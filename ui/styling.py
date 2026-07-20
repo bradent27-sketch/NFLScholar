@@ -497,6 +497,91 @@ def inject_theme():
             margin-top: 1px;
         }}
 
+        /* Percentile bar chart (Player Search "Season Profile") -
+           ui.player_snapshot.render_percentile_bars_figure. Reuses
+           .fpts-strip/.fs-label for the outer card/label, same as the
+           matchup heat-strip above. Bar fill color is a bare SVG `fill`
+           attribute set inline per-row (data-driven, one get_pff_color()
+           per stat) - only the static layout/typography/hover live here,
+           same split as every other data-driven component in this file.
+           Hover state (outline the bar + enlarge its value) replaces the
+           interaction the now-removed stat-tile grid used to carry, since
+           this chart is the sole primary view of these stats now. */
+        .pbar-svg {{ display: block; width: 100%; height: auto; }}
+        .pbar-grid {{ stroke: {C['outline_variant']}; stroke-width: 1; }}
+        .pbar-tick {{
+            font-family: {F['mono']};
+            font-size: 10px;
+            fill: {C['on_surface_variant']};
+        }}
+        .pbar-track {{ fill: {C['surface_container_high']}; }}
+        .pbar-label {{
+            font-family: {F['body']};
+            font-size: 12px;
+            font-weight: 600;
+            fill: {C['on_surface_variant']};
+            transition: fill 150ms ease-out;
+        }}
+        .pbar-value {{
+            font-family: {F['mono']};
+            font-size: 12px;
+            font-weight: 700;
+            fill: #ffffff;
+            transition: transform 150ms ease-out;
+            transform-box: fill-box;
+            transform-origin: left center;
+        }}
+        .pbar-fill {{
+            stroke: transparent;
+            stroke-width: 0;
+            transition: filter 150ms ease-out, stroke-width 150ms ease-out;
+        }}
+        .pbar-row:hover .pbar-fill {{ stroke: #ffffff; stroke-width: 2px; filter: brightness(1.12); }}
+        .pbar-row:hover .pbar-value {{ transform: scale(1.28); }}
+        .pbar-row:hover .pbar-label {{ fill: #ffffff; }}
+
+        /* Percentile-colored metric tiles (Defensive Yield's Coverage
+           Matchup Radar) - ui.components.render_percentile_metric_tiles.
+           Centered layout like .hero-tile, but color is per-tile and
+           data-driven (a percentile fill, not a fixed gradient) - a plain
+           st.metric has no per-instance styling hook a caller can drive
+           from Python, which is why this exists instead of just theming
+           div[data-testid="stMetric"] further. */
+        .metric-tile-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 10px;
+            margin: 10px 0 4px 0;
+        }}
+        .metric-tile {{
+            border-radius: {R['md']};
+            padding: 12px 14px;
+            text-align: center;
+            border: 1px solid {C['outline_variant']};
+        }}
+        .metric-tile .m-label {{
+            font-size: 10.5px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: rgba(255, 255, 255, 0.85);
+        }}
+        .metric-tile .m-value {{
+            font-family: {F['mono']};
+            font-size: 22px;
+            font-weight: 700;
+            color: #ffffff;
+            line-height: 1.2;
+            margin-top: 2px;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+        }}
+        .metric-tile .m-sub {{
+            font-size: 10px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.85);
+            margin-top: 2px;
+        }}
+
         /* Matchup title (Defensive Yield's Coverage Correlator radar) -
            centered "{{player}} VS {{team}}" header, replacing a bare bold
            markdown line that read cramped against the chart below it. */

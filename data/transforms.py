@@ -999,7 +999,15 @@ def build_risers_report(_stats_df, name_col, team_col, year, min_weeks=2, top_n=
     # as a safety net since any duplicate here is always a bug, never valid
     # data - drop_duplicates keeps the first (already sorted by Pct Jump).
     out = out.drop_duplicates(subset=['Player'])
-    out = _merge_ryoe(out, year)
+    # RYOE (_merge_ryoe) deliberately NOT merged in here - confirmed live
+    # (real 2025 data, real RB rows in this exact report) that it renders
+    # blank for every player: load_ngs_rushing has no local-file fallback
+    # (unlike almost every other source in this app) and its live
+    # nflreadpy.load_nextgen_stats() pull is failing, silently swallowed by
+    # that loader's bare except/empty-DataFrame return. Rather than show a
+    # column that's currently always empty, it's left off this board -
+    # still used by the VORP Draft Sheet (build_vorp_draft_sheet), which
+    # has the identical gap.
     return out
 
 
@@ -1076,6 +1084,15 @@ def build_rookie_watch(_stats_df, name_col, team_col, global_rookie_names, year)
         # always-blank column for most rows. Red-zone share is meaningful
         # for both: target share for WR/TE, carry share for RB.
         summary = _merge_redzone_share(summary, _stats_df, name_col, year, out_name_col='Player', pos_col='Pos')
+        # Explicit column order (there wasn't one before - display order
+        # just fell out of agg_spec's dict-insertion order) - Player, Pos,
+        # Team, Draft Pick lead, then Avg FPTS, then everything else
+        # (Snap %, Targets, Rec/Rush Yds, Games, RZ share) keeps its
+        # existing relative order. Filtered against summary.columns since
+        # several of these are conditional on what _stats_df happens to
+        # carry (see the opt_col loop above).
+        lead_cols = [c for c in ['Player', 'Pos', 'Team', 'Draft Pick', 'Avg FPTS'] if c in summary.columns]
+        summary = summary[lead_cols + [c for c in summary.columns if c not in lead_cols]]
     return summary
 
 

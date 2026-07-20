@@ -24,6 +24,7 @@ data/ui layering intact.
 import re
 
 import pandas as pd
+import streamlit as st
 
 from config import THEME, OLINE_POSITIONS, DEFENSIVE_POSITIONS
 from data.utils import get_val, calculate_percentile
@@ -401,9 +402,16 @@ def build_player_snapshot(selected_player, pos, p_data, p_bio, pff, p_pct_row, g
 # (e.g. a position/season with sparse PFF data) rather than showing nothing.
 BAR_CHART_HEADLINE_STATS = {
     'QB': ['Overall PFF', 'EPA/Dropback', 'Success Rate', 'CPOE', 'ESPN QBR', 'Pass Grade', 'BTT %', 'TWP %', 'ADOT'],
-    'RB': ['Overall PFF', 'EPA/Rush', 'Success Rate', 'Yards/Carry', 'Rush Att/G', 'Targets/G', 'RecV Grade', 'MTF/G', 'YCO/Att'],
-    'WR': ['Overall PFF', 'EPA/Target', 'Success Rate', 'YPRR', 'Targets/G', 'Rec/G', 'RecV Grade', 'ADOT', 'Drop Rate %'],
-    'TE': ['Overall PFF', 'EPA/Target', 'Success Rate', 'YPRR', 'Targets/G', 'Rec/G', 'RecV Grade', 'ADOT', 'Drop Rate %'],
+    # Snap % appended per explicit feedback (Usage & Alignment promoted out
+    # of the "More stats" picker into the always-visible percentile
+    # rankings) - RB has no slot/wide/inline alignment equivalent to WR/TE,
+    # so Snap % (the "usage" half of that group) is the only addition here.
+    'RB': ['Overall PFF', 'EPA/Rush', 'Success Rate', 'Yards/Carry', 'Rush Att/G', 'Targets/G', 'RecV Grade', 'MTF/G', 'YCO/Att', 'Snap %'],
+    # Snap %/SL %/WID %/INL % appended - the WR/TE 'Usage & Alignment'
+    # SECONDARY_TILE_GROUPS entries below are removed in the same pass,
+    # since every stat that group held now lives here instead.
+    'WR': ['Overall PFF', 'EPA/Target', 'Success Rate', 'YPRR', 'Targets/G', 'Rec/G', 'RecV Grade', 'ADOT', 'Drop Rate %', 'Snap %', 'SL %', 'WID %'],
+    'TE': ['Overall PFF', 'EPA/Target', 'Success Rate', 'YPRR', 'Targets/G', 'Rec/G', 'RecV Grade', 'ADOT', 'Drop Rate %', 'Snap %', 'SL %', 'INL %'],
 }
 
 # Secondary tile grouping for Player Search's season profile - everything
@@ -417,14 +425,20 @@ BAR_CHART_HEADLINE_STATS = {
 # bucket so nothing silently disappears.
 SECONDARY_TILE_GROUPS = {
     'QB': [('More Stats', ['Snap %', 'Run Grade', 'Adj Comp %', 'P2S %'])],
-    'RB': [('More Stats', ['Snap %', 'PBLK Grade'])],
+    # RB's Snap % moved to BAR_CHART_HEADLINE_STATS above (promoted to the
+    # primary percentile rankings) - only PBLK Grade is left here.
+    'RB': [('More Stats', ['PBLK Grade'])],
+    # WR/TE's 'Usage & Alignment' group removed entirely - every stat it
+    # held (Snap %, SL %, WID %/INL %) moved to BAR_CHART_HEADLINE_STATS
+    # above, per explicit feedback that those specifically belonged in the
+    # always-visible percentile rankings rather than behind a picker. Slot
+    # Production and Screen Game stay exactly as before ("these can stay as
+    # more stats... good to have if I do want them").
     'WR': [
-        ('Usage & Alignment', ['Snap %', 'SL %', 'WID %']),
         ('Slot Production', ['Slot RecV Grd', 'Slot Route %', 'Slot YPRR']),
         ('Screen Game', ['Screen Route %', 'Screen YPRR']),
     ],
     'TE': [
-        ('Usage & Alignment', ['Snap %', 'SL %', 'INL %']),
         ('Slot Production', ['Slot RecV Grd', 'Slot Route %', 'Slot YPRR']),
         ('Screen Game', ['Screen Route %', 'Screen YPRR']),
     ],
@@ -732,20 +746,26 @@ def render_percentile_radar_grid_compare(side_1, side_2):
 def render_percentile_bars_figure(snapshot, player_name, pos):
     """
     Baseball Savant-style "Percentile Rankings" visual: one horizontal bar
-    per stat, length = league percentile (0-100), color = get_pff_color(pct)
-    (the app's existing grade-color palette, not a new one). Same
-    matplotlib convention as data/coverage_radar.py's
-    render_split_radar_figure (Agg backend, transparent background, DPI
-    160, returns a Figure or None if there's nothing to plot).
+    per stat, length = league percentile (0-100), color = each entry's own
+    color (get_pff_color(pct), already computed by build_player_snapshot).
 
-    Entries with pct=None (no real percentile available - see
-    build_player_snapshot/_entry) are skipped outright, same as they'd be
-    uninterpretable as a bar length.
+    Inline SVG (same convention as ui.components.render_fpts_week_strip /
+    render_matchup_heat_strip - a fixed viewBox, real DOM elements, CSS
+    hover) instead of matplotlib - this used to sit BELOW a stat-tile grid
+    showing the same headline stats (which carried its own hover/highlight
+    interaction), so the static PNG this rendered as before was never the
+    only view of this data. Per explicit feedback, that duplicate tile grid
+    was removed and this chart became the sole primary view - a flat
+    matplotlib image can't grow a per-bar hover affordance on its own, so
+    it needed a real interactive markup instead.
+
+    Renders directly via st.markdown - no Figure to return. Entries with
+    pct=None (no real percentile available - see build_player_snapshot/
+    _entry) are skipped outright, same as they'd be uninterpretable as a
+    bar length; renders nothing at all if that leaves zero rows, same
+    "nothing to show" convention as every other render_* here/in
+    ui.components.
     """
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-
     headline_labels = BAR_CHART_HEADLINE_STATS.get(pos)
     if headline_labels:
         by_label = {e['label']: e for e in snapshot}
@@ -754,48 +774,56 @@ def render_percentile_bars_figure(snapshot, player_name, pos):
         rows = [e for e in snapshot if e['pct'] is not None]
 
     if not rows:
-        return None
+        return
 
     rows = list(reversed(rows))  # top stat drawn at the top of the chart
-    labels = [r['label'] for r in rows]
-    pcts = [max(0.0, min(100.0, float(r['pct']))) for r in rows]
-    colors = [_mpl_color(r['color']) for r in rows]
+    n = len(rows)
 
-    # Shrunk from the original (0.42/row, 2.0 floor) - this chart sits below
-    # the matrix table on Player Search, and users wanted less scrolling to
-    # clear it, not a smaller readable area (labels/values keep the same
-    # font sizes below; only the per-row and floor height dropped).
-    fig_height = max(1.6, 0.32 * len(rows) + 0.5)
-    fig, ax = plt.subplots(figsize=(6.5, fig_height), dpi=220)
-    fig.patch.set_alpha(0)
-    ax.set_facecolor('none')
+    # SCALE_MAX (122, not 100) mirrors the old matplotlib xlim(0, 122) -
+    # bars are measured on a 0-122 "scale" even though real values only
+    # reach 100, so a bar at the 100th percentile still has clear room to
+    # its right for the value label instead of the label doubling back onto
+    # the bar itself.
+    W, LABEL_END_X, PLOT_X0, PLOT_W, SCALE_MAX = 1000, 178, 195, 750, 122.0
+    ROW_H, BAR_H = 34, 21
+    TOP_PAD, BOTTOM_PAD = 6, 28
+    H = TOP_PAD + n * ROW_H + BOTTOM_PAD
 
-    y_pos = range(len(rows))
-    ax.barh(y_pos, pcts, color=colors, height=0.62, zorder=3)
-    ax.barh(y_pos, [100] * len(rows), color='#1a2447', height=0.62, zorder=1)
+    def bar_w(pct):
+        return max(2.0, (pct / SCALE_MAX) * PLOT_W)
 
-    ax.set_yticks(list(y_pos))
-    ax.set_yticklabels(labels, color='#e5e8ff', size=9)
-    # xlim extends well past the 0-100 data range (grid/ticks still stop at
-    # 100) so the value label always has clear space to its own right,
-    # never crowding or overlapping the bar's end cap - a bar at/near the
-    # 100th percentile used to force its label to double back onto the bar
-    # itself (label position capped at 96, inside a bar already extending
-    # to 100). A fixed +5 offset now lands consistently just past every
-    # bar's real end instead of needing that cap at all.
-    ax.set_xlim(0, 122)
-    ax.set_xticks([0, 25, 50, 75, 100])
-    ax.set_xticklabels(['0', '25', '50', '75', '100'], color='#7a80a8', size=8)
-    for val, pct, y in zip([r['value_str'] for r in rows], pcts, y_pos):
-        ax.text(pct + 5, y, str(val), va='center', ha='left', color='#ffffff', size=8, fontweight='bold', zorder=4)
+    grid_parts = []
+    for tick in (0, 25, 50, 75, 100):
+        tx = PLOT_X0 + (tick / SCALE_MAX) * PLOT_W
+        grid_parts.append(f'<line x1="{tx:.1f}" y1="{TOP_PAD}" x2="{tx:.1f}" y2="{H - BOTTOM_PAD + 4:.1f}" class="pbar-grid"/>')
+        grid_parts.append(f'<text x="{tx:.1f}" y="{H - BOTTOM_PAD + 19:.1f}" text-anchor="middle" class="pbar-tick">{tick}</text>')
 
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.tick_params(length=0)
-    ax.set_title(f"{player_name} — {pos} Percentile Rankings", color='#ffffff', size=11, pad=10)
+    bar_parts = []
+    for i, r in enumerate(rows):
+        y0 = TOP_PAD + i * ROW_H
+        y_mid = y0 + ROW_H / 2
+        bar_y = y0 + (ROW_H - BAR_H) / 2
+        pct = max(0.0, min(100.0, float(r['pct'])))
+        w = bar_w(pct)
+        label, value, color = r['label'], r['value_str'], r['color']
+        bar_parts.append(
+            f'<g class="pbar-row">'
+            f'<title>{label}: {value} — {pct:.0f}th percentile</title>'
+            f'<text x="{LABEL_END_X}" y="{y_mid:.1f}" text-anchor="end" dominant-baseline="central" class="pbar-label">{label}</text>'
+            f'<rect x="{PLOT_X0}" y="{bar_y:.1f}" width="{PLOT_W}" height="{BAR_H}" rx="4" class="pbar-track"/>'
+            f'<rect x="{PLOT_X0}" y="{bar_y:.1f}" width="{w:.1f}" height="{BAR_H}" rx="4" class="pbar-fill" fill="{color}"/>'
+            f'<text x="{PLOT_X0 + w + 10:.1f}" y="{y_mid:.1f}" dominant-baseline="central" class="pbar-value">{value}</text>'
+            f'</g>'
+        )
 
-    fig.tight_layout(pad=1.4)
-    return fig
+    svg = (
+        f'<svg viewBox="0 0 {W} {H}" class="pbar-svg" role="img" aria-label="{pos} percentile rankings">'
+        f'{"".join(grid_parts)}{"".join(bar_parts)}</svg>'
+    )
+    st.markdown(
+        f"<div class='fpts-strip'><div class='fs-label'>{player_name} — {pos} Percentile Rankings</div>{svg}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_percentile_bars_figure_compare(side_1, side_2):

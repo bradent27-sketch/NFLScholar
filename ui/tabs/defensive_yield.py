@@ -21,8 +21,8 @@ from data.coverage_radar import (
     list_coverage_teams, list_receivers, build_radar_data, build_defense_radar_data, render_split_radar_figure,
     team_nickname, build_team_man_zone_rates,
 )
-from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import render_matchup_title
+from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config, get_pff_color, get_matchup_color
+from ui.components import render_matchup_title, render_percentile_metric_tiles
 
 # Sharp Football's coverage-tendency export keys teams by bare nickname
 # (e.g. "Dolphins"), while build_points_allowed_matrix keys by nflverse
@@ -312,25 +312,27 @@ def _render_coverage_radar(pff):
         st.caption("sharp_positional_coverage_2025.csv not found in external_data/ — showing player radar only.")
 
     if matchup:
-        # delta= carries league-relative context (not the chart itself -
-        # explicit request) for each raw number: the player's own YPRR
-        # percentile among all charted WR/TEs, the blended matchup's
-        # percentile among the same pool facing this SAME opponent, and the
-        # opponent's man/zone rate percentile among all 32 teams.
-        # delta_color="off" keeps it a plain gray caption rather than a
-        # red/green up-down arrow, which would misleadingly read as change
-        # over time rather than a rank.
-        row1 = st.columns(5)
-        row1_vals = [
-            ("Man YPRR", matchup['player_man_yprr'], matchup.get('player_man_yprr_pct')),
-            ("Zone YPRR", matchup['player_zone_yprr'], matchup.get('player_zone_yprr_pct')),
-            ("Blended Exp. YPRR", matchup['blended_expected_yprr'], matchup.get('blended_expected_yprr_pct')),
-            ("Opp Man %", f"{matchup['opp_man_rate']}%", matchup.get('opp_man_rate_pct')),
-            ("Opp Zone %", f"{matchup['opp_zone_rate']}%", matchup.get('opp_zone_rate_pct')),
+        # Tile background = percentile color (replaces the plain st.metric
+        # boxes' gray delta text, per explicit feedback) - the ordinal
+        # percentile ("78th percentile") stays visible as the `sub`
+        # caption, just re-themed onto a colored tile instead of a bare
+        # delta. Man/Zone/Blended YPRR are a PLAYER performance percentile
+        # (get_pff_color, the app's standard "how good is this player"
+        # scale - same one every stat tile/bar chart uses), while Opp Man
+        # %/Opp Zone % are a tendency metric with no inherent good/bad
+        # direction (get_matchup_color, matching how this SAME tab's merged
+        # points-allowed/coverage matrix already colors Man %/Zone % below).
+        row1_defs = [
+            ("Man YPRR", matchup['player_man_yprr'], matchup.get('player_man_yprr_pct'), get_pff_color),
+            ("Zone YPRR", matchup['player_zone_yprr'], matchup.get('player_zone_yprr_pct'), get_pff_color),
+            ("Blended Exp. YPRR", matchup['blended_expected_yprr'], matchup.get('blended_expected_yprr_pct'), get_pff_color),
+            ("Opp Man %", f"{matchup['opp_man_rate']}%", matchup.get('opp_man_rate_pct'), get_matchup_color),
+            ("Opp Zone %", f"{matchup['opp_zone_rate']}%", matchup.get('opp_zone_rate_pct'), get_matchup_color),
         ]
-        for col, (label, val, pct) in zip(row1, row1_vals):
-            with col:
-                st.metric(label, val, delta=_ordinal_percentile_label(pct), delta_color="off")
+        render_percentile_metric_tiles([
+            {'label': label, 'value': val, 'sub': _ordinal_percentile_label(pct), 'color': color_fn(pct)}
+            for label, val, pct, color_fn in row1_defs
+        ])
     else:
         st.caption("Not enough coverage-snap data to compute a blended matchup score for this team.")
 
@@ -338,12 +340,21 @@ def _render_coverage_radar(pff):
         # def_vals is the SAME percentile array already computed for the
         # defense-side radar chart (build_defense_radar_data), parallel to
         # def_labels/def_raw by construction (built in the same loop) - no
-        # new computation needed, just reused here for the boxes' delta.
+        # new computation needed, just reused here for the tiles' color/sub.
+        # get_matchup_color (not get_pff_color): these are already an
+        # INVERTED percentile (low yards allowed = good coverage = high
+        # percentile, see build_defense_radar_data's docstring), so "good
+        # defense = green" is the correct read, matching the same
+        # tendency/matchup convention as the Opp Man %/Opp Zone % tiles above.
         def_pct_map = dict(zip(def_labels, def_vals))
-        row2 = st.columns(len(def_raw))
-        for col, (label, val) in zip(row2, def_raw.items()):
-            with col:
-                st.metric(label, f"{val:.1f}", delta=_ordinal_percentile_label(def_pct_map.get(label)), delta_color="off")
+        render_percentile_metric_tiles([
+            {
+                'label': label, 'value': f"{val:.1f}",
+                'sub': _ordinal_percentile_label(def_pct_map.get(label)),
+                'color': get_matchup_color(def_pct_map.get(label)),
+            }
+            for label, val in def_raw.items()
+        ])
     elif not matchup:
         st.caption("No defensive coverage data available for this team.")
 

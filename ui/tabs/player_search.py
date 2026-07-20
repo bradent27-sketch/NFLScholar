@@ -492,24 +492,18 @@ def render():
 
             st.markdown("<div class='custom-section-header'>SEASON PROFILE — LEAGUE PERCENTILES</div>", unsafe_allow_html=True)
 
-            # Curated headline tiles only (the same ~9-stat set the
-            # percentile-bar chart uses), with everything else split into
-            # selectable stat-family groups (slot / screen / alignment for
-            # WR-TE) behind a segmented control - per explicit feedback
-            # that boxing all ~19 WR snapshot stats at once was too
-            # crowded. Nothing is dropped: every stat is still reachable,
-            # one group at a time.
+            # The percentile-bar chart alone is now the primary view - it
+            # used to sit directly below a stat-tile grid showing the exact
+            # same headline stats a second time, which per explicit
+            # feedback was redundant (the bar chart already reads clearly
+            # on its own, especially now that it carries its own per-bar
+            # hover detail). Everything else stays split into selectable
+            # stat-family groups (slot / screen for WR-TE) behind a
+            # segmented control - nothing is dropped, every stat is still
+            # reachable, one group at a time.
             if snapshot:
-                primary_tiles, secondary_groups = split_snapshot_for_display(snapshot, pos)
-                render_stat_tiles(primary_tiles)
-
-                # Percentile-bar breakdown directly under the headline
-                # tiles, always visible (was briefly in an expander - user
-                # preferred it out), with the "More stats" group selector
-                # below it.
-                bars_fig = render_percentile_bars_figure(snapshot, selected_player, pos)
-                if bars_fig is not None:
-                    st.pyplot(bars_fig, width="stretch")
+                _, secondary_groups = split_snapshot_for_display(snapshot, pos)
+                render_percentile_bars_figure(snapshot, selected_player, pos)
 
                 if secondary_groups:
                     group_names = [g for g, _ in secondary_groups]

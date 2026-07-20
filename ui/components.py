@@ -306,6 +306,41 @@ def render_hero_tiles(items):
     st.markdown(f"<div class='hero-tile-grid'>{''.join(tiles)}</div>", unsafe_allow_html=True)
 
 
+def render_percentile_metric_tiles(items):
+    """
+    Percentile-colored metric tiles (Defensive Yield's Coverage Matchup
+    Radar) - replaces st.metric, which has no per-instance styling hook a
+    caller can drive from Python, so a per-tile percentile color was never
+    reachable through it. Centered layout like render_hero_tiles, but
+    `color` is REQUIRED per item and drives the tile's own background
+    (a solid percentile fill, the same convention every other
+    percentile-colored surface in this app uses - table cells via
+    style_plain_dataframe/style_depth_chart_table - not a fixed gradient).
+
+    A separate function rather than extending render_hero_tiles with this
+    same behavior - render_hero_tiles already has callers (Player Search's
+    headline band) that only tint the VALUE text via `accent`, never the
+    tile background; retrofitting shared per-tile background coloring onto
+    that function risked changing those unrelated tiles' look too.
+
+    `items`: list of {'label', 'value', 'sub' (optional), 'color'} - color
+    is precomputed by the caller (get_pff_color for a player-performance
+    percentile, get_matchup_color for a defense/tendency percentile - see
+    ui.tabs.defensive_yield._render_coverage_radar for which is used
+    where), keeping this a pure render function, same layering as
+    render_stat_tiles/render_hero_tiles.
+    """
+    tiles = []
+    for it in items:
+        sub = f"<div class='m-sub'>{it['sub']}</div>" if it.get('sub') else ""
+        tiles.append(
+            f"<div class='metric-tile' style='background:{it['color']};'>"
+            f"<div class='m-label'>{it['label']}</div>"
+            f"<div class='m-value'>{it['value']}</div>{sub}</div>"
+        )
+    st.markdown(f"<div class='metric-tile-grid'>{''.join(tiles)}</div>", unsafe_allow_html=True)
+
+
 def _smooth_svg_path(pts):
     """
     SVG path string that curves THROUGH every point in `pts` (a uniform

@@ -1,0 +1,8 @@
+streamlit>=1.59
+pandas>=3.0
+numpy>=2.5
+requests>=2.34
+nflreadpy>=0.1.5
+pyarrow>=25.0
+matplotlib>=3.11
+rapidfuzz>=3.14

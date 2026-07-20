@@ -1,0 +1,19 @@
+# Secrets - never commit. The Live Odds tab persists an Odds API key here in
+# plaintext (see ui/tabs/live_odds.py) - HANDOFF.md explicitly warns about
+# this file before sharing the folder.
+.streamlit/odds_api_key.txt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Claude Code local session config (machine-specific tool permissions, not
+# app config - .claude/launch.json, the actually-useful dev-server config,
+# is intentionally still tracked).
+.claude/settings.local.json
+
+# OS cruft
+.DS_Store
+Thumbs.db

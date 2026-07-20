@@ -1,0 +1,313 @@
+"""
+Defensive Coverage Correlator: cross a WR/TE's own man-vs-zone performance
+split against an opposing defense's man/zone coverage mix, to flag matchups
+that favor (or work against) that player's actual scheme performance.
+
+Data sources (see PLAN.md section 0.2 for why - Cover-1/2/3/4/6 shell data
+isn't published anywhere free/local this app can reach yet):
+  - pff_imports/receiving_scheme_2025.csv (player-level man/zone YPRR,
+    target share, route grade - via data.loaders.load_all_pff_data()['rec_scheme'])
+  - pff_imports/defense_coverage_scheme_2025.csv (player-level defensive
+    coverage snaps, aggregated here to team-level man/zone rate)
+  - external_data/sumersports_*_personnel_tendency_2025.csv /
+    *_formation_tendency_2025.csv (secondary "scheme context" panel -
+    personnel/formation tendency, not coverage shells)
+"""
+import pandas as pd
+
+from data.utils import calculate_percentile
+
+
+def get_team_man_zone_rate(def_coverage_scheme_df, team_name):
+    """
+    defense_coverage_scheme_2025.csv is player-level (one row per defender).
+    Aggregating man_snap_counts_coverage / zone_snap_counts_coverage across
+    every defender on a team gives a team-level man% / zone% rate - the
+    same idea as the team-level Sharp Football coverage export the code
+    already had a (currently-missing) local-file slot for, built instead
+    from real local PFF data that's actually on disk.
+    """
+    if def_coverage_scheme_df.empty or 'team_name' not in def_coverage_scheme_df.columns:
+        return None
+    team_rows = def_coverage_scheme_df[def_coverage_scheme_df['team_name'] == team_name]
+    if team_rows.empty:
+        return None
+    man_snaps = pd.to_numeric(team_rows.get('man_snap_counts_coverage'), errors='coerce').fillna(0).sum()
+    zone_snaps = pd.to_numeric(team_rows.get('zone_snap_counts_coverage'), errors='coerce').fillna(0).sum()
+    total = man_snaps + zone_snaps
+    if total <= 0:
+        return None
+    return {'man_rate': round(man_snaps / total * 100, 1), 'zone_rate': round(zone_snaps / total * 100, 1)}
+
+
+def build_team_man_zone_rates(def_coverage_scheme_df):
+    """
+    Team-level man/zone coverage rate for ALL teams at once - same math as
+    get_team_man_zone_rate above, aggregated in one groupby instead of
+    looping per-team. Lets the Defensive Yield merged matchup table show
+    Man%/Zone% for any year PFF data exists (2019+, per pff_imports/'s
+    per-year folders), not just 2025 - the only year Sharp Football
+    Analysis's free coverage-tendency page (the other source for this same
+    metric) happens to have, since that site has no historical archive
+    (confirmed - no season selector or year parameter). PFF's export
+    doesn't carry a middle-of-field open/closed (Cover-1 vs. two-high shell)
+    split at all, so that specific pair of columns is still Sharp-Football-
+    only / 2025-only regardless - a genuine gap, not something this
+    substitutes for.
+
+    Returns a DataFrame with columns ['team', 'man_rate', 'zone_rate'] -
+    'team' here is PFF's own team CODE (e.g. "ARZ"), matching
+    defense_coverage_scheme's 'team_name' column despite that column's
+    name (confirmed: it holds codes, not real names) - caller converts to
+    the standard nflverse abbreviation via config.pff_team_to_abbr.
+    """
+    if def_coverage_scheme_df.empty or 'team_name' not in def_coverage_scheme_df.columns:
+        return pd.DataFrame()
+    df = def_coverage_scheme_df.copy()
+    df['man_snap_counts_coverage'] = pd.to_numeric(df.get('man_snap_counts_coverage'), errors='coerce').fillna(0)
+    df['zone_snap_counts_coverage'] = pd.to_numeric(df.get('zone_snap_counts_coverage'), errors='coerce').fillna(0)
+    agg = df.groupby('team_name', observed=True).agg(
+        man_snaps=('man_snap_counts_coverage', 'sum'),
+        zone_snaps=('zone_snap_counts_coverage', 'sum'),
+    ).reset_index()
+    agg['total'] = agg['man_snaps'] + agg['zone_snaps']
+    agg = agg[agg['total'] > 0].copy()
+    if agg.empty:
+        return pd.DataFrame()
+    agg['man_rate'] = (agg['man_snaps'] / agg['total'] * 100).round(1)
+    agg['zone_rate'] = (agg['zone_snaps'] / agg['total'] * 100).round(1)
+    return agg.rename(columns={'team_name': 'team'})[['team', 'man_rate', 'zone_rate']]
+
+
+def list_coverage_teams(def_coverage_scheme_df):
+    if def_coverage_scheme_df.empty or 'team_name' not in def_coverage_scheme_df.columns:
+        return []
+    return sorted(def_coverage_scheme_df['team_name'].dropna().unique().tolist())
+
+
+def list_receivers(rec_scheme_df):
+    if rec_scheme_df.empty or 'player' not in rec_scheme_df.columns:
+        return []
+    pool = rec_scheme_df
+    if 'position' in rec_scheme_df.columns:
+        pool = rec_scheme_df[rec_scheme_df['position'].isin(['WR', 'TE'])]
+    return sorted(pool['player'].dropna().unique().tolist())
+
+
+def build_radar_data(rec_scheme_df, player_name, opponent_team_name, def_coverage_scheme_df):
+    """
+    Returns (axis_labels, man_values, zone_values, matchup_summary) where
+    man_values/zone_values are percentile-scaled (0-100, among WR/TE with
+    non-zero data) so YPRR/target-share/grade - three very different raw
+    scales - can share one radar. matchup_summary blends the player's raw
+    man/zone YPRR with the opponent's man/zone rate into one expected
+    YPRR-against-this-defense number.
+    """
+    if rec_scheme_df.empty or 'player' not in rec_scheme_df.columns:
+        return [], [], [], None
+
+    pool = rec_scheme_df[rec_scheme_df['position'].isin(['WR', 'TE'])] if 'position' in rec_scheme_df.columns else rec_scheme_df
+    p_row = pool[pool['player'].str.lower() == str(player_name).lower()]
+    if p_row.empty:
+        return [], [], [], None
+    row = p_row.iloc[0]
+
+    axis_pairs = [
+        ('man_yprr', 'zone_yprr', 'YPRR'),
+        ('man_targets_percent', 'zone_targets_percent', 'Target Share'),
+        ('man_grades_pass_route', 'zone_grades_pass_route', 'Route Grade'),
+        ('man_caught_percent', 'zone_caught_percent', 'Catch %'),
+    ]
+    labels, man_vals, zone_vals = [], [], []
+    for man_col, zone_col, label in axis_pairs:
+        if man_col not in pool.columns or zone_col not in pool.columns:
+            continue
+        man_pct = calculate_percentile(pool, man_col)
+        zone_pct = calculate_percentile(pool, zone_col)
+        idx = p_row.index[0]
+        labels.append(label)
+        man_vals.append(round(float(man_pct.get(idx, 0)), 1))
+        zone_vals.append(round(float(zone_pct.get(idx, 0)), 1))
+
+    matchup_summary = None
+    if opponent_team_name and def_coverage_scheme_df is not None:
+        # Built once via build_team_man_zone_rates (all 32 teams) instead of
+        # the single-team get_team_man_zone_rate - needed anyway to rank
+        # this opponent's own man/zone rate against the rest of the league
+        # for the metric boxes' percentile context (explicit request: raw
+        # numbers there should carry a league-relative read, not just the
+        # chart itself).
+        team_rates = build_team_man_zone_rates(def_coverage_scheme_df)
+        team_row = team_rates[team_rates['team'] == opponent_team_name] if not team_rates.empty else pd.DataFrame()
+        if not team_row.empty and 'man_yprr' in row and 'zone_yprr' in row:
+            man_rate = float(team_row.iloc[0]['man_rate'])
+            zone_rate = float(team_row.iloc[0]['zone_rate'])
+            man_yprr = float(row.get('man_yprr', 0) or 0)
+            zone_yprr = float(row.get('zone_yprr', 0) or 0)
+            blended = (man_yprr * man_rate + zone_yprr * zone_rate) / 100
+
+            p_idx = p_row.index[0]
+            team_idx = team_row.index[0]
+            man_yprr_pct = calculate_percentile(pool, 'man_yprr').get(p_idx)
+            zone_yprr_pct = calculate_percentile(pool, 'zone_yprr').get(p_idx)
+            opp_man_pct = calculate_percentile(team_rates, 'man_rate').get(team_idx)
+            opp_zone_pct = calculate_percentile(team_rates, 'zone_rate').get(team_idx)
+            # Blended Exp. YPRR isn't a single source column - it's this
+            # player's own man/zone YPRR weighted by THIS opponent's own
+            # man/zone rate, so its percentile has to be computed the same
+            # way for every other qualified WR/TE against that SAME
+            # opponent, then rank the selected player within that - an
+            # apples-to-apples "how good is this specific matchup for him
+            # vs. everyone else facing this defense" read, not a rehash of
+            # his overall YPRR percentile.
+            pool_blend = (
+                pd.to_numeric(pool['man_yprr'], errors='coerce').fillna(0) * man_rate
+                + pd.to_numeric(pool['zone_yprr'], errors='coerce').fillna(0) * zone_rate
+            ) / 100
+            blended_pct = calculate_percentile(pool_blend.to_frame('blend'), 'blend').get(p_idx)
+
+            matchup_summary = {
+                'opponent': opponent_team_name,
+                'opp_man_rate': man_rate,
+                'opp_zone_rate': zone_rate,
+                'opp_man_rate_pct': round(float(opp_man_pct), 1) if pd.notna(opp_man_pct) else None,
+                'opp_zone_rate_pct': round(float(opp_zone_pct), 1) if pd.notna(opp_zone_pct) else None,
+                'player_man_yprr': round(man_yprr, 2),
+                'player_zone_yprr': round(zone_yprr, 2),
+                'player_man_yprr_pct': round(float(man_yprr_pct), 1) if pd.notna(man_yprr_pct) else None,
+                'player_zone_yprr_pct': round(float(zone_yprr_pct), 1) if pd.notna(zone_yprr_pct) else None,
+                'blended_expected_yprr': round(blended, 2),
+                'blended_expected_yprr_pct': round(float(blended_pct), 1) if pd.notna(blended_pct) else None,
+            }
+
+    return labels, man_vals, zone_vals, matchup_summary
+
+
+def team_nickname(full_team_name):
+    """'Arizona Cardinals' -> 'Cardinals' - matches Sharp Football Analysis's
+    bare-nickname team column convention."""
+    if not full_team_name:
+        return None
+    return full_team_name.split()[-1]
+
+
+def build_defense_radar_data(positional_coverage_df, full_team_name):
+    """
+    Right-side "opposing defense" radar: percentile-scaled (0-100, among all
+    32 teams) yards-per-target ALLOWED to each receiver type/alignment, from
+    Sharp Football Analysis's free "NFL Coverage Stats by Position" page
+    (external_data/sharp_positional_coverage_2025.csv - a real gap-filling
+    source, not local PFF data). Percentile direction is inverted
+    (ascending=False) so a LOW yards-allowed number - good coverage - still
+    reads as "further out on the chart", consistent with the player-side
+    radar where further out also means better performance.
+    """
+    if positional_coverage_df.empty or 'team' not in positional_coverage_df.columns:
+        return [], [], {}
+    nickname = team_nickname(full_team_name)
+    row = positional_coverage_df[positional_coverage_df['team'] == nickname]
+    if row.empty:
+        return [], [], {}
+    idx = row.index[0]
+
+    axis_cols = [
+        ('ypt_allowed_wr', 'YPT vs WR'),
+        ('ypt_allowed_te', 'YPT vs TE'),
+        ('ypt_allowed_rb', 'YPT vs RB'),
+        ('ypt_allowed_outside', 'YPT Outside'),
+        ('ypt_allowed_slot', 'YPT Slot'),
+    ]
+    labels, vals, raw = [], [], {}
+    for col, label in axis_cols:
+        if col not in positional_coverage_df.columns:
+            continue
+        pct = calculate_percentile(positional_coverage_df, col, ascending=False)
+        labels.append(label)
+        vals.append(round(float(pct.get(idx, 0)), 1))
+        raw[label] = float(row.iloc[0][col])
+
+    return labels, vals, raw
+
+
+def render_split_radar_figure(player_labels, player_man_vals, player_zone_vals, player_name,
+                               defense_labels, defense_vals, defense_team_label):
+    """
+    Two polar charts side by side in one figure - player's own man/zone
+    profile (left) and the opposing defense's coverage-quality-by-target-type
+    profile (right), so both halves of the matchup are visible at once
+    without needing to scroll between two separately-rendered charts.
+    Higher DPI + tighter layout than the original single chart (which read
+    as "large and slightly low quality" at default matplotlib DPI).
+    """
+    import numpy as np
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    if not player_labels and not defense_labels:
+        return None
+
+    # Sizing/DPI/fonts raised together per explicit feedback that the
+    # charts read small and fuzzy: st.pyplot scales the image to its
+    # container width, so on-screen legibility tracks the font-to-figure
+    # ratio and the render DPI, not the absolute point sizes. DPI raised
+    # again (200->260) per a later round of the same feedback - this chart
+    # sits in a wide, full-bleed layout with no max-width cap, and on a
+    # large/high-DPI monitor the rendered CSS width can exceed what 200 DPI
+    # comfortably supports before the upscale starts looking soft.
+    fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.9), subplot_kw=dict(polar=True), dpi=260)
+    fig.patch.set_alpha(0)
+
+    def _draw(ax, labels, series, category_label):
+        ax.set_facecolor('none')
+        if not labels:
+            ax.text(0.5, 0.5, 'No data', ha='center', va='center', color='#7a80a8', transform=ax.transAxes)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            return
+        n = len(labels)
+        angles = np.linspace(0, 2 * np.pi, n, endpoint=False).tolist()
+        angles += angles[:1]
+        for vals, color, name in series:
+            v = vals + vals[:1]
+            ax.plot(angles, v, color=color, linewidth=2.2, label=name)
+            ax.fill(angles, v, color=color, alpha=0.18)
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, color='#e5e8ff', size=11)
+        ax.set_ylim(0, 100)
+        ax.set_yticks([25, 50, 75, 100])
+        ax.set_yticklabels(['25', '50', '75', '100'], color='#7a80a8', size=8)
+        ax.spines['polar'].set_color('#2c3260')
+        ax.grid(color='#2c3260')
+        ax.tick_params(axis='x', pad=12)
+        # A small muted CATEGORY label ("PLAYER PROFILE"/"OPPONENT
+        # DEFENSE"), not the player/team's own name - render_matchup_title
+        # already names both immediately above this figure, so repeating
+        # the same name here (the original version titled each panel with
+        # it) was pure redundancy sitting uncomfortably close to the
+        # circle. This still orients a first-time viewer to which side is
+        # which without repeating text or crowding the plot - small size +
+        # generous pad keeps it clearly separated from the topmost spoke.
+        ax.set_title(category_label, color='#7a80a8', size=9.5, fontweight='700', pad=32,
+                     fontfamily='sans-serif')
+        # Legend BELOW the chart, centered - the old upper-right placement
+        # sat directly on top of the top-right spoke label at the new,
+        # larger label size.
+        legend = ax.legend(loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=2,
+                           facecolor='#131b38', edgecolor='#2c3260', fontsize=9)
+        for text in legend.get_texts():
+            text.set_color('#e5e8ff')
+
+    _draw(axes[0], player_labels,
+          [(player_man_vals, '#00fff9', 'vs. Man'), (player_zone_vals, '#ffae58', 'vs. Zone')],
+          'PLAYER PROFILE')
+    _draw(axes[1], defense_labels,
+          [(defense_vals, '#1ed760', 'Coverage Quality')],
+          'OPPONENT DEFENSE')
+
+    # Explicit margins instead of tight_layout - tight_layout doesn't
+    # account for polar tick labels or the below-axes legends, which left
+    # the left-edge label clipped and the legend sitting on the bottom
+    # spoke label.
+    fig.subplots_adjust(left=0.145, right=0.855, top=0.87, bottom=0.17, wspace=0.6)
+    return fig

@@ -336,6 +336,16 @@ def inject_theme():
             border-radius: {R['default']};
             padding: 9px 34px 10px 11px;
             overflow: hidden;
+            transition: transform 200ms ease-out, border-color 200ms ease-out;
+        }}
+        /* Card-hover per design.md/DESIGN.md's documented "card-hover" token
+           (border shifts toward the primary accent, subtle lift) - already
+           applied to buttons/tabs/inputs, extended here to the tile
+           components added in the July 2026 polish pass, which never picked
+           it up. */
+        .stat-tile:hover {{
+            transform: translateY(-2px);
+            border-color: rgba(0, 255, 249, 0.35);
         }}
         .stat-tile .t-label {{
             font-size: 10px;
@@ -391,6 +401,11 @@ def inject_theme():
             border-radius: {R['md']};
             padding: 12px 14px;
             text-align: center;
+            transition: transform 200ms ease-out, border-color 200ms ease-out;
+        }}
+        .hero-tile:hover {{
+            transform: translateY(-2px);
+            border-color: rgba(0, 255, 249, 0.35);
         }}
         .hero-tile .h-label {{
             font-size: 10.5px;
@@ -445,6 +460,41 @@ def inject_theme():
             font-family: {F['mono']};
             font-size: 11px;
             fill: {C['on_surface_variant']};
+        }}
+
+        /* Rest-of-season matchup heat-strip (Player Search) -
+           ui.components.render_matchup_heat_strip. Shares .fpts-strip/
+           .fs-label above for the outer card/label; only the per-game cell
+           row is new here. Cell background is inline (data-driven, one
+           get_matchup_color() per game) - only the static layout/typography
+           lives in these rules, same split as .stat-tile's t-pct/t-meter. */
+        .matchup-strip-row {{
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+        }}
+        .ms-cell {{
+            flex: 0 0 auto;
+            min-width: 56px;
+            border-radius: {R['default']};
+            padding: 6px 8px;
+            text-align: center;
+        }}
+        .ms-cell .ms-wk {{
+            font-family: {F['mono']};
+            font-size: 9px;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.75);
+        }}
+        .ms-cell .ms-opp {{
+            font-family: {F['display']};
+            font-size: 13px;
+            font-weight: 800;
+            color: #ffffff;
+            text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+            margin-top: 1px;
         }}
 
         /* Matchup title (Defensive Yield's Coverage Correlator radar) -
@@ -507,6 +557,22 @@ def inject_theme():
             letter-spacing: 0.08em;
             color: rgba(255,255,255,0.75);
             margin-top: 2px;
+        }}
+
+        /* Player bio card hover (ui.components.render_player_card) - same
+           card-hover token as the stat/hero tiles above. box-shadow needs
+           !important here specifically: the card's base box-shadow is set
+           per-render as an inline style (card_glow, grade/gold-dependent),
+           and an inline style always wins over a class selector - even
+           :hover - on the same property, so the hover rule would otherwise
+           be silently overridden the instant it's applied. transform has no
+           such conflict (nothing sets it inline) and needs no override. */
+        .player-card {{
+            transition: transform 200ms ease-out, box-shadow 200ms ease-out;
+        }}
+        .player-card:hover {{
+            transform: translateY(-4px);
+            box-shadow: 0px 16px 38px rgba(0,0,0,0.65), 0 0 24px rgba(0, 255, 249, 0.35) !important;
         }}
 
         /* Glass cards for expanders/containers - Sleeper's card spec

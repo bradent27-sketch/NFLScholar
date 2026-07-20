@@ -11,15 +11,19 @@ from data.transforms import (
     load_and_merge_data, precompute_league_percentiles, build_player_historical_summary,
     build_stat_allowed_matrix, build_alignment_multiplier, build_player_projection,
     build_market_projection, score_projected_stats, OFFENSE_PROJECTION_STATS,
+    build_points_allowed_matrix,
 )
 from data.loaders import load_pff_data_with_fallback, load_schedule, load_saved_odds_api_key, fetch_nfl_player_props, load_team_pace, load_sharp_positional_coverage
 from data.coverage_radar import list_receivers, list_coverage_teams, team_nickname
-from data.utils import calculate_exact_age, parse_height, parse_weight, clean_name_exact, clean_name_for_merge, build_last_name_index, match_abbreviated_name
+from data.utils import (
+    calculate_exact_age, parse_height, parse_weight, clean_name_exact, clean_name_for_merge,
+    build_last_name_index, match_abbreviated_name, calculate_percentile,
+)
 from ui.styling import get_pff_color, style_plain_dataframe, df_auto_height
 from ui.components import (
     render_player_card, render_bio_strip, render_sticky_game_log, switch_tab, get_drafted_players_clean_keys,
     render_back_button, compute_bye_weeks, build_player_search_labels, render_stat_tiles, render_hero_tiles,
-    render_fpts_week_strip,
+    render_fpts_week_strip, render_matchup_heat_strip,
 )
 from ui.player_snapshot import build_player_snapshot, render_percentile_bars_figure, render_percentile_radar_grid, split_snapshot_for_display
 
@@ -41,6 +45,25 @@ def _get_upcoming_opponent(team_abbr, year):
     game = upcoming.iloc[0]
     opponent = game['away_team'] if game['home_team'] == team_abbr else game['home_team']
     return opponent, int(game['week'])
+
+
+def _get_remaining_schedule(team_abbr, year):
+    """
+    Every not-yet-played game for this team in the given schedule year, as
+    (week, opponent_abbr) tuples sorted by week - same "not yet played"
+    filter as _get_upcoming_opponent above (home_score.isna()), generalized
+    to return the whole remaining slate instead of just the next game, for
+    the matchup heat-strip.
+    """
+    schedule_df = load_schedule(year)
+    if schedule_df.empty:
+        return []
+    in_game = (schedule_df['home_team'] == team_abbr) | (schedule_df['away_team'] == team_abbr)
+    upcoming = schedule_df[in_game & schedule_df['home_score'].isna()].sort_values('week')
+    return [
+        (int(g['week']), g['away_team'] if g['home_team'] == team_abbr else g['home_team'])
+        for _, g in upcoming.iterrows()
+    ]
 
 
 def _find_odds_event_id(odds_api_key, team_abbr, opponent_abbr):
@@ -339,6 +362,30 @@ def render():
         # best "at a glance"). Renders nothing for seasons with no weekly
         # data yet (see render_fpts_week_strip's own guard).
         render_fpts_week_strip(p_data, t1_target_year, scoring_label=t1_scoring_rule)
+
+        # Rest-of-season matchup difficulty strip - additive companion to
+        # the fpts-by-week strip above (that one looks back, this one looks
+        # ahead). QB/RB/WR/TE only: build_points_allowed_matrix only ever
+        # has those 4 position columns (same positions Defensive Yield's own
+        # points-allowed table covers) - silently absent for any other
+        # position, or a season with no remaining games left to play, same
+        # "nothing to show" convention as the fpts strip.
+        if pos in ('QB', 'RB', 'WR', 'TE'):
+            remaining_games = _get_remaining_schedule(filter_team, t1_target_year)
+            if remaining_games:
+                def_matrix = build_points_allowed_matrix(df_t1_stats, t1_target_year)
+                if not def_matrix.empty and pos in def_matrix.columns:
+                    # ascending=True (default): a higher points-allowed
+                    # number is a SOFTER matchup - same direction
+                    # Defensive Yield's own strength-of-schedule table uses,
+                    # so get_matchup_color reads identically here.
+                    pct_by_team = dict(zip(def_matrix['Team'], calculate_percentile(def_matrix, pos)))
+                    raw_by_team = dict(zip(def_matrix['Team'], def_matrix[pos]))
+                    matchup_rows = [
+                        {'week': wk, 'opponent': opp, 'pct': pct_by_team.get(opp), 'raw_pts': raw_by_team.get(opp)}
+                        for wk, opp in remaining_games if opp in pct_by_team
+                    ]
+                    render_matchup_heat_strip(matchup_rows, pos, t1_target_year)
 
         # Hero stat band - the headline fantasy numbers (PPG, total points,
         # position rank, games) as large tiles spanning the page, the same

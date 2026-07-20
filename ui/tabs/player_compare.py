@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from config import TEAM_CONFIG, THEME, AVAILABLE_SEASONS_WITH_UPCOMING
+from config import TEAM_CONFIG, THEME, AVAILABLE_SEASONS_WITH_UPCOMING, get_position_color
 from data.transforms import load_and_merge_data, precompute_league_percentiles
 from data.loaders import load_pff_data_with_fallback
 from data.utils import calculate_exact_age, parse_height, parse_weight
@@ -68,13 +68,33 @@ def _render_player_half(side):
 def _render_legend(side_1, side_2):
     """Color key for the overlaid chart below - each player's own team
     color (side['color']), so the swatch someone sees on the radar/bars
-    always ties back to a name without having to guess from context."""
+    always ties back to a name without having to guess from context. A
+    position tag (fixed position-identity color, config.get_position_color -
+    same convention as the bio card above it) rides alongside the name as a
+    second, independent signal - team color says WHO, the tag says WHAT
+    POSITION, which matters here specifically since Compare allows a WR-vs-TE
+    pairing where the two sides aren't the same position."""
     def swatch(side):
+        # Double-quoted style="..." attributes throughout (NOT single-quoted
+        # style='...') - THEME['fonts']['display']/['mono'] are themselves
+        # single-quoted strings ("'Inter', sans-serif"), so a single-quoted
+        # style attribute here closes prematurely at that embedded quote and
+        # corrupts the rest of the tag (confirmed live: the browser was
+        # parsing the leftover text as garbage bare attributes instead of a
+        # style, silently dropping the font/color/padding - only invisible
+        # before because the plain name span happened to still inherit a
+        # correct-looking white color from its ancestor with no style
+        # attribute applied at all). Same double-quote convention
+        # ui.components.render_player_card already uses for this exact
+        # reason.
+        pos_color = get_position_color(side['pos'])
         return (
-            f"<span style='display:inline-flex; align-items:center; gap:7px;'>"
-            f"<span style='width:13px; height:13px; border-radius:3px; background:{side['color']}; "
-            f"box-shadow:0 0 0 1px rgba(255,255,255,0.25); display:inline-block;'></span>"
-            f"<span style='font-family:{THEME['fonts']['display']}; font-weight:700; color:#ffffff; font-size:13.5px;'>{side['name']}</span></span>"
+            f'<span style="display:inline-flex; align-items:center; gap:7px;">'
+            f'<span style="width:13px; height:13px; border-radius:3px; background:{side["color"]}; '
+            f'box-shadow:0 0 0 1px rgba(255,255,255,0.25); display:inline-block;"></span>'
+            f'<span style="font-family:{THEME["fonts"]["display"]}; font-weight:700; color:#ffffff; font-size:13.5px;">{side["name"]}</span>'
+            f'<span style="font-family:{THEME["fonts"]["mono"]}; font-weight:700; color:{pos_color}; font-size:10.5px; '
+            f'letter-spacing:0.05em; background:rgba(255,255,255,0.06); border-radius:4px; padding:2px 6px;">{side["pos"]}</span></span>'
         )
     st.markdown(
         f"<div style='display:flex; justify-content:center; gap:26px; margin:2px 0 10px 0; flex-wrap:wrap;'>"

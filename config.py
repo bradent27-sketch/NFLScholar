@@ -116,6 +116,41 @@ DEFENSIVE_POSITIONS = [
     'CB', 'S', 'FS', 'SS', 'DB', 'SAF',
 ]
 
+# Position-identity accent colors - a fixed color per position GROUP (same
+# grouping ui.player_snapshot.position_branch_group already uses: QB / RB /
+# WR / TE / OLINE_POSITIONS / DEFENSIVE_POSITIONS / K / [P, LS]), for
+# scannability on real HTML surfaces (bio card, Player Compare legend) -
+# deliberately NOT applied inside st.dataframe tables, since the grid
+# (glide-data-grid) renders cells on an HTML canvas and only reads
+# background-color/color/font-weight out of a Styler, not a chip/pill shape
+# (see ui.styling.style_depth_chart_table's docstring on the same limit).
+# Chosen to stay clear of every color already carrying a DIFFERENT meaning
+# elsewhere in THEME - primary cyan (CTA/interactive), secondary blue,
+# tertiary orange (alerts), positive green / negative red (stat deltas),
+# and the grade-color scale's own red-to-lavender range - so a position tag
+# never reads as a grade, a delta, or a call to action.
+POSITION_COLORS = {
+    'QB': '#a78bfa',
+    'RB': '#2dd4bf',
+    'WR': '#38bdf8',
+    'TE': '#fb7185',
+    'K': '#94a3b8',
+    'P': '#cbd5e1',
+    'LS': '#cbd5e1',
+}
+for _p in OLINE_POSITIONS:
+    POSITION_COLORS.setdefault(_p, '#a8a29e')
+for _p in DEFENSIVE_POSITIONS:
+    POSITION_COLORS.setdefault(_p, '#818cf8')
+
+
+def get_position_color(pos):
+    """Falls back to the theme's neutral secondary-text color for anything
+    unmapped (FB, N/A, a future/unknown position code) - never a jarring
+    default, and never silently reuses a color that means something else."""
+    return POSITION_COLORS.get(str(pos).upper(), THEME['colors']['on_surface_variant'])
+
+
 # Exact tab label strings, shared between app.py's st.tabs(...) call and any
 # tab that needs to programmatically switch the active tab (e.g. a "View
 # Player" link from Risers jumping to Player Search) - st.tabs' key-based

@@ -7,7 +7,7 @@ import os
 import pandas as pd
 import streamlit as st
 
-from config import THEME, TEAM_CONFIG
+from config import THEME, TEAM_CONFIG, get_position_color
 from ui.styling import render_game_log_html_table
 
 C = THEME['colors']
@@ -433,6 +433,53 @@ def render_fpts_week_strip(p_data, year, scoring_label=""):
     )
 
 
+def render_matchup_heat_strip(rows, pos, year):
+    """
+    Rest-of-season matchup-difficulty strip (Player Search) - one compact
+    cell per remaining game, colored by how many fantasy points that
+    opponent allows to this player's position. Same get_matchup_color
+    (light green=soft/red=tough) and same percentile DIRECTION (ascending -
+    a higher points-allowed number is a softer matchup) as Defensive
+    Yield's own rest-of-season strength-of-schedule table
+    (data.transforms.build_strength_of_schedule /
+    ui.tabs.defensive_yield._render_strength_of_schedule) - a user who's
+    already learned that convention there sees the identical read here,
+    just scoped to one player's own remaining slate instead of a
+    league-wide table. Reuses the .fpts-strip/.fs-label card chrome (same
+    "compact glanceable widget" family as render_fpts_week_strip above)
+    rather than introducing a new container style.
+
+    `rows`: list of {'week', 'opponent', 'pct', 'raw_pts'} - `pct` (0-100
+    or None) and `raw_pts` are computed by the caller from
+    build_points_allowed_matrix + data.utils.calculate_percentile, since
+    that's already a data/ concern, not a ui/ one. Silently renders nothing
+    if `rows` is empty - same convention as render_fpts_week_strip for a
+    player/season with nothing to show (e.g. the season is already over).
+    """
+    from ui.styling import get_matchup_color
+    if not rows:
+        return
+    cells = []
+    for r in rows:
+        wk, opp = r['week'], r['opponent']
+        pct = r.get('pct')
+        color = get_matchup_color(pct) if pct is not None else C['surface_container_high']
+        raw_pts = r.get('raw_pts')
+        pts_txt = f"{raw_pts:.1f} pts allowed to {pos}s this season" if raw_pts is not None else "no matchup data yet"
+        title_txt = f"Wk {wk} vs {opp} — {pts_txt}"
+        cells.append(
+            f"<div class='ms-cell' style='background:{color};' title='{title_txt}'>"
+            f"<div class='ms-wk'>WK {wk}</div>"
+            f"<div class='ms-opp'>{opp}</div>"
+            f"</div>"
+        )
+    st.markdown(
+        f"<div class='fpts-strip'><div class='fs-label'>Rest-of-Season Matchups vs. {pos} Defenses — {year}</div>"
+        f"<div class='matchup-strip-row'>{''.join(cells)}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_matchup_title(player_label, team_label, team_color=None):
     """
     Centered "{player} VS {team}" header for a matchup visual (Defensive
@@ -502,16 +549,23 @@ def render_player_card(selected_player, pos, grade_str, grade_color, team_abbr, 
     card_border_color = C['tertiary'] if is_gold else grade_color
     card_glow = f"0px 8px 28px rgba(0,0,0,0.55), 0 0 18px {C['tertiary']}" if is_gold else "0px 8px 28px rgba(0,0,0,0.55)"
     name_suffix = " 🏆" if is_gold else ""
+    # Position label recolored to a fixed position-identity accent instead
+    # of grade_color - the grade signal is still fully carried by grade_str
+    # (the big number) and the card's own border/glow, so the position text
+    # is free to encode a second, position-fixed signal (same color for
+    # every QB regardless of that player's individual grade) instead of
+    # duplicating the grade color that's already shown two ways.
+    pos_color = get_position_color(pos)
 
     # Corner radii tightened from the original 12px/6px (a technical scouting
     # card reads denser than a soft consumer-app card) - kept just above
     # zero rather than a hard square, since a fully square corner clashes
     # visually against a circular headshot cutout at this card's size.
     card_html = f"""
-    <div style="position: relative; width: 100%; max-width: 320px; margin: 0 auto; background: linear-gradient(180deg, {C['surface_container']} 0%, {C['surface_dim']} 100%); border: 4px solid {card_border_color}; border-radius: {R['default']}; box-shadow: {card_glow}; overflow: hidden; display: flex; flex-direction: column;">
+    <div class="player-card" style="position: relative; width: 100%; max-width: 320px; margin: 0 auto; background: linear-gradient(180deg, {C['surface_container']} 0%, {C['surface_dim']} 100%); border: 4px solid {card_border_color}; border-radius: {R['default']}; box-shadow: {card_glow}; overflow: hidden; display: flex; flex-direction: column;">
         <div style="position: absolute; top: 12px; left: 12px; background: rgba(2,4,9,0.85); border: 1px solid {grade_color}; border-radius: {R['sm']}; padding: 6px 12px; text-align: center; z-index: 10;">
             <div style="font-size: 24px; font-weight: 700; color: #ffffff; line-height: 1.1; font-family: {F['display']};">{grade_str}</div>
-            <div style="font-size: 12px; font-weight: 600; color: {grade_color}; letter-spacing: 0.5px; margin-top: 2px;">{pos}</div>
+            <div style="font-size: 12px; font-weight: 600; color: {pos_color}; letter-spacing: 0.5px; margin-top: 2px;">{pos}</div>
         </div>
         <div style="position: absolute; top: 12px; right: 12px; background: rgba(2,4,9,0.85); border: 1px solid {C['outline_variant']}; border-radius: {R['sm']}; padding: 6px 10px; text-align: center; z-index: 10;">
             <div style="font-size: 14px; font-weight: 700; color: {team_color}; font-family: {F['display']};">{team_abbr}</div>

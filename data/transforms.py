@@ -1382,17 +1382,98 @@ def build_player_historical_summary(selected_player, scoring_rule, years=(2023, 
         cols = hist_grouped.columns.tolist()
         cols.insert(1, cols.pop(cols.index('Team')))
         hist_grouped = hist_grouped[cols]
+
+    # Overall PFF grade + Snap %/Slot %/Wide %/Inline % per season - so a
+    # role/usage change over time (a slot receiver moving outside, a
+    # committee back becoming the every-down guy) is visible right next to
+    # the counting-stat trend above, not just the raw box score. Genuinely
+    # separate data sources from the weekly nflverse history this table is
+    # otherwise built from (PFF's own per-year exports for grade/alignment,
+    # load_year_data's snap merge for Snap %), so this loops one season at
+    # a time rather than reusing p_hist - neither source has a ready-made
+    # multi-year history the way load_weekly_stats_history does.
+    #
+    # load_all_pff_data (NOT load_pff_data_with_fallback) deliberately -
+    # pff_imports/ already covers this table's whole 2019-2025 window with
+    # real per-year exports, and silently falling back to a NEIGHBORING
+    # season's grade would misrepresent the exact year-over-year trend this
+    # table exists to show. A season with genuinely no PFF data just shows
+    # blank ('--') for that row instead - see the role_grade_cols formatting
+    # step below for why that has to be a literal string, not NaN.
+    from data.loaders import load_all_pff_data, load_year_data
+    name_lower = selected_player.lower()
+    role_rows = []
+    for yr in hist_grouped['season'].tolist():
+        pff = load_all_pff_data(int(yr))
+        overall_grade = pff['pff_grades_map'].get(name_lower)
+
+        slot_rate = wide_rate = inline_rate = None
+        rec_df = pff.get('rec', pd.DataFrame())
+        if not rec_df.empty and 'player' in rec_df.columns:
+            match = rec_df[rec_df['player'].str.lower() == name_lower]
+            if not match.empty:
+                row = match.iloc[0]
+                slot_rate, wide_rate, inline_rate = row.get('slot_rate'), row.get('wide_rate'), row.get('inline_rate')
+
+        snap_pct = None
+        # load_year_data returns (stats, team_col, name_col, rookie_names) -
+        # same 4-tuple shape as load_and_merge_data, not a bare DataFrame.
+        yr_stats, _yr_team_col, yr_name_col, _yr_rookies = load_year_data(int(yr))
+        if not yr_stats.empty and yr_name_col in yr_stats.columns:
+            yr_match = yr_stats[yr_stats[yr_name_col].astype(str).str.lower() == name_lower]
+            # has_snap_match (not just checking the value itself) - same
+            # reason the bio card's own Snap % checks it: load_year_data
+            # fills snap_pct_avg to a literal 0.0 sentinel when NO snap
+            # source has a row for this player at all, and that's not
+            # distinguishable from a genuine 0% by the number alone. Without
+            # this check, a season with no snap-count coverage would show a
+            # misleading "0.0%" here instead of a blank "--".
+            if not yr_match.empty and bool(yr_match.iloc[0].get('has_snap_match', True)):
+                snap_pct = yr_match.iloc[0].get('snap_pct_avg')
+
+        role_rows.append({
+            'season': yr, 'Overall PFF': overall_grade, 'Snap %': snap_pct,
+            'Slot %': slot_rate, 'Wide %': wide_rate, 'Inline %': inline_rate,
+        })
+    hist_grouped = hist_grouped.merge(pd.DataFrame(role_rows), on='season', how='left')
+
     # Sacks lands on half-increments (1 or 2.5), not whole numbers like the
     # other counting stats here - was previously getting int-cast along with
     # everything else, silently dropping half-sacks.
     decimal_cols = {'Fantasy Pts', 'Sacks'}
+    # The new role/grade columns are handled separately below, not folded
+    # into decimal_cols - a genuinely missing season (Slot %/Wide %/Inline %
+    # for any non-receiver, or Snap % wherever the snap source has no row
+    # at all) needs to end up as blank/'--', and confirmed live that
+    # st.dataframe's grid (glide-data-grid) does NOT respect the Styler's
+    # na_rep='--' for a real NaN float cell the way style_plain_dataframe
+    # asks it to - it shows the literal string "None" instead, regardless
+    # of the Styler's format() string (same class of "the grid quietly
+    # ignores what the Styler asks for" limitation as border/box-shadow -
+    # see style_depth_chart_table's docstring on that one). The only
+    # reliable fix is the same one used there: make missing cells a real
+    # '--' STRING at the value level rather than trusting the grid to
+    # substitute display text for NaN.
+    role_grade_cols = ['Overall PFF', 'Snap %', 'Slot %', 'Wide %', 'Inline %']
     for c in hist_grouped.columns:
-        if c in ('season', 'Team'):
+        if c in ('season', 'Team') or c in role_grade_cols:
             continue
         elif c in decimal_cols:
             hist_grouped[c] = hist_grouped[c].round(1)
         else:
             hist_grouped[c] = hist_grouped[c].fillna(0).round(0).astype(int)
+
+    for c in role_grade_cols:
+        # pd.to_numeric first - a column that's None for EVERY row in this
+        # player's window (confirmed real: Micah Parsons has no
+        # receiving_summary.csv row in any season, so Slot/Wide/Inline % are
+        # None every year for him) stays object dtype with literal Python
+        # Nones rather than float64 NaN, since pandas only infers a numeric
+        # dtype when a column has at least one real value to go on - .round()
+        # on an object-dtype column falls back to calling the builtin
+        # round() per element, which raises on a plain None.
+        numeric = pd.to_numeric(hist_grouped[c], errors='coerce').round(1)
+        hist_grouped[c] = numeric.apply(lambda v: '--' if pd.isna(v) else f"{v:.1f}")
     return hist_grouped
 
 

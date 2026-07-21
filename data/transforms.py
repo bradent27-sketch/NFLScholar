@@ -1402,18 +1402,37 @@ def build_player_historical_summary(selected_player, scoring_rule, years=(2023, 
     # step below for why that has to be a literal string, not NaN.
     from data.loaders import load_all_pff_data, load_year_data
     name_lower = selected_player.lower()
+    # Slot %/Wide %/Inline % are WR/TE-specific PFF receiving-ALIGNMENT
+    # concepts (per-route split: slot vs. wide vs. inline) - meaningless for
+    # a QB/RB/K/defensive player, and PFF's receiving_summary.csv does carry
+    # occasional rows for pass-catching RBs (a real match, not a lookup
+    # miss), so "did this player match in pff['rec'] this year" alone isn't
+    # a reliable WR/TE gate - a real position check is needed instead.
+    # Position pulled from p_hist (the weekly nflverse history already
+    # loaded above), most recent row, since that's available for every
+    # season this table spans regardless of PFF data completeness.
+    player_position = None
+    if 'position' in p_hist.columns:
+        pos_vals = p_hist['position'].dropna()
+        if not pos_vals.empty:
+            player_position = str(pos_vals.iloc[-1]).upper()
+    is_wr_te = player_position in ('WR', 'TE')
+
     role_rows = []
     for yr in hist_grouped['season'].tolist():
         pff = load_all_pff_data(int(yr))
         overall_grade = pff['pff_grades_map'].get(name_lower)
+        role_row = {'season': yr, 'Overall PFF': overall_grade}
 
-        slot_rate = wide_rate = inline_rate = None
-        rec_df = pff.get('rec', pd.DataFrame())
-        if not rec_df.empty and 'player' in rec_df.columns:
-            match = rec_df[rec_df['player'].str.lower() == name_lower]
-            if not match.empty:
-                row = match.iloc[0]
-                slot_rate, wide_rate, inline_rate = row.get('slot_rate'), row.get('wide_rate'), row.get('inline_rate')
+        if is_wr_te:
+            slot_rate = wide_rate = inline_rate = None
+            rec_df = pff.get('rec', pd.DataFrame())
+            if not rec_df.empty and 'player' in rec_df.columns:
+                match = rec_df[rec_df['player'].str.lower() == name_lower]
+                if not match.empty:
+                    row = match.iloc[0]
+                    slot_rate, wide_rate, inline_rate = row.get('slot_rate'), row.get('wide_rate'), row.get('inline_rate')
+            role_row.update({'Slot %': slot_rate, 'Wide %': wide_rate, 'Inline %': inline_rate})
 
         snap_pct = None
         # load_year_data returns (stats, team_col, name_col, rookie_names) -
@@ -1430,11 +1449,9 @@ def build_player_historical_summary(selected_player, scoring_rule, years=(2023, 
             # misleading "0.0%" here instead of a blank "--".
             if not yr_match.empty and bool(yr_match.iloc[0].get('has_snap_match', True)):
                 snap_pct = yr_match.iloc[0].get('snap_pct_avg')
+        role_row['Snap %'] = snap_pct
 
-        role_rows.append({
-            'season': yr, 'Overall PFF': overall_grade, 'Snap %': snap_pct,
-            'Slot %': slot_rate, 'Wide %': wide_rate, 'Inline %': inline_rate,
-        })
+        role_rows.append(role_row)
     hist_grouped = hist_grouped.merge(pd.DataFrame(role_rows), on='season', how='left')
 
     # Sacks lands on half-increments (1 or 2.5), not whole numbers like the
@@ -1454,7 +1471,10 @@ def build_player_historical_summary(selected_player, scoring_rule, years=(2023, 
     # reliable fix is the same one used there: make missing cells a real
     # '--' STRING at the value level rather than trusting the grid to
     # substitute display text for NaN.
-    role_grade_cols = ['Overall PFF', 'Snap %', 'Slot %', 'Wide %', 'Inline %']
+    # Filtered against hist_grouped.columns - Slot %/Wide %/Inline % simply
+    # aren't columns at all for a non-WR/TE player (role_row never set them
+    # above), not just blanked out for them.
+    role_grade_cols = [c for c in ['Overall PFF', 'Snap %', 'Slot %', 'Wide %', 'Inline %'] if c in hist_grouped.columns]
     for c in hist_grouped.columns:
         if c in ('season', 'Team') or c in role_grade_cols:
             continue

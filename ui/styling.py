@@ -1002,36 +1002,56 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     pct_arrays = {col: list(vals) for col, vals in numeric_pct_cols.items()}
     matchup_arrays = {col: list(vals) for col, vals in matchup_pct_cols.items()}
 
-    def style_row(row):
-        pos = df.index.get_loc(row.name)
-        styles = []
-        for col in df.columns:
-            if col in diverging_cols:
-                bg = get_diverging_color(row[col], diverging_cols[col])
-                styles.append(f'background-color:{bg}; color:#ffffff; font-weight:bold;')
-            elif col in matchup_arrays and pos < len(matchup_arrays[col]):
-                bg = get_matchup_color(matchup_arrays[col][pos])
-                styles.append(f'background-color:{bg}; color:#ffffff; font-weight:bold;')
-            elif col in pct_arrays and pos < len(pct_arrays[col]):
-                bg = get_pff_color(pct_arrays[col][pos])
-                styles.append(f'background-color:{bg}; color:#ffffff; font-weight:bold;')
-            elif col == 'Team':
+    _DEFAULT_STYLE = f"background-color:{C['surface_container']}; color:{C['on_surface']};"
+
+    # Built column-by-column and applied in one axis=None Styler.apply call,
+    # instead of the previous df.style.apply(func, axis=1): pandas' axis=1
+    # apply constructs a full pandas Series (with index alignment) for every
+    # single row before the function body even runs, which is pure overhead
+    # here since every branch below only ever reads one column at a time.
+    # Same per-cell precedence (diverging > matchup > percentile > Team >
+    # default) and same output, confirmed identical against the old
+    # implementation on real data - this only changes the iteration order,
+    # not what gets colored. Matters most on the app's largest tables
+    # (full-season Rankings/Risers/VORP sheets, several hundred rows) which
+    # get rebuilt from scratch on every widget interaction in that tab.
+    def style_column(col):
+        values = df[col]
+        if col in diverging_cols:
+            max_abs = diverging_cols[col]
+            return [
+                f'background-color:{get_diverging_color(v, max_abs)}; color:#ffffff; font-weight:bold;'
+                for v in values
+            ]
+        matchup_vals = matchup_arrays.get(col)
+        pct_vals = pct_arrays.get(col)
+        is_team = col == 'Team'
+        out = []
+        for pos, v in enumerate(values):
+            if matchup_vals is not None and pos < len(matchup_vals):
+                bg = get_matchup_color(matchup_vals[pos])
+                out.append(f'background-color:{bg}; color:#ffffff; font-weight:bold;')
+            elif pct_vals is not None and pos < len(pct_vals):
+                bg = get_pff_color(pct_vals[pos])
+                out.append(f'background-color:{bg}; color:#ffffff; font-weight:bold;')
+            elif is_team:
                 # Same team-color convention already used for the bio card
                 # accent, depth chart Position column, and game log opponent
                 # cell - ties every "Team" column app-wide into one
                 # consistent visual language instead of plain text, and
                 # makes a given team's players easy to spot scanning down a
                 # sorted table (e.g. after sorting Risers by Pct Jump).
-                team_color = TEAM_CONFIG.get(str(row[col]), {}).get('color')
+                team_color = TEAM_CONFIG.get(str(v), {}).get('color')
                 if team_color:
-                    styles.append(f"background-color:{team_color}; color:#ffffff; font-weight:bold;")
+                    out.append(f"background-color:{team_color}; color:#ffffff; font-weight:bold;")
                 else:
-                    styles.append(f"background-color:{C['surface_container']}; color:{C['on_surface']};")
+                    out.append(_DEFAULT_STYLE)
             else:
-                styles.append(f"background-color:{C['surface_container']}; color:{C['on_surface']};")
-        return styles
+                out.append(_DEFAULT_STYLE)
+        return out
 
-    styler = df.style.apply(style_row, axis=1)
+    style_df = pd.DataFrame({col: style_column(col) for col in df.columns}, index=df.index)
+    styler = df.style.apply(lambda _: style_df, axis=None)
 
     fmt = {}
     for col in df.columns:

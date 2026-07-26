@@ -14,6 +14,7 @@ isn't published anywhere free/local this app can reach yet):
     personnel/formation tendency, not coverage shells)
 """
 import pandas as pd
+import streamlit as st
 
 from data.utils import calculate_percentile
 
@@ -229,6 +230,7 @@ def build_defense_radar_data(positional_coverage_df, full_team_name):
     return labels, vals, raw
 
 
+@st.cache_data(show_spinner=False)
 def render_split_radar_figure(player_labels, player_man_vals, player_zone_vals, player_name,
                                defense_labels, defense_vals, defense_team_label):
     """
@@ -238,6 +240,12 @@ def render_split_radar_figure(player_labels, player_man_vals, player_zone_vals, 
     without needing to scroll between two separately-rendered charts.
     Higher DPI + tighter layout than the original single chart (which read
     as "large and slightly low quality" at default matplotlib DPI).
+
+    @st.cache_data: pure function of these 7 plain values, DPI-260 two-panel
+    draw - Defensive Yield's other widgets (O-Line/pressure year picker,
+    strength-of-schedule controls) live in the same render() and would
+    otherwise force a full redraw of this chart on every rerun even when
+    neither sel_player nor sel_opponent changed.
     """
     import numpy as np
     import matplotlib

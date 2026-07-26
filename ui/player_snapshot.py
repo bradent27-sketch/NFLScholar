@@ -590,6 +590,7 @@ def _draw_percentile_radar(ax, labels, pcts, color, label_size=9.5):
     ax.tick_params(axis='x', pad=20)
 
 
+@st.cache_data(show_spinner=False)
 def render_percentile_radar_grid(snapshot, player_name, pos):
     """
     High-density grid of small-multiple percentile radars, grouped by stat
@@ -601,6 +602,13 @@ def render_percentile_radar_grid(snapshot, player_name, pos):
     real-percentile stats are available for every group - callers should
     fall back to showing the bar chart directly (not inside an expander)
     in that case, since there's nothing to demote it in favor of.
+
+    @st.cache_data: this is a pure function of (snapshot, player_name, pos)
+    that draws a multi-panel matplotlib figure at DPI 260 - real cost on
+    every call, and Streamlit reruns this tab's whole render() on ANY
+    widget interaction in it, not just ones that change the selected
+    player. Caching skips the redraw entirely when those three inputs
+    haven't changed, which is most reruns in practice.
     """
     groups = RADAR_GRID_GROUPS.get(pos)
     if not groups:
@@ -688,6 +696,7 @@ def _draw_percentile_radar_overlay(ax, labels, pcts_1, pcts_2, color_1, color_2,
     ax.tick_params(axis='x', pad=20)
 
 
+@st.cache_data(show_spinner=False)
 def render_percentile_radar_grid_compare(side_1, side_2):
     """
     Overlaid version of render_percentile_radar_grid for Player Compare:
@@ -826,6 +835,7 @@ def render_percentile_bars_figure(snapshot, player_name, pos):
     )
 
 
+@st.cache_data(show_spinner=False)
 def render_percentile_bars_figure_compare(side_1, side_2):
     """
     Overlaid version of render_percentile_bars_figure for Player Compare -
@@ -946,6 +956,7 @@ def _draw_quadrant_panel(ax, pos_df, pos):
     ax.set_title(f"{pos} ({len(pos_df)} qualified)", color='#ffffff', size=10, fontweight='bold', pad=8)
 
 
+@st.cache_data(show_spinner=False)
 def render_efficiency_volume_quadrants(ev_df):
     """
     2x2 small-multiples grid (QB/RB/WR/TE), one Efficiency-vs-Volume
@@ -962,6 +973,14 @@ def render_efficiency_volume_quadrants(ev_df):
     positions actually qualified this season, so the flatten()+zip below
     doesn't need a separate 1-panel special case. Returns None if no
     position has enough qualified players to plot at all.
+
+    @st.cache_data: ev_df spans every qualified player league-wide (up to
+    a few hundred rows across 4 positions, each with per-point name
+    annotations), so this is the most expensive figure in the app to
+    redraw. On VORP Draft Sheet, keyed only on the resolved ev_df content -
+    clicking "Add to drafted"/"Sync Sleeper picks"/adjusting roster-slot
+    counts reruns the whole tab but doesn't change ev_df, so those
+    interactions now hit cache instead of re-rendering this chart.
     """
     import matplotlib
     matplotlib.use('Agg')

@@ -4,6 +4,8 @@ game log (weekly rows scroll, season-average row stays pinned to the bottom
 of the viewport), and the sidebar data-health diagnostics panel.
 """
 import os
+from contextlib import contextmanager
+
 import pandas as pd
 import streamlit as st
 
@@ -13,6 +15,58 @@ from ui.styling import render_game_log_html_table
 C = THEME['colors']
 F = THEME['fonts']
 R = THEME['radius']
+
+
+def _skel_cells(n):
+    return ''.join(f"<div class='skel-cell' style='animation-delay:{i * 45}ms;'></div>" for i in range(n))
+
+
+def _render_skeleton_table(n_rows=8, n_cols=6):
+    header = f"<div class='skel-row skel-header-row'>{_skel_cells(n_cols)}</div>"
+    body = ''.join(
+        f"<div class='skel-row' style='animation-delay:{i * 35}ms;'>{_skel_cells(n_cols)}</div>"
+        for i in range(n_rows)
+    )
+    st.markdown(f"<div class='skel-table-wrap'>{header}{body}</div>", unsafe_allow_html=True)
+
+
+def _render_skeleton_tiles(n=8):
+    tiles = ''.join(f"<div class='skel-tile' style='animation-delay:{i * 40}ms;'></div>" for i in range(n))
+    st.markdown(f"<div class='skel-tile-grid'>{tiles}</div>", unsafe_allow_html=True)
+
+
+def _render_skeleton_block(height=220):
+    st.markdown(f"<div class='skel-block' style='height:{height}px;'></div>", unsafe_allow_html=True)
+
+
+@contextmanager
+def skeleton_loader(kind='table', **kwargs):
+    """
+    Drop-in replacement for `with st.spinner(...):` around a slow
+    @st.cache_data season/odds load - shows a shimmering placeholder shaped
+    like the content about to appear (a table, a stat-tile grid, or a plain
+    card block) instead of a bare spinner, then clears it once the `with`
+    block finishes. Only ever visible on an actual cache miss (a fresh
+    season/scoring/game combo) - same as the st.spinner it replaces, since
+    the wrapped call is still whatever @st.cache_data function was already
+    there.
+
+    kind: 'table' (default), 'tiles', or 'block' - matched by shape to
+    what's actually loading in each call site (a stats table vs. a
+    card/list-shaped fetch like live odds).
+    """
+    placeholder = st.empty()
+    with placeholder:
+        if kind == 'tiles':
+            _render_skeleton_tiles(**kwargs)
+        elif kind == 'block':
+            _render_skeleton_block(**kwargs)
+        else:
+            _render_skeleton_table(**kwargs)
+    try:
+        yield
+    finally:
+        placeholder.empty()
 
 
 def get_drafted_players_clean_keys():

@@ -11,6 +11,7 @@ import streamlit as st
 from config import ODDS_API_PLAYER_PROP_MARKETS
 from data.loaders import fetch_nfl_odds, fetch_nfl_player_props, load_saved_odds_api_key, save_odds_api_key
 from ui.styling import style_plain_dataframe, df_auto_height
+from ui.components import skeleton_loader
 
 
 def _fmt_kickoff(iso_str):
@@ -129,7 +130,7 @@ def render():
             st.session_state.pop('odds_props_data', None)
             st.rerun()
 
-    with st.spinner("Fetching odds..."):
+    with skeleton_loader("table", n_rows=6, n_cols=5):
         odds_data, odds_err, requests_left = fetch_nfl_odds(odds_api_key)
 
     if odds_err:
@@ -170,7 +171,7 @@ def render():
     # `if st.button(...)`.
     if st.button("Load player props for this game") or st.session_state.get('odds_props_game_id') == game['id']:
         if st.session_state.get('odds_props_game_id') != game['id']:
-            with st.spinner("Fetching player props..."):
+            with skeleton_loader("table", n_rows=8, n_cols=5):
                 props_data, props_err = fetch_nfl_player_props(
                     odds_api_key, game['id'], markets=','.join(ODDS_API_PLAYER_PROP_MARKETS)
                 )

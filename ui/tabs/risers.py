@@ -5,13 +5,13 @@ from config import TAB_PLAYER_SEARCH, AVAILABLE_SEASONS
 from data.transforms import load_and_merge_data, build_risers_report, build_recent_trend
 from data.utils import calculate_percentile
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import switch_tab
+from ui.components import switch_tab, skeleton_loader
 
 
 def render():
     st.markdown("<div class='custom-section-header'>RISERS &amp; WAIVER WIRE — BIGGEST WEEK-OVER-WEEK JUMPS</div>", unsafe_allow_html=True)
     t4_year = st.selectbox("Season", AVAILABLE_SEASONS, index=0, key="year_tab4")
-    with st.spinner(f"Loading {t4_year} season data..."):
+    with skeleton_loader("table", n_rows=10, n_cols=7):
         df_t4_stats, t4_t_col, t4_n_col, _ = load_and_merge_data(t4_year, "Full PPR")
     risers = build_risers_report(df_t4_stats, t4_n_col, t4_t_col, t4_year)
     if not risers.empty:

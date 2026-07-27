@@ -27,7 +27,7 @@ from data.loaders import fetch_sleeper_draft_picks
 from data.rankings import load_fantasypros_rankings, parse_custom_rankings, build_rankings_comparison
 from data.utils import calculate_percentile
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import position_filter_multiselect
+from ui.components import position_filter_multiselect, skeleton_loader
 from ui.player_snapshot import render_efficiency_volume_quadrants
 
 
@@ -75,7 +75,7 @@ def render():
             vorp_rec_td = st.number_input("Points per receiving TD", min_value=0, max_value=10, value=6, key="vorp_rec_td")
 
     vorp_year = st.selectbox("Baseline season", AVAILABLE_SEASONS, index=0, key="vorp_year")
-    with st.spinner(f"Loading {vorp_year} season data..."):
+    with skeleton_loader("table", n_rows=10, n_cols=7):
         df_vorp_stats, vorp_t_col, vorp_n_col, _ = load_and_merge_data(vorp_year, "Full PPR")
 
     vorp_starters = {'QB': vorp_qb, 'RB': vorp_rb, 'WR': vorp_wr, 'TE': vorp_te, 'K': vorp_k, 'FLEX': vorp_flex, 'SUPERFLEX': vorp_superflex}

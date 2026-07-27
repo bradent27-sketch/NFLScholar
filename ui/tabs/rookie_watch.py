@@ -5,13 +5,13 @@ from config import TAB_PLAYER_SEARCH, AVAILABLE_SEASONS_WITH_UPCOMING
 from data.transforms import load_and_merge_data, build_rookie_watch, build_recent_trend
 from data.utils import calculate_percentile, clean_name_exact
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import switch_tab, get_drafted_players_clean_keys
+from ui.components import switch_tab, get_drafted_players_clean_keys, skeleton_loader
 
 
 def render():
     st.markdown("<div class='custom-section-header'>ROOKIE WATCH LEADERBOARD</div>", unsafe_allow_html=True)
     t5_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_tab5")
-    with st.spinner(f"Loading {t5_year} season data..."):
+    with skeleton_loader("table", n_rows=10, n_cols=7):
         df_t5_stats, t5_t_col, t5_n_col, t5_rookie_names = load_and_merge_data(t5_year, "Full PPR")
     rookie_board = build_rookie_watch(df_t5_stats, t5_n_col, t5_t_col, t5_rookie_names, t5_year)
 

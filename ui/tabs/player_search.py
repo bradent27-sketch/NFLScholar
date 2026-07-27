@@ -23,7 +23,7 @@ from ui.styling import get_pff_color, style_plain_dataframe, df_auto_height
 from ui.components import (
     render_player_card, render_bio_strip, render_sticky_game_log, switch_tab, get_drafted_players_clean_keys,
     render_back_button, compute_bye_weeks, build_player_search_labels, render_stat_tiles, render_hero_tiles,
-    render_fpts_week_strip, render_matchup_heat_strip,
+    render_fpts_week_strip, render_matchup_heat_strip, skeleton_loader,
 )
 from ui.player_snapshot import build_player_snapshot, render_percentile_bars_figure, render_percentile_radar_grid, split_snapshot_for_display
 
@@ -200,7 +200,7 @@ def render():
     if pff_source_year != t1_target_year:
         st.caption(f"⚠️ No PFF grades uploaded yet for {t1_target_year} - showing {pff_source_year} grades until real data is added to pff_imports/{t1_target_year}/.")
 
-    with st.spinner(f"Loading {t1_target_year} season data..."):
+    with skeleton_loader("tiles", n=10):
         df_t1_stats, t1_t_col, t1_n_col, global_rookie_names = load_and_merge_data(t1_target_year, t1_scoring_rule)
     df_t1_percentiles = precompute_league_percentiles(df_t1_stats, t1_n_col, t1_target_year)
 

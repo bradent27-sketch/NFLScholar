@@ -754,6 +754,115 @@ def inject_theme():
             color: {C['on_surface']} !important;
             font-family: {F['mono']} !important;
         }}
+
+        /* ---- Premium polish pass: skeleton loaders, content-reveal
+           transitions, and pressed/focus feedback. Kept as one block at
+           the end so this whole pass is easy to find (or revert) together,
+           instead of scattered inline with the older per-component rules
+           above. */
+
+        /* Skeleton loaders - shimmering placeholders shaped like the
+           content about to appear (a table, a stat-tile grid, or a plain
+           card), swapped in via ui.components.skeleton_loader() in place
+           of a bare st.spinner(). Only ever visible on an actual cache
+           miss (a fresh season/scoring/game combo), same as the spinner
+           it replaces. */
+        @keyframes skel-shimmer {{
+            0% {{ background-position: -420px 0; }}
+            100% {{ background-position: 420px 0; }}
+        }}
+        .skel-table-wrap {{
+            border: 1px solid {C['outline_variant']};
+            border-radius: {R['sm']};
+            background: {C['surface_container']};
+            padding: 10px;
+        }}
+        .skel-row {{ display: flex; gap: 8px; margin-bottom: 6px; }}
+        .skel-row:last-child {{ margin-bottom: 0; }}
+        .skel-header-row {{ margin-bottom: 10px; }}
+        .skel-header-row .skel-cell {{ height: 12px; opacity: 0.6; }}
+        .skel-cell, .skel-tile, .skel-block {{
+            background: linear-gradient(90deg, {C['surface_container_high']} 20%, {C['surface_container_highest']} 50%, {C['surface_container_high']} 80%);
+            background-size: 420px 100%;
+            animation: skel-shimmer 1.3s ease-in-out infinite;
+            border-radius: {R['default']};
+        }}
+        .skel-row .skel-cell {{ height: 22px; flex: 1; }}
+        .skel-tile-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+            gap: 8px;
+        }}
+        .skel-tile {{ height: 58px; }}
+        .skel-block {{ width: 100%; border: 1px solid {C['outline_variant']}; }}
+
+        /* Content-reveal - a short fade + rise on whatever just finished
+           loading (a table, an alert/info box, a section header), instead
+           of an instant "pop in". Streamlit re-inserts these elements fresh
+           on the rerun that follows a skeleton clearing (season/scoring/
+           filter change), so this reliably replays right at the moment a
+           hard instant swap used to feel harshest. */
+        @keyframes content-reveal {{
+            from {{ opacity: 0; transform: translateY(5px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        div[data-testid="stDataFrame"], div[data-testid="stTable"],
+        div[data-testid="stAlert"], .custom-section-header,
+        .skel-table-wrap, .skel-tile-grid, .skel-block {{
+            animation: content-reveal 260ms ease-out;
+        }}
+
+        /* Pressed/active feedback - buttons, pill tabs, and the hover-lift
+           cards only had a :hover state before (see the rules above);
+           nothing gave tactile feedback on the actual press. */
+        .stButton button:active, .stDownloadButton button:active {{
+            transform: scale(0.96) !important;
+            filter: brightness(0.94);
+        }}
+        [data-testid="stTab"]:active, div[data-testid="stTabs"] button[data-baseweb="tab"]:active {{
+            transform: scale(0.96);
+        }}
+        .stat-tile:active, .hero-tile:active, .player-card:active {{
+            transform: scale(0.98);
+        }}
+
+        /* Focus-visible rings app-wide (keyboard nav) - previously only
+           text inputs/selects had a focus ring; buttons and tabs had none. */
+        .stButton button:focus-visible, .stDownloadButton button:focus-visible,
+        [data-testid="stTab"]:focus-visible, div[data-testid="stTabs"] button[data-baseweb="tab"]:focus-visible {{
+            outline: 2px solid {C['primary']} !important;
+            outline-offset: 2px;
+        }}
+
+        /* Dropdown/number/date field hover - previously only had a focus
+           ring, no cue on hover that the field is interactive. */
+        .stSelectbox [role="group"]:hover, .stMultiSelect [role="group"]:hover,
+        .stNumberInput [role="group"]:hover, .stDateInput [role="group"]:hover {{
+            border-color: {C['outline']} !important;
+        }}
+
+        /* Expander hover - the sidebar diagnostics panel and glossary/
+           technical-details disclosures had no hover cue that they're
+           clickable. */
+        div[data-testid="stExpander"] summary {{
+            transition: color 150ms ease-out;
+            cursor: pointer;
+        }}
+        div[data-testid="stExpander"] summary:hover {{
+            color: {C['primary']} !important;
+        }}
+
+        /* Game log table rows (ui.styling.render_game_log_html_table) -
+           real DOM <tr> elements (not glide-data-grid canvas - see that
+           function's docstring), so a genuine per-row hover + staggered
+           entrance works here, unlike the canvas-rendered st.dataframe
+           tables everywhere else in the app. */
+        @keyframes row-in {{
+            from {{ opacity: 0; transform: translateY(4px); }}
+            to {{ opacity: 1; transform: translateY(0); }}
+        }}
+        .gl-row {{ animation: row-in 240ms ease-out backwards; }}
+        .gl-row:hover td {{ filter: brightness(1.18); }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -1142,12 +1251,16 @@ def render_game_log_html_table(log_df_view, avg_source_df, log_cols, header_map,
         return val, f"background-color:{bg}; color:#ffffff; font-weight:bold;"
 
     body_rows_html = []
-    for _, r in log_df_view.iterrows():
+    for i, (_, r) in enumerate(log_df_view.iterrows()):
         cells = []
         for col in log_cols:
             text, style = week_cell(col, r)
             cells.append(f"<td style='padding:8px; white-space:nowrap; text-align:center; border:1px solid {C['outline_variant']}; font-family:\"JetBrains Mono\",monospace; {style}'>{text}</td>")
-        body_rows_html.append(f"<tr>{''.join(cells)}</tr>")
+        # gl-row + a staggered animation-delay (capped so a full 17+ week
+        # season log still finishes revealing in well under a second) gives
+        # this table a cascading entrance instead of popping in all at once
+        # - see .gl-row in ui/styling.py's inject_theme for the keyframe.
+        body_rows_html.append(f"<tr class='gl-row' style='animation-delay:{min(i, 20) * 18}ms;'>{''.join(cells)}</tr>")
 
     from config import STAT_DECIMALS
     avg_cells = []

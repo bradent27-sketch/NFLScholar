@@ -15,7 +15,7 @@ from data.transforms import load_and_merge_data, precompute_league_percentiles
 from data.loaders import load_pff_data_with_fallback
 from data.utils import calculate_exact_age, parse_height, parse_weight
 from ui.styling import get_pff_color, style_plain_dataframe, df_auto_height
-from ui.components import render_player_card, render_bio_strip, compute_bye_weeks, build_player_search_labels
+from ui.components import render_player_card, render_bio_strip, compute_bye_weeks, build_player_search_labels, skeleton_loader
 from ui.player_snapshot import (
     build_player_snapshot, render_percentile_radar_grid_compare, render_percentile_bars_figure_compare,
     position_branch_group,
@@ -202,7 +202,7 @@ def render():
     if pff_source_year != cmp_year:
         st.caption(f"⚠️ No PFF grades uploaded yet for {cmp_year} - showing {pff_source_year} grades until real data is added to pff_imports/{cmp_year}/.")
 
-    with st.spinner(f"Loading {cmp_year} season data..."):
+    with skeleton_loader("tiles", n=10):
         df_stats, t_col, n_col, _ = load_and_merge_data(cmp_year, cmp_scoring)
     df_percentiles = precompute_league_percentiles(df_stats, n_col, cmp_year)
     bye_weeks = compute_bye_weeks(cmp_year)

@@ -7,7 +7,7 @@ from data.transforms import load_and_merge_data, fetch_intelligent_depth_chart
 from data.loaders import build_veteran_database, load_pff_data_with_fallback
 from data.utils import clean_name_exact
 from ui.styling import style_depth_chart_table, df_auto_height
-from ui.components import switch_tab, render_team_banner
+from ui.components import switch_tab, render_team_banner, skeleton_loader
 
 
 @st.cache_data
@@ -157,7 +157,7 @@ def render():
     if pff_source_year != t2_target_year:
         st.caption(f"⚠️ No PFF grades uploaded yet for {t2_target_year} - showing {pff_source_year} grades until real data is added to pff_imports/{t2_target_year}/.")
 
-    with st.spinner(f"Loading {t2_target_year} season data..."):
+    with skeleton_loader("table", n_rows=12, n_cols=6):
         df_t2_stats, t2_t_col, t2_n_col, global_rookie_names = load_and_merge_data(t2_target_year, "Full PPR")
 
     snap_year_used = int(df_t2_stats['snap_data_year'].iloc[0]) if 'snap_data_year' in df_t2_stats.columns and not df_t2_stats.empty else t2_target_year

@@ -22,7 +22,7 @@ from data.coverage_radar import (
     team_nickname, build_team_man_zone_rates,
 )
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config, get_pff_color, get_matchup_color
-from ui.components import render_matchup_title, render_percentile_metric_tiles
+from ui.components import render_matchup_title, render_percentile_metric_tiles, skeleton_loader
 
 # Sharp Football's coverage-tendency export keys teams by bare nickname
 # (e.g. "Dolphins"), while build_points_allowed_matrix keys by nflverse
@@ -85,7 +85,7 @@ def render():
     with c_t3_score:
         t3_scoring_rule = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="score_tab3")
 
-    with st.spinner(f"Loading {t3_target_year} season data..."):
+    with skeleton_loader("table", n_rows=10, n_cols=7):
         df_t3_stats, _, _, _ = load_and_merge_data(t3_target_year, t3_scoring_rule)
     pff = load_all_pff_data(t3_target_year)
 

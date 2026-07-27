@@ -18,7 +18,7 @@ from config import AVAILABLE_SEASONS
 from data.transforms import load_and_merge_data, build_recent_form_rank
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import position_filter_multiselect
+from ui.components import position_filter_multiselect, skeleton_loader
 
 
 def render():
@@ -32,7 +32,7 @@ def render():
     with c3:
         n_weeks = st.number_input("Recent-form window (games)", min_value=1, max_value=8, value=4, key="weekly_rank_window")
 
-    with st.spinner(f"Loading {wk_year} season data..."):
+    with skeleton_loader("table", n_rows=10, n_cols=7):
         df_stats, t_col, n_col, _ = load_and_merge_data(wk_year, wk_scoring)
 
     form_df = build_recent_form_rank(df_stats, n_col, t_col, n_weeks=n_weeks)

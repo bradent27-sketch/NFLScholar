@@ -3,6 +3,7 @@ Reusable UI pieces shared across tabs: the player bio card, the sticky-footer
 game log (weekly rows scroll, season-average row stays pinned to the bottom
 of the viewport), and the sidebar data-health diagnostics panel.
 """
+import math
 import os
 from contextlib import contextmanager
 
@@ -423,6 +424,36 @@ def _smooth_svg_path(pts):
     return " ".join(d)
 
 
+def _nice_y_ticks(max_val, target_count=4):
+    """
+    A handful of round-number tick values from 0 up to (at least) max_val -
+    e.g. [0, 10, 20, 30] rather than the raw max sliced evenly, which would
+    label a fantasy-points axis with ugly values like "27.3". Standard
+    "nice number" step selection (round the raw max_val/target_count step
+    up to the nearest 1/2/5/10 x a power of ten), same idea matplotlib's
+    default tick locator uses.
+    """
+    if max_val <= 0:
+        return [0]
+    raw_step = max_val / target_count
+    magnitude = 10 ** math.floor(math.log10(raw_step))
+    residual = raw_step / magnitude
+    if residual > 5:
+        step = 10 * magnitude
+    elif residual > 2:
+        step = 5 * magnitude
+    elif residual > 1:
+        step = 2 * magnitude
+    else:
+        step = magnitude
+    ticks = []
+    v = 0.0
+    while v <= max_val + step * 0.01:
+        ticks.append(v)
+        v += step
+    return ticks
+
+
 def render_fpts_week_strip(p_data, year, scoring_label=""):
     """
     Full-season fantasy-points-by-week LINE chart (Player Search) - shown
@@ -470,7 +501,10 @@ def render_fpts_week_strip(p_data, year, scoring_label=""):
     # chart ran too tall for what's meant to be a quick glance up top, not
     # a full analytical chart.
     W, H = 1000, 140
-    pad_l, pad_r, pad_t, pad_b = 14, 14, 12, 26
+    # pad_l widened from a bare 14 to fit the y-axis tick labels added below
+    # (a 1-2 digit fantasy-point value plus its tick mark) without crowding
+    # the first week's point.
+    pad_l, pad_r, pad_t, pad_b = 30, 14, 12, 26
     plot_w, plot_h = W - pad_l - pad_r, H - pad_t - pad_b
     y_max = max_fpts * 1.15  # headroom so the top point never touches the edge
 
@@ -503,12 +537,32 @@ def render_fpts_week_strip(p_data, year, scoring_label=""):
         if n <= 10 or i % 2 == 0 or i == n - 1:
             wk_labels.append(f'<text x="{x:.1f}" y="{H - 6}" text-anchor="middle" class="fl-wklabel">{wk}</text>')
 
+    # Faint y-axis - a handful of round-number tick marks/labels (0, 10, 20,
+    # ...) so a value can be referenced against the axis when needed,
+    # without the chart reading as a "real" analytical axis - just the
+    # vertical line plus short tick marks, no full-width gridlines, and
+    # drawn before the area/line/dots below so the translucent area fill
+    # mutes it slightly further. Per explicit feedback this should stay in
+    # the background, not compete with the line/dots for attention.
+    axis_parts = [
+        f'<line x1="{pad_l:.1f}" y1="{pad_t:.1f}" x2="{pad_l:.1f}" y2="{pad_t + plot_h:.1f}" class="fl-yaxis-line"/>'
+    ]
+    for tick_v in _nice_y_ticks(max_fpts):
+        if tick_v > y_max:
+            continue
+        ty = y_at(tick_v)
+        tick_label = f"{tick_v:.0f}" if tick_v == int(tick_v) else f"{tick_v:.1f}"
+        axis_parts.append(f'<line x1="{pad_l - 4:.1f}" y1="{ty:.1f}" x2="{pad_l:.1f}" y2="{ty:.1f}" class="fl-ytick"/>')
+        axis_parts.append(f'<text x="{pad_l - 7:.1f}" y="{ty + 3:.1f}" text-anchor="end" class="fl-yticklabel">{tick_label}</text>')
+    axis_svg = ''.join(axis_parts)
+
     svg = (
         f'<svg viewBox="0 0 {W} {H}" class="fpts-linechart" role="img" aria-label="Fantasy points by week">'
         f'<defs><linearGradient id="fl-fill-{year}" x1="0" y1="0" x2="0" y2="1">'
         f'<stop offset="0%" stop-color="{C["primary"]}" stop-opacity="0.30"/>'
         f'<stop offset="100%" stop-color="{C["primary"]}" stop-opacity="0"/>'
         f'</linearGradient></defs>'
+        f'{axis_svg}'
         f'<path d="{area_path}" fill="url(#fl-fill-{year})" stroke="none"/>'
         f'<path d="{line_path}" fill="none" stroke="{C["primary"]}" stroke-width="2.5" '
         f'stroke-linejoin="round" stroke-linecap="round"/>'

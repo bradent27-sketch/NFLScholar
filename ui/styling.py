@@ -461,6 +461,21 @@ def inject_theme():
             font-size: 11px;
             fill: {C['on_surface_variant']};
         }}
+        /* Faint y-axis (fantasy-points scale) - deliberately much quieter
+           than the week labels above: a thin line + tick marks in the
+           near-background outline_variant tone, and small dim labels, so
+           it's there to reference a value against but never competes with
+           the line/dots for attention. */
+        .fpts-linechart .fl-yaxis-line, .fpts-linechart .fl-ytick {{
+            stroke: {C['outline_variant']};
+            stroke-width: 1;
+        }}
+        .fpts-linechart .fl-yticklabel {{
+            font-family: {F['mono']};
+            font-size: 9px;
+            fill: {C['on_surface_variant']};
+            opacity: 0.6;
+        }}
 
         /* Rest-of-season matchup heat-strip (Player Search) -
            ui.components.render_matchup_heat_strip. Shares .fpts-strip/

@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 
-from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
+from data.utils import calculate_percentile, calculate_percentile_qualified, clean_name_exact, clean_name_for_merge
 from data.loaders import load_ngs_rushing, load_pfr_pass_block, load_pfr_def_pressure, load_team_pass_attempts_faced, load_schedule, load_pbp
 
 
@@ -688,14 +688,21 @@ def apply_scoring_and_percentiles(_stats, year, scoring_mode="Full PPR"):
         (stats.get('pat_made', 0) * 1.0)
     )
 
-    # Calculate Weekly Game Log Percentiles for Heatmapping
+    # Calculate Weekly Game Log Percentiles for Heatmapping - ranked against
+    # a same-week, snap-qualified reference pool (calculate_percentile_
+    # qualified) rather than every rostered name at the position that week,
+    # so a limited-snap/garbage-time row doesn't drag the comparison pool
+    # down for everyone else that week. See data.utils.
+    # MIN_SNAP_PCT_FOR_PERCENTILE for the per-position bars.
     stat_cols_for_color = ['fantasy_points', 'passing_yards', 'passing_tds', 'passing_attempts', 'passing_completions',
                            'rushing_yards', 'rushing_tds', 'rushing_attempts', 'ypc',
                            'receptions', 'receiving_yards', 'receiving_tds', 'targets', 'y/c',
                            'tackles', 'sacks', 'def_ints', 'forced_fumbles', 'weekly_snap_pct']
     for c in stat_cols_for_color:
         if c in stats.columns:
-            stats[f"{c}_wk_pct"] = stats.groupby('position', observed=True)[c].rank(pct=True) * 100
+            stats[f"{c}_wk_pct"] = calculate_percentile_qualified(
+                stats, c, position_col='position', snap_col='weekly_snap_pct', ascending=True
+            )
 
     return stats
 
@@ -777,12 +784,20 @@ def precompute_league_percentiles(_df, name_field, year):
     if not epa_df.empty:
         summary = pd.merge(summary, epa_df, on=name_field, how='left')
 
+    # Ranked against a snap-qualified reference pool (calculate_percentile_
+    # qualified), not every rostered name at the position - a raw groupby
+    # rank() here let a pile of low-snap bench/committee rows drag a whole
+    # position's comparison pool down, which is exactly what was inflating
+    # a real starter's percentile (confirmed real: a clear WR1 reading as
+    # 94th-percentile fantasy PPG purely because dozens of fringe receivers
+    # who barely play were sitting in the same denominator). See
+    # data.utils.MIN_SNAP_PCT_FOR_PERCENTILE for the per-position bars.
     metrics_to_rank = [c for c in summary.columns if c not in [name_field, 'position', 'games_played']]
     for m in metrics_to_rank:
-        if 'interceptions' in m:
-            summary[f"{m}_pct"] = summary.groupby('position', observed=True)[m].rank(pct=True, ascending=False) * 100
-        else:
-            summary[f"{m}_pct"] = summary.groupby('position', observed=True)[m].rank(pct=True) * 100
+        ascending = 'interceptions' not in m
+        summary[f"{m}_pct"] = calculate_percentile_qualified(
+            summary, m, position_col='position', snap_col='snap_pct_avg_max', ascending=ascending
+        )
     return summary
 
 
@@ -1338,30 +1353,110 @@ def build_player_historical_summary(selected_player, scoring_rule, years=(2023, 
     p_hist['calc_sacks'] = h_col(p_hist, ['def_sacks', 'sacks'])
     p_hist['calc_def_ints'] = h_col(p_hist, ['def_interceptions', 'interceptions'])
     p_hist['calc_ff'] = h_col(p_hist, ['def_fumbles_forced', 'forced_fumbles'])
-    # Same IDP scoring as apply_scoring_and_percentiles - kept in sync so a
-    # player's historical totals and their live game log always agree.
+    # Distance-tiered FG scoring, same buckets apply_scoring_and_percentiles
+    # uses for the live weekly fantasy_points column - folded into the same
+    # shared calc_fp formula below rather than a kicker-only branch, since
+    # these columns are naturally 0 for every non-kicker anyway (nothing to
+    # gate on).
+    p_hist['calc_fg_made'] = h_col(p_hist, ['fg_made'])
+    p_hist['calc_fg_att'] = h_col(p_hist, ['fg_att'])
+    p_hist['calc_fg_short'] = h_col(p_hist, ['fg_made_0_19']) + h_col(p_hist, ['fg_made_20_29']) + h_col(p_hist, ['fg_made_30_39'])
+    p_hist['calc_fg_mid'] = h_col(p_hist, ['fg_made_40_49'])
+    p_hist['calc_fg_long'] = h_col(p_hist, ['fg_made_50_59']) + h_col(p_hist, ['fg_made_60_'])
+    p_hist['calc_pat_made'] = h_col(p_hist, ['pat_made'])
+    p_hist['calc_pat_att'] = h_col(p_hist, ['pat_att'])
+    # Same IDP + kicker scoring as apply_scoring_and_percentiles - kept in
+    # sync so a player's historical totals and their live game log always
+    # agree (this table previously left kicker scoring out entirely, so
+    # every kicker's "Fantasy Pts" here read as 0 regardless of real makes).
     p_hist['calc_fp'] = (
         (p_hist['calc_rush_yds'] * 0.1) + (p_hist['calc_rush_tds'] * 6) +
         (p_hist['calc_rec_yds'] * 0.1) + (p_hist['calc_rec_tds'] * 6) +
         (p_hist['calc_rec'] * rec_mult) + (p_hist['calc_pass_yds'] * 0.04) +
         (p_hist['calc_pass_tds'] * 4) - (h_col(p_hist, ['passing_interceptions']) * 2) +
         (p_hist['calc_tackles'] * 1.0) + (p_hist['calc_sacks'] * 2.0) +
-        (p_hist['calc_def_ints'] * 4.0) + (p_hist['calc_ff'] * 2.0)
-    )
-
-    is_defensive = (
-        (p_hist['calc_tackles'].sum() + p_hist['calc_sacks'].sum() + p_hist['calc_def_ints'].sum()) > 0
-        and p_hist['calc_pass_yds'].sum() == 0 and p_hist['calc_rush_yds'].sum() == 0 and p_hist['calc_rec_yds'].sum() == 0
+        (p_hist['calc_def_ints'] * 4.0) + (p_hist['calc_ff'] * 2.0) +
+        (p_hist['calc_fg_short'] * 3) + (p_hist['calc_fg_mid'] * 4) + (p_hist['calc_fg_long'] * 5) +
+        (p_hist['calc_pat_made'] * 1.0)
     )
 
     has_team = 'team' in p_hist.columns
 
+    # Position pulled from p_hist (the weekly nflverse history already
+    # loaded above), most recent row, since that's available for every
+    # season this table spans regardless of PFF data completeness. Used
+    # below to branch which counting stats actually apply to this player -
+    # a receiver has no business seeing Pass Yds/Pass TDs (previously every
+    # non-defensive position saw the exact same full offensive column set,
+    # which is where a WR's passing columns - always empty/irrelevant - was
+    # coming from), same idea already established for the live Game Log's
+    # own position branching just above in this file's UI counterpart.
+    player_position = None
+    if 'position' in p_hist.columns:
+        pos_vals = p_hist['position'].dropna()
+        if not pos_vals.empty:
+            player_position = str(pos_vals.iloc[-1]).upper()
+
+    is_defensive = (
+        (p_hist['calc_tackles'].sum() + p_hist['calc_sacks'].sum() + p_hist['calc_def_ints'].sum()) > 0
+        and p_hist['calc_pass_yds'].sum() == 0 and p_hist['calc_rush_yds'].sum() == 0 and p_hist['calc_rec_yds'].sum() == 0
+        # player_position != 'K' guards a real, confirmed false-positive:
+        # kickers occasionally register a genuine special-teams tackle
+        # (last line of defense on a kickoff/punt return), which alone
+        # satisfies the tackle-sum heuristic above and - with pass/rush/rec
+        # yards correctly at 0 for a kicker too - was misclassifying
+        # Harrison Butker's career totals as a defensive player's (Tackles/
+        # Sacks/Ints/FF instead of FG/PAT) the moment he had even one.
+        and player_position != 'K'
+    )
+
+    from config import OLINE_POSITIONS
     if is_defensive:
         agg_spec = dict(
             Games_Played=('week', 'nunique'), Tackles=('calc_tackles', 'sum'),
             Sacks=('calc_sacks', 'sum'), Ints=('calc_def_ints', 'sum'), FF=('calc_ff', 'sum'),
+            Fantasy_Pts=('calc_fp', 'sum'),
         )
+    elif player_position == 'QB':
+        agg_spec = dict(
+            Games_Played=('week', 'nunique'), Pass_Yds=('calc_pass_yds', 'sum'),
+            Pass_TDs=('calc_pass_tds', 'sum'), Rush_Att=('calc_rush_att', 'sum'),
+            Rush_Yds=('calc_rush_yds', 'sum'), Rush_TDs=('calc_rush_tds', 'sum'),
+            Fantasy_Pts=('calc_fp', 'sum'),
+        )
+    elif player_position in ('WR', 'TE'):
+        agg_spec = dict(
+            Games_Played=('week', 'nunique'), Targets=('calc_targets', 'sum'),
+            Receptions=('calc_rec', 'sum'), Rec_Yds=('calc_rec_yds', 'sum'), Rec_TDs=('calc_rec_tds', 'sum'),
+            Rush_Yds=('calc_rush_yds', 'sum'), Rush_TDs=('calc_rush_tds', 'sum'),
+            Fantasy_Pts=('calc_fp', 'sum'),
+        )
+    elif player_position in ('RB', 'FB'):
+        agg_spec = dict(
+            Games_Played=('week', 'nunique'), Rush_Att=('calc_rush_att', 'sum'),
+            Rush_Yds=('calc_rush_yds', 'sum'), Rush_TDs=('calc_rush_tds', 'sum'),
+            Targets=('calc_targets', 'sum'), Receptions=('calc_rec', 'sum'),
+            Rec_Yds=('calc_rec_yds', 'sum'), Rec_TDs=('calc_rec_tds', 'sum'),
+            Fantasy_Pts=('calc_fp', 'sum'),
+        )
+    elif player_position == 'K':
+        agg_spec = dict(
+            Games_Played=('week', 'nunique'), FG_Made=('calc_fg_made', 'sum'),
+            FG_Att=('calc_fg_att', 'sum'), PAT_Made=('calc_pat_made', 'sum'),
+            PAT_Att=('calc_pat_att', 'sum'), Fantasy_Pts=('calc_fp', 'sum'),
+        )
+    elif player_position in OLINE_POSITIONS:
+        # No offensive counting stat here is meaningful for a lineman - this
+        # weekly nflverse export doesn't carry PFF-style pass-block/run-
+        # block snaps, just the skill-position box score - so Games Played
+        # (+ Team, added below) is genuinely all there is to show.
+        agg_spec = dict(Games_Played=('week', 'nunique'))
     else:
+        # Unknown/unmapped position (missing from this weekly source for
+        # every row this player has) - falls back to the full offensive
+        # spec rather than guessing wrong at a position this branch doesn't
+        # recognize; worst case shows a stat that happens to be 0 instead of
+        # hiding a real one.
         agg_spec = dict(
             Games_Played=('week', 'nunique'), Pass_Yds=('calc_pass_yds', 'sum'),
             Pass_TDs=('calc_pass_tds', 'sum'), Rush_Att=('calc_rush_att', 'sum'),
@@ -1408,14 +1503,7 @@ def build_player_historical_summary(selected_player, scoring_rule, years=(2023, 
     # occasional rows for pass-catching RBs (a real match, not a lookup
     # miss), so "did this player match in pff['rec'] this year" alone isn't
     # a reliable WR/TE gate - a real position check is needed instead.
-    # Position pulled from p_hist (the weekly nflverse history already
-    # loaded above), most recent row, since that's available for every
-    # season this table spans regardless of PFF data completeness.
-    player_position = None
-    if 'position' in p_hist.columns:
-        pos_vals = p_hist['position'].dropna()
-        if not pos_vals.empty:
-            player_position = str(pos_vals.iloc[-1]).upper()
+    # player_position was already derived above (used to branch agg_spec).
     is_wr_te = player_position in ('WR', 'TE')
 
     role_rows = []

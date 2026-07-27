@@ -3,7 +3,7 @@ import streamlit as st
 
 from config import TAB_PLAYER_SEARCH, AVAILABLE_SEASONS
 from data.transforms import load_and_merge_data, build_risers_report, build_recent_trend
-from data.utils import calculate_percentile
+from data.utils import calculate_percentile_qualified
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
 from ui.components import switch_tab, skeleton_loader
 
@@ -15,7 +15,9 @@ def render():
         df_t4_stats, t4_t_col, t4_n_col, _ = load_and_merge_data(t4_year, "Full PPR")
     risers = build_risers_report(df_t4_stats, t4_n_col, t4_t_col, t4_year)
     if not risers.empty:
-        jump_pct = calculate_percentile(risers, 'Pct Jump')
+        jump_pct = calculate_percentile_qualified(
+            risers, 'Pct Jump', position_col='Pos', snap_col='Season Snap %', group_by_position=False
+        )
         indexed = risers.set_index('Player')
 
         trend_map = build_recent_trend(df_t4_stats, t4_n_col, metric='fantasy_points', n_weeks=5)

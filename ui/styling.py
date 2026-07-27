@@ -243,14 +243,14 @@ def inject_theme():
            selector generations are kept below so the styling survives in
            either direction. */
         div[data-testid="stTabs"] [role="tablist"] {{
-            gap: 4px;
+            gap: 0px;
             border-bottom: 1px solid {C['outline_variant']};
             padding-bottom: 6px;
             flex-wrap: wrap;
         }}
         [data-testid="stTab"], div[data-testid="stTabs"] button[data-baseweb="tab"] {{
             border-radius: {R['full']} !important;
-            padding: 6px 18px !important;
+            padding: 5px 6px !important;
             transition: background-color 150ms ease-out;
             cursor: pointer;
         }}
@@ -260,9 +260,10 @@ def inject_theme():
         [data-testid="stTab"] p, button[data-baseweb="tab"] p {{
             color: {C['on_surface_variant']} !important;
             font-family: {F['display']};
-            font-size: 12.5px !important;
+            font-size: 10px !important;
             font-weight: 600 !important;
-            letter-spacing: 0.02em;
+            letter-spacing: 0;
+            white-space: nowrap;
         }}
         [data-testid="stTab"][aria-selected="true"], button[data-baseweb="tab"][aria-selected="true"] {{
             background-color: rgba(0, 255, 249, 0.10) !important;

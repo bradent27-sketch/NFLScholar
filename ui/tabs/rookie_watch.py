@@ -3,7 +3,7 @@ import streamlit as st
 
 from config import TAB_PLAYER_SEARCH, AVAILABLE_SEASONS_WITH_UPCOMING
 from data.transforms import load_and_merge_data, build_rookie_watch, build_recent_trend
-from data.utils import calculate_percentile, clean_name_exact
+from data.utils import calculate_percentile_qualified, clean_name_exact
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
 from ui.components import switch_tab, get_drafted_players_clean_keys, skeleton_loader
 
@@ -26,7 +26,9 @@ def render():
     if not rookie_board.empty:
         pct_cols = {}
         if 'Avg FPTS' in rookie_board.columns:
-            pct_cols['Avg FPTS'] = calculate_percentile(rookie_board, 'Avg FPTS')
+            pct_cols['Avg FPTS'] = calculate_percentile_qualified(
+                rookie_board, 'Avg FPTS', position_col='Pos', snap_col='Snap %', group_by_position=False
+            )
         indexed = rookie_board.set_index('Player')
 
         trend_map = build_recent_trend(df_t5_stats, t5_n_col, metric='fantasy_points', n_weeks=5)

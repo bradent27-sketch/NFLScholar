@@ -5,6 +5,7 @@ module so loaders.py and transforms.py can each depend on this without a
 circular import between the two of them.
 """
 import datetime
+import numpy as np
 import pandas as pd
 
 
@@ -12,6 +13,130 @@ def calculate_percentile(df, col_name, ascending=True):
     if not df.empty and col_name in df.columns:
         return df[col_name].rank(pct=True, ascending=ascending) * 100
     return pd.Series([0]*len(df), index=df.index)
+
+
+# Minimum share of team snaps a player must have played (this season, or
+# this week - whichever granularity the caller's snap_col tracks) for their
+# stat line to count toward the REFERENCE POOL other players get
+# percentile-ranked against - see calculate_percentile_qualified below.
+# Skill positions where a real committee/backup role is common get a lower
+# bar than a starting QB, who's on the field for nearly every snap by
+# definition. Without this, a pile of 10%-snap bench/garbage-time rows
+# drags a position's whole comparison pool down, inflating every real
+# starter's percentile against them - confirmed real: a clear WR1 reading
+# as a 94th-percentile fantasy-PPG player purely because dozens of fringe
+# receivers who barely play were sitting in the same denominator.
+MIN_SNAP_PCT_FOR_PERCENTILE = {
+    'QB': 80,
+    'RB': 40, 'FB': 40, 'WR': 40, 'TE': 40,
+}
+
+
+def min_snap_pct_for_position(pos):
+    """
+    Returns None for a position with no defined participation cutoff (K/P/
+    LS/O-line - snap % isn't a meaningful signal for a kicker, and this
+    app's data doesn't track O-line snaps as a team-snap share at all).
+    Callers should treat None as "don't filter, use the full pool", not as
+    a 0% bar.
+    """
+    from config import DEFENSIVE_POSITIONS
+    pos = str(pos).upper()
+    if pos in MIN_SNAP_PCT_FOR_PERCENTILE:
+        return MIN_SNAP_PCT_FOR_PERCENTILE[pos]
+    if pos in DEFENSIVE_POSITIONS:
+        return 60
+    return None
+
+
+def _rank_against_pool(values, pool, ascending):
+    """
+    Shared ECDF-style percentile core for calculate_percentile_qualified's
+    two modes below: rank(pct=True)'s tie handling reduced to "fraction of
+    `pool` this value beats" via a sorted-array searchsorted, which is
+    equivalent for percentile purposes and lets both modes share one
+    vectorized implementation.
+    """
+    sorted_vals = np.sort(pool.to_numpy())
+    n_pool = len(sorted_vals)
+    gv = values.to_numpy()
+    valid = ~np.isnan(gv)
+    if ascending:
+        ranks = np.searchsorted(sorted_vals, gv, side='right')
+    else:
+        ranks = n_pool - np.searchsorted(sorted_vals, gv, side='left')
+    return ranks / n_pool * 100, valid
+
+
+def calculate_percentile_qualified(df, col_name, position_col='position', snap_col='snap_pct_avg', ascending=True, group_by_position=True):
+    """
+    Same result shape as calculate_percentile (one 0-100 percentile per row,
+    aligned to df's index) but the REFERENCE POOL used to rank col_name is
+    restricted to rows meeting THEIR OWN position's minimum snap-
+    participation bar (min_snap_pct_for_position) - every row still gets a
+    percentile, even a below-threshold bench/limited-snap row, it's just
+    scored against the cleaned qualifying-peer distribution instead of
+    being diluted by (and diluting everyone else's percentile against)
+    fringe/inactive-role rows.
+
+    group_by_position=True (the default, and the right choice whenever the
+    caller was ALREADY ranking within each position separately - e.g. a
+    season-long or per-week stat percentile computed per position) ranks
+    each position group only against that position's own qualified pool -
+    exactly calculate_percentile's existing per-position-group behavior,
+    just with a cleaner denominator.
+
+    group_by_position=False is for a caller that ranks across a MIXED-
+    position pool as one flat leaderboard (e.g. a cross-position risers/
+    rookie board) - every row still only QUALIFIES for the shared pool via
+    its own position's bar, but the ranking itself stays one combined pool
+    across every position, matching the caller's original flat-ranking
+    behavior rather than silently splitting it into separate per-position
+    leaderboards.
+
+    Falls back to the FULL pool - i.e. behaves exactly like
+    calculate_percentile - for any position with no defined cutoff, or if
+    the qualifying pool happens to be empty (too small/thin a sample to
+    trust, e.g. an early-season slice where almost nobody has logged enough
+    snaps yet). Also falls back to plain calculate_percentile wholesale if
+    position_col/snap_col aren't even present, so a caller can reach for
+    this function without checking the columns exist first.
+    """
+    if df.empty or col_name not in df.columns or position_col not in df.columns or snap_col not in df.columns:
+        return calculate_percentile(df, col_name, ascending=ascending)
+
+    snaps = pd.to_numeric(df[snap_col], errors='coerce')
+    values = pd.to_numeric(df[col_name], errors='coerce')
+    positions = df[position_col]
+
+    if not group_by_position:
+        thresholds = positions.map(min_snap_pct_for_position)
+        qualifies = thresholds.isna() | (snaps >= thresholds)
+        pool = values[qualifies].dropna()
+        if pool.empty:
+            pool = values.dropna()
+        if pool.empty:
+            return pd.Series(0.0, index=df.index)
+        pct_vals, valid = _rank_against_pool(values, pool, ascending)
+        result = pd.Series(0.0, index=df.index)
+        result.loc[df.index[valid]] = pct_vals[valid]
+        return result
+
+    result = pd.Series(0.0, index=df.index)
+    for pos, group_idx in df.groupby(position_col, observed=True).groups.items():
+        threshold = min_snap_pct_for_position(pos)
+        group_vals = values.loc[group_idx]
+        pool = pd.Series(dtype=float)
+        if threshold is not None:
+            qualified_idx = group_idx[snaps.loc[group_idx] >= threshold]
+            pool = group_vals.loc[qualified_idx].dropna()
+        if pool.empty:
+            pool = group_vals.dropna()
+        if pool.empty:
+            continue
+        pct_vals, valid = _rank_against_pool(group_vals, pool, ascending)
+        result.loc[group_idx[valid]] = pct_vals[valid]
+    return result
 
 
 def get_val(row, col, fmt="{}"):

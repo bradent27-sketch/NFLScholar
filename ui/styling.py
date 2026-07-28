@@ -1391,20 +1391,27 @@ def style_depth_chart_table(dc_df, sel_team, snap_map, pff_grades_map, global_ro
         # covering for is largely closed now, and it was producing more
         # false positives (misidentified veterans) than it was catching.
         is_rk = clean_name.lower() in global_rookie_names or bool(match_abbreviated_name(clean_name, rookie_name_index))
+        # Terser shorthand ("Name grade · snap%·gp" - no "(Snap:", "PFF:",
+        # commas/parens) per explicit feedback that spelling out both
+        # labels in every single cell, across a whole dense grid, read as
+        # busy/cluttered rather than clean. The format is explained once,
+        # in a caption above the table (ui/tabs/depth_charts.py), instead
+        # of repeating the labels per cell. Cell color still carries the
+        # PFF-grade tier on its own (get_pff_color below), same as before.
         if pd.notnull(pff_grade) and pff_grade > 0:
-            cell_text = f"{clean_name} (Snap: {snap_text}, PFF: {pff_grade:.1f})"
+            cell_text = f"{clean_name} {pff_grade:.1f} · {snap_text}"
             cell_grade = float(pff_grade)
         elif is_rk:
-            cell_text = f"{clean_name} (Snap: {snap_text}, PFF: ROOKIE)"
+            cell_text = f"{clean_name} RK · {snap_text}"
             cell_grade = 0.0
         else:
             # Genuinely no PFF grade and not a rookie (common for backups
-            # with too few snaps to be graded) - blank, not a fabricated
-            # "N/A" grade riding the same rainbow scale as a real number,
-            # and get_pff_color(0.0, is_rookie=False) below already falls
+            # with too few snaps to be graded) - "--", not a fabricated
+            # grade riding the same rainbow scale as a real number, and
+            # get_pff_color(0.0, is_rookie=False) below already falls
             # through to the neutral gray, never the rookie color or a
             # grade color, for this exact case.
-            cell_text = f"{clean_name} (Snap: {snap_text}, PFF: --)"
+            cell_text = f"{clean_name} -- · {snap_text}"
             cell_grade = 0.0
         bg = get_pff_color(cell_grade, is_rookie=is_rk, raw_grade=True)
         is_gold_name = clean_name.lower() in league_gold_players or bool(match_abbreviated_name(clean_name, gold_name_index))

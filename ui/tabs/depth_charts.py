@@ -185,6 +185,7 @@ def render():
             offense_df, defense_df = dc_df, dc_df.iloc[0:0]
 
         st.markdown("<div class='custom-section-header'>OFFENSE</div>", unsafe_allow_html=True)
+        st.caption("Each cell: **Player · PFF grade · Snap % (games played)** — \"RK\" in place of a grade means a rookie with no PFF grade yet, \"--\" means neither a rookie nor graded (common for deep backups).")
         st.caption("Snap % shows \"N/A\" (not \"0%\") for players no source has a snap-count row for at all — mostly deep backups with too little playing time to be tracked. Ordering for those rows leans on draft capital and experience instead.")
         st.dataframe(
             style_depth_chart_table(offense_df, sel_team_t2, snap_map, pff['pff_grades_map'], global_rookie_names, veteran_names, pff['league_gold_players'], has_match_map, games_map),

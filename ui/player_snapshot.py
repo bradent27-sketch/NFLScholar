@@ -788,12 +788,14 @@ def render_percentile_bars_figure(snapshot, player_name, pos):
     rows = list(reversed(rows))  # top stat drawn at the top of the chart
     n = len(rows)
 
-    # SCALE_MAX (122, not 100) mirrors the old matplotlib xlim(0, 122) -
-    # bars are measured on a 0-122 "scale" even though real values only
-    # reach 100, so a bar at the 100th percentile still has clear room to
-    # its right for the value label instead of the label doubling back onto
-    # the bar itself.
-    W, LABEL_END_X, PLOT_X0, PLOT_W, SCALE_MAX = 1000, 178, 195, 750, 122.0
+    # SCALE_MAX is a real 0-100 (not the old 0-122 padded scale, which drew
+    # every bar's empty track past the "100" gridline - reading as if the
+    # axis went to ~125 - per explicit feedback that this looked like extra,
+    # unexplained width rather than genuine headroom). PLOT_W is trimmed
+    # from 750 to leave the same clear space for the value label after a
+    # maxed-out 100th-percentile bar, just past the track's own right edge
+    # instead of inside it.
+    W, LABEL_END_X, PLOT_X0, PLOT_W, SCALE_MAX = 1000, 178, 195, 700, 100.0
     ROW_H, BAR_H = 34, 21
     TOP_PAD, BOTTOM_PAD = 6, 28
     H = TOP_PAD + n * ROW_H + BOTTOM_PAD

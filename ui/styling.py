@@ -243,14 +243,14 @@ def inject_theme():
            selector generations are kept below so the styling survives in
            either direction. */
         div[data-testid="stTabs"] [role="tablist"] {{
-            gap: 0px;
+            gap: 1px;
             border-bottom: 1px solid {C['outline_variant']};
             padding-bottom: 6px;
             flex-wrap: wrap;
         }}
         [data-testid="stTab"], div[data-testid="stTabs"] button[data-baseweb="tab"] {{
             border-radius: {R['full']} !important;
-            padding: 5px 6px !important;
+            padding: 6px 9px !important;
             transition: background-color 150ms ease-out;
             cursor: pointer;
         }}
@@ -260,7 +260,7 @@ def inject_theme():
         [data-testid="stTab"] p, button[data-baseweb="tab"] p {{
             color: {C['on_surface_variant']} !important;
             font-family: {F['display']};
-            font-size: 10px !important;
+            font-size: 11px !important;
             font-weight: 600 !important;
             letter-spacing: 0;
             white-space: nowrap;
@@ -1360,7 +1360,12 @@ def style_depth_chart_table(dc_df, sel_team, snap_map, pff_grades_map, global_ro
     gold_name_index = build_last_name_index(league_gold_players)
 
     def build_cell(cell_val):
-        if pd.isna(cell_val) or str(cell_val).strip() == "":
+        # "nan" (not just a real NaN) - some empty depth-chart slots arrive
+        # as the literal 3-character string "nan" (a stringified NaN from
+        # further upstream), which pd.isna() doesn't catch and str().strip()
+        # doesn't reduce to "" - those were rendering as a visible "nan"
+        # player name instead of a blank slot.
+        if pd.isna(cell_val) or str(cell_val).strip().lower() in ("", "nan"):
             return "", f"background-color:{C['surface_container']};"
         clean_name = str(cell_val).split(' (')[0].strip()
         merge_key = clean_name_exact(pd.Series([clean_name])).iloc[0]

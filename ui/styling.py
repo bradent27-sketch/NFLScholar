@@ -598,6 +598,20 @@ def inject_theme():
             margin-top: 2px;
         }}
 
+        /* Small column-group caption above each of the Coverage Matchup
+           Radar's three tile columns (PLAYER/BLENDED/TEAM) - identifies
+           which side of the matchup each group of metric-tiles belongs to
+           without the visual weight of a full .custom-section-header. */
+        .metric-col-label {{
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            text-align: center;
+            color: {C['on_surface_variant']};
+            margin: 2px 0 2px 0;
+        }}
+
         /* Matchup title (Defensive Yield's Coverage Correlator radar) -
            centered "{{player}} VS {{team}}" header, replacing a bare bold
            markdown line that read cramped against the chart below it. */

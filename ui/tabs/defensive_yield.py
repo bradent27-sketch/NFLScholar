@@ -19,7 +19,7 @@ from data.loaders import (
 from data.utils import calculate_percentile
 from data.coverage_radar import (
     list_coverage_teams, list_receivers, build_radar_data, build_defense_radar_data, render_split_radar_figure,
-    team_nickname, build_team_man_zone_rates,
+    team_nickname, build_team_man_zone_rates, build_alignment_matchup_data,
 )
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config, get_pff_color, get_matchup_color
 from ui.components import render_matchup_title, render_percentile_metric_tiles, skeleton_loader
@@ -189,6 +189,26 @@ def _render_strength_of_schedule(target_year, scoring_rule, def_matrix):
     )
 
 
+def _relative_meter_range(series, pad_frac=0.15):
+    """
+    Bounds a ProgressColumn meter to this column's OWN observed range (with
+    a small pad) instead of a fixed 0-100 scale. Pressure Allowed %/Pressure
+    Rate % both cluster tightly (roughly 15-40%), so a 0-100 meter left
+    every team's bar looking nearly identical - the real variance among
+    starters/the league only shows up once the scale is stretched to match
+    what actually occurs, the same idea as this table's own percentile
+    heatmap coloring already uses.
+    """
+    vals = pd.to_numeric(series, errors='coerce').dropna()
+    if vals.empty:
+        return (0, 100)
+    lo, hi = float(vals.min()), float(vals.max())
+    if hi <= lo:
+        return (max(0.0, lo - 1), hi + 1)
+    pad = (hi - lo) * pad_frac
+    return (max(0.0, lo - pad), hi + pad)
+
+
 def _render_oline_pressure(target_year):
     st.markdown(f"<div class='custom-section-header'>O-LINE PASS PROTECTION &amp; DEFENSIVE PRESSURE — {target_year}</div>", unsafe_allow_html=True)
     # Same "fall back to the most recent season with real data" pattern as
@@ -220,7 +240,9 @@ def _render_oline_pressure(target_year):
             st.dataframe(
                 style_plain_dataframe(oline_indexed, numeric_pct_cols={'Pressure Allowed %': pressure_pct}),
                 width="stretch", height=df_auto_height(len(oline_df)),
-                column_config=build_column_help_config(oline_indexed, meter_cols={'Pressure Allowed %': (0, 100)}),
+                column_config=build_column_help_config(
+                    oline_indexed, meter_cols={'Pressure Allowed %': _relative_meter_range(oline_df['Pressure Allowed %'])}
+                ),
             )
         else:
             st.info("No PFR advanced passing data available yet.")
@@ -233,7 +255,9 @@ def _render_oline_pressure(target_year):
             st.dataframe(
                 style_plain_dataframe(def_pressure_indexed, numeric_pct_cols={'Pressure Rate %': pr_pct}),
                 width="stretch", height=df_auto_height(len(def_pressure_df)),
-                column_config=build_column_help_config(def_pressure_indexed, meter_cols={'Pressure Rate %': (0, 100)}),
+                column_config=build_column_help_config(
+                    def_pressure_indexed, meter_cols={'Pressure Rate %': _relative_meter_range(def_pressure_df['Pressure Rate %'])}
+                ),
             )
         else:
             st.info("No PFR advanced defensive/team stats available yet.")
@@ -311,52 +335,120 @@ def _render_coverage_radar(pff):
     elif not def_labels:
         st.caption("sharp_positional_coverage_2025.csv not found in external_data/ — showing player radar only.")
 
-    if matchup:
-        # Tile background = percentile color (replaces the plain st.metric
-        # boxes' gray delta text, per explicit feedback) - the ordinal
-        # percentile ("78th percentile") stays visible as the `sub`
-        # caption, just re-themed onto a colored tile instead of a bare
-        # delta. Man/Zone/Blended YPRR are a PLAYER performance percentile
-        # (get_pff_color, the app's standard "how good is this player"
-        # scale - same one every stat tile/bar chart uses), while Opp Man
-        # %/Opp Zone % are a tendency metric with no inherent good/bad
-        # direction (get_matchup_color, matching how this SAME tab's merged
-        # points-allowed/coverage matrix already colors Man %/Zone % below).
-        row1_defs = [
-            ("Man YPRR", matchup['player_man_yprr'], matchup.get('player_man_yprr_pct'), get_pff_color),
-            ("Zone YPRR", matchup['player_zone_yprr'], matchup.get('player_zone_yprr_pct'), get_pff_color),
-            ("Blended Exp. YPRR", matchup['blended_expected_yprr'], matchup.get('blended_expected_yprr_pct'), get_pff_color),
-            ("Opp Man %", f"{matchup['opp_man_rate']}%", matchup.get('opp_man_rate_pct'), get_matchup_color),
-            ("Opp Zone %", f"{matchup['opp_zone_rate']}%", matchup.get('opp_zone_rate_pct'), get_matchup_color),
-        ]
-        render_percentile_metric_tiles([
-            {'label': label, 'value': val, 'sub': _ordinal_percentile_label(pct), 'color': color_fn(pct)}
-            for label, val, pct, color_fn in row1_defs
-        ])
-    else:
-        st.caption("Not enough coverage-snap data to compute a blended matchup score for this team.")
+    # Alignment (slot-vs-outside) axis - complements the Man/Zone (coverage
+    # shell) axis above with Slot %/Slot YPRR/Wide YPRR for the player, plus
+    # a second matchup-aware blended number keyed on alignment instead of
+    # coverage scheme.
+    align_data = build_alignment_matchup_data(pff['rec'], pff['route_concept'], positional_coverage_df, sel_player, full_name)
 
-    if def_raw:
-        # def_vals is the SAME percentile array already computed for the
-        # defense-side radar chart (build_defense_radar_data), parallel to
-        # def_labels/def_raw by construction (built in the same loop) - no
-        # new computation needed, just reused here for the tiles' color/sub.
-        # get_matchup_color (not get_pff_color): these are already an
-        # INVERTED percentile (low yards allowed = good coverage = high
-        # percentile, see build_defense_radar_data's docstring), so "good
-        # defense = green" is the correct read, matching the same
-        # tendency/matchup convention as the Opp Man %/Opp Zone % tiles above.
-        def_pct_map = dict(zip(def_labels, def_vals))
-        render_percentile_metric_tiles([
-            {
-                'label': label, 'value': f"{val:.1f}",
-                'sub': _ordinal_percentile_label(def_pct_map.get(label)),
-                'color': get_matchup_color(def_pct_map.get(label)),
-            }
-            for label, val in def_raw.items()
-        ])
-    elif not matchup:
-        st.caption("No defensive coverage data available for this team.")
+    # Three tile columns instead of a "player row on top, defense row below"
+    # stack, per explicit feedback: PLAYER (this receiver's own man/zone +
+    # alignment production) on the left, the two matchup-aware BLENDED
+    # numbers in the middle, and every TEAM/opponent-tendency stat (Man %/
+    # Zone % coverage mix plus the Sharp Football YPT-allowed-by-type
+    # figures that used to sit in their own row below) grouped on the
+    # right - so "how good is HE" and "how tough is THIS DEFENSE" read as
+    # two clearly separated sides of the matchup instead of top/bottom rows
+    # with no visual distinction. Tile background = percentile color
+    # (replaces the plain st.metric boxes' gray delta text, per earlier
+    # feedback) - get_pff_color (the app's standard "how good is this
+    # player" scale) for anything measuring the PLAYER's own production,
+    # get_matchup_color (no inherent good/bad direction) for anything
+    # measuring a TEAM's tendency/coverage quality.
+    if matchup or def_raw or align_data:
+        player_tiles = []
+        if matchup:
+            player_tiles += [
+                {'label': 'Man YPRR', 'value': matchup['player_man_yprr'],
+                 'sub': _ordinal_percentile_label(matchup.get('player_man_yprr_pct')),
+                 'color': get_pff_color(matchup.get('player_man_yprr_pct'))},
+                {'label': 'Zone YPRR', 'value': matchup['player_zone_yprr'],
+                 'sub': _ordinal_percentile_label(matchup.get('player_zone_yprr_pct')),
+                 'color': get_pff_color(matchup.get('player_zone_yprr_pct'))},
+            ]
+        if 'slot_rate' in align_data:
+            player_tiles.append({
+                'label': 'Slot %', 'value': f"{align_data['slot_rate']}%",
+                'sub': _ordinal_percentile_label(align_data.get('slot_rate_pct')),
+                'color': get_pff_color(align_data.get('slot_rate_pct')),
+            })
+        if 'slot_yprr' in align_data:
+            player_tiles.append({
+                'label': 'Slot YPRR', 'value': align_data['slot_yprr'],
+                'sub': _ordinal_percentile_label(align_data.get('slot_yprr_pct')),
+                'color': get_pff_color(align_data.get('slot_yprr_pct')),
+            })
+        if 'wide_yprr' in align_data:
+            player_tiles.append({
+                'label': 'Wide YPRR', 'value': align_data['wide_yprr'],
+                'sub': _ordinal_percentile_label(align_data.get('wide_yprr_pct')),
+                'color': get_pff_color(align_data.get('wide_yprr_pct')),
+            })
+
+        blended_tiles = []
+        if matchup:
+            blended_tiles.append({
+                'label': 'Blended Exp. YPRR (Man/Zone)', 'value': matchup['blended_expected_yprr'],
+                'sub': _ordinal_percentile_label(matchup.get('blended_expected_yprr_pct')),
+                'color': get_pff_color(matchup.get('blended_expected_yprr_pct')),
+            })
+        if 'blended_alignment_yprr' in align_data:
+            blended_tiles.append({
+                'label': 'Blended Exp. YPRR (Slot Align)', 'value': align_data['blended_alignment_yprr'],
+                'sub': _ordinal_percentile_label(align_data.get('blended_alignment_yprr_pct')),
+                'color': get_pff_color(align_data.get('blended_alignment_yprr_pct')),
+            })
+
+        team_tiles = []
+        if matchup:
+            team_tiles += [
+                {'label': 'Opp Man %', 'value': f"{matchup['opp_man_rate']}%",
+                 'sub': _ordinal_percentile_label(matchup.get('opp_man_rate_pct')),
+                 'color': get_matchup_color(matchup.get('opp_man_rate_pct'))},
+                {'label': 'Opp Zone %', 'value': f"{matchup['opp_zone_rate']}%",
+                 'sub': _ordinal_percentile_label(matchup.get('opp_zone_rate_pct')),
+                 'color': get_matchup_color(matchup.get('opp_zone_rate_pct'))},
+            ]
+        if def_raw:
+            # def_vals is the SAME percentile array already computed for the
+            # defense-side radar chart (build_defense_radar_data), parallel
+            # to def_labels/def_raw by construction - no new computation
+            # needed, just reused here for the tiles' color/sub.
+            # get_matchup_color (not get_pff_color): these are already an
+            # INVERTED percentile (low yards allowed = good coverage = high
+            # percentile, see build_defense_radar_data's docstring), so
+            # "good defense = green" is the correct read.
+            def_pct_map = dict(zip(def_labels, def_vals))
+            team_tiles += [
+                {
+                    'label': label, 'value': f"{val:.1f}",
+                    'sub': _ordinal_percentile_label(def_pct_map.get(label)),
+                    'color': get_matchup_color(def_pct_map.get(label)),
+                }
+                for label, val in def_raw.items()
+            ]
+
+        col_player, col_blend, col_team = st.columns([5, 2, 6])
+        with col_player:
+            st.markdown("<div class='metric-col-label'>PLAYER</div>", unsafe_allow_html=True)
+            if player_tiles:
+                render_percentile_metric_tiles(player_tiles)
+            else:
+                st.caption("No player-side coverage/alignment data available.")
+        with col_blend:
+            st.markdown("<div class='metric-col-label'>BLENDED</div>", unsafe_allow_html=True)
+            if blended_tiles:
+                render_percentile_metric_tiles(blended_tiles)
+            else:
+                st.caption("Not enough data for a blended matchup score.")
+        with col_team:
+            st.markdown("<div class='metric-col-label'>TEAM</div>", unsafe_allow_html=True)
+            if team_tiles:
+                render_percentile_metric_tiles(team_tiles)
+            else:
+                st.caption("No defensive coverage data available for this team.")
+    else:
+        st.caption("Not enough coverage-snap data to compute matchup tiles for this pairing.")
 
     _render_sumersports_context(full_name)
 

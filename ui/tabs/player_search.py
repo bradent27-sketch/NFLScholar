@@ -309,7 +309,6 @@ def render():
         st.session_state['player_sel_t1_name'] = selected_player
 
     if selected_player is None:
-        st.info("👋 Start typing a player's name in the dropdown above (optionally narrow by team first) to see their bio card, percentile matrix, weekly game log, and historical totals.")
         return
 
     p_data = df_t1_stats[df_t1_stats[t1_n_col].astype(str) == selected_player].copy()

@@ -17,6 +17,7 @@ import pandas as pd
 import streamlit as st
 
 from data.utils import calculate_percentile
+from data.transforms import build_alignment_multiplier
 
 
 def get_team_man_zone_rate(def_coverage_scheme_df, team_name):
@@ -182,6 +183,104 @@ def build_radar_data(rec_scheme_df, player_name, opponent_team_name, def_coverag
             }
 
     return labels, man_vals, zone_vals, matchup_summary
+
+
+def build_alignment_matchup_data(rec_df, route_concept_df, positional_coverage_df, player_name, full_team_name):
+    """
+    WR/TE alignment profile (Slot %, Slot YPRR, Wide YPRR) plus a matchup-
+    aware "Blended Exp. YPRR (Slot Align)" number - complements
+    build_radar_data's own Man/Zone axis (coverage SHELL) with the alignment
+    axis (slot-vs-outside) instead, for the Coverage Matchup Radar's
+    PLAYER/BLENDED tile columns.
+
+    Wide YPRR isn't its own PFF export - receiving_concept only ever ships a
+    SLOT split (confirmed by direct inspection of every pff_imports/
+    receiving_concept file, every year - no "Wide"/"Outside" concept file
+    exists). Derived here instead as the residual of receiving_summary's
+    season routes/yards minus receiving_concept's slot component. Reads as
+    genuinely "wide" for WRs (inline_rate is near-zero there); for TEs it
+    also nets out inline routes, so it's closer to "non-slot" than strictly
+    "wide" - the same caveat PFF's own wide_rate/inline_rate split already
+    carries for that position.
+
+    The blended number reuses build_alignment_multiplier (the same function
+    already driving Player Search's Next Game Projection alignment
+    adjustment) rather than inventing a second formula for the same idea:
+    this player's overall season YPRR, scaled up or down by how soft or
+    tough THIS specific opponent plays against however this player is
+    actually deployed (their own slot/wide snap split) - same "matchup-
+    aware, not just raw" spirit as build_radar_data's own Man/Zone blend.
+
+    Returns {} if receiving_summary has no row for this player. Every other
+    key is filled in as far as the data allows - Slot YPRR/Wide YPRR/the
+    blended number are silently omitted if their own source data is
+    missing, same partial-fill convention as build_radar_data's
+    matchup_summary.
+    """
+    if rec_df.empty or 'player' not in rec_df.columns:
+        return {}
+    rec_pool = rec_df[rec_df['position'].isin(['WR', 'TE'])] if 'position' in rec_df.columns else rec_df
+    p_rec = rec_pool[rec_pool['player'].str.lower() == str(player_name).lower()]
+    if p_rec.empty:
+        return {}
+    p_idx = p_rec.index[0]
+    rec_row = p_rec.iloc[0]
+    slot_rate = float(rec_row.get('slot_rate', 0) or 0)
+    wide_rate = float(rec_row.get('wide_rate', 0) or 0)
+    overall_yprr = float(rec_row.get('yprr', 0) or 0)
+
+    result = {
+        'slot_rate': round(slot_rate, 1),
+        'slot_rate_pct': round(float(calculate_percentile(rec_pool, 'slot_rate').get(p_idx, 0)), 1),
+    }
+
+    rc_pool = pd.DataFrame()
+    if not route_concept_df.empty and 'player' in route_concept_df.columns and 'slot_yprr' in route_concept_df.columns:
+        rc_pool = route_concept_df[route_concept_df['position'].isin(['WR', 'TE'])] if 'position' in route_concept_df.columns else route_concept_df
+        p_rc = rc_pool[rc_pool['player'].str.lower() == str(player_name).lower()]
+        if not p_rc.empty:
+            rc_idx = p_rc.index[0]
+            slot_yprr = float(p_rc.iloc[0].get('slot_yprr', 0) or 0)
+            result['slot_yprr'] = round(slot_yprr, 2)
+            result['slot_yprr_pct'] = round(float(calculate_percentile(rc_pool, 'slot_yprr').get(rc_idx, 0)), 1)
+
+    wide_pool = pd.DataFrame()
+    if not rc_pool.empty and {'routes', 'yards'}.issubset(rec_pool.columns) and {'slot_routes', 'slot_yards'}.issubset(rc_pool.columns):
+        wide_pool = rec_pool[['player', 'routes', 'yards']].merge(
+            rc_pool[['player', 'slot_routes', 'slot_yards']], on='player', how='inner'
+        )
+        wide_pool['wide_routes'] = pd.to_numeric(wide_pool['routes'], errors='coerce') - pd.to_numeric(wide_pool['slot_routes'], errors='coerce')
+        wide_pool['wide_yards'] = pd.to_numeric(wide_pool['yards'], errors='coerce') - pd.to_numeric(wide_pool['slot_yards'], errors='coerce')
+        wide_pool = wide_pool[wide_pool['wide_routes'] > 0].copy()
+        wide_pool['wide_yprr'] = wide_pool['wide_yards'] / wide_pool['wide_routes']
+        m_row = wide_pool[wide_pool['player'].str.lower() == str(player_name).lower()]
+        if not m_row.empty:
+            m_idx = m_row.index[0]
+            result['wide_yprr'] = round(float(m_row.iloc[0]['wide_yprr']), 2)
+            result['wide_yprr_pct'] = round(float(calculate_percentile(wide_pool, 'wide_yprr').get(m_idx, 0)), 1)
+
+    if full_team_name and positional_coverage_df is not None and not positional_coverage_df.empty:
+        nickname = team_nickname(full_team_name)
+        alignment_mult = build_alignment_multiplier(positional_coverage_df, nickname, slot_rate, wide_rate)
+        result['blended_alignment_yprr'] = round(overall_yprr * alignment_mult, 2)
+
+        # Percentile against every other qualified WR/TE facing this SAME
+        # opponent (each run through the same opponent-specific multiplier,
+        # using THEIR OWN slot/wide split) - identical "how good is THIS
+        # matchup for him specifically, vs. everyone else facing this
+        # defense" convention as build_radar_data's own
+        # blended_expected_yprr_pct.
+        pool = rec_pool[['slot_rate', 'wide_rate', 'yprr']].copy()
+        pool['alignment_mult'] = rec_pool.apply(
+            lambda r: build_alignment_multiplier(positional_coverage_df, nickname, r.get('slot_rate', 0), r.get('wide_rate', 0)),
+            axis=1,
+        )
+        pool['blended_alignment_yprr'] = pd.to_numeric(pool['yprr'], errors='coerce') * pool['alignment_mult']
+        blended_pct = calculate_percentile(pool, 'blended_alignment_yprr').get(p_idx)
+        if pd.notna(blended_pct):
+            result['blended_alignment_yprr_pct'] = round(float(blended_pct), 1)
+
+    return result
 
 
 def team_nickname(full_team_name):

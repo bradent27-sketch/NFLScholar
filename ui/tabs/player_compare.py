@@ -234,7 +234,6 @@ def render():
     player_2 = label_to_name_2.get(selected_label_2) if selected_label_2 else None
 
     if not player_1 or not player_2:
-        st.info("👋 Pick two players above (Player 2 narrows to Player 1's position group) to compare them side by side.")
         return
     if player_1 == player_2:
         st.warning("Pick two different players to compare.")

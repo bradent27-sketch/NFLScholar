@@ -308,8 +308,31 @@ def load_year_data(year):
     # week's snapshot -- e.g. a player's pre-trade team could "win" over
     # their current one depending on row order. Sort newest-week-first so
     # drop_duplicates keeps each player's most recent bio snapshot.
+    #
+    # Sorted BEFORE that by "has a real gsis_id" (True first) - a full_name
+    # collision with a garbage/incomplete roster row must never win over the
+    # real player sharing that name, or drop_duplicates below throws away
+    # the real player's own gsis_id and the later player_id/gsis_id merge
+    # can't match ANY of his real stat rows to a bio row at all. Confirmed
+    # real: roster_weekly_2025.csv carries a second, ID-less "Quinshon
+    # Judkins" row (team GB, position DL, status DEV, week 18 only, no
+    # gsis_id/birth_date/college - reads as a garbage/placeholder entry)
+    # alongside the real CLE RB's rows. Sorting by week alone let that
+    # week-18 phantom row "win" the dedup over the real player's own
+    # (earlier-week, real-gsis_id) rows purely because it was more recent -
+    # his Team/Draft Pick went blank/wrong (Rookie Watch showed Team "None",
+    # Draft Pick sentinel 256 instead of CLE / 36) across every stat row he
+    # has all season, despite his stats themselves loading fine.
+    if 'gsis_id' in rosters.columns:
+        rosters = rosters.assign(_has_gsis=rosters['gsis_id'].notna())
+        sort_cols, sort_asc = ['_has_gsis'], [False]
+    else:
+        sort_cols, sort_asc = [], []
     if 'week' in rosters.columns:
-        rosters = rosters.sort_values('week', ascending=False)
+        sort_cols.append('week')
+        sort_asc.append(False)
+    if sort_cols:
+        rosters = rosters.sort_values(sort_cols, ascending=sort_asc)
 
     bio_cols = ['gsis_id', 'pfr_id', 'espn_id', 'full_name', 'team', 'position', 'depth_chart_position', 'age', 'height', 'weight', 'jersey_number', 'years_exp', 'rookie_year', 'birth_date', 'draft_number', 'draft_club', 'entry_year']
     rosters_clean = rosters[[c for c in bio_cols if c in rosters.columns]].drop_duplicates(subset=['full_name']) if 'full_name' in rosters.columns else rosters
@@ -564,6 +587,14 @@ def load_weekly_stats_history():
     same total already reconstructed from summing their weekly rows.
     Verified on this dataset: a real 1,708-yard / 127-catch season was being
     shown as 3,416 yards / 254 catches (exactly 2x) before this fix.
+
+    Regular season only - same REG-only filter load_year_data applies (see
+    its docstring), needed again here because this is a SEPARATE loader
+    reading the same raw _week_ files from scratch. Without it, Career
+    Totals silently blended playoff games into every season row for any
+    team that made a run - confirmed real: Patrick Mahomes' 2023 row showed
+    "20" games played (16 REG + 4 POST, Super Bowl LVIII run) instead of 16,
+    with Pass Yds/TDs/Fantasy Pts inflated by the same 4 playoff games.
     """
     hist_frames = []
     for f in os.listdir():
@@ -574,6 +605,8 @@ def load_weekly_stats_history():
             try:
                 tmp = pd.read_csv(f, low_memory=False)
                 if 'week' in tmp.columns:
+                    if 'season_type' in tmp.columns:
+                        tmp = tmp[tmp['season_type'] == 'REG']
                     hist_frames.append(tmp)
             except: pass
     if hist_frames:
@@ -753,10 +786,29 @@ def load_all_pff_data(year):
         d['pass']['btt_pct'] = calculate_percentile(d['pass'], 'btt_rate')
         d['pass']['twp_pct'] = calculate_percentile(d['pass'], 'twp_rate', ascending=False)
         d['pass']['adot_pct'] = calculate_percentile(d['pass'], 'avg_depth_of_target')
-        # FIXED: Finds exact mapping for Adjusted Completion Percent
-        adj_col = 'adjusted_completion_percent' if 'adjusted_completion_percent' in d['pass'].columns else ('adj_completion_percent' if 'adj_completion_percent' in d['pass'].columns else None)
-        if adj_col: d['pass']['adj_comp_pct'] = calculate_percentile(d['pass'], adj_col)
-        else: d['pass']['adj_comp_pct'] = 0.0
+        # "Adjusted Completion %" - PFF's own name for this stat in
+        # passing_summary.csv is 'accuracy_percent' (completions+drops over
+        # attempts excluding throwaways/spikes/battedballs/hit-as-threw,
+        # PFF's standard definition of adjusted/accuracy completion rate) -
+        # neither 'adjusted_completion_percent' nor 'adj_completion_percent'
+        # (the two names this previously checked for) actually exist in the
+        # real export, confirmed by direct inspection of the file's columns.
+        # calculate_percentile silently returns all-zeros for a missing
+        # column name (see HANDOFF gotcha #17 - the exact same failure mode
+        # hit here independently), so this always fell through to the
+        # explicit 0.0 fallback below - every QB showed "Adj Comp % 0.0%"
+        # league-wide, reading as a real (if oddly bad) value rather than a
+        # broken lookup. 'adj_comp_pct_raw' carries the real stat value for
+        # display (ui.player_snapshot reads this) - 'adj_comp_pct' stays a
+        # PERCENTILE (0-100 rank), same convention as every sibling column
+        # here (btt_pct, twp_pct, adot_pct, p2s_pct), not the raw number.
+        adj_col = next((c for c in ('accuracy_percent', 'adjusted_completion_percent', 'adj_completion_percent') if c in d['pass'].columns), None)
+        if adj_col:
+            d['pass']['adj_comp_pct_raw'] = d['pass'][adj_col]
+            d['pass']['adj_comp_pct'] = calculate_percentile(d['pass'], adj_col)
+        else:
+            d['pass']['adj_comp_pct_raw'] = None
+            d['pass']['adj_comp_pct'] = 0.0
         d['pass']['p2s_pct'] = calculate_percentile(d['pass'], 'pressure_to_sack_rate', ascending=False)
 
     if not d['rec'].empty:

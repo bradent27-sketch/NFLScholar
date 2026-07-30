@@ -1,7 +1,7 @@
 """Risers / Waiver Wire tab: biggest week-over-week percentile jumps."""
 import streamlit as st
 
-from config import TAB_PLAYER_SEARCH, AVAILABLE_SEASONS
+from config import TAB_PLAYER_SEARCH, AVAILABLE_SEASONS_WITH_UPCOMING
 from data.transforms import load_and_merge_data, build_risers_report, build_recent_trend
 from data.utils import calculate_percentile_qualified
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
@@ -10,7 +10,20 @@ from ui.components import switch_tab, skeleton_loader
 
 def render():
     st.markdown("<div class='custom-section-header'>RISERS &amp; WAIVER WIRE — BIGGEST WEEK-OVER-WEEK JUMPS</div>", unsafe_allow_html=True)
-    t4_year = st.selectbox("Season", AVAILABLE_SEASONS, index=0, key="year_tab4")
+    # WITH_UPCOMING (not the plain AVAILABLE_SEASONS list), same as Player
+    # Search/Depth Charts/Defensive Yield/Rookie Watch/Player Compare -
+    # Risers is exactly the tab a user needs mid-SEASON (real week-over-week
+    # waiver-wire movement), so once the upcoming season's games start
+    # rolling in, its own year needs to be selectable here too. It used the
+    # season-only list before, which meant the tab would have had no way to
+    # ever show the new season's risers at all until someone manually edited
+    # config.py - confirmed the empty-data path already degrades cleanly
+    # ("Not enough weekly data yet this season...", below) for a season
+    # with fewer than 2 weeks played, so adding the upcoming year here is
+    # safe pre-kickoff too. index=1 keeps today's default on the last
+    # COMPLETED season (index 0 would default new sessions to a blank
+    # upcoming-season table before any games are played).
+    t4_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_tab4")
     with skeleton_loader("table", n_rows=10, n_cols=7):
         df_t4_stats, t4_t_col, t4_n_col, _ = load_and_merge_data(t4_year, "Full PPR")
     risers = build_risers_report(df_t4_stats, t4_n_col, t4_t_col, t4_year)

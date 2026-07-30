@@ -35,6 +35,78 @@ against that same opponent). The fantasy-points-by-week line chart (Player Searc
 shorter (viewBox height 220->140) and curves through its weekly points via a Catmull-Rom-
 to-Bezier spline (`ui.components._smooth_svg_path`) instead of straight polyline segments.
 
+**Season-readiness audit pass (July 30 2026, pre-kickoff):** full walkthrough of all 9
+tabs (AppTest sweep across every tab × year × all 32 teams, zero exceptions, plus live
+browser click-through) specifically checking 2026-27 readiness. Found and fixed real bugs,
+none previously caught:
+- **Risers/Waiver Wire and Weekly Rankings' Season dropdowns used the plain
+  `AVAILABLE_SEASONS` list (excludes 2026), not `AVAILABLE_SEASONS_WITH_UPCOMING`** - the
+  two tabs a user most needs mid-SEASON had no way to ever select the 2026 season at all,
+  which would have made both effectively dead for the entire 26-27 season until someone
+  manually edited `config.py`. Both already degrade cleanly on empty data ("not enough
+  weekly data yet") so switching them to the WITH_UPCOMING list was a safe, one-line fix
+  each (`ui/tabs/risers.py`, `ui/tabs/rankings.py`). VORP Draft Sheet's baseline-season
+  selector deliberately stays on the season-only list - a draft baseline should be a
+  completed season's pace, not the unplayed one.
+- **`data.loaders.load_weekly_stats_history` (feeds Player Search's Career Totals table)
+  never filtered to `season_type == 'REG'`**, unlike `load_year_data`'s own well-documented
+  filter for the exact same class of bug (section 2) - playoff games were silently blended
+  into every season row for any team that made a run. Confirmed real: Mahomes' 2023 row
+  showed "20" games played (16 REG + 4 POST, Super Bowl LVIII) instead of 16, with
+  Pass Yds/TDs/Fantasy Pts inflated to match. Fixed by applying the same filter a second
+  time in this separate loader.
+- **`ui.components._local_stats_max_week` (sidebar freshness caption) had the identical
+  gap** - it read the raw `week` column unfiltered, so once a season's playoffs are in the
+  same file it reported POST week numbers (19-22) as if they were real season weeks. The
+  completed 2025 season showed "current through week 22" (not a real NFL week) instead of
+  18. Same REG-only filter added here too.
+- **A second, independent instance of gotcha #17's exact failure mode**: `adj_comp_pct`
+  ("Adj Comp %") was computed from a PFF column name (`adjusted_completion_percent` /
+  `adj_completion_percent`) that doesn't exist in the real export - the real column is
+  `accuracy_percent`. `calculate_percentile` silently returns all-zeros for a missing
+  column, so every QB league-wide showed "Adj Comp % 0.0%" - a plausible-looking wrong
+  number, not an error. Separately (and independent of the column-name bug), the display
+  code was reading the PERCENTILE column (`adj_comp_pct`) as if it were the raw stat value
+  - every sibling stat (BTT%/TWP%/ADOT/P2S%) correctly displays its own raw source column
+  and uses a separate `_pct` column only for bar color, but Adj Comp % had no raw-value
+  column at all. Fixed both: `adj_comp_pct_raw` now carries the real `accuracy_percent`
+  value for display; `adj_comp_pct` stays the percentile, color-only, same as its siblings.
+- **`fetch_intelligent_depth_chart` always rendered the "LB (unclassified)" / "S / DB
+  (unclassified)" catch-all rows even when empty** - most teams have zero players tagged
+  with only the bare generic LB/S/DB code (everyone else gets sorted into their precise
+  ILB/OLB/CB/SS/FS row first), so most Depth Charts showed a fully blank row wasting space.
+  Now dropped when every slot in the row is empty (never drops "BREAK", the offense/defense
+  divider `ui.tabs.depth_charts.render()` splits on).
+- **Roster full_name dedup could pick a garbage/ID-less row over the real player sharing
+  that name** - see new gotcha #18 below.
+- **Skill Radar (Player Search) blew up to ~3x its intended size whenever fewer than 3 of
+  the normal 3 stat-group panels had enough real data to render** - confirmed live on a
+  2026 pre-kickoff QB (Efficiency/Situational both need per-game weekly/pbp rates that
+  don't exist yet; only PFF-fallback-backed Ball Security survives), a real, common
+  situation for the first weeks of any new season, not an edge case. `st.pyplot(...,
+  width="stretch")` filled the SAME full-bleed container width regardless of the figure's
+  actual panel count. Fixed in `ui.tabs.player_search.render()` by sizing the render
+  column to the figure's own panel count (inferred from its width in inches) instead of
+  always stretching full width.
+- **VORP Draft Sheet's Efficiency-vs-Volume quadrant chart's player-name callouts used one
+  fixed label offset**, which overlapped illegibly whenever 2+ of a panel's (up to 6)
+  labeled points sat close together in data space - confirmed real on 2025 QBs (Goff/
+  Prescott/Mahomes cluster tightly). Fixed in `ui.player_snapshot._draw_quadrant_panel` by
+  fanning labels into their own horizontal lane (cumulative dx by x-rank) plus alternating
+  above/below - a same-direction-only alternation wasn't enough on its own (two labels one
+  x-rank apart, with an unrelated third point's label from a very different y-value sitting
+  between them in sort order, still landed on the same side).
+- **Player Compare's "Shared Stat Comparison" column was labeled bare "Edge"** but is a
+  percentile-POINT gap between the two players (not a raw-value delta) - deliberate, one
+  scale works across every stat regardless of native units, but reads as obviously wrong
+  next to two close raw values (97.4% vs 93.0% snap share showing a "42.5" edge). Relabeled
+  to "Edge (Pctl)" - no logic change, `ui/tabs/player_compare.py`.
+- Defensive Yield's "Remaining games only" SOS checkbox already correctly fell back to the
+  full season when a season is complete (`build_strength_of_schedule`'s existing fallback -
+  not new), but gave no on-screen indication that happened, so the checkbox stayed checked
+  and reading "remaining" while showing the whole season - added a one-line caption for the
+  fallback case, matching every other fallback caption's convention in this app.
+
 This doc exists so a fresh session (human or AI) can orient without re-deriving the
 project's hard-won lessons. **The gotchas in section 5 are all real bugs that happened
 here — several more than once.** Read that section before changing anything.
@@ -548,6 +620,32 @@ the same filenames. Weekly rankings are uploaded per-session via the Weekly Rank
     trust `python -m py_compile` OR a percentile of exactly/near 0 as proof a PFF-sourced
     stat is wired correctly - verify the raw column name actually exists in
     `pff[...].columns` for the real loaded file, not just that the code runs.**
+
+18. **A `full_name` collision in `roster_weekly_*.csv` between the real player and a
+    garbage/incomplete row can make `load_year_data`'s roster dedup pick the WRONG one -
+    and it doesn't fail loudly, it just quietly loses the real player's bio data.**
+    `rosters_clean = rosters.drop_duplicates(subset=['full_name'])` (after sorting
+    newest-week-first) assumed the only reason two rows share a `full_name` is a real
+    player appearing on multiple weeks. Confirmed real: `roster_weekly_2025.csv` also
+    carries a second "Quinshon Judkins" row - team GB, position DL, status DEV, week 18
+    only, no `gsis_id`/`birth_date`/`college` at all (reads as a garbage/placeholder entry,
+    not a real second person) - alongside the actual CLE RB's rows. Sorting by week alone
+    let that week-18 phantom row "win" the dedup purely for being more recent, which threw
+    away the real player's own `gsis_id` from `rosters_clean` entirely - the later
+    `player_id`/`gsis_id` merge then couldn't match ANY of his real stat rows to a bio row,
+    so his Team/Draft Pick/etc. went blank or wrong (Rookie Watch showed Team "None", Draft
+    Pick sentinel 256) on every single row he has all season, while his stats themselves
+    kept loading fine (they don't depend on this merge) - exactly the kind of bug that looks
+    like a data gap rather than a merge defect. Fixed by sorting on "has a real `gsis_id`"
+    (True first) BEFORE the week sort, so a real player can never lose the dedup to an
+    ID-less row sharing his name. **This is a different failure mode from gotcha #3's
+    same-person-different-spelling problem** - this is two DIFFERENT roster rows, one of
+    them garbage, sharing an EXACT name string. It does not fix - and isn't meant to fix -
+    two REAL different players who happen to share a full name (confirmed still real and
+    present: e.g. two real "Byron Young"s in 2025); that case still needs the parked
+    ID-based crosswalk join (section 7) to resolve correctly, since both sides of a
+    real/real collision have a legitimate `gsis_id` and this ordering doesn't disambiguate
+    between them.
 
 ## 6. Verification workflow (what "done" means here)
 

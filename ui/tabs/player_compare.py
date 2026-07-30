@@ -179,12 +179,18 @@ def _render_comparison_table(side_1, side_2):
             edge = round(e1['pct'] - e2['pct'], 1)
         else:
             edge = np.nan
-        rows.append({'Stat': label, side_1['name']: val1, side_2['name']: val2, 'Edge': edge})
+        rows.append({'Stat': label, side_1['name']: val1, side_2['name']: val2, 'Edge (Pctl)': edge})
 
     table_df = pd.DataFrame(rows).set_index('Stat')
     st.markdown("<div class='custom-section-header'>SHARED STAT COMPARISON</div>", unsafe_allow_html=True)
+    # Column labeled "Edge (Pctl)", not bare "Edge" - it's a percentile-POINT
+    # gap (see the comment above), which can look wrong at a glance next to
+    # two raw values that are actually close (e.g. 97.4% vs 93.0% snap share
+    # showing a "42.5" edge, since that's the gap between their SNAP %
+    # PERCENTILE RANKS among position peers, not the 4.4-point raw
+    # difference a bare "Edge" header implies).
     st.dataframe(
-        style_plain_dataframe(table_df, diverging_cols={'Edge': 100}),
+        style_plain_dataframe(table_df, diverging_cols={'Edge (Pctl)': 100}),
         width="stretch", height=df_auto_height(len(rows)),
     )
 

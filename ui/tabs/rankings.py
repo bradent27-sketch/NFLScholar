@@ -14,7 +14,7 @@ compared against.
 """
 import streamlit as st
 
-from config import AVAILABLE_SEASONS
+from config import AVAILABLE_SEASONS_WITH_UPCOMING
 from data.transforms import load_and_merge_data, build_recent_form_rank
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
@@ -26,7 +26,16 @@ def render():
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        wk_year = st.selectbox("Season", AVAILABLE_SEASONS, index=0, key="weekly_rank_year")
+        # WITH_UPCOMING - this tab exists specifically for in-season,
+        # week-to-week use (upload this week's FantasyPros export, compare
+        # against recent-form). The season-only list excluded the upcoming
+        # season entirely, which would have made the whole tab unusable for
+        # all of the upcoming season until someone manually edited config.py
+        # - the exact bug this pass is looking for. The empty-baseline path
+        # a few lines below already shows a clean "not enough weekly data
+        # yet" message pre-kickoff, so this is safe before the season starts
+        # too. index=1 keeps today's default on the last COMPLETED season.
+        wk_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="weekly_rank_year")
     with c2:
         wk_scoring = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="weekly_rank_scoring")
     with c3:

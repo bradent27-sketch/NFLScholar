@@ -615,7 +615,30 @@ def render():
             radar_grid_fig = render_percentile_radar_grid(snapshot, selected_player, pos)
             if radar_grid_fig is not None:
                 st.markdown("<div class='custom-section-header'>SKILL RADAR</div>", unsafe_allow_html=True)
-                st.pyplot(radar_grid_fig, width="stretch")
+                # render_percentile_radar_grid sizes its figure at a fixed
+                # 3.9in PER PANEL (3 panels normally - Efficiency/Ball
+                # Security/Situational), but drops any group with fewer than
+                # 3 real-percentile stats in it (e.g. a QB pre-kickoff, where
+                # Efficiency/Situational need per-game weekly/pbp-derived
+                # rates that don't exist yet and only the PFF-fallback-backed
+                # Ball Security group survives). A bare width="stretch" fills
+                # the SAME full-bleed container width regardless of how many
+                # panels the figure actually has, so a genuine 1-panel figure
+                # (physically 3.9in wide) got upscaled to the same on-screen
+                # width as a normal 3-panel (11.7in) one - confirmed live on
+                # a 2026 pre-season QB: one panel blown up to roughly 3x its
+                # intended size, title text included. Sizing the column to
+                # match the figure's own panel count keeps a 1- or 2-panel
+                # radar at the same per-panel scale as the normal 3-panel case
+                # instead of stretching to fill space the figure was never
+                # drawn to use.
+                n_panels = max(1, round(radar_grid_fig.get_size_inches()[0] / 3.9))
+                if n_panels < 3:
+                    radar_col, _spacer = st.columns([n_panels, 3 - n_panels])
+                    with radar_col:
+                        st.pyplot(radar_grid_fig, width="stretch")
+                else:
+                    st.pyplot(radar_grid_fig, width="stretch")
 
         # AVAILABLE_SEASONS is [2025, 2024, ..., 2019] - excludes 2026
         # (never a "historical" season) automatically, and matches

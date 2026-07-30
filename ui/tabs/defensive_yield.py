@@ -172,6 +172,18 @@ def _render_strength_of_schedule(target_year, scoring_rule, def_matrix):
         st.info("No games found for the selected filter.")
         return
 
+    # build_strength_of_schedule silently falls back to the FULL season's
+    # games when "remaining only" is requested but every game already has a
+    # score (a completed season, e.g. browsing 2025 after it's over) - a
+    # 0-game remaining table would otherwise just be empty and useless. That
+    # fallback is the right behavior, but it needs its own caption (same
+    # transparency pattern as every other fallback in this app - PFF grade
+    # year, snap-count year) or the checkbox stays checked and reading
+    # "Remaining games only" while the table quietly shows the whole season
+    # instead, which looks like a bug rather than a deliberate substitution.
+    if remaining_only and not schedule_df['home_score'].isna().any():
+        st.caption(f"No games remain in the {target_year} season - showing the full-season schedule instead.")
+
     st.caption(f"Points-allowed baseline: {source_note} season. Higher = softer remaining matchups (those opponents allow more fantasy points at that position).")
     # "Games" (how many remaining/total games fed each team's average) is
     # useful for build_strength_of_schedule's own math but redundant on

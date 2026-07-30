@@ -142,7 +142,13 @@ def build_player_snapshot(selected_player, pos, p_data, p_bio, pff, p_pct_row, g
                 snapshot.append(_entry('Run Grade', get_val(row, 'grades_run', "{:.1f}"), row.get('grades_run_pct', 0)))
                 snapshot.append(_entry('BTT %', get_val(row, 'btt_rate', "{:.1f}%"), row.get('btt_pct', 0)))
                 snapshot.append(_entry('TWP %', get_val(row, 'twp_rate', "{:.1f}%"), row.get('twp_pct', 0)))
-                adj_comp_val = get_val(row, 'adj_comp_pct', "{:.1f}%") if 'adj_comp_pct' in df_pff_pass.columns else "--"
+                # Raw value from 'adj_comp_pct_raw' (PFF's accuracy_percent),
+                # NOT 'adj_comp_pct' - that column is a PERCENTILE (0-100
+                # rank), same convention as btt_pct/twp_pct/adot_pct/p2s_pct
+                # just above/below it, used only for this entry's color/bar
+                # length. Displaying the percentile itself as the value used
+                # to show a plausible-looking-but-wrong number here.
+                adj_comp_val = get_val(row, 'adj_comp_pct_raw', "{:.1f}%") if 'adj_comp_pct_raw' in df_pff_pass.columns else "--"
                 snapshot.append(_entry('Adj Comp %', adj_comp_val, row.get('adj_comp_pct', 0)))
                 snapshot.append(_entry('ADOT', get_val(row, 'avg_depth_of_target', "{:.1f}"), row.get('adot_pct', 0)))
                 snapshot.append(_entry('P2S %', get_val(row, 'pressure_to_sack_rate', "{:.1f}%"), row.get('p2s_pct', 0)))
@@ -939,10 +945,25 @@ def _draw_quadrant_panel(ax, pos_df, pos):
     # single most useful quadrant to name at a glance, and naming all four
     # at league-wide sample sizes would be an unreadable label soup.
     top_right = pos_df[(x >= x_med) & (y >= y_med)]
-    for _, r in top_right.nlargest(6, 'Efficiency').iterrows():
+    labeled = top_right.nlargest(6, 'Efficiency').sort_values('Volume')
+    # A single fixed (4, 3)-point offset for every label overlapped
+    # illegibly whenever two+ of the (up to 6) callouts sit close together
+    # in data space - confirmed real on 2025 QBs: Jared Goff/Dak Prescott/
+    # Patrick Mahomes cluster within a 1.9-unit Volume / 0.009-unit
+    # Efficiency band, all three names rendering stacked on the same spot.
+    # A short 2-4 offset cycle wasn't enough on its own - alternating only
+    # above/below still let two same-direction labels (Goff/Prescott, one
+    # x-rank apart with a THIRD point's label in between at a very
+    # different y, so it never visually collided with either) sit close
+    # enough to still overlap. Growing dx cumulatively by rank-along-x, on
+    # top of the above/below alternation, fans every label out into its own
+    # horizontal lane regardless of which other labels end up sharing its
+    # vertical side - the one guarantee a fixed small offset set can't make.
+    for i, (_, r) in enumerate(labeled.iterrows()):
+        dx, dy = 4 + i * 12, (3 if i % 2 == 0 else -9)
         ax.annotate(
             r['Player'], (r['Volume'], r['Efficiency']),
-            xytext=(4, 3), textcoords='offset points', color='#e5e8ff', size=6.5, zorder=4,
+            xytext=(dx, dy), textcoords='offset points', color='#e5e8ff', size=6.5, zorder=4,
         )
 
     for lx, ly, text, ha, va in _QUADRANT_LABELS:

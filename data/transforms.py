@@ -1800,4 +1800,15 @@ def fetch_intelligent_depth_chart(team, _stats_df, _df_pff_rec, year):
     add_row("P", get_players(['P'], 6))
     add_row("LS", get_players(['LS'], 6))
 
+    # Drop rows with literally no player in any slot - the "(unclassified)"
+    # catch-all rows (LB/S/DB players tagged only with the bare generic code,
+    # not a specific ILB/OLB/CB/SS/FS) are empty for most teams, since most
+    # rostered players DO carry the precise tag their own dedicated row pulls
+    # from first. Rendering them anyway showed a fully blank row - no
+    # players, no info - taking up a full row of vertical space in the table
+    # for no reason. "BREAK" is kept regardless (it's the offense/defense
+    # divider render() splits on, not a real position row).
+    slot_cols = ['Starter', '2nd String', '3rd String', '4th String', '5th String', '6th String']
+    dc_rows = [r for r in dc_rows if r['Position'] == 'BREAK' or any(r[c] for c in slot_cols)]
+
     return pd.DataFrame(dc_rows)

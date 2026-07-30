@@ -849,18 +849,31 @@ def _current_nfl_season():
 @st.cache_data
 def _local_stats_max_week(season, file_mtime):
     """
-    Highest week number present in the local weekly stats file for a season.
-    `file_mtime` is part of the cache key ON PURPOSE - it's how this cache
-    busts itself the moment the user drops a refreshed CSV in (same path,
-    new mtime), without re-reading a ~19k-row file on every single rerun
-    the rest of the time. Returns None if the file doesn't exist.
+    Highest REGULAR-SEASON week number present in the local weekly stats
+    file for a season. `file_mtime` is part of the cache key ON PURPOSE -
+    it's how this cache busts itself the moment the user drops a refreshed
+    CSV in (same path, new mtime), without re-reading a ~19k-row file on
+    every single rerun the rest of the time. Returns None if the file
+    doesn't exist.
+
+    Filters to season_type == 'REG' before taking the max, same rule
+    load_year_data applies (see its docstring) - these files number POST
+    (playoff) weeks 19-22 instead of continuing past 18, and this gets
+    compared directly against load_schedule's REG-only "latest completed
+    week". Without the filter, the freshness caption read local POST rows
+    as regular-season weeks once a season's playoffs were included in the
+    same file - confirmed real: the completed 2025 season (Super Bowl
+    played, 4 POST rows numbered 19-22) showed "current through week 22"
+    in the sidebar, which isn't a real NFL week number and reads as broken.
     """
     path = f"stats_player_week_{season}.csv"
     if not os.path.exists(path):
         return None
     try:
-        weeks = pd.read_csv(path, usecols=['week'])['week']
-        return int(pd.to_numeric(weeks, errors='coerce').max())
+        df = pd.read_csv(path, usecols=lambda c: c in ('week', 'season_type'))
+        if 'season_type' in df.columns:
+            df = df[df['season_type'] == 'REG']
+        return int(pd.to_numeric(df['week'], errors='coerce').max())
     except Exception:
         return None
 

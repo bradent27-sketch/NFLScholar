@@ -1566,7 +1566,8 @@ def _need_multiplier(pos, needs, settings):
     return 0.92
 
 
-def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_col='VONA'):
+def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_col='VONA',
+                    allow_late_round=False):
     """
     Rank the available players by what they're worth to YOUR roster right
     now, and say why.
@@ -1598,9 +1599,13 @@ def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_c
     # every other starting slot is filled. Suggesting a defense as your third
     # best option is never right: it will still be there in twelve rounds,
     # and the receiver it's competing with will not.
+    # allow_late_round is set when the caller has explicitly asked for a
+    # kicker or defense (the K/DST position filter). Suppressing them there
+    # would leave the panel permanently empty for those buttons, which is a
+    # worse answer than the one the suppression exists to prevent.
     starters_left = sum(n for pos, n in needs.items()
                         if pos not in LATE_ROUND_POSITIONS and n > 0)
-    if starters_left > 0:
+    if starters_left > 0 and not allow_late_round:
         avail = avail[~avail['Pos'].astype(str).str.upper().isin(LATE_ROUND_POSITIONS)]
         if avail.empty:
             return pd.DataFrame()

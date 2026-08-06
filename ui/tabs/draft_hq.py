@@ -25,7 +25,7 @@ import streamlit as st
 from config import AVAILABLE_SEASONS_WITH_UPCOMING
 from data.draft_sources import (
     ECR_BOARDS, load_ecr_raw, build_ecr_board, fetch_adp, fetch_injury_report,
-    fetch_player_news, load_dynasty_values,
+    fetch_player_news, load_dynasty_values, ecr_age_days, ADP_SOURCE_NOTES,
 )
 from data.draft_board import (
     DEFAULT_SCORING, DEFAULT_ROSTER, build_draft_board, recommend_picks,
@@ -63,8 +63,8 @@ SIM_KEY = 'dhq_sim_state'
 # the number keeps it in the only context where it means anything.
 BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Pos Rk', 'Tier', 'Proj Pts', 'VORP', 'VONA',
-    'ADP', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor', 'Risk',
-    'SOS', 'Bye', 'FFA Value', 'ECR',
+    'FFA Rank', 'ADP', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
+    'Risk', 'SOS', 'Bye', 'ECR',
 ]
 
 
@@ -201,6 +201,14 @@ def _league_settings_ui():
             st.markdown("**Board & market**")
             board_format = st.selectbox("Ranking board", list(ECR_BOARDS.keys()), key="dhq_board_fmt")
             adp_year = st.selectbox("ADP season", AVAILABLE_SEASONS_WITH_UPCOMING, index=0, key="dhq_adp_year")
+            adp_source = st.selectbox(
+                "ADP source", ["Auto", "FFA import", "Uploaded CSV", "Fantasy Football Calculator"],
+                key="dhq_adp_source",
+                help="Auto prefers an uploaded CSV, then an FFA import, then Fantasy Football "
+                     "Calculator. FFC's ADP comes from mock drafts on its own free site, which "
+                     "skews casual — tight ends and quarterbacks slide later there than in real "
+                     "drafts.",
+            )
             sos_window = st.selectbox("Schedule window", list(WEEK_PRESETS.keys()), key="dhq_sos_window",
                 help="Strength of schedule is graded per position group — backs against run "
                      "defenses, passers and pass catchers against pass defenses.")
@@ -274,7 +282,7 @@ def _league_settings_ui():
         'num_teams': int(num_teams), 'roster': roster, 'scoring': scoring,
         'draft_type': draft_type,
         'my_slot': int(my_slot), 'board_format': board_format,
-        'adp_year': int(adp_year), 'adp_upload': adp_upload,
+        'adp_year': int(adp_year), 'adp_upload': adp_upload, 'adp_source': adp_source,
         'uncertainty': float(uncertainty), 'tiers': int(tiers),
         'baseline_season': int(baseline_season), 'market_weight': float(market_weight),
         'sos_window': sos_window, 'ffa_upload': ffa_upload, 'ffa_weight': float(ffa_weight),
@@ -303,6 +311,7 @@ def _board_cache_key(settings, next_pick, adp_meta):
         next_pick, settings['uncertainty'], settings['tiers'],
         settings['baseline_season'], settings['market_weight'],
         settings['sos_window'], settings['ffa_weight'], settings.get('ffa_rows', 0),
+        settings.get('adp_source', 'Auto'),
         # str() rather than float() - scoring now carries 'bonus_mode',
         # which is a string, and float()-ing every value would raise the
         # moment the settings panel is opened.
@@ -350,6 +359,14 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _settings, cache_key):
     board = attach_sos_to_board(board, sos)
     board = adp_quartiles(board)
 
+    # FFA's ranking sits beside VORP and VONA as just another column, rather
+    # than in a tab of its own. Two independent rankings are most useful read
+    # side by side on the same row - the disagreement is the informative
+    # part, and it's invisible if you have to switch screens to see it.
+    if 'FFA Value' in board.columns and board['FFA Value'].notna().any():
+        board['FFA Rank'] = pd.to_numeric(board['FFA Value'], errors='coerce').rank(
+            ascending=False, method='first').astype('Int64')
+
     meta['projection'] = proj_meta
     meta['ffa'] = ffa_meta
     meta['sos_window'] = (week_start, week_end)
@@ -368,14 +385,9 @@ def _load_board(settings, next_pick):
     is_superflex = int(settings['roster'].get('SUPERFLEX', 0)) > 0
     scoring_label = ('Full PPR' if settings['scoring']['rec'] >= 0.75
                      else 'Half-PPR' if settings['scoring']['rec'] >= 0.25 else 'Standard')
-    adp_df, adp_meta = fetch_adp(scoring_label, settings['num_teams'], is_superflex,
-                                 settings['adp_year'], uploaded=settings.get('adp_upload'))
-    adp_meta = dict(adp_meta or {})
-    adp_meta['rows'] = int(len(adp_df))
-    status['adp'] = adp_meta
-
-    # FFA import: an upload persists to disk, otherwise whatever was saved
-    # last time is picked up automatically so it survives a restart.
+    # FFA import resolves FIRST, because it is now a candidate ADP source -
+    # their composite is drawn across real drafts on the major platforms,
+    # which is a far better market read than a free mock site.
     ffa_df, ffa_err = pd.DataFrame(), None
     upload = settings.get('ffa_upload')
     if upload is not None:
@@ -384,6 +396,14 @@ def _load_board(settings, next_pick):
         ffa_df, ffa_err = load_ffa_import()
     status['ffa'] = {'rows': int(len(ffa_df)), 'error': ffa_err}
     settings = {**settings, 'ffa_rows': int(len(ffa_df))}
+
+    adp_df, adp_meta = fetch_adp(scoring_label, settings['num_teams'], is_superflex,
+                                 settings['adp_year'], uploaded=settings.get('adp_upload'),
+                                 ffa_df=ffa_df, source=settings.get('adp_source', 'Auto'))
+    adp_meta = dict(adp_meta or {})
+    adp_meta['rows'] = int(len(adp_df))
+    status['adp'] = adp_meta
+    status['ecr_age'] = ecr_age_days(ecr_raw)
 
     board, meta = _cached_board(ecr_board, adp_df, ffa_df, settings,
                                 _board_cache_key(settings, next_pick, adp_meta))
@@ -415,6 +435,11 @@ def _render_source_status(status, meta):
             extra = (f" — showing {adp_meta['teams']}-team ADP for your "
                      f"{adp_meta['requested_teams']}-team league (nearest published size)")
         bits.append(f"✅ ADP from {src}{extra}")
+
+    age = status.get('ecr_age')
+    if age is not None and age >= 3:
+        bits.append(f"⚠️ Consensus rankings are {age} days old (source refreshes nightly; "
+                    "it hasn't). Injuries and depth-chart news since then aren't in them.")
     projection = meta.get('projection') or {}
     if projection.get('volume_projections'):
         n = projection.get('players_with_history', 0)
@@ -586,34 +611,6 @@ def _add_names_as_picks(names, board, mine):
             already.add(name)
 
 
-def _render_recommendations(board, settings, ctx):
-    """The 'who should I take' panel - the reason to open this tab at all."""
-    available = board[~board['Player'].isin(_drafted_names())]
-    recs = recommend_picks(available, _my_roster(), settings, next_pick=ctx['next_pick'], top_n=6)
-    if recs.empty:
-        st.info("No recommendations available — the board didn't load any valued players.")
-        return
-
-    st.markdown("<div class='custom-section-header'>BEST PICKS FOR YOU RIGHT NOW</div>", unsafe_allow_html=True)
-    st.caption(
-        f"Ranked by fit with your roster, not raw value. Assumes your next pick is #{ctx['next_pick']} "
-        f"(slot {settings['my_slot']} of {settings['num_teams']}, {settings['draft_type'].lower()})."
-        if ctx['next_pick'] else "Ranked by value — your picks are all used up."
-    )
-    show = recs[['Player', 'Pos', 'Team', 'Tier', 'Proj Pts', 'VORP', 'VONA', 'ADP',
-                 'Avail Next %', 'Fit Score', 'Why']]
-    st.dataframe(
-        show, width="stretch", hide_index=True, height=df_auto_height(len(show)),
-        column_config={
-            'Why': st.column_config.TextColumn("Why", width="large"),
-            'Avail Next %': st.column_config.NumberColumn("Avail Next %", format="%d%%",
-                help="Chance this player is still on the board at your next pick"),
-            'VONA': st.column_config.NumberColumn("VONA",
-                help="Value Over Next Available: points you lose by passing on him now"),
-        },
-    )
-
-
 def _render_selectable_board(available, key_prefix, next_pick=None, columns=None, row_limit=60):
     """
     The sortable, filterable board grid, returning whichever player is
@@ -628,10 +625,11 @@ def _render_selectable_board(available, key_prefix, next_pick=None, columns=None
     live, on the board you'll be doing it on.
     """
     available = available.copy()
-    c1, c2, c3 = st.columns([2, 2, 1])
-    with c1:
-        positions = st.multiselect("Positions", DRAFTABLE_POSITIONS, default=[],
-                                   key=f"{key_prefix}_pos")
+    # No position control here - the button row above owns that now, and two
+    # filters for one thing is how you end up with a board that disagrees
+    # with itself.
+    c2, c3 = st.columns([3, 1])
+    positions = []
     with c2:
         sort_by = st.selectbox("Sort by", ['Board Rank', 'VORP', 'VONA', 'Proj Pts',
                                            'Value vs ADP', 'ADP', 'ECR', 'Ceiling'],
@@ -697,29 +695,6 @@ def _render_selectable_board(available, key_prefix, next_pick=None, columns=None
     return display.index[rows[0]] if rows and rows[0] < len(display) else None
 
 
-def _render_board_table(board, settings, ctx, key_prefix, columns=None):
-    """The live draft board: drafted players removed, draft actions attached."""
-    available = board[~board['Player'].isin(_drafted_names())]
-    selected = _render_selectable_board(available, key_prefix, next_pick=ctx['next_pick'],
-                                        columns=columns)
-
-    if selected and selected in set(board['Player']):
-        row = board[board['Player'] == selected].iloc[0]
-        st.markdown(f"**Selected:** {selected} ({row['Pos']} — {row.get('Team')})")
-        b1, b2, b3 = st.columns([1, 1, 3])
-        with b1:
-            if st.button("➕ Draft to my team", key=f"{key_prefix}_draft_mine", type="primary"):
-                _record_pick(row, mine=True)
-                st.rerun()
-        with b2:
-            if st.button("❌ Taken by someone else", key=f"{key_prefix}_draft_other"):
-                _record_pick(row, mine=False)
-                st.rerun()
-    else:
-        st.caption("Click a row to draft that player to your team or mark him as taken.")
-    _render_player_detail(board, selected)
-
-
 def _render_positional_scarcity(board, settings):
     """
     How many players above replacement are left at each position.
@@ -753,7 +728,7 @@ def _render_positional_scarcity(board, settings):
 
 
 
-def _render_strategy_panel(settings):
+def _render_strategy_panel(settings, roster=None):
     """
     The archetype your picks have actually committed you to.
 
@@ -763,7 +738,7 @@ def _render_strategy_panel(settings):
     below readable, since what counts as a good next pick depends entirely
     on which shape you're already building.
     """
-    mine = _my_roster()
+    mine = _my_roster() if roster is None else roster
     strategy = classify_strategy(mine, settings)
     st.markdown("**Your strategy**")
     if not strategy['primary']:
@@ -1050,315 +1025,514 @@ def _render_draft_board_grid(picks, num_teams, my_slot, draft_type='Snake', high
         "</style>" + "".join(html), unsafe_allow_html=True)
 
 
-def _render_live_draft_board(settings):
-    """Draft board for the live tracker, with pick numbers inferred from order."""
-    picks = _drafted_list()
-    if not picks:
-        st.caption("No picks logged yet. Mark players as they go and the board fills in.")
-        return
-    st.caption(
-        "Pick numbers are inferred from the order you log them, so this reads correctly only "
-        "if the whole room is being tracked — mark other teams' picks with *Taken by someone "
-        "else*, not just your own."
-    )
-    numbered = []
-    for i, pick in enumerate(picks):
+
+# Position filter buttons. FLEX expands to the positions a flex slot can
+# actually take, which is the filter people reach for constantly and that a
+# plain position dropdown can't express at all.
+POSITION_FILTERS = [
+    ('All', None),
+    ('QB', ['QB']),
+    ('RB', ['RB']),
+    ('WR', ['WR']),
+    ('TE', ['TE']),
+    ('FLEX', ['RB', 'WR', 'TE']),
+    ('K', ['K']),
+    ('DST', ['DST']),
+]
+POS_FILTER_KEY = 'dhq_pos_filter'
+
+
+def _render_position_filter():
+    """
+    A row of buttons rather than a dropdown.
+
+    A dropdown costs a click to open, a read to find the option, and a click
+    to choose - three actions to answer "show me receivers", repeated dozens
+    of times per draft. Buttons make it one, and they show the current state
+    without being opened.
+    """
+    current = st.session_state.get(POS_FILTER_KEY, 'All')
+    cols = st.columns(len(POSITION_FILTERS))
+    for col, (label, _) in zip(cols, POSITION_FILTERS):
+        with col:
+            if st.button(label, key=f"posfilter_{label}", width="stretch",
+                         type="primary" if current == label else "secondary"):
+                st.session_state[POS_FILTER_KEY] = label
+                st.rerun()
+    return dict(POSITION_FILTERS).get(current), current
+
+
+def _apply_position_filter(df, positions):
+    if not positions or df.empty:
+        return df
+    return df[df['Pos'].astype(str).str.upper().isin(positions)]
+
+
+def _render_recent_picks_strip(picks, num_teams, current_pick, window=12):
+    """
+    The last dozen picks as colored cards, plus the upcoming slots as empty
+    ones.
+
+    This is the thing a drafter actually keeps glancing at - not a table of
+    everyone taken, just "what just happened and what's about to". Showing
+    the empty upcoming boxes alongside is what makes it readable as a
+    position on the clock rather than a log: you can see how many picks
+    stand between you and your turn without counting.
+    """
+    start = max(1, int(current_pick) - window + 1)
+    by_number = {int(p['pick']): p for p in picks if p.get('pick')}
+
+    from config import get_position_color, get_position_chip_bg
+    cards = []
+    for number in range(start, start + window):
+        pick = by_number.get(number)
+        if pick:
+            pos = str(pick.get('Pos', '')).upper()
+            bg = get_position_chip_bg(pos) or '#1a2447'
+            fg = get_position_color(pos)
+            name = str(pick.get('Player', ''))
+            short = name if len(name) <= 15 else name.split()[-1][:14]
+            cards.append(
+                f"<div class='rp-card' style='background:{bg};border-color:{fg}'>"
+                f"<div class='rp-num'>PICK {number}</div>"
+                f"<div class='rp-name'>{short}</div>"
+                f"<div class='rp-sub' style='color:{fg}'>{pos} · {pick.get('Team NFL') or pick.get('Team') or ''}</div>"
+                f"</div>")
+        else:
+            on_clock = number == int(current_pick)
+            cards.append(
+                f"<div class='rp-card rp-empty{' rp-clock' if on_clock else ''}'>"
+                f"<div class='rp-num'>PICK {number}</div>"
+                f"<div class='rp-name'>{'ON THE CLOCK' if on_clock else '—'}</div>"
+                f"<div class='rp-sub'></div></div>")
+
+    st.markdown(
+        "<style>"
+        ".rp-strip{display:flex;gap:4px;overflow-x:auto;padding:2px 0 6px 0}"
+        ".rp-card{min-width:96px;max-width:96px;border-radius:5px;padding:4px 6px;"
+        "border-left:3px solid rgba(255,255,255,0.15);font-size:11px}"
+        ".rp-empty{background:rgba(255,255,255,0.035);opacity:.55}"
+        ".rp-clock{outline:1px solid rgba(0,255,249,0.7);opacity:1}"
+        ".rp-num{font-size:9px;letter-spacing:.08em;opacity:.6;font-weight:700}"
+        ".rp-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
+        ".rp-sub{font-size:9px;opacity:.9;letter-spacing:.03em;min-height:11px}"
+        "</style>"
+        f"<div class='rp-strip'>{''.join(cards)}</div>", unsafe_allow_html=True)
+
+
+def _render_single_recommendation(board, settings, my_roster, next_pick, positions, label):
+    """
+    ONE recommendation, scoped to whatever the position filter is showing.
+
+    A five-row table of suggestions duplicated most of the board directly
+    beneath it and ate the screen for it. The board is already sorted by
+    value - what it can't tell you is which single player best fits THIS
+    roster right now, and that's a one-line answer. Narrowing by position
+    turns it into "best tight end available" without a second control.
+    """
+    available = board[~board['Player'].isin(_drafted_names())]
+    available = _apply_position_filter(available, positions)
+    if available.empty:
+        st.info("Nothing available at that position.")
+        return None
+
+    recs = recommend_picks(available, my_roster, settings, next_pick=next_pick, top_n=1,
+                           allow_late_round=bool(positions))
+    if recs.empty:
+        recs = available.nlargest(1, 'VORP' if 'VORP' in available.columns else 'Proj Pts')
+        recs = recs.assign(**{'Fit Score': np.nan, 'Why': 'best available'})
+    pick = recs.iloc[0]
+
+    from config import get_position_color, get_position_chip_bg
+    pos = str(pick['Pos']).upper()
+    bg = get_position_chip_bg(pos) or '#1a2447'
+    fg = get_position_color(pos)
+    scope = "overall" if label == 'All' else label
+    bits = []
+    for column, fmt in (('Proj Pts', '{:.0f} pts'), ('VORP', 'VORP {:.0f}'),
+                        ('VONA', 'VONA {:.0f}'), ('ADP', 'ADP {:.0f}')):
+        value = pick.get(column)
+        if pd.notna(value):
+            bits.append(fmt.format(float(value)))
+    avail_pct = pick.get('Avail Next %')
+    if pd.notna(avail_pct):
+        bits.append(f"{float(avail_pct):.0f}% to last")
+
+    st.markdown(
+        "<style>.reco{display:flex;align-items:center;gap:12px;border-radius:8px;"
+        "padding:8px 12px;margin-bottom:6px}"
+        ".reco-pos{font-size:11px;font-weight:800;letter-spacing:.06em;padding:2px 8px;border-radius:4px}"
+        ".reco-name{font-size:17px;font-weight:700}"
+        ".reco-meta{font-size:11px;opacity:.85}"
+        ".reco-why{font-size:11px;opacity:.7;font-style:italic}</style>"
+        f"<div class='reco' style='background:{bg};border-left:4px solid {fg}'>"
+        f"<span class='reco-pos' style='background:{fg};color:#0b1020'>BEST {scope.upper()}</span>"
+        f"<span class='reco-name'>{pick['Player']}</span>"
+        f"<span class='reco-meta' style='color:{fg}'>{pos} · {pick.get('Team') or ''}</span>"
+        f"<span class='reco-meta'>{' · '.join(bits)}</span>"
+        f"<span class='reco-why'>{pick.get('Why', '')}</span>"
+        "</div>", unsafe_allow_html=True)
+    return pick['Player']
+
+
+def _draft_context(board, settings, ctx, mode):
+    """
+    One description of "where the draft is", whether it's real or simulated.
+
+    Both modes answer the same questions - who's gone, what's my roster,
+    which pick am I on, what happens when I take someone - so the surface
+    below is written once against this, rather than as two screens that
+    drift apart. The drafted lists stay strictly separate: a mock can never
+    write into your real draft log.
+    """
+    if mode == 'Mock draft':
+        state = st.session_state.get(SIM_KEY)
+        if state is None:
+            return None
+        pool, order_col, _ = prepare_sim_pool(board)
+        avail = available_players(state, pool) if not pool.empty else board.iloc[0:0]
+        my_roster = [dict(p) for p in state['rosters'][state['my_slot']]]
+        return {
+            'mode': mode, 'state': state, 'pool': pool, 'order_col': order_col,
+            'picks': state['picks'], 'my_roster': my_roster,
+            'available': avail,
+            'current_pick': state['pick_no'],
+            'next_pick': state['pick_no'] + state['num_teams'],
+            'num_teams': state['num_teams'], 'my_slot': state['my_slot'],
+            'complete': state['complete'],
+            'on_clock_me': team_on_clock(state) == state['my_slot'],
+        }
+
+    picks = []
+    for i, pick in enumerate(_drafted_list()):
         entry = dict(pick)
         entry['pick'] = i + 1
         entry['team'] = _team_for_pick(i + 1, settings['num_teams'], settings['draft_type'])
-        numbered.append(entry)
-    _render_draft_board_grid(numbered, settings['num_teams'], settings['my_slot'],
-                             settings['draft_type'])
+        picks.append(entry)
+    return {
+        'mode': mode, 'state': None, 'pool': None, 'order_col': None,
+        'picks': picks, 'my_roster': _my_roster(),
+        'available': board[~board['Player'].isin(_drafted_names())],
+        'current_pick': len(picks) + 1,
+        'next_pick': ctx['next_pick'],
+        'num_teams': settings['num_teams'], 'my_slot': settings['my_slot'],
+        'complete': False, 'on_clock_me': True,
+    }
+
+
+def _commit_pick(dc, settings, player_name, mine=True, reach=3.0):
+    """Take a player, in whichever mode is active."""
+    row = dc['available'][dc['available']['Player'] == player_name]
+    if row.empty:
+        return
+    if dc['mode'] == 'Mock draft':
+        state = dc['state']
+        record_pick(state, state['my_slot'], row.iloc[0])
+        run_until_user_pick(state, settings, dc['pool'], dc['order_col'], reach_window=reach)
+        st.session_state[SIM_KEY] = state
+    else:
+        _record_pick(row.iloc[0], mine=mine)
+    st.session_state['dhq_selected'] = None
+    st.rerun()
+
+
+
+@st.dialog("Player profile", width="large")
+def _player_profile_dialog(player_name, board):
+    """
+    A player's profile in a modal, without leaving the draft.
+
+    WHY A PURPOSE-BUILT PANEL RATHER THAN THE PLAYER SEARCH TAB: that tab's
+    render() is a single function wired to fixed widget keys (year_tab1,
+    player_search_team_filter, player_sel_t1_name). Calling it from inside a
+    dialog while the tab itself exists registers those keys twice and
+    Streamlit raises. Rebuilding it would mean editing that tab, which is
+    exactly what was asked not to happen. So this reads the same underlying
+    data through the same cached loaders and shows the parts that matter on
+    the clock, with a jump to the full tab for a deeper look.
+
+    Streamlit reruns the script when a dialog opens, but session state
+    survives it - so an in-progress mock draft is untouched.
+    """
+    row = board[board['Player'] == player_name]
+    if row.empty:
+        st.info("No board data for that player.")
+        return
+    row = row.iloc[0]
+    pos = str(row['Pos']).upper()
+
+    from config import get_position_color, get_position_chip_bg
+    fg = get_position_color(pos)
+    bg = get_position_chip_bg(pos) or '#1a2447'
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:10px;background:{bg};"
+        f"border-left:4px solid {fg};border-radius:8px;padding:8px 12px'>"
+        f"<span style='font-size:20px;font-weight:700'>{player_name}</span>"
+        f"<span style='color:{fg};font-weight:700'>{pos} · {row.get('Team') or ''}</span>"
+        f"<span style='opacity:.8;font-size:12px'>{row.get('Pos Rk') or ''}"
+        f"{' · bye ' + str(int(row['Bye'])) if pd.notna(row.get('Bye')) else ''}</span></div>",
+        unsafe_allow_html=True)
+
+    tiles = []
+    for label, column, fmt in (('Proj Pts', 'Proj Pts', '{:.0f}'), ('VORP', 'VORP', '{:.0f}'),
+                               ('VONA', 'VONA', '{:.0f}'), ('ADP', 'ADP', '{:.1f}'),
+                               ('FFA Rank', 'FFA Rank', '{:.0f}'), ('Tier', 'Tier', '{:.0f}'),
+                               ('Ceiling', 'Ceiling', '{:.0f}'), ('Floor', 'Floor', '{:.0f}')):
+        value = row.get(column)
+        if pd.notna(value):
+            tiles.append((label, fmt.format(float(value))))
+    if tiles:
+        cols = st.columns(len(tiles))
+        for col, (label, value) in zip(cols, tiles):
+            col.metric(label, value)
+
+    stat_bits = []
+    for label, column in (('carries', 'carries'), ('targets', 'targets'),
+                          ('rush yds', 'rushing_yards'), ('rec', 'receptions'),
+                          ('rec yds', 'receiving_yards'), ('rush TD', 'rushing_tds'),
+                          ('rec TD', 'receiving_tds'), ('pass yds', 'passing_yards'),
+                          ('pass TD', 'passing_tds')):
+        value = row.get(column)
+        if pd.notna(value) and float(value) > 0:
+            stat_bits.append(f"**{float(value):.0f}** {label}")
+    if stat_bits:
+        st.markdown("**Projected line** — " + " · ".join(stat_bits))
+        st.caption(f"Source: {row.get('proj_basis', 'projection')}")
+
+    notes = row.get('Notes')
+    if isinstance(notes, str) and notes.strip():
+        st.markdown("**Scouting note**")
+        st.write(notes)
+
+    st.markdown("---")
+    st.markdown("**Recent game log**")
+    try:
+        from data.transforms import load_and_merge_data
+        scoring_rule = st.session_state.get('score_tab1', 'Full PPR')
+        season = int(st.session_state.get('dhq_curve_season', 2025))
+        stats, team_col, name_col, _ = load_and_merge_data(season, scoring_rule)
+        log = stats[stats[name_col] == player_name]
+        log = log[pd.to_numeric(log['week'], errors='coerce').fillna(0) > 0]
+        if log.empty:
+            st.caption(f"No {season} game log for this player (rookie, or he didn't play).")
+        else:
+            wanted = ['week', 'opponent_team', 'fantasy_points', 'carries', 'rushing_yards',
+                      'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds',
+                      'passing_yards', 'passing_tds', 'passing_interceptions']
+            cols = [c for c in wanted if c in log.columns]
+            view = log[cols].sort_values('week', ascending=False).head(10)
+            view = view.loc[:, (view.fillna(0) != 0).any(axis=0)]
+            st.dataframe(view, width="stretch", hide_index=True,
+                         height=df_auto_height(min(len(view), 10)))
+    except Exception as exc:
+        st.caption(f"Couldn't load the game log ({type(exc).__name__}).")
+
+    st.caption("For the full profile — percentile radars, splits, matchup history — open the "
+               "Player Search tab. This draft stays exactly where it is.")
 
 
 def _render_draft_room(board, settings, ctx):
-    top = st.columns(4)
-    top[0].metric("Picks made", ctx['picks_made'])
-    top[1].metric("Round", ctx['round'])
-    top[2].metric("Your next pick", ctx['next_pick'] if ctx['next_pick'] else "—")
-    top[3].metric("Your roster", len(_my_roster()))
+    """
+    The single draft surface, live or simulated.
 
-    _render_live_sync(board)
-    _render_run_pressure(settings)
-    _render_recommendations(board, settings, ctx)
-    st.caption(
-        "Proj Pts are season totals under YOUR scoring, from what players finishing at each "
-        "positional rank have actually scored recently — so changing PPR or a yardage bonus "
-        "re-prices the board, not just re-sorts it. Ceiling and Floor are the 85th/15th "
-        "percentile outcomes from that same model, which is why a volatile player's ceiling "
-        "rises and floor falls together. Read Proj Pts alongside Pos Rk: every starting QB "
-        "outscores every running back, so the raw number means nothing across positions."
-    )
+    Previously two tabs that were 90% the same screen. Keeping them apart
+    meant every improvement had to be built twice and they slowly diverged -
+    the mock had a draft board, the live room didn't; the live room had
+    strategy and pick odds, the mock didn't. One surface with a mode switch
+    is the same product with half the code and none of the drift.
+    """
+    mode = st.radio("Mode", ["Live draft", "Mock draft"], horizontal=True,
+                    key="dhq_mode", label_visibility="collapsed")
+
+    reach = 3.0
+    if mode == "Mock draft":
+        controls = st.columns([1.1, 1, 1, 1, 2])
+        with controls[0]:
+            start_mock = st.button("🎲 New mock", key="dhq_new_mock", type="primary",
+                                   width="stretch")
+        with controls[1]:
+            slot = st.number_input("Slot", 1, int(settings['num_teams']),
+                                   int(settings['my_slot']), key="dhq_mock_slot")
+        with controls[2]:
+            rounds = st.number_input("Rounds", 5, 25, int(ctx['rounds']), key="dhq_mock_rounds")
+        with controls[3]:
+            reach = st.slider("Chaos", 1.0, 8.0, 3.0, 0.5, key="dhq_mock_reach",
+                              help="How far simulated opponents stray from ADP.")
+        if start_mock:
+            pool, order_col, _ = prepare_sim_pool(board)
+            if pool.empty:
+                st.error("No board to simulate against.")
+            else:
+                state = init_draft_state({**settings, 'my_slot': int(slot)}, int(slot), int(rounds))
+                run_until_user_pick(state, settings, pool, order_col, reach_window=reach)
+                st.session_state[SIM_KEY] = state
+                st.session_state['dhq_selected'] = None
+                st.rerun()
+
+    dc = _draft_context(board, settings, ctx, mode)
+    if dc is None:
+        st.info("Start a new mock to draft against a simulated room.")
+        return
+
+    if dc['complete']:
+        st.success("Mock complete.")
+        grades = grade_draft(dc['state'], settings)
+        st.dataframe(grades[['Rank', 'Team', 'Starters Proj', 'Bench Proj']], width="stretch",
+                     hide_index=True, height=df_auto_height(len(grades)))
+
+    top = st.columns(4)
+    top[0].metric("Pick", dc['current_pick'])
+    top[1].metric("Round", (dc['current_pick'] - 1) // max(dc['num_teams'], 1) + 1)
+    top[2].metric("Your next pick", dc['next_pick'] if dc['next_pick'] else "—")
+    top[3].metric("Your roster", len(dc['my_roster']))
+
+    _render_recent_picks_strip(dc['picks'], dc['num_teams'], dc['current_pick'])
+    if mode == "Live draft":
+        _render_run_pressure(settings)
+
+    positions, label = _render_position_filter()
+    _render_single_recommendation(board, settings, dc['my_roster'], dc['next_pick'],
+                                  positions, label)
+
+    selected = st.session_state.get('dhq_selected')
+    if selected and selected not in set(dc['available']['Player']):
+        selected = None
+
+    action = st.columns([1.3, 1.3, 1.3, 3])
+    if mode == "Mock draft":
+        with action[0]:
+            if st.button("✅ Draft selected", key="dhq_act_draft", type="primary",
+                         disabled=not selected, width="stretch"):
+                _commit_pick(dc, settings, selected, reach=reach)
+        with action[1]:
+            if st.button("⏭ Auto-pick", key="dhq_act_auto", width="stretch"):
+                row = autopick_for_user(dc['state'], settings, dc['pool'])
+                if row is not None:
+                    _commit_pick(dc, settings, row['Player'], reach=reach)
+    else:
+        with action[0]:
+            if st.button("➕ Draft to my team", key="dhq_act_mine", type="primary",
+                         disabled=not selected, width="stretch"):
+                _commit_pick(dc, settings, selected, mine=True)
+        with action[1]:
+            if st.button("❌ Taken by others", key="dhq_act_other",
+                         disabled=not selected, width="stretch"):
+                _commit_pick(dc, settings, selected, mine=False)
+        with action[2]:
+            if st.button("↩ Undo", key="dhq_act_undo", disabled=not dc['picks'],
+                         width="stretch"):
+                _undo_last()
+                st.rerun()
+    with action[2 if mode == "Mock draft" else 3]:
+        if selected and st.button("🔍 Player profile", key="dhq_act_profile", width="stretch"):
+            _player_profile_dialog(selected, board)
+    with action[3]:
+        if selected:
+            st.caption(f"Selected: **{selected}**")
+        else:
+            st.caption("Click a row below to select a player.")
 
     left, right = st.columns([3, 1])
     with left:
-        _render_board_table(board, settings, ctx, key_prefix="dhq_room")
+        view = _apply_position_filter(dc['available'], positions)
+        picked = _render_selectable_board(view, "dhq_board", next_pick=dc['next_pick'],
+                                          row_limit=40)
+        if picked and picked != selected:
+            st.session_state['dhq_selected'] = picked
+            st.rerun()
+        _render_player_detail(board, selected)
     with right:
-        _render_roster_panel(settings)
+        _render_roster_slots(settings, roster=dc['my_roster'])
         st.markdown("---")
-        _render_strategy_panel(settings)
-        st.markdown("---")
+        _render_strategy_panel(settings, roster=dc['my_roster'])
+
+    with st.expander("🗂 Full draft board", expanded=False):
+        _render_draft_board_grid(dc['picks'], dc['num_teams'], dc['my_slot'],
+                                 settings['draft_type'])
+    with st.expander("📊 Pick odds & positional scarcity", expanded=False):
         _render_pick_odds(board, settings, ctx)
-    # Full width rather than in the sidebar column - it's a 5-column table
-    # and the narrow column truncated its last two columns entirely.
-    _render_positional_scarcity(board, settings)
+        _render_positional_scarcity(board, settings)
+    if mode == "Live draft":
+        _render_live_sync(board)
+    else:
+        with st.expander("🔁 Run many mocks / compare slots", expanded=False):
+            _render_mock_tools(board, settings, ctx)
 
 
 # ---------------------------------------------------------------------------
 # Mock draft
 # ---------------------------------------------------------------------------
 
-def _render_mock(board, settings):
-    st.markdown("<div class='custom-section-header'>MOCK DRAFT SIMULATOR</div>", unsafe_allow_html=True)
-    st.caption(
-        "Runs your league's real settings against opponents who draft from ADP with noise, so "
-        "positional runs and reaches happen the way they do in a real room. Bots respect roster "
-        "legality — they fill their lineups and don't take three kickers — which is what stops "
-        "studs from unrealistically falling to you. *Draft interactively* gives you the same "
-        "board and the same click-to-pick as the live room."
-    )
+def _render_mock_tools(board, settings, ctx):
+    """
+    Batch simulation tools: many drafts at once, and per-slot comparison.
 
-    pool, order_col, has_adp = prepare_sim_pool(board)
+    Separate from the interactive mock because they answer a different
+    question. One mock tells you what happened; fifty tell you what usually
+    happens, which is the only version worth planning around.
+    """
+    pool, _, has_adp = prepare_sim_pool(board)
     if pool.empty:
         st.info("No board loaded to simulate against.")
         return
     if not has_adp:
         st.warning(
-            "No ADP loaded, so the simulated opponents are drafting off this board's own value "
-            "ranking instead of the market. That's a useful stress test, but it is not a "
-            "realistic draft room — treat 'who fell to me' with suspicion until ADP is available."
+            "No ADP loaded, so simulated opponents draft off this board's own value ranking "
+            "rather than the market. Useful as a stress test, but not a realistic room — treat "
+            "'who fell to me' with suspicion."
         )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        rounds = st.number_input("Rounds", 5, 25, min(15, sum(int(settings['roster'].get(k, 0)) for k in
-                                 ['QB', 'RB', 'WR', 'TE', 'K', 'DST', 'FLEX', 'SUPERFLEX', 'BENCH']) or 15),
-                                 key="dhq_sim_rounds")
+        rounds = st.number_input("Rounds", 5, 25, int(ctx['rounds']), key="dhq_batch_rounds")
     with c2:
-        slot = st.number_input("Your slot", 1, settings['num_teams'], settings['my_slot'], key="dhq_sim_slot")
+        slot = st.number_input("Slot", 1, int(settings['num_teams']), int(settings['my_slot']),
+                               key="dhq_batch_slot")
     with c3:
-        reach = st.slider("Room chaos", 1.0, 8.0, 3.0, 0.5, key="dhq_sim_reach",
-                          help="How far opponents stray from ADP. 1 = chalk, 8 = wild.")
+        reach = st.slider("Chaos", 1.0, 8.0, 3.0, 0.5, key="dhq_batch_reach")
     with c4:
-        n_sims = st.number_input("Simulations", 1, 100, 20, key="dhq_sim_n")
+        n_sims = st.number_input("Simulations", 1, 100, 20, key="dhq_batch_n")
 
-    mode = st.radio("Mode", ["Run many drafts (summary)", "Draft interactively", "Compare every draft slot"],
-                    horizontal=True, key="dhq_sim_mode")
+    b1, b2 = st.columns(2)
+    with b1:
+        run_many = st.button("▶ Run simulations", key="dhq_batch_run", width="stretch")
+    with b2:
+        run_slots = st.button("▶ Compare every slot", key="dhq_slot_run", width="stretch")
 
-    if mode == "Run many drafts (summary)":
-        if st.button("▶ Run simulations", key="dhq_sim_run", type="primary"):
-            with st.spinner(f"Running {int(n_sims)} drafts..."):
-                summary, outcomes = run_many_drafts(board, settings, int(slot), int(rounds),
-                                                    n_sims=int(n_sims), reach_window=float(reach))
-            if outcomes.empty:
-                st.info("Simulation produced no results.")
-                return
+    if run_many:
+        with st.spinner(f"Running {int(n_sims)} drafts..."):
+            summary, outcomes = run_many_drafts(board, settings, int(slot), int(rounds),
+                                                n_sims=int(n_sims), reach_window=float(reach))
+        if outcomes.empty:
+            st.info("Simulation produced no results.")
+        else:
             m1, m2, m3 = st.columns(3)
             m1.metric("Median starters projection", f"{outcomes['Starters Proj'].median():.0f}")
             m2.metric("Range", f"{outcomes['Starters Proj'].min():.0f} – {outcomes['Starters Proj'].max():.0f}")
             m3.metric("Avg league finish", f"{outcomes['League Rank'].mean():.1f}")
-            st.markdown("**Who you ended up with, by round**")
-            st.caption("Read this as tendencies, not predictions — a player showing up in 60% of "
-                       "drafts is one your slot reliably gets; 10% is a coin flip you shouldn't plan around.")
+            st.caption("Read as tendencies, not predictions — 60% of drafts is a player your "
+                       "slot reliably gets; 10% is a coin flip you shouldn't plan around.")
             st.dataframe(summary[['round', 'Player', 'Pos', '% of drafts']], width="stretch",
-                         hide_index=True, height=df_auto_height(min(len(summary), 30)))
+                         hide_index=True, height=df_auto_height(min(len(summary), 26)))
 
-    elif mode == "Draft interactively":
-        _render_interactive_mock(board, settings, pool, order_col, int(slot), int(rounds), float(reach))
-
-    else:
-        st.caption("Runs every draft slot to see which ones YOUR settings favour — the answer "
-                   "moves with league size, superflex and TE premium, so the usual received wisdom "
-                   "about 'the turn' often doesn't apply.")
-        sims_each = st.number_input("Sims per slot", 1, 40, 8, key="dhq_slot_sims")
-        if st.button("▶ Compare slots", key="dhq_slot_run"):
-            with st.spinner(f"Running {settings['num_teams']} slots x {int(sims_each)} drafts..."):
-                cmp_df = pick_slot_comparison(board, settings, int(rounds),
-                                              n_sims=int(sims_each), reach_window=float(reach))
-            if cmp_df.empty:
-                st.info("No results.")
-            else:
-                st.dataframe(cmp_df, width="stretch", hide_index=True,
-                             height=df_auto_height(len(cmp_df)))
-
-
-def _render_interactive_mock(board, settings, pool, order_col, slot, rounds, reach):
-    """
-    A mock you actually draft in, on the same board you'll use live.
-
-    Rebuilt from a pair of dropdowns into the real board. The dropdown
-    version couldn't do the one job a mock has - rehearsing the read you'll
-    make on the clock - because it showed you a list of names stripped of
-    every number you'd actually decide on. Same grid, same columns, same
-    click-to-pick as the live room; the only difference is that the other
-    eleven teams are simulated.
-    """
-    state = st.session_state.get(SIM_KEY)
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        if st.button("🎲 New mock draft", key="dhq_mock_new", type="primary"):
-            state = init_draft_state(settings, slot, rounds)
-            run_until_user_pick(state, settings, pool, order_col, reach_window=reach)
-            st.session_state[SIM_KEY] = state
-            st.rerun()
-    if state is None:
-        st.caption("Start a new mock to draft against the simulated room.")
-        return
-
-    my_roster = state['rosters'][state['my_slot']]
-    with c2:
-        st.caption(f"Pick {state['pick_no']} of {state['num_teams'] * state['rounds']} · "
-                   f"Round {current_round(state)} · On the clock: Team {team_on_clock(state)}"
-                   f"{' (you)' if team_on_clock(state) == state['my_slot'] else ''}")
-
-    if state['complete']:
-        st.success("Mock complete.")
-        grades = grade_draft(state, settings)
-        st.dataframe(grades[['Rank', 'Team', 'Starters Proj', 'Bench Proj']], width="stretch",
-                     hide_index=True, height=df_auto_height(len(grades)))
-        st.markdown("**Your roster**")
-        st.dataframe(pd.DataFrame(my_roster)[['round', 'pick', 'Player', 'Pos', 'Proj Pts']],
-                     width="stretch", hide_index=True, height=df_auto_height(len(my_roster)))
-        return
-
-    mock_next_pick = state['pick_no'] + state['num_teams']
-    left, right = st.columns([3, 1])
-
-    with right:
-        st.markdown("**Your roster**")
-        _render_roster_slots(settings, roster=my_roster)
-        if my_roster:
-            pts, _ = optimal_lineup_points(my_roster, settings)
-            st.caption(f"Starters project **{pts:.0f} pts**")
-        needs = roster_needs(my_roster, settings)
-        open_slots = [f"{n}x {pos}" for pos, n in needs.items() if n > 0]
-        st.caption("**Still need:** " + (", ".join(open_slots) if open_slots else "lineup full"))
-
-        recent = state['picks'][-min(len(state['picks']), 10):]
-        if recent:
-            st.markdown("**Last picks**")
-            st.dataframe(pd.DataFrame(recent)[['pick', 'team', 'Player', 'Pos']], width="stretch",
-                         hide_index=True, height=df_auto_height(min(len(recent), 10)))
-
-    with left:
-        avail = available_players(state, pool)
-        recs = recommend_picks(avail, my_roster, settings, next_pick=mock_next_pick, top_n=5)
-
-        # ACTIONS FIRST, board second. The previous order put the draft
-        # buttons under a 40-row table, so every single pick meant select,
-        # scroll down, click, scroll back up - which is unusable at the pace
-        # a mock is supposed to run at. One-click buttons for the top
-        # suggestions sit here too, so the common case needs no selection
-        # step at all.
-        selected = st.session_state.get('dhq_mock_selected')
-        if selected and selected not in set(avail['Player']):
-            selected = None
-
-        def _commit(player_name):
-            row = avail[avail['Player'] == player_name]
-            if row.empty:
-                return
-            record_pick(state, state['my_slot'], row.iloc[0])
-            run_until_user_pick(state, settings, pool, order_col, reach_window=reach)
-            st.session_state[SIM_KEY] = state
-            st.session_state['dhq_mock_selected'] = None
-            st.rerun()
-
-        st.markdown(f"**You're on the clock** — pick {state['pick_no']}"
-                    + (f" · selected: **{selected}**" if selected else ""))
-        action_cols = st.columns([1.2, 1, 3])
-        with action_cols[0]:
-            if st.button("✅ Draft selected", key="dhq_mock_pick", type="primary",
-                         disabled=not selected, width="stretch"):
-                _commit(selected)
-        with action_cols[1]:
-            if st.button("⏭ Auto-pick", key="dhq_mock_auto", width="stretch"):
-                row = autopick_for_user(state, settings, pool)
-                if row is not None:
-                    record_pick(state, state['my_slot'], row)
-                    run_until_user_pick(state, settings, pool, order_col, reach_window=reach)
-                    st.session_state[SIM_KEY] = state
-                    st.rerun()
-
-        if not recs.empty:
-            st.caption("One-click from the suggestions:")
-            quick = st.columns(len(recs))
-            for col, (_, rec) in zip(quick, recs.iterrows()):
-                with col:
-                    if st.button(f"{rec['Pos']} · {rec['Player'].split()[-1]}",
-                                 key=f"dhq_quick_{rec['Player']}", width="stretch",
-                                 help=f"{rec['Player']} — {rec.get('Why', '')}"):
-                        _commit(rec['Player'])
-            st.dataframe(recs[['Player', 'Pos', 'Tier', 'Proj Pts', 'VORP', 'ADP', 'Why']],
-                         width="stretch", hide_index=True, height=df_auto_height(len(recs)),
-                         column_config={'Why': st.column_config.TextColumn("Why", width="large")})
-
-        picked = _render_selectable_board(avail, "dhq_mockboard", next_pick=mock_next_pick,
-                                          row_limit=40)
-        if picked and picked != selected:
-            st.session_state['dhq_mock_selected'] = picked
-            st.rerun()
-        if not selected:
-            st.caption("Click a row on the board to select, then use *Draft selected* above.")
-
-    with st.expander("🗂 Draft board", expanded=False):
-        _render_draft_board_grid(state['picks'], state['num_teams'], state['my_slot'],
-                                 state.get('draft_type', 'Snake'))
+    if run_slots:
+        sims_each = max(4, int(n_sims) // 3)
+        with st.spinner(f"Running {settings['num_teams']} slots x {sims_each} drafts..."):
+            cmp_df = pick_slot_comparison(board, settings, int(rounds),
+                                          n_sims=sims_each, reach_window=float(reach))
+        if cmp_df.empty:
+            st.info("No results.")
+        else:
+            st.caption("Which slots your settings actually favour — the answer moves with league "
+                       "size, superflex and TE premium, so the usual wisdom about 'the turn' "
+                       "often doesn't apply.")
+            st.dataframe(cmp_df, width="stretch", hide_index=True,
+                         height=df_auto_height(len(cmp_df)))
 
 
 # ---------------------------------------------------------------------------
 # News & injuries
 # ---------------------------------------------------------------------------
-
-def _render_ffa_board(board):
-    """
-    Fantasy Football Advice's own rankings, kept entirely separate from this
-    app's board.
-
-    Deliberately not merged into VORP or the app's ordering. Two independent
-    rankings are far more useful side by side than averaged together - where
-    they agree you can move fast, and where they disagree is exactly the
-    place worth thinking. Blending them produces a third number that is
-    neither, and quietly hides the disagreement that was the informative
-    part.
-    """
-    st.markdown("<div class='custom-section-header'>FFA RANKINGS</div>", unsafe_allow_html=True)
-    if 'FFA Value' not in board.columns or board['FFA Value'].notna().sum() == 0:
-        st.info(
-            "No FFA data imported yet. Add their player export under League Settings → "
-            "Import Fantasy Football Advice projections, and their rankings, value score "
-            "and player notes appear here."
-        )
-        return
-
-    ffa = board[board['FFA Value'].notna()].copy()
-    ffa['FFA Rank'] = ffa['FFA Value'].rank(ascending=False, method='first').astype(int)
-    ffa['Board Rank'] = pd.to_numeric(ffa['Board Rank'], errors='coerce')
-    ffa['Disagreement'] = (ffa['Board Rank'] - ffa['FFA Rank']).round(0)
-    ffa = ffa.sort_values('FFA Rank')
-
-    st.caption(
-        f"{len(ffa)} players. **Disagreement** is this board's rank minus theirs — positive "
-        "means FFA is higher on him than this app is, negative means the reverse. The extremes "
-        "at either end are where the two models genuinely differ, not where either is noisy."
-    )
-    cols = [c for c in ['FFA Rank', 'Player', 'Pos', 'Team', 'FFA Value', 'FFA Proj (their scoring)',
-                        'Board Rank', 'Proj Pts', 'VORP', 'Disagreement', 'Elo', 'Age'] if c in ffa.columns]
-    view = ffa[cols].set_index('FFA Rank')
-    diverging = {}
-    if ffa['Disagreement'].notna().any():
-        max_abs = ffa['Disagreement'].abs().max()
-        if max_abs and max_abs > 0:
-            diverging['Disagreement'] = max_abs
-    st.dataframe(style_plain_dataframe(view, diverging_cols=diverging), width="stretch",
-                 height=df_auto_height(26))
-
-    with st.expander("Biggest disagreements", expanded=False):
-        extremes = pd.concat([ffa.nlargest(10, 'Disagreement'), ffa.nsmallest(10, 'Disagreement')])
-        st.dataframe(extremes[[c for c in ['Player', 'Pos', 'FFA Rank', 'Board Rank',
-                                           'Disagreement', 'Proj Pts'] if c in extremes.columns]],
-                     width="stretch", hide_index=True, height=df_auto_height(20))
-
 
 def _render_news(board, settings):
     st.markdown("<div class='custom-section-header'>NEWS &amp; INJURY REPORT</div>", unsafe_allow_html=True)
@@ -1448,16 +1622,11 @@ def render():
     # got squeezed in - so it read as two boards that might disagree. There
     # is one board now: before you start drafting it IS the big board, and
     # as picks come in it thins out into the live room.
-    room, board_tab, mock, ffa_tab, news = st.tabs(
-        ["🎯 Draft Room", "🗂 Draft Board", "🎲 Mock Draft", "🏈 FFA Rankings", "📰 News & Injuries"])
+    # ONE draft surface. The draft board and mock draft were separate tabs
+    # showing the same thing at different moments; both now live inside the
+    # draft room, where you're already looking.
+    room, news = st.tabs(["🎯 Draft Room", "📰 News & Injuries"])
     with room:
         _render_draft_room(board, settings, ctx)
-    with board_tab:
-        st.markdown("<div class='custom-section-header'>DRAFT BOARD</div>", unsafe_allow_html=True)
-        _render_live_draft_board(settings)
-    with mock:
-        _render_mock(board, settings)
-    with ffa_tab:
-        _render_ffa_board(board)
     with news:
         _render_news(board, settings)

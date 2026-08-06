@@ -139,6 +139,38 @@ def load_ffa_import(path=FFA_IMPORT_PATH):
     return df, None
 
 
+def diagnose_ffa_payload(raw):
+    """
+    Say specifically what a rejected file actually was.
+
+    Worth the effort because the realistic failure is handing this the wrong
+    file out of a HAR unpack, not handing it corrupt data - the manifest
+    (index.json) sits right next to the player data and looks equally
+    plausible. "No recognisable player list" sends you hunting for a bug that
+    isn't there; "this is the HAR manifest, you want api/players.json" is
+    the actual fix.
+    """
+    if isinstance(raw, dict):
+        if 'entries' in raw and 'source_har' in raw:
+            return ("that's the HAR manifest (index.json), which only lists which URLs were "
+                    "captured. The player data is the file at api/players.json inside the same "
+                    "unpacked folder.")
+        if 'responses' in raw:
+            return ("that's an older har_extract bundle. Re-run tools/har_extract.py and use "
+                    "api/players.json from the output folder.")
+        keys = ", ".join(list(raw.keys())[:6])
+        return f"top-level keys were [{keys}] - expected a list of players, or one under 'players'."
+    if isinstance(raw, list):
+        if not raw:
+            return "the file was an empty list."
+        first = raw[0]
+        if isinstance(first, dict):
+            return (f"it's a list, but the entries don't look like players "
+                    f"(keys: {', '.join(list(first.keys())[:6])}).")
+        return "it's a list of values rather than player objects."
+    return f"unexpected JSON type ({type(raw).__name__})."
+
+
 def save_ffa_import(uploaded_file, path=FFA_IMPORT_PATH):
     """
     Persist an uploaded export so it survives a restart.
@@ -155,7 +187,7 @@ def save_ffa_import(uploaded_file, path=FFA_IMPORT_PATH):
         return pd.DataFrame(), f"not valid JSON: {exc}"
     df = parse_ffa_export(raw)
     if df.empty:
-        return df, "no recognisable player list in that file"
+        return df, f"no players found — {diagnose_ffa_payload(raw)}"
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as fh:

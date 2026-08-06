@@ -356,31 +356,108 @@ def parse_adp_upload(uploaded_file):
     return out.sort_values('ADP').reset_index(drop=True)
 
 
-def fetch_adp(scoring, num_teams, is_superflex, year, uploaded=None):
-    """
-    Resolve ADP: an uploaded CSV if there is one, otherwise Fantasy Football
-    Calculator, otherwise nothing.
+# What each ADP source actually measures. Shown verbatim in the UI, because
+# "ADP" from two sources can differ by two full rounds on the same player and
+# the reason is always the sample, never the arithmetic.
+ADP_SOURCE_NOTES = {
+    'FFA import': "Fantasy Football Advice's own draft corpus, human picks, cross-platform "
+                  "composite. Closest to where players actually go in real drafts.",
+    'Uploaded CSV': "Your own file.",
+    'Fantasy Football Calculator': "Mock drafts run on fantasyfootballcalculator.com. A free "
+                                   "public mock site skews casual - tight ends and quarterbacks "
+                                   "consistently slide later there than in real or sharp drafts.",
+    'ECR estimate': "Not ADP. Consensus expert rank standing in as a draft-order estimate so "
+                    "the availability model still works.",
+}
 
-    ONLY ONE LIVE SOURCE, ON PURPOSE. This previously also offered Sleeper,
-    built on their /players/nfl 'search_rank' field - which is a popularity
-    ordering, not average draft position. It returned whole-number ranks and
-    put the consensus QB1 second overall, which no 1QB draft has ever done.
-    A number that looks like ADP, sorts like ADP, and is labelled ADP but
-    isn't measured from drafts is worse than no number at all: every
-    downstream column built on it (value-vs-market, survival probability,
-    VONA, and the entire mock draft opponent model) inherits the error while
-    still looking authoritative. Removed rather than relabelled.
 
-    An absent ADP is left absent rather than silently substituting ECR. ECR
-    (what analysts think) and ADP (what drafters do) disagreeing IS the
-    signal this board sells, so aliasing one to the other would manufacture
-    agreement everywhere and make every value-vs-market number read 0.
+def fetch_adp(scoring, num_teams, is_superflex, year, uploaded=None, ffa_df=None,
+              source='Auto'):
     """
-    if uploaded is not None:
+    Resolve ADP from the best market source available.
+
+    PREFERENCE ORDER, AND WHY IT CHANGED: Fantasy Football Calculator used to
+    be the default and is now the last resort. Its ADP is computed from mock
+    drafts run on its own free public site - roughly 850 of them in a week -
+    with computer picks filtered out. That is a real sample of real humans,
+    but it is a sample of people mock-drafting for free on a calculator site,
+    and it drifts hard from where players actually go: it had the consensus
+    TE1 going around pick 40, two rounds later than any real draft, which is
+    exactly the kind of error that then propagates into availability, VONA
+    and every "he'll be there next round" call the board makes.
+
+    An FFA import wins when present because it is a cross-platform composite
+    of actual drafts. An explicit upload wins over everything, because you
+    know your own league.
+
+    Sleeper is deliberately absent: it was built on their 'search_rank'
+    field, a popularity ordering rather than a draft position, and it put the
+    consensus QB1 second overall. A number that looks like ADP and is
+    labelled ADP but was never measured from drafts is worse than none,
+    because everything downstream - value-vs-market, survival probability,
+    VONA, the whole opponent model - inherits the error while still looking
+    authoritative.
+
+    An absent ADP is left absent rather than silently substituting ECR into
+    the ADP column. ECR (what analysts think) and ADP (what drafters do)
+    disagreeing IS the signal this board sells.
+    """
+    if source in ('Auto', 'Uploaded CSV') and uploaded is not None:
         up = parse_adp_upload(uploaded)
         if not up.empty:
-            return up, {'source': 'Uploaded CSV', 'error': None, 'teams': num_teams}
-    return fetch_ffc_adp(scoring, num_teams, is_superflex, year)
+            return up, {'source': 'Uploaded CSV', 'error': None, 'teams': num_teams,
+                        'note': ADP_SOURCE_NOTES['Uploaded CSV']}
+
+    if source in ('Auto', 'FFA import') and ffa_df is not None and not ffa_df.empty:
+        ffa_adp = ffa_adp_frame(ffa_df)
+        if not ffa_adp.empty:
+            return ffa_adp, {'source': 'FFA import', 'error': None, 'teams': num_teams,
+                             'note': ADP_SOURCE_NOTES['FFA import']}
+
+    if source in ('Auto', 'Fantasy Football Calculator'):
+        df, meta = fetch_ffc_adp(scoring, num_teams, is_superflex, year)
+        meta = dict(meta or {})
+        meta['note'] = ADP_SOURCE_NOTES['Fantasy Football Calculator']
+        return df, meta
+
+    return pd.DataFrame(), {'source': source, 'error': 'source unavailable'}
+
+
+def ffa_adp_frame(ffa_df):
+    """
+    Turn an FFA import into an ADP frame the board can consume.
+
+    Prefers their `adpComposite` over the bare `adp`: the composite is drawn
+    across the major host platforms rather than one, which is what makes it a
+    market number rather than one site's habits. Falls back to `adp` where the
+    composite is missing.
+    """
+    if ffa_df is None or ffa_df.empty:
+        return pd.DataFrame()
+    composite = pd.to_numeric(ffa_df.get('FFA ADP Composite'), errors='coerce')
+    plain = pd.to_numeric(ffa_df.get('FFA ADP'), errors='coerce')
+    adp = composite.fillna(plain) if composite is not None else plain
+    if adp is None or adp.notna().sum() < 10:
+        return pd.DataFrame()
+    out = pd.DataFrame({
+        'Player': ffa_df['Player'],
+        'Pos': ffa_df.get('Pos'),
+        'ADP': adp,
+    }).dropna(subset=['ADP'])
+    # No published spread in their export, so the availability model falls
+    # back to its rank-scaled estimate (see effective_adp_sd).
+    return out.sort_values('ADP').reset_index(drop=True)
+
+
+def ecr_age_days(ecr_raw):
+    """How stale the consensus scrape is, in days, or None if unknown."""
+    if ecr_raw is None or ecr_raw.empty or 'scrape_date' not in ecr_raw.columns:
+        return None
+    try:
+        scraped = pd.to_datetime(ecr_raw['scrape_date'].dropna().max())
+        return int((pd.Timestamp.utcnow().tz_localize(None).normalize() - scraped.normalize()).days)
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=60 * 20, show_spinner=False)

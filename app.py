@@ -11,6 +11,7 @@ from ui.styling import inject_theme
 from ui.components import render_data_health_sidebar, ensure_pff_imports_dir, render_intro_and_glossary
 from ui.tabs import (
     player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, vorp_draft, live_odds, player_compare,
+    draft_hq,
 )
 
 
@@ -52,10 +53,17 @@ render_intro_and_glossary()
 # of all 8 tabs' full data-load-and-render pipeline running on every single
 # widget interaction anywhere in the app, which was the actual root cause
 # behind Rookie Watch (and everything else) feeling sluggish.
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs(TAB_LABELS, key="active_tab", on_change="rerun")
+#
+# Unpacked into a list rather than N named variables so adding a tab is a
+# two-line change (a label in config.TAB_LABELS, a module here) instead of
+# also renumbering a tab1..tabN tuple that has to stay exactly as long as
+# TAB_LABELS - a mismatch there fails with an opaque unpacking error rather
+# than pointing at the tab that was actually added.
+_tabs = st.tabs(TAB_LABELS, key="active_tab", on_change="rerun")
 
-_tab_modules = [player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare, vorp_draft]
-for _tab, _module, _label in zip([tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9], _tab_modules, TAB_LABELS):
+_tab_modules = [player_search, draft_hq, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare, vorp_draft]
+assert len(_tab_modules) == len(TAB_LABELS), "TAB_LABELS and _tab_modules must stay in sync"
+for _tab, _module, _label in zip(_tabs, _tab_modules, TAB_LABELS):
     if _tab.open:
         with _tab:
             _render_guarded(_module, _label)

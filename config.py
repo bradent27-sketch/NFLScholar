@@ -166,8 +166,15 @@ TAB_RANKINGS = "WEEKLY RANKINGS"
 TAB_VORP_DRAFT = "VORP DRAFT SHEET"
 TAB_LIVE_ODDS = "LIVE ODDS"
 TAB_PLAYER_COMPARE = "PLAYER COMPARE"
+TAB_DRAFT_HQ = "DRAFT HQ"
+# Draft HQ sits second, directly after Player Search, because during draft
+# season it's the tab that gets opened first and stays open - unlike the
+# analysis tabs, it's used under time pressure with a pick clock running.
+# The older VORP Draft Sheet stays at the end rather than being deleted:
+# it's fully offline (local CSVs only) where Draft HQ is live-fetched, so
+# it remains the fallback when there's no network.
 TAB_LABELS = [
-    TAB_PLAYER_SEARCH, TAB_DEPTH_CHARTS, TAB_DEFENSIVE_YIELD, TAB_RISERS,
+    TAB_PLAYER_SEARCH, TAB_DRAFT_HQ, TAB_DEPTH_CHARTS, TAB_DEFENSIVE_YIELD, TAB_RISERS,
     TAB_ROOKIE_WATCH, TAB_RANKINGS, TAB_LIVE_ODDS, TAB_PLAYER_COMPARE, TAB_VORP_DRAFT,
 ]
 

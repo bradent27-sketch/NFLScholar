@@ -779,6 +779,19 @@ def inject_theme():
             border-radius: {R['sm']} !important;
             padding: 6px;
             font-family: {F['mono']} !important;
+            /* box-sizing + overflow are load-bearing, not cosmetic. The
+               grid inside is a canvas sized to 100% of this element's
+               CONTENT box; without border-box the 6px padding and 1px
+               border are added on top, so the canvas renders ~14px wider
+               than the frame around it and visibly hangs off its own
+               background - the "table falling out of its box" effect.
+               Clipping to the rounded corner finishes it. */
+            box-sizing: border-box !important;
+            overflow: hidden !important;
+        }}
+        div[data-testid="stDataFrame"] > div,
+        div[data-testid="stDataFrame"] canvas {{
+            max-width: 100% !important;
         }}
         div[data-testid="stDataFrame"] * {{
             color: {C['on_surface']} !important;
@@ -840,6 +853,40 @@ def inject_theme():
         div[data-testid="stAlert"], .custom-section-header,
         .skel-table-wrap, .skel-tile-grid, .skel-block {{
             animation: content-reveal 260ms ease-out;
+        }}
+
+        /* ---- Interactive feedback on buttons.
+           A button that visibly responds tells you it registered the click
+           before the rerun lands, which matters most under a pick clock
+           where the alternative is wondering whether you actually hit it.
+           Lift + glow on hover, and a real press-down on click. Kept small:
+           a big scale on a dense board reads as jitter, not polish. */
+        .stButton button, .stDownloadButton button {{
+            transition: transform 120ms ease-out, box-shadow 160ms ease-out,
+                        background-color 150ms ease-out, border-color 150ms ease-out,
+                        color 150ms ease-out !important;
+            will-change: transform;
+        }}
+        .stButton button:hover, .stDownloadButton button:hover {{
+            transform: translateY(-1px) scale(1.015);
+            box-shadow: 0 4px 16px rgba(0, 255, 249, 0.20);
+        }}
+        .stButton button[kind="primary"]:hover {{
+            filter: brightness(1.12);
+            box-shadow: 0 4px 18px rgba(0, 255, 249, 0.42);
+        }}
+        .stButton button:active, .stDownloadButton button:active {{
+            transform: translateY(0) scale(0.985);
+            box-shadow: none;
+        }}
+        /* Rows/cards that are clickable get the same language, so "this
+           responds to a click" looks identical everywhere. */
+        .rp-card, .pv-card, .db-cell {{
+            transition: transform 120ms ease-out, box-shadow 160ms ease-out;
+        }}
+        .rp-card:hover, .pv-card:hover {{
+            transform: translateY(-1px);
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
         }}
 
         /* Pressed/active feedback - buttons, pill tabs, and the hover-lift

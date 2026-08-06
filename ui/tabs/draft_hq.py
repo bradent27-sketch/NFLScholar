@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from config import AVAILABLE_SEASONS_WITH_UPCOMING
+from config import AVAILABLE_SEASONS_WITH_UPCOMING, TAB_PLAYER_SEARCH
 from data.draft_sources import (
     ECR_BOARDS, load_ecr_raw, build_ecr_board, fetch_adp, fetch_injury_report,
     fetch_player_news, load_dynasty_values, ecr_age_days, ADP_SOURCE_NOTES,
@@ -40,14 +40,14 @@ from data.draft_projections import build_projected_board
 from data.draft_sos import build_team_sos, attach_sos_to_board, adp_quartiles, WEEK_PRESETS
 from data.draft_intel import (
     classify_strategy, pick_intel, outcome_distribution, roster_percentile,
-    positional_run_pressure,
+    positional_run_pressure, positional_value_add,
 )
 from data.ffa_import import load_ffa_import, save_ffa_import, merge_ffa_into_board
 from data.loaders import fetch_sleeper_draft_picks
 from data.transforms import parse_pasted_draft_picks, match_names_to_board
 from data.utils import calculate_percentile
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import skeleton_loader
+from ui.components import skeleton_loader, switch_tab
 
 DRAFTED_KEY = 'dhq_drafted'          # ordered list of pick dicts (live draft tracker)
 SIM_KEY = 'dhq_sim_state'
@@ -1237,98 +1237,60 @@ def _commit_pick(dc, settings, player_name, mine=True, reach=3.0):
 
 
 
-@st.dialog("Player profile", width="large")
-def _player_profile_dialog(player_name, board):
+def _render_positional_value_add(board, settings, dc):
     """
-    A player's profile in a modal, without leaving the draft.
+    Which position this pick should go to, in points and as a share of your
+    projected lineup.
 
-    WHY A PURPOSE-BUILT PANEL RATHER THAN THE PLAYER SEARCH TAB: that tab's
-    render() is a single function wired to fixed widget keys (year_tab1,
-    player_search_team_filter, player_sel_t1_name). Calling it from inside a
-    dialog while the tab itself exists registers those keys twice and
-    Streamlit raises. Rebuilding it would mean editing that tab, which is
-    exactly what was asked not to happen. So this reads the same underlying
-    data through the same cached loaders and shows the parts that matter on
-    the clock, with a jump to the full tab for a deeper look.
-
-    Streamlit reruns the script when a dialog opens, but session state
-    survives it - so an in-progress mock draft is untouched.
+    The single most useful thing on the screen once you've made a couple of
+    picks: it collapses the whole board into six numbers that answer "what
+    do I need" rather than "who is good". Reading it is deliberately
+    literal - the bar is how much your projected starting lineup improves by
+    spending THIS pick there instead of waiting one more turn.
     """
-    row = board[board['Player'] == player_name]
-    if row.empty:
-        st.info("No board data for that player.")
+    rows = positional_value_add(board, dc['my_roster'], settings, dc['next_pick'],
+                                drafted_names=_drafted_names() if dc['mode'] == 'Live draft'
+                                else {p['Player'] for p in dc['picks']})
+    if not rows:
         return
-    row = row.iloc[0]
-    pos = str(row['Pos']).upper()
-
     from config import get_position_color, get_position_chip_bg
-    fg = get_position_color(pos)
-    bg = get_position_chip_bg(pos) or '#1a2447'
+    top = max((r['Points added'] for r in rows), default=1.0) or 1.0
+
+    cards = []
+    for row in rows:
+        pos = row['Pos']
+        fg = get_position_color(pos)
+        bg = get_position_chip_bg(pos) or '#1a2447'
+        width = max(2.0, min(100.0, row['Points added'] / top * 100))
+        cards.append(
+            f"<div class='pv-card' style='background:{bg};border-left:3px solid {fg}'>"
+            f"<div class='pv-top'><span class='pv-pos' style='color:{fg}'>{pos}</span>"
+            f"<span class='pv-pct'>+{row['Team %']:.1f}%</span></div>"
+            f"<div class='pv-bar'><span style='width:{width:.0f}%;background:{fg}'></span></div>"
+            f"<div class='pv-pts'>+{row['Points added']:.0f} pts</div>"
+            f"<div class='pv-name'>{row['Best available']}</div>"
+            f"<div class='pv-wait'>wait &rarr; {row['If you wait']:.0f}</div>"
+            "</div>")
     st.markdown(
-        f"<div style='display:flex;align-items:center;gap:10px;background:{bg};"
-        f"border-left:4px solid {fg};border-radius:8px;padding:8px 12px'>"
-        f"<span style='font-size:20px;font-weight:700'>{player_name}</span>"
-        f"<span style='color:{fg};font-weight:700'>{pos} · {row.get('Team') or ''}</span>"
-        f"<span style='opacity:.8;font-size:12px'>{row.get('Pos Rk') or ''}"
-        f"{' · bye ' + str(int(row['Bye'])) if pd.notna(row.get('Bye')) else ''}</span></div>",
-        unsafe_allow_html=True)
-
-    tiles = []
-    for label, column, fmt in (('Proj Pts', 'Proj Pts', '{:.0f}'), ('VORP', 'VORP', '{:.0f}'),
-                               ('VONA', 'VONA', '{:.0f}'), ('ADP', 'ADP', '{:.1f}'),
-                               ('FFA Rank', 'FFA Rank', '{:.0f}'), ('Tier', 'Tier', '{:.0f}'),
-                               ('Ceiling', 'Ceiling', '{:.0f}'), ('Floor', 'Floor', '{:.0f}')):
-        value = row.get(column)
-        if pd.notna(value):
-            tiles.append((label, fmt.format(float(value))))
-    if tiles:
-        cols = st.columns(len(tiles))
-        for col, (label, value) in zip(cols, tiles):
-            col.metric(label, value)
-
-    stat_bits = []
-    for label, column in (('carries', 'carries'), ('targets', 'targets'),
-                          ('rush yds', 'rushing_yards'), ('rec', 'receptions'),
-                          ('rec yds', 'receiving_yards'), ('rush TD', 'rushing_tds'),
-                          ('rec TD', 'receiving_tds'), ('pass yds', 'passing_yards'),
-                          ('pass TD', 'passing_tds')):
-        value = row.get(column)
-        if pd.notna(value) and float(value) > 0:
-            stat_bits.append(f"**{float(value):.0f}** {label}")
-    if stat_bits:
-        st.markdown("**Projected line** — " + " · ".join(stat_bits))
-        st.caption(f"Source: {row.get('proj_basis', 'projection')}")
-
-    notes = row.get('Notes')
-    if isinstance(notes, str) and notes.strip():
-        st.markdown("**Scouting note**")
-        st.write(notes)
-
-    st.markdown("---")
-    st.markdown("**Recent game log**")
-    try:
-        from data.transforms import load_and_merge_data
-        scoring_rule = st.session_state.get('score_tab1', 'Full PPR')
-        season = int(st.session_state.get('dhq_curve_season', 2025))
-        stats, team_col, name_col, _ = load_and_merge_data(season, scoring_rule)
-        log = stats[stats[name_col] == player_name]
-        log = log[pd.to_numeric(log['week'], errors='coerce').fillna(0) > 0]
-        if log.empty:
-            st.caption(f"No {season} game log for this player (rookie, or he didn't play).")
-        else:
-            wanted = ['week', 'opponent_team', 'fantasy_points', 'carries', 'rushing_yards',
-                      'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds',
-                      'passing_yards', 'passing_tds', 'passing_interceptions']
-            cols = [c for c in wanted if c in log.columns]
-            view = log[cols].sort_values('week', ascending=False).head(10)
-            view = view.loc[:, (view.fillna(0) != 0).any(axis=0)]
-            st.dataframe(view, width="stretch", hide_index=True,
-                         height=df_auto_height(min(len(view), 10)))
-    except Exception as exc:
-        st.caption(f"Couldn't load the game log ({type(exc).__name__}).")
-
-    st.caption("For the full profile — percentile radars, splits, matchup history — open the "
-               "Player Search tab. This draft stays exactly where it is.")
+        "<style>"
+        ".pv-wrap{display:flex;gap:6px;overflow-x:auto;padding:2px 0 8px 0}"
+        ".pv-card{min-width:132px;flex:1;border-radius:6px;padding:6px 8px}"
+        ".pv-top{display:flex;justify-content:space-between;align-items:baseline}"
+        ".pv-pos{font-size:12px;font-weight:800;letter-spacing:.06em}"
+        ".pv-pct{font-size:13px;font-weight:700}"
+        ".pv-bar{height:4px;border-radius:2px;background:rgba(255,255,255,0.09);margin:4px 0}"
+        ".pv-bar span{display:block;height:100%;border-radius:2px}"
+        ".pv-pts{font-size:10px;opacity:.75}"
+        ".pv-name{font-size:11px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
+        ".pv-wait{font-size:9px;opacity:.55}"
+        "</style>"
+        f"<div class='pv-wrap'>{''.join(cards)}</div>", unsafe_allow_html=True)
+    st.caption(
+        "How much your projected starting lineup gains by spending this pick on each position "
+        "instead of waiting one more turn. It's a difference, not a level — that's why the "
+        "quarterback reads low even though he outscores everyone: another comparable one will "
+        "still be there."
+    )
 
 
 def _render_draft_room(board, settings, ctx):
@@ -1390,6 +1352,7 @@ def _render_draft_room(board, settings, ctx):
     if mode == "Live draft":
         _render_run_pressure(settings)
 
+    _render_positional_value_add(board, settings, dc)
     positions, label = _render_position_filter()
     _render_single_recommendation(board, settings, dc['my_roster'], dc['next_pick'],
                                   positions, label)
@@ -1424,8 +1387,24 @@ def _render_draft_room(board, settings, ctx):
                 _undo_last()
                 st.rerun()
     with action[2 if mode == "Mock draft" else 3]:
-        if selected and st.button("🔍 Player profile", key="dhq_act_profile", width="stretch"):
-            _player_profile_dialog(selected, board)
+        # Jumps to the real Player Search tab rather than a cut-down modal.
+        # Every bit of draft state - your picks, an in-progress mock, the
+        # selected player, the position filter - lives in st.session_state,
+        # which survives a tab switch untouched, so coming back lands you
+        # exactly where you left. The modal only ever showed a subset;
+        # this shows everything that tab does, with no changes to it.
+        # on_click, not a post-hoc `if st.button(...)`: switch_tab writes to
+        # st.session_state['active_tab'], and app.py has already instantiated
+        # that keyed st.tabs widget by the time this body runs. Streamlit only
+        # permits writes to a keyed widget's state from a callback, which runs
+        # in its own pre-script phase - the same constraint documented in
+        # ui/tabs/risers.py.
+        if selected:
+            st.button("🔍 Full player profile", key="dhq_act_profile", width="stretch",
+                      on_click=switch_tab, args=(TAB_PLAYER_SEARCH,),
+                      kwargs={'jump_to_player': selected},
+                      help="Opens the Player Search tab for this player. Your draft, mock and "
+                           "selections are all preserved — come straight back.")
     with action[3]:
         if selected:
             st.caption(f"Selected: **{selected}**")

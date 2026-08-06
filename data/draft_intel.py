@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from data.draft_board import DRAFTABLE_POSITIONS, snake_pick_numbers
+from data.draft_board import DRAFTABLE_POSITIONS, snake_pick_numbers, roster_needs
 from data.draft_sim import (
     prepare_sim_pool, init_draft_state, run_until_user_pick, record_pick,
     autopick_for_user, optimal_lineup_points, team_on_clock,
@@ -334,6 +334,132 @@ def roster_percentile(score, distribution):
     if len(scores) == 0:
         return None
     return round(float((scores < float(score)).mean() * 100), 0)
+
+
+def _projected_full_lineup(available, my_roster, settings):
+    """
+    What your starting lineup would score if every empty slot were filled at
+    replacement level - the sensible denominator for "how much does this
+    pick add to my team".
+    """
+    from data.draft_sim import optimal_lineup_points
+    from data.draft_board import DRAFTABLE_POSITIONS as _POS
+
+    filled, _ = optimal_lineup_points(my_roster, settings)
+    needs = roster_needs(my_roster, settings)
+    replacement_total = 0.0
+    for slot, count in needs.items():
+        if count <= 0:
+            continue
+        positions = {'FLEX': ['RB', 'WR', 'TE'],
+                     'SUPERFLEX': ['QB', 'RB', 'WR', 'TE']}.get(slot, [slot])
+        pool = available[available['Pos'].astype(str).str.upper().isin(positions)]
+        pool = pool.dropna(subset=['Proj Pts']).sort_values('Proj Pts', ascending=False)
+        if pool.empty:
+            continue
+        # "Replacement" here is the player around the depth this league
+        # rosters at that slot, not the best one left.
+        depth = min(len(pool) - 1, int(settings['num_teams']) * max(1, count))
+        replacement_total += float(pool['Proj Pts'].iloc[depth]) * count
+    return max(float(filled) + replacement_total, 1.0)
+
+
+def positional_value_add(board, my_roster, settings, next_pick, drafted_names=None):
+    """
+    What spending THIS pick on each position does to your projected starting
+    lineup, in points and as a percentage.
+
+    The question every drafter is actually asking on the clock is not "who is
+    the best player left" but "which hole should I fill now, and which can
+    wait". This answers it directly: for each position, the value of taking
+    the best one available RIGHT NOW, minus the value of the one you'd
+    expect to still be there at your NEXT pick. What's left is the cost of
+    waiting - which is the whole decision.
+
+    Why it's a difference and not a level: the best receiver available is
+    always worth a lot of points in absolute terms, so ranking positions by
+    "how good is the best one" just re-sorts them by raw scoring and tells
+    you to take a quarterback every time. Subtracting what you'd get by
+    waiting removes exactly that, and leaves the scarcity - a tight end who
+    won't be there next round scores high, a quarterback with eight
+    comparable ones behind him scores near zero.
+
+    Marginal gain is measured against your ACTUAL lineup, so a position you
+    have already filled contributes only bench value and correctly falls to
+    the bottom. Both terms use the same lineup calculation, so the
+    difference is apples to apples.
+
+    (Fantasy Football Advice show a comparable per-position score built from
+    how often similar drafts took each position here, plus server-side
+    "dynamic position multipliers" whose derivation isn't in their client
+    bundle. This is a different route to the same question - and it has the
+    advantage of being computable from your own board and fully explainable
+    line by line.)
+
+    Returns rows sorted by value added, each carrying the player driving it.
+    """
+    from data.draft_sim import marginal_lineup_gain, optimal_lineup_points
+
+    if board is None or board.empty:
+        return []
+    available = board
+    if drafted_names:
+        available = available[~available['Player'].isin(set(drafted_names))]
+    if available.empty or 'Proj Pts' not in available.columns:
+        return []
+
+    # Percentages are against a COMPLETE projected lineup, not the partial
+    # one you happen to hold right now. Dividing by the current roster makes
+    # the first pick of a draft read "+10,060% to your team", which is not
+    # only absurd but hides the ordering the number exists to show. Empty
+    # starting slots are valued at replacement level, which is what you'd
+    # end up with if you never addressed them.
+    baseline = _projected_full_lineup(available, my_roster or [], settings)
+
+    rows = []
+    for pos in DRAFTABLE_POSITIONS:
+        pool = available[available['Pos'].astype(str).str.upper() == pos]
+        pool = pool.dropna(subset=['Proj Pts']).sort_values('Proj Pts', ascending=False)
+        if pool.empty:
+            continue
+
+        best = pool.iloc[0]
+        gain_now = marginal_lineup_gain(
+            my_roster or [], {'Pos': pos, 'Proj Pts': best['Proj Pts'], 'VORP': best.get('VORP')},
+            settings)
+
+        # Expected best still on the board at your next pick: walk the
+        # position in value order, weighting each player by the chance he is
+        # both available AND the best one left.
+        expected_points = float(best['Proj Pts'])
+        if next_pick is not None and 'Avail Next %' in pool.columns:
+            survive = (pd.to_numeric(pool['Avail Next %'], errors='coerce').fillna(0) / 100.0).to_numpy()
+            points = pool['Proj Pts'].to_numpy(dtype=float)
+            gone_before = np.cumprod(np.concatenate([[1.0], 1.0 - survive[:-1]]))
+            weights = survive * gone_before
+            total_weight = float(weights.sum())
+            if total_weight > 0.02:
+                expected_points = float((weights * points).sum() / total_weight)
+            else:
+                # Nobody at this position is expected to survive: waiting
+                # gets you replacement level, not the next name down.
+                expected_points = float(points[-1])
+
+        gain_later = marginal_lineup_gain(
+            my_roster or [], {'Pos': pos, 'Proj Pts': expected_points, 'VORP': None}, settings)
+
+        value_add = gain_now - gain_later
+        rows.append({
+            'Pos': pos,
+            'Best available': best['Player'],
+            'Proj Pts': round(float(best['Proj Pts']), 1),
+            'If you wait': round(expected_points, 1),
+            'Points added': round(value_add, 1),
+            'Team %': round(value_add / baseline * 100, 1),
+            'Avail Next %': best.get('Avail Next %'),
+        })
+
+    return sorted(rows, key=lambda r: -r['Points added'])
 
 
 def positional_run_pressure(all_drafted, settings, lookback=12):

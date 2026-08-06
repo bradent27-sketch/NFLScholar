@@ -238,8 +238,19 @@ def merge_ffa_into_board(board, ffa_df, stat_line_weight=1.0, scoring=None):
 
     matched = int(sum(1 for p in positions if p is not None))
     for column in FFA_PASSTHROUGH.values():
-        if column in ffa.columns:
-            out[column] = [ffa[column].iloc[p] if p is not None else None for p in positions]
+        if column not in ffa.columns:
+            continue
+        incoming = [ffa[column].iloc[p] if p is not None else None for p in positions]
+        if column in out.columns:
+            # Fill, don't overwrite. Their export covers ~260 players and the
+            # board carries ~700, so a straight assignment would blank the
+            # column for everyone they don't list. That is a real loss where
+            # the app already had the field from a wider source: Age is
+            # derived from birthdates for 92% of the board, and letting a
+            # 42%-coverage import replace it would delete half of it.
+            out[column] = pd.Series(incoming, index=out.index).combine_first(out[column])
+        else:
+            out[column] = incoming
 
     weight = float(np.clip(stat_line_weight, 0.0, 1.0))
     blended = 0

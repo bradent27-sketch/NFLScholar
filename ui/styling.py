@@ -86,6 +86,7 @@ COLUMN_HELP = {
     'ADOT': "Average Depth of Target",
     'EPA': "Expected Points Added - how much a play's value beat expectation for that down/distance/field position",
     'VORP': "Value Over Replacement Player - this app's draft-value metric vs. a replacement-level player at the position",
+    'Age': "Age at kickoff, from the player's birthdate. Also drives the aging markdown on the projection: past the position's peak (RB 25, WR 26, QB/TE 27) his own past production is discounted at a measured rate - RB -6.5%/yr, WR -3.6%, TE -2.0%, QB -1.0%",
     'RYOE': "Rush Yards Over Expected (NFL Next Gen Stats) - actual rush yards vs. expected given blockers/defenders in the box",
     'RYOE/Att': "Rush Yards Over Expected per attempt - RYOE normalized for volume",
     'Pct Jump': "Percentile jump from this player's season-to-date average to their most recent game",

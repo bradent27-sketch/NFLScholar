@@ -44,7 +44,7 @@ import pandas as pd
 import streamlit as st
 
 from data.draft_board import (
-    DRAFTABLE_POSITIONS, CURVE_SEASONS, MODERN_SEASON_GAMES, score_stats,
+    DRAFTABLE_POSITIONS, CURVE_SEASONS, MODERN_SEASON_GAMES, PACE_GAMES, score_stats,
 )
 
 # The stat line produced for every player. These are exactly the fields
@@ -92,11 +92,97 @@ FULL_TRUST_GAMES = 24
 # should be read as a changed job rather than as noise.
 ROLE_CHANGE_RATIO = 0.6
 
+# HOW MANY GAMES A PROJECTION IS SPREAD ACROSS.
+#
+# The two sides of the blend need a games figure and they need DIFFERENT
+# ones, because they already mean different things:
+#
+#   * The rank curve's entry at rank r is an average season total over every
+#     player who finished there. That is already the right unconditional
+#     expectation for a player projected at rank r - missed games included,
+#     because some of the players in that average missed games. It needs no
+#     adjustment at all.
+#
+#   * The player's own side is a pure per-game rate with no games
+#     information in it, so it has to be multiplied by something. That
+#     something is PACE_GAMES - a full season.
+#
+# Two other candidates were built and measured, and both were worse:
+#
+#   Rank-curve games ("this player will miss as many games as the average
+#   player who finished at his rank"). Not a durability measure - the curve
+#   slopes 16.6 at QB1 to 10.6 at QB28 mostly because missing games is how
+#   players END UP ranked 28th. It left every QB ~30 points under the analyst
+#   consensus (Jared Goff 247 here vs 302 at FFA) purely from the games
+#   assumption. Rescaling the curve the other way, up to a flat 17, is worse
+#   still: it invents a player who plays a full season and finishes 28th
+#   anyway, flattening every positional curve. Measured, that dropped rank
+#   agreement with FantasyPros ECR from 0.937 to 0.905 and pushed all four
+#   positions 15-28 points ABOVE consensus.
+#
+#   The player's own games-per-season record. This one sounds right and
+#   isn't, because at this sample size it mostly measures role changes and
+#   rookie seasons rather than health - a rookie who played 10 games as a
+#   backup and 17 as a starter reads as "fragile" at 13.5. Measured, it hurt
+#   agreement on both references (ECR rank-corr 0.937 -> 0.924, median
+#   positional bias 9.0 -> 11.0) by marking down exactly the players
+#   analysts had already cleared, Malik Nabers and Rashee Rice among them.
+#
+# A full season for the own-history side is also what every published
+# projection assumes, which keeps these point totals on the same scale as
+# every number the user can compare them to.
+#
+# PACE_GAMES itself lives in data.draft_board, because the valuation side
+# needs the same constant.
+
 # Season recency weights when averaging a player's own per-game rates. Last
 # season dominates - a 2022 usage rate says little about a 2026 role - but
 # earlier seasons still stabilize the estimate for players with a short or
 # interrupted recent run.
 SEASON_RECENCY_WEIGHTS = [1.0, 0.55, 0.30, 0.15, 0.08]
+
+# AGING. Measured here rather than assumed, off 1,644 contributor seasons
+# (>=8 games, >=4 ppg) from 2014 on, matched to birthdates from the
+# DynastyProcess ID crosswalk. The quantity measured is the median
+# year-over-year ratio of points per game within each age band, and only the
+# SHAPE across bands is used - the level is meaningless because requiring a
+# productive season N selects high, so every band's ratio sits below 1.
+#
+#   RB  22:0.98  24:0.84  26:0.85  28:0.73  30:0.68
+#   WR  22:1.01  24:0.91  26:0.85  28:0.78  30:0.76  32:0.67
+#   TE  22:0.98  24:1.07  26:0.79  28:0.83  30:0.80  32:0.90
+#   QB  22:1.02  24:0.96  26:0.93  28:0.92  30:0.93  32:0.90  36:0.91
+#
+# Backs fall off a cliff and receivers slide steadily; tight ends and
+# quarterbacks essentially don't, which is the well-known shape and a good
+# sign the measurement isn't an artifact. TE and QB rates below come from
+# the regression that controls for prior-year production rather than from
+# these raw bands, because their raw bands are flat-but-noisy and the
+# regression separates the small real decline from the noise.
+#
+# Rates are per year of age past the position's peak, as a fraction of the
+# per-game rate.
+AGE_PEAK = {'QB': 27.0, 'RB': 25.0, 'WR': 26.0, 'TE': 27.0}
+AGE_DECLINE_PER_YEAR = {'QB': 0.010, 'RB': 0.065, 'WR': 0.036, 'TE': 0.020}
+
+# How far in the past a player's own rates sit, in seasons, relative to the
+# season being projected. It is the weight-centroid of SEASON_RECENCY_WEIGHTS
+# (0.92 seasons back) plus the one season forward being projected. This is
+# the interval the decline is integrated over - a player's history is not
+# one year stale, and pretending it is would under-apply the curve.
+HISTORY_LAG_SEASONS = 1.92
+
+# Applied only as a markdown, never as a boost, even though the raw bands do
+# show young players gaining (~4.5%/yr at RB/WR/TE, ~2% at QB relative to
+# prime). The symmetric version was built and measured, and it does nothing:
+# rank agreement with FantasyPros ECR and with FFA Value were identical to
+# three decimals, and projection MAE got marginally worse (22.0 -> 22.2).
+# That is not a surprise in hindsight - young players are exactly the ones
+# with thin history, so `evidence` is already low and the consensus rank
+# curve is already carrying most of their projection. Boosting the small
+# own-history slice barely moves them. The upside half is left to the market,
+# which prices it better anyway.
+AGE_ADJUST_MIN = 0.75
 
 
 def _weekly_history(latest_season, n_seasons=CURVE_SEASONS):
@@ -253,15 +339,87 @@ def build_player_rates(latest_season, n_seasons=CURVE_SEASONS):
     return rates.reset_index(drop=True)
 
 
-def project_stat_lines(board, curves, rates, latest_season=2025, games_override=None):
+@st.cache_data(show_spinner=False)
+def build_age_lookup(season):
+    """
+    Player -> age (in years) at kickoff of the given season.
+
+    Computed from BIRTHDATE rather than read off the crosswalk's own `age`
+    column, because a birthdate is a fact and an age is a fact with a
+    timestamp on it - the published column is correct only for whenever that
+    file was last rebuilt. The two agree to 0.27 years where both exist,
+    which is the drift you'd expect, and the birthdate version can't rot.
+
+    Keyed on the loose merge name because this joins to a consensus feed
+    that spells suffixes differently, and an age is harmless to get slightly
+    wrong on a rare collision - it scales a projection by a few percent, it
+    doesn't decide anything on its own.
+    """
+    from data.draft_sources import load_player_id_map
+    from data.utils import clean_name_for_merge
+
+    ids, _ = load_player_id_map()
+    if ids is None or ids.empty or 'birthdate' not in ids.columns:
+        return {}
+    ids = ids.dropna(subset=['birthdate']).copy()
+    born = pd.to_datetime(ids['birthdate'], errors='coerce')
+    ids = ids[born.notna()]
+    born = born[born.notna()]
+    kickoff = pd.Timestamp(f'{int(season)}-09-01')
+    ages = ((kickoff - born).dt.days / 365.25).round(2)
+    keys = clean_name_for_merge(ids['name'])
+    lookup = {}
+    for key, age in zip(keys, ages):
+        if key and 18 <= age <= 50:
+            lookup.setdefault(key, float(age))
+    return lookup
+
+
+def age_adjustment(position, age):
+    """
+    Multiplier on a player's own historical per-game rates, for the fact
+    that he will be older next season than he was when he produced them.
+
+    Only ever <= 1: see AGE_ADJUST_MIN for why the upside half is left to
+    the consensus rank rather than modelled here. Returns 1.0 for an unknown
+    age, an unknown position, or anyone at or below his position's peak, so
+    a missing birthdate costs nothing.
+
+    The decline is integrated over the interval between where his history
+    actually sits (HISTORY_LAG_SEASONS back) and the season being projected,
+    counting only the part of that interval past the peak. A 26-year-old
+    back is therefore charged for the one year of it that lands past 25,
+    not the full lag, which keeps the curve continuous at the peak instead
+    of stepping down the moment a player has a birthday.
+    """
+    rate = AGE_DECLINE_PER_YEAR.get(str(position).upper())
+    if not rate or age is None or not np.isfinite(age):
+        return 1.0
+    peak = AGE_PEAK.get(str(position).upper(), 26.0)
+    years_past = max(age - peak, 0.0) - max(age - HISTORY_LAG_SEASONS - peak, 0.0)
+    if years_past <= 0:
+        return 1.0
+    return float(max(np.exp(-rate * years_past), AGE_ADJUST_MIN))
+
+
+def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
     """
     Attach a full projected stat line to every row of the board.
 
-    The blend per stat is:  self_weight * (player's own rate x expected
-    games)  +  (1 - self_weight) * (rank curve total), where self_weight is
-    the stat's stickiness (STAT_SELF_WEIGHT) scaled down when the player has
+    The blend per stat is:  self_weight * (player's own rate x PACE_GAMES)
+    + (1 - self_weight) * (rank curve total), where self_weight is the
+    stat's stickiness (STAT_SELF_WEIGHT) scaled down when the player has
     thin history. A player with no history at all lands entirely on the rank
     curve, which is exactly right for a rookie.
+
+    See the games note above PACE_GAMES for why the own side is projected
+    across a full season while the curve side is left alone, and for the two
+    alternatives that were measured and rejected.
+
+    The own-history side is additionally scaled by age_adjustment(), and
+    ONLY that side: the rank-curve side is indexed by consensus rank, and
+    consensus has already priced the player's age. Applying an age curve to
+    both halves would charge a 33-year-old for his age twice.
     """
     if board.empty or not curves:
         return board
@@ -294,10 +452,15 @@ def project_stat_lines(board, curves, rates, latest_season=2025, games_override=
             record = loose_lookup.get(board_loose.iloc[position])
         return record
 
+    ages = ages if ages is not None else build_age_lookup(int(latest_season) + 1)
+    board_ages = [ages.get(k) for k in board_loose]
+
     for stat in PROJECTED_STATS:
         out[stat] = 0.0
     out['proj_games'] = np.nan
     out['proj_basis'] = 'rank curve'
+    out['Age'] = [a if a is not None else np.nan for a in board_ages]
+    out['age_factor'] = 1.0
 
     for position, (idx, row) in enumerate(out.iterrows()):
         pos = str(row['Pos']).upper()
@@ -309,10 +472,12 @@ def project_stat_lines(board, curves, rates, latest_season=2025, games_override=
             continue
         rank_idx = int(np.clip(int(row.get('Pos Rank') or 1) - 1, 0, depth - 1))
 
-        expected_games = float(pos_curves['games'][rank_idx]) if 'games' in pos_curves else 15.0
-        if games_override:
-            expected_games = float(games_override)
-        out.at[idx, 'proj_games'] = round(expected_games, 1)
+        # The curve's games figure is used ONLY to turn its season totals
+        # back into per-game rates for the role-change comparison below,
+        # which is the one place it's the right number: it's asking "what
+        # workload did the player who finished here actually carry per game
+        # he played". It is deliberately not used as this player's games.
+        curve_games = float(pos_curves['games'][rank_idx]) if 'games' in pos_curves else 15.0
 
         history = _history_for(position)
         sample_games = float(history['games_sample']) if history else 0.0
@@ -336,7 +501,7 @@ def project_stat_lines(board, curves, rates, latest_season=2025, games_override=
             own_usage = sum(float(history.get(f'rate_{s}', 0.0))
                             for s in ('carries', 'targets', 'attempts'))
             curve_usage = sum(float(pos_curves[s][rank_idx]) for s in ('carries', 'targets', 'attempts')
-                              if s in pos_curves) / max(expected_games, 1.0)
+                              if s in pos_curves) / max(curve_games, 1.0)
             if curve_usage > 0:
                 usage_ratio = own_usage / curve_usage
                 if usage_ratio < ROLE_CHANGE_RATIO:
@@ -348,10 +513,22 @@ def project_stat_lines(board, curves, rates, latest_season=2025, games_override=
             out.at[idx, 'proj_basis'] = ('own history' if evidence >= 0.99
                                          else f'blend ({int(evidence * 100)}% own)')
 
+        age_factor = age_adjustment(pos, board_ages[position])
+        out.at[idx, 'age_factor'] = round(age_factor, 3)
+
+        # The games this line is spread across, which the milestone-bonus
+        # model needs to turn a season total back into a weekly mean. It has
+        # to follow the blend: the own-history side carries a full season,
+        # the curve side carries whatever the players at that rank actually
+        # played, so the line as a whole sits between them in proportion to
+        # how much of it came from each. Exact at both ends - a pure rookie
+        # gets the curve's games, a fully-established player gets 17.
+        out.at[idx, 'proj_games'] = round(evidence * PACE_GAMES + (1 - evidence) * curve_games, 1)
+
         for stat in PROJECTED_STATS:
             curve_total = float(pos_curves[stat][rank_idx]) if stat in pos_curves else 0.0
             if history and evidence > 0:
-                own_total = float(history.get(f'rate_{stat}', 0.0)) * expected_games
+                own_total = float(history.get(f'rate_{stat}', 0.0)) * PACE_GAMES * age_factor
                 weight = STAT_SELF_WEIGHT.get(stat, DEFAULT_SELF_WEIGHT) * evidence
                 value = weight * own_total + (1 - weight) * curve_total
             else:
@@ -373,18 +550,29 @@ def score_projected_lines(board, scoring):
     instead would award a 100-yard bonus once for a 1,400-yard season, and
     ignoring them would drop the setting entirely; both are worse than an
     explicit distributional estimate.
+
+    Divided by the player's own projected games, not by 17: the bonus is
+    per GAME PLAYED, so a back who is projected for 1,200 yards across 14
+    games clears 100 in a week far more often than one who takes 17 to get
+    there, and dividing both by a flat 17 would price them identically.
     """
     if board.empty:
         return board
     out = board.copy()
     per_game = out.copy()
-    games = pd.to_numeric(out.get('proj_games'), errors='coerce').fillna(15.0).clip(lower=1)
+    games = pd.to_numeric(out.get('proj_games'), errors='coerce').fillna(PACE_GAMES).clip(lower=1)
 
     base_scoring = dict(scoring)
     for key in list(base_scoring):
         if key.startswith('bonus_') and key != 'bonus_mode':
             base_scoring[key] = 0.0
-    out['Proj Pts'] = score_stats(per_game, base_scoring).round(1)
+    # Floored at zero. A projected line is a season-long EXPECTATION, and no
+    # draftable player has a negative one: the only way this went below zero
+    # was a deep bench body whose rank-curve share of fumbles and picks
+    # outweighed a near-zero share of the production, which is an artifact of
+    # slicing a curve thin rather than a real forecast. Left unclamped it put
+    # 20 players on the board at negative points.
+    out['Proj Pts'] = score_stats(per_game, base_scoring).clip(lower=0.0).round(1)
 
     from data.draft_board import YARDAGE_BONUSES, has_yardage_bonuses
     if has_yardage_bonuses(scoring):

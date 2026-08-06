@@ -62,7 +62,7 @@ SIM_KEY = 'dhq_sim_state'
 # rates the QB1 the best player in football. Seeing "QB1" and "RB3" next to
 # the number keeps it in the only context where it means anything.
 BOARD_COLUMNS = [
-    'Player', 'Pos', 'Team', 'Pos Rk', 'Tier', 'Proj Pts', 'VORP', 'VONA',
+    'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'Proj Pts', 'VORP', 'VONA',
     'FFA Rank', 'ADP', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
     'Risk', 'SOS', 'Bye', 'ECR',
 ]

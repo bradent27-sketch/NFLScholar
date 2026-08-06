@@ -115,6 +115,14 @@ CURVE_SEASONS = 5
 # same footing as current ones when building the curves.
 MODERN_SEASON_GAMES = 17
 
+# The games basis every projected stat line is expressed on. Lives here
+# rather than in data.draft_projections because draft_projections already
+# imports from this module, and both the projection side and the valuation
+# side need the same number to agree. See the long note beside it in
+# data/draft_projections.py for why projections are a full-season pace and
+# the games discount is applied to surplus over replacement instead.
+PACE_GAMES = 17.0
+
 
 # The raw local weekly exports and the canonical names data.loaders renames
 # them to are NOT the same vocabulary - the on-disk nflverse files call rush

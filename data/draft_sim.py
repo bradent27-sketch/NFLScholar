@@ -72,8 +72,11 @@ def _position_limits(settings):
         if pos in SUPERFLEX_ELIGIBLE:
             starters += superflex
         if pos in FLEX_ELIGIBLE:
-            starters += flex
-        limits[pos] = max(1, starters + BENCH_DEPTH_ALLOWANCE.get(pos, 1))
+            # One flex slot is a claim shared across three positions, so it
+            # counts as a third of a slot each rather than a whole one for
+            # all of them.
+            starters += flex / len(FLEX_ELIGIBLE)
+        limits[pos] = max(1, int(round(starters + BENCH_DEPTH_ALLOWANCE.get(pos, 1))))
     return limits
 
 
@@ -101,6 +104,55 @@ def _unfilled_starter_slots(counts, settings):
     return remaining
 
 
+# Roster construction ladder, applied after the starting lineup is full:
+# one backup at each real position, and everything after that goes to
+# running back and receiver.
+#
+# This is how people actually build a bench, and it is not what a pure
+# value model does on its own - left alone it will happily take a third
+# tight end or a second kicker in round 12 because they graded out highest,
+# producing a roster nobody would draft. Backups at QB and TE are worth one
+# spot each (you start one, so the second is insurance); backups at K and
+# DST are worth none at all, since a bad week is solved off waivers.
+BACKUP_ALLOWANCE = {'QB': 1, 'RB': 1, 'WR': 1, 'TE': 1, 'K': 0, 'DST': 0}
+DEPTH_PRIORITY_POSITIONS = ['RB', 'WR']
+
+
+def _construction_stage_positions(counts, settings):
+    """
+    Which positions the roster ladder allows next, or None for no restriction.
+
+    Returns None while the starting lineup still has holes - at that point
+    the value model and the need multiplier are already pulling in the right
+    direction and don't need a hard filter on top.
+    """
+    roster = settings['roster']
+    req, flex, superflex = _starter_requirements(settings)
+    if _unfilled_starter_slots(counts, settings) > 0:
+        return None
+
+    # Starters are set: take one backup at each position that warrants one.
+    #
+    # Counted against DEDICATED slots only. A single FLEX slot is shared
+    # between RB, WR and TE - adding it to each of their starter counts
+    # tells the ladder every one of them is a slot short, which is how a
+    # roster ends up with four tight ends in a league that starts one.
+    # Flex-driven depth is handled where it belongs, in the final stage,
+    # which puts extra picks into running backs and receivers.
+    wants_backup = []
+    for pos in DRAFTABLE_POSITIONS:
+        started = req.get(pos, 0)
+        if pos in SUPERFLEX_ELIGIBLE:
+            started += superflex
+        if started <= 0:
+            continue
+        if counts.get(pos, 0) < started + BACKUP_ALLOWANCE.get(pos, 0):
+            wants_backup.append(pos)
+    if wants_backup:
+        return wants_backup
+    return list(DEPTH_PRIORITY_POSITIONS)
+
+
 def _legal_positions(counts, settings, round_no, total_rounds, picks_left):
     """
     Which positions this team may still draft at this point.
@@ -123,6 +175,31 @@ def _legal_positions(counts, settings, round_no, total_rounds, picks_left):
             if req.get(pos, 0) == 0:
                 continue
         legal.append(pos)
+
+    # No backups anywhere until the starting lineup is complete. Nobody
+    # takes a second quarterback in round three of a one-QB league while
+    # their WR2 slot is empty, however well he grades - the backup can only
+    # ever contribute if the starter is hurt, so a starting slot is strictly
+    # more valuable than any bench copy of a position you've already filled.
+    if _unfilled_starter_slots(counts, settings) > 0:
+        flex_open = int(settings['roster'].get('FLEX', 0)) + int(settings['roster'].get('SUPERFLEX', 0)) > 0
+        still_needed = []
+        for pos in legal:
+            dedicated = req.get(pos, 0)
+            if pos in SUPERFLEX_ELIGIBLE:
+                dedicated += superflex
+            if counts.get(pos, 0) < dedicated:
+                still_needed.append(pos)
+            elif flex_open and pos in FLEX_ELIGIBLE:
+                still_needed.append(pos)
+        if still_needed:
+            legal = still_needed
+
+    ladder = _construction_stage_positions(counts, settings)
+    if ladder:
+        narrowed = [p for p in legal if p in ladder]
+        if narrowed:
+            legal = narrowed
 
     unfilled = _unfilled_starter_slots(counts, settings)
     if picks_left <= unfilled:
@@ -405,14 +482,36 @@ def autopick_for_user(state, settings, pool, value_col='VORP', explore=0.0, rng=
     pool_legal = available[available['Pos'].astype(str).str.upper().isin(legal)]
     if pool_legal.empty:
         pool_legal = available
-    col = value_col if value_col in pool_legal.columns and pool_legal[value_col].notna().any() else 'Proj Pts'
-
-    shortlist = pool_legal.nlargest(min(len(pool_legal), 40), col)
+    # Candidates come off BOARD RANK where it exists, not raw projected
+    # points or bare VORP.
+    #
+    # This matters most in round one. Raw value hands an empty roster the
+    # quarterback every time - he really does project ~150 points above the
+    # best back, and a lineup-gain calculation on an empty lineup sees
+    # exactly that. What it cannot see is that a quarterback worth almost as
+    # much is available eight rounds later. Board Rank already carries that
+    # correction (market blend, late-round demotion), and it is the ordering
+    # measured against expert consensus, so the simulator should draft the
+    # same board the app recommends rather than a second, more naive one.
+    if 'Board Rank' in pool_legal.columns and pool_legal['Board Rank'].notna().any():
+        shortlist = pool_legal.nsmallest(min(len(pool_legal), 40), 'Board Rank')
+    else:
+        col = value_col if value_col in pool_legal.columns and pool_legal[value_col].notna().any() else 'Proj Pts'
+        shortlist = pool_legal.nlargest(min(len(pool_legal), 40), col)
+    has_board_rank = 'Board Rank' in shortlist.columns and shortlist['Board Rank'].notna().any()
     scores, rows = [], []
     for _, row in shortlist.iterrows():
         candidate = {'Pos': str(row['Pos']).upper(),
                      'Proj Pts': row.get('Proj Pts'), 'VORP': row.get('VORP')}
-        scores.append(marginal_lineup_gain(my_roster, candidate, settings))
+        gain = marginal_lineup_gain(my_roster, candidate, settings)
+        if has_board_rank and pd.notna(row.get('Board Rank')):
+            # Board order leads; the lineup-gain term only separates players
+            # sitting close together on it, which is where roster fit should
+            # decide and where the board itself is least confident anyway.
+            score = -float(row['Board Rank']) + 0.02 * gain
+        else:
+            score = gain
+        scores.append(score)
         rows.append(row)
     if not rows:
         return None

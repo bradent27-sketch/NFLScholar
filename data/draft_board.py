@@ -801,6 +801,11 @@ def compute_starter_demand(board, settings):
 # replacement level.
 STREAMABLE_POSITIONS = ['QB', 'K', 'DST']
 
+# Positions universally drafted in the last couple of rounds. See
+# demote_late_round_positions for why this is a fact about draft structure
+# rather than a judgement about their value.
+LATE_ROUND_POSITIONS = ['K', 'DST']
+
 # How many free options a streamer realistically rotates between, chosen on
 # prior form. Averaging the top 2 rather than always taking the single best
 # reflects that the obvious pickup isn't always startable (bye, injury,
@@ -872,6 +877,15 @@ def build_streaming_replacement(scoring, latest_season, rostered_counts, n_seaso
     for pos, n_rostered in dict(rostered_counts).items():
         if pos not in STREAMABLE_POSITIONS:
             continue
+        if pos == 'DST':
+            # Team defenses never appear in player-level data, so the loop
+            # below has nothing to work with. Streaming a defense is the most
+            # common streaming there is, so it gets measured from team stats
+            # rather than skipped.
+            value = _stream_dst(scoring, seasons, int(n_rostered))
+            if value:
+                out['DST'] = value
+            continue
         pos_rows = df[df['position'].astype(str).str.upper() == pos]
         if pos_rows.empty:
             continue
@@ -880,8 +894,25 @@ def build_streaming_replacement(scoring, latest_season, rostered_counts, n_seaso
             season_rows = pos_rows[pos_rows['season'] == season]
             if season_rows.empty:
                 continue
-            totals = season_rows.groupby(name_col)['_points'].sum().sort_values(ascending=False)
-            rostered = set(totals.head(int(n_rostered)).index)
+            # WHO IS ROSTERED is decided by the PREVIOUS season's finish -
+            # draft-time information - not by how this season turned out.
+            #
+            # This distinction inverts the answer. Defining the rostered tier
+            # by final season totals leaves a free pool consisting precisely
+            # of the players who ended up worst, because every breakout has
+            # been retroactively removed from it. Streaming then measures as
+            # worse than the last starting player at every position, which is
+            # both obviously false and the opposite of why nobody drafts a
+            # kicker in round four. Ranking by the prior season puts this
+            # year's breakouts back in the pool, where a real waiver wire
+            # actually has them.
+            prior_rows = pos_rows[pos_rows['season'] == season - 1]
+            if not prior_rows.empty:
+                prior_totals = prior_rows.groupby(name_col)['_points'].sum().sort_values(ascending=False)
+                rostered = set(prior_totals.head(int(n_rostered)).index)
+            else:
+                totals = season_rows.groupby(name_col)['_points'].sum().sort_values(ascending=False)
+                rostered = set(totals.head(int(n_rostered)).index)
             free_rows = season_rows[~season_rows[name_col].isin(rostered)]
             if free_rows.empty:
                 continue
@@ -910,6 +941,82 @@ def build_streaming_replacement(scoring, latest_season, rostered_counts, n_seaso
         if per_season:
             out[pos] = float(np.mean(per_season))
     return out
+
+
+def _stream_dst(scoring, seasons, n_rostered):
+    """Streaming value for team defenses, measured from team-week stats."""
+    try:
+        import nflreadpy
+        team_stats = nflreadpy.load_team_stats(list(seasons), summary_level='week').to_pandas()
+        sched = nflreadpy.load_schedules(list(seasons)).to_pandas()
+    except Exception:
+        return None
+    if team_stats is None or team_stats.empty or sched is None or sched.empty:
+        return None
+
+    rows = []
+    for _, g in sched.iterrows():
+        if pd.isna(g.get('home_score')) or pd.isna(g.get('away_score')):
+            continue
+        rows.append({'season': g['season'], 'week': g['week'], 'team': g['home_team'],
+                     'points_allowed': g['away_score']})
+        rows.append({'season': g['season'], 'week': g['week'], 'team': g['away_team'],
+                     'points_allowed': g['home_score']})
+    if not rows:
+        return None
+
+    ts = team_stats.copy()
+    if 'season_type' in ts.columns:
+        ts = ts[ts['season_type'].astype(str).str.upper().isin(['REG', 'REGULAR'])]
+    ts = ts.merge(pd.DataFrame(rows), on=['season', 'week', 'team'], how='inner')
+    if ts.empty:
+        return None
+
+    def _pa_points(val):
+        for threshold, pts in DST_POINTS_ALLOWED_TIERS:
+            if val <= threshold:
+                return pts
+        return DST_POINTS_ALLOWED_WORST
+
+    ts['_points'] = (
+        _col(ts, 'def_sacks') * scoring.get('dst_sack', 1.0) +
+        _col(ts, 'def_interceptions') * scoring.get('dst_int', 2.0) +
+        _col(ts, 'fumble_recovery_opp') * scoring.get('dst_fumble_rec', 2.0) +
+        (_col(ts, 'def_tds') + _col(ts, 'special_teams_tds')) * scoring.get('dst_td', 6.0) +
+        _col(ts, 'def_safeties') * scoring.get('dst_safety', 2.0) +
+        ts['points_allowed'].map(_pa_points)
+    )
+
+    per_season = []
+    for season in sorted(ts['season'].unique()):
+        season_rows = ts[ts['season'] == season]
+        prior = ts[ts['season'] == season - 1]
+        if prior.empty:
+            continue
+        rostered = set(prior.groupby('team')['_points'].sum()
+                       .sort_values(ascending=False).head(int(n_rostered)).index)
+        free_rows = season_rows[~season_rows['team'].isin(rostered)]
+        if free_rows.empty:
+            continue
+        banked = 0.0
+        for week in sorted(free_rows['week'].dropna().unique()):
+            prior_weeks = free_rows[free_rows['week'] < week]
+            this_week = free_rows[free_rows['week'] == week]
+            if prior_weeks.empty or this_week.empty:
+                continue
+            form = prior_weeks.groupby('team')['_points'].agg(['mean', 'count'])
+            form = form[form['count'] >= STREAMING_MIN_PRIOR_GAMES]
+            if form.empty:
+                continue
+            candidates = form.nlargest(STREAMING_CHOICE_DEPTH, 'mean').index
+            actual = this_week[this_week['team'].isin(candidates)]['_points']
+            if not actual.empty:
+                banked += float(actual.mean())
+        if banked > 0:
+            if season < 2021:
+                banked *= MODERN_SEASON_GAMES / 16.0
+            per_season.append(banked)
+    return float(np.mean(per_season)) if per_season else None
 
 
 def add_value_over_replacement(board, settings):
@@ -1088,9 +1195,27 @@ def attach_adp(board, adp_df, market_weight=0.0):
     out['Pos Rk'] = out['Pos'].astype(str).str.upper() + out['Pos Rank'].astype(str)
 
     if adp_df is None or adp_df.empty:
+        # No market data. ADP and Value-vs-ADP stay genuinely blank - there
+        # is no market to compare against and inventing one would fake the
+        # single most useful column on the board.
+        #
+        # But the AVAILABILITY model still needs some estimate of when each
+        # player comes off the board, and without one the whole board becomes
+        # availability-blind - which is the specific failure that makes
+        # value-based drafting rank an elite quarterback around pick 7. His
+        # surplus over the last starting QB is real; what VORP cannot see is
+        # that a quarterback worth 90% as much is still sitting there in
+        # round 9, so the true cost of waiting is a fraction of that surplus.
+        # Consensus rank is a decent proxy for draft order (it is, after all,
+        # what most of the room is reading), so it fills in here - flagged as
+        # an estimate, with a wider spread than measured ADP would carry.
         out['ADP'] = np.nan
         out['ADP SD'] = np.nan
         out['Value vs ADP'] = np.nan
+        out['Expected Pick'] = out['ECR'].rank(method='first')
+        out['Expected Pick SD'] = np.maximum(4.0, 0.32 * out['Expected Pick'])
+        out['Pick Source'] = 'ECR estimate'
+        out = apply_market_blend(out, market_weight)
         return out
 
     from data.utils import clean_name_exact, clean_name_for_merge
@@ -1106,6 +1231,19 @@ def attach_adp(board, adp_df, market_weight=0.0):
     b_loose = clean_name_for_merge(out['Player'])
     out['ADP'] = b_exact.map(exact_map).fillna(b_loose.map(loose_map))
     out['ADP SD'] = b_exact.map(sd_exact).fillna(b_loose.map(sd_loose)) if sd_exact else np.nan
+
+    # Real ADP where the market covers a player, consensus rank as the
+    # estimate where it doesn't - a 262-player ADP feed leaves the back half
+    # of the board with no draft-position estimate at all otherwise, and
+    # those are exactly the late-round players whose availability decides
+    # whether you can wait on them.
+    ecr_rank = out['ECR'].rank(method='first')
+    out['Expected Pick'] = pd.to_numeric(out['ADP'], errors='coerce').fillna(ecr_rank)
+    published = pd.to_numeric(out['ADP SD'], errors='coerce')
+    estimated = np.maximum(4.0, 0.32 * out['Expected Pick'])
+    out['Expected Pick SD'] = published.where(published.notna() & (published > 0), estimated)
+    out['Pick Source'] = np.where(pd.to_numeric(out['ADP'], errors='coerce').notna(),
+                                  'ADP', 'ECR estimate')
 
     out = apply_market_blend(out, market_weight)
     out['Value vs ADP'] = (out['ADP'] - out['Board Rank']).round(1)
@@ -1137,18 +1275,68 @@ def apply_market_blend(board, market_weight):
     """
     out = board.copy()
     weight = float(market_weight or 0)
-    if weight <= 0 or 'ADP' not in out.columns or out['ADP'].notna().sum() < 10:
+    if weight <= 0 or 'Board Rank' not in out.columns:
+        return out
+    # Blend toward whatever market signal exists: real ADP when we have it,
+    # consensus rank otherwise. Falling back to ECR matters because the
+    # blend is the board's main defence against out-thinking the entire
+    # analyst industry on the strength of one model, and switching it off
+    # entirely whenever the ADP feed is down is exactly backwards.
+    market = pd.to_numeric(out.get('Expected Pick'), errors='coerce')
+    if market.isna().all():
+        market = pd.to_numeric(out.get('ADP'), errors='coerce')
+    if market.notna().sum() < 10:
         return out
 
     model_rank = out['Board Rank'].astype(float)
-    # A player the market hasn't priced can't be blended toward it, so he
-    # keeps his model rank rather than being shoved to the back of the board
-    # for the crime of being unlisted.
-    adp_rank = out['ADP'].rank(method='first')
-    adp_rank = adp_rank.fillna(model_rank)
+    adp_rank = market.rank(method='first').fillna(model_rank)
 
     blended = (1 - weight) * model_rank + weight * adp_rank
     out['Board Rank'] = blended.rank(method='first').round().astype('Int64')
+    return out
+
+
+def demote_late_round_positions(board, settings):
+    """
+    Sort kickers and team defenses behind every offensive player.
+
+    NOT a fudge to make the board look conventional - it corrects a real
+    mismatch between what VORP measures and what a draft actually offers.
+    Measured honestly, the best kicker really does carry ~40 points of
+    surplus over the last startable one, which is comparable to a WR3's
+    surplus, and value-based drafting will therefore slot him around pick
+    50. Every measurement thrown at this agrees: streaming a kicker returns
+    LESS than rostering a good one, and kicker year-over-year persistence
+    (0.23) is no worse than receiver (0.16). The surplus is real.
+
+    What makes it undraftable at pick 50 is the draft's structure, not the
+    projection: you are never choosing between the best kicker and a third
+    receiver, because the kicker will still be available 130 picks later and
+    the receiver will not. Ranking them against each other answers a
+    question no drafter ever faces.
+
+    So their value stays fully visible in the VORP and VONA columns - the
+    model is not being overruled, just told when the choice is actually
+    live. Positions the league doesn't even start are dropped further still.
+    """
+    if board.empty or 'Board Rank' not in board.columns:
+        return board
+    out = board.copy()
+    roster = settings.get('roster', {})
+    pos_upper = out['Pos'].astype(str).str.upper()
+
+    offset = pd.Series(0.0, index=out.index)
+    horizon = float(len(out))
+    for pos in LATE_ROUND_POSITIONS:
+        mask = pos_upper == pos
+        if not mask.any():
+            continue
+        # A position the league never starts isn't merely late, it's
+        # undraftable - pushed behind even the ones that are.
+        offset[mask] = horizon * (1.0 if int(roster.get(pos, 0)) > 0 else 2.0)
+
+    out['Board Rank'] = (out['Board Rank'].astype(float) + offset).rank(
+        method='first').round().astype('Int64')
     return out
 
 
@@ -1159,11 +1347,15 @@ def effective_adp_sd(board):
 
     Uses the market's own observed stdev where the ADP source publishes it
     (Fantasy Football Calculator does, from real drafts - that's the honest
-    number). Where it's missing, it's estimated as growing with ADP, because
-    early picks are far more predictable than late ones: nobody is unsure
-    whether the consensus 1.01 goes in round one, but a player with an ADP
-    of 120 routinely goes anywhere from 90 to undrafted.
+    number). Where it's missing, it's estimated as growing with the expected
+    pick, because early picks are far more predictable than late ones: nobody
+    is unsure whether the consensus 1.01 goes in round one, but a player
+    expected around 120 routinely goes anywhere from 90 to undrafted.
     """
+    if 'Expected Pick SD' in board.columns:
+        sd = pd.to_numeric(board['Expected Pick SD'], errors='coerce')
+        if sd.notna().any():
+            return sd
     adp = pd.to_numeric(board.get('ADP'), errors='coerce')
     published = pd.to_numeric(board.get('ADP SD'), errors='coerce')
     estimated = np.maximum(2.5, 0.22 * adp)
@@ -1188,9 +1380,11 @@ def add_availability(board, next_pick):
         out['Avail Next %'] = np.nan
         return out
     out = board.copy()
-    adp = pd.to_numeric(out.get('ADP'), errors='coerce')
+    expected = pd.to_numeric(out.get('Expected Pick'), errors='coerce')
+    if expected.isna().all():
+        expected = pd.to_numeric(out.get('ADP'), errors='coerce')
     sd = effective_adp_sd(out)
-    z = (float(next_pick) - adp) / sd.replace(0, np.nan)
+    z = (float(next_pick) - expected) / sd.replace(0, np.nan)
     out['Avail Next %'] = (vectorized_normal_sf(z.to_numpy()) * 100).round(0)
     return out
 
@@ -1311,6 +1505,7 @@ def build_draft_board(ecr_board, settings, adp_df=None, next_pick=None,
     board = attach_adp(board, adp_df, market_weight=market_weight)
     board = add_availability(board, next_pick)
     board = compute_vona(board, next_pick)
+    board = demote_late_round_positions(board, settings)
     meta['has_curves'] = True
     meta['projection_source'] = 'stat line' if has_projection else 'rank curve'
     meta['rank_sd_calibration'] = calibration
@@ -1398,6 +1593,17 @@ def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_c
     avail = avail[avail[base_col].notna()]
     if avail.empty:
         return pd.DataFrame()
+
+    # Kickers and defenses are filtered out of suggestions entirely until
+    # every other starting slot is filled. Suggesting a defense as your third
+    # best option is never right: it will still be there in twelve rounds,
+    # and the receiver it's competing with will not.
+    starters_left = sum(n for pos, n in needs.items()
+                        if pos not in LATE_ROUND_POSITIONS and n > 0)
+    if starters_left > 0:
+        avail = avail[~avail['Pos'].astype(str).str.upper().isin(LATE_ROUND_POSITIONS)]
+        if avail.empty:
+            return pd.DataFrame()
 
     rows = []
     for _, r in avail.nlargest(min(60, len(avail)), base_col).iterrows():

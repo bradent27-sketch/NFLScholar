@@ -129,15 +129,40 @@ DEFENSIVE_POSITIONS = [
 # tertiary orange (alerts), positive green / negative red (stat deltas),
 # and the grade-color scale's own red-to-lavender range - so a position tag
 # never reads as a grade, a delta, or a call to action.
+# Position identity colors. Hues follow the convention the mainstream draft
+# tools have converged on (orange QB, green RB, blue WR, purple TE, cyan
+# D/ST, pink K), because a drafter reading this board has that mapping
+# already memorised from every other tool they use - an app-specific palette
+# would be a small tax paid on every glance, under a pick clock.
+#
+# Each position carries a text color and a darker background, so a position
+# can render as a filled chip in a table cell and still hold contrast
+# against the navy surface.
 POSITION_COLORS = {
-    'QB': '#a78bfa',
-    'RB': '#2dd4bf',
-    'WR': '#38bdf8',
-    'TE': '#fb7185',
-    'K': '#94a3b8',
+    'QB': '#f59e0b',
+    'RB': '#22c55e',
+    'WR': '#60a5fa',
+    'TE': '#c084fc',
+    'K': '#f472b6',
+    'DST': '#22d3ee',
+    'DEF': '#22d3ee',
     'P': '#cbd5e1',
     'LS': '#cbd5e1',
 }
+POSITION_CHIP_BG = {
+    'QB': '#5a3410',
+    'RB': '#0f3d22',
+    'WR': '#12315c',
+    'TE': '#3b1f55',
+    'K': '#4d1330',
+    'DST': '#0b3a44',
+    'DEF': '#0b3a44',
+}
+
+
+def get_position_chip_bg(pos):
+    """Darker background pairing for a position chip; None if unmapped."""
+    return POSITION_CHIP_BG.get(str(pos).upper())
 for _p in OLINE_POSITIONS:
     POSITION_COLORS.setdefault(_p, '#a8a29e')
 for _p in DEFENSIVE_POSITIONS:

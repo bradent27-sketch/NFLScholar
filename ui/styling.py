@@ -1165,6 +1165,7 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
         matchup_vals = matchup_arrays.get(col)
         pct_vals = pct_arrays.get(col)
         is_team = col == 'Team'
+        is_position = col in ('Pos', 'Position')
         out = []
         for pos, v in enumerate(values):
             if matchup_vals is not None and pos < len(matchup_vals):
@@ -1173,6 +1174,17 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
             elif pct_vals is not None and pos < len(pct_vals):
                 bg = get_pff_color(pct_vals[pos])
                 out.append(f'background-color:{bg}; color:#ffffff; font-weight:bold;')
+            elif is_position:
+                # Position chips, same mechanism as the Team column. Under a
+                # pick clock the position is the first thing scanned on every
+                # row - a color does that in peripheral vision where reading
+                # two letters does not.
+                from config import get_position_color, get_position_chip_bg
+                chip_bg = get_position_chip_bg(v)
+                if chip_bg:
+                    out.append(f"background-color:{chip_bg}; color:{get_position_color(v)}; font-weight:bold;")
+                else:
+                    out.append(_DEFAULT_STYLE)
             elif is_team:
                 # Same team-color convention already used for the bio card
                 # accent, depth chart Position column, and game log opponent

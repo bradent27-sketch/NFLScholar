@@ -3,6 +3,13 @@
 # this file before sharing the folder.
 .streamlit/odds_api_key.txt
 
+# Raw browser HAR captures. A HAR carries every cookie and Authorization
+# header the browser sent, so committing one publishes a live login session
+# for whatever site was captured. Run it through tools/har_extract.py first
+# and commit that output instead - it keeps the API payloads and copies no
+# headers, cookies or POST bodies.
+*.har
+
 # Python
 __pycache__/
 *.pyc

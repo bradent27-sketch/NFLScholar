@@ -5,8 +5,9 @@ leagues), runs locally via `streamlit run app.py` (or the `.claude/launch.json` 
 named `gridiron-hub`). Last major work pass: July 2026 "pro polish" pass (perf fixes +
 UI elevation toward a pro sports-site look - stat tile grid, hero stat band, team
 banners, and the react-aria CSS-selector migration in gotcha #15, which had silently
-killed the previous pass's tab/input styling). All 9 tabs verified working end-to-end
-at that time (AppTest per-tab sweep + live browser click-through, zero exceptions).
+killed the previous pass's tab/input styling). All 9 tabs at the time verified working
+end-to-end (AppTest per-tab sweep + live browser click-through, zero exceptions). There
+are 10 now — Draft HQ was added in the August 2026 pass below.
 
 Second July 2026 pass (same week): Player Search's fantasy-points chart converted from a
 bar strip to an SVG line chart and moved to the very top of the player profile; the WR
@@ -35,6 +36,20 @@ against that same opponent). The fantasy-points-by-week line chart (Player Searc
 shorter (viewBox height 220->140) and curves through its weekly points via a Catmull-Rom-
 to-Bezier spline (`ui.components._smooth_svg_path`) instead of straight polyline segments.
 
+**August 2026 pass — DRAFT HQ (the current major work).** A full draft product built to
+compete with the paid tools the user actually uses (thefantasyfootballadvice.com and
+bdge.co): live market data, a settings-aware volume projection engine, value-based
+valuation, a mock draft simulator, and one merged draft room. ~6,600 new lines across
+seven new `data/` modules and one new tab. This is now the largest single system in the
+app and it does NOT reuse `data/transforms.py`'s scoring or the old VORP sheet - see
+section 3.5 for why the parallel implementation is deliberate.
+
+Everything in that pass has its own dedicated reference: **`docs/draft_hq_methodology.md`**
+documents every function in the tab, every computed stat's derivation, and every external
+source with endpoints and refresh intervals. That file is the detail; section 3.5 here is
+the orientation. Read this section for "what exists and what will bite you", read the
+methodology doc for "how is this number actually made".
+
 This doc exists so a fresh session (human or AI) can orient without re-deriving the
 project's hard-won lessons. **The gotchas in section 5 are all real bugs that happened
 here — several more than once.** Read that section before changing anything.
@@ -60,6 +75,31 @@ data/
                     red-zone usage, recent-form ranking.
   rankings.py       FantasyPros/custom rankings ingestion + comparison logic.
   coverage_radar.py Man/zone coverage correlator (radar chart) helpers.
+
+  --- Draft HQ engine (August 2026, ~4,700 lines) --------------------------
+  draft_sources.py  Live market data: FantasyPros ECR (per draft format), the
+                    DynastyProcess ID crosswalk (+ birthdates), dynasty values,
+                    ADP with a source-preference chain, injuries, ESPN news.
+                    Also the scipy-free normal survival function every
+                    availability calc uses.
+  draft_projections.py  Volume-based projections. Positional usage curves,
+                    per-player recency-weighted rates, the stickiness blend,
+                    the measured aging curve, and gamma-distribution pricing
+                    of per-game yardage bonuses.
+  draft_board.py    Valuation. Parameterized scoring (score_stats), starter
+                    demand, replacement level, VORP/VOLS/VONA, tiers,
+                    availability, market blend, outcome ranges. The lowest
+                    module in the draft stack - draft_projections imports FROM
+                    it, never the reverse.
+  draft_intel.py    Strategy archetype inference, pick-frequency simulation,
+                    roster percentile, and the positional value-add model
+                    ("+X% to your team").
+  draft_sim.py      Mock draft simulator: bot logic, roster-construction
+                    legality rules, autopick, lineup optimizer, draft grading.
+  draft_sos.py      Positional strength of schedule over a selectable week
+                    range, from fantasy points allowed by defense.
+  ffa_import.py     Reads a Fantasy Football Advice player export the USER
+                    supplies. No network calls, by design (section 8).
 ui/
   styling.py        Theme CSS injection + every table Styler (percentile heatmap,
                     matchup colors, depth chart cells, sticky game log HTML).
@@ -71,11 +111,23 @@ ui/
                     produces display-ready output. Used by both Player Search and
                     Player Compare so the two never drift apart.
   tabs/             One module per tab, each exposing render().
+tools/
+  har_extract.py    Standalone (no project imports - the user runs it on their
+                    own machine). Unpacks a browser HAR into api/ js/ css/
+                    html/ other/ + an index.json manifest, stripping every
+                    credential on the way out. How the FFA payload got here.
+docs/
+  draft_hq_methodology.md   Full derivation reference for Draft HQ.
 ```
 
-**Tabs** (order = `config.TAB_LABELS`): Player Search, NFL Depth Charts, Defensive Yield
-Schemes, Risers/Waiver Wire, Rookie Watch, Weekly Rankings, VORP Draft Sheet, Live Odds,
-Player Compare.
+**Tabs** (order = `config.TAB_LABELS`): Player Search, **Draft HQ**, NFL Depth Charts,
+Defensive Yield Schemes, Risers/Waiver Wire, Rookie Watch, Weekly Rankings, Live Odds,
+Player Compare, VORP Draft Sheet.
+
+Draft HQ sits at index 1, right after Player Search, because it's the tab the user
+actually opens in August. The old **VORP Draft Sheet is still present and unchanged** at
+the end - it is a different, much simpler thing (last season's pace × 17, explicitly
+labeled a volume stand-in) and was deliberately not deleted or merged.
 
 **Tab wiring** (app.py): `st.tabs(TAB_LABELS, key="active_tab", on_change="rerun")` —
 Streamlit ≥1.59 syntax. Each tab's body only runs when `tabN.open` is True (lazy
@@ -162,6 +214,59 @@ the same filenames. Weekly rankings are uploaded per-session via the Weekly Rank
   user to delete it before sharing the folder; **do not remove that warning**. Both
   fetches `@st.cache_data(ttl=900)`; props fetches are button-gated on purpose (quota).
 - **Sleeper API** — public, keyless; draft-pick sync for the Live Draft Tracker.
+
+### Draft HQ market data (`data/draft_sources.py`, all `@st.cache_data(ttl=6h)`)
+- **DynastyProcess GitHub CSVs** — `raw.githubusercontent.com/dynastyprocess/data/
+  master/files/{f}`. Two hosts are tried in order and **only raw.githubusercontent.com
+  is reachable from a sandboxed/proxied environment** — keep it first.
+  - `db_fpecr_latest.csv` → FantasyPros ECR with `ecr`/`sd`/`best`/`worst`. Fetched
+    **per draft format** via the `page_type` column (`ECR_BOARDS`: Redraft 1QB, Redraft
+    Superflex/2QB, Best Ball, Dynasty 1QB, Dynasty Superflex). A superflex board is NOT
+    the 1QB board with QBs shifted up — the whole positional value structure changes.
+    `ecr_age_days()` surfaces staleness in the UI.
+  - `db_playerids.csv` → the cross-platform ID crosswalk AND **birthdates**, which is
+    where the aging curve's ages come from (92% board coverage).
+  - `values-players.csv` → dynasty trade values.
+- **ADP has a preference chain** (`fetch_adp`): uploaded CSV → FFA import → Fantasy
+  Football Calculator → ECR-as-estimate. FFC is LAST deliberately — its ADP comes from
+  mock drafts run on its own free public site and skews casual (TEs and QBs slide later
+  there than in real drafts). The user tested it and called it "way off"; that was
+  correct. **Sleeper ADP was removed entirely** — its `search_rank` is a popularity
+  ordering, not ADP, and it put a QB at overall #2. When nothing answers, ECR stands in
+  so availability still works, and `ADP_SOURCE_NOTES` tells the user what the active
+  source actually measures.
+- **nflverse injuries** — short TTL (a Saturday IR move should invalidate a board within
+  the hour). Falls back a season at a time: asking for the season you're DRAFTING raises
+  "Season must be between 2009 and 2025" every single time during draft season, because
+  nflverse has no rows for a season that hasn't kicked off. That's the normal case, not
+  an edge case.
+- **ESPN site API** — news headlines keyed to player names. Several host candidates tried
+  in order (public JSON endpoints move around and some networks 403 `site.api`
+  specifically). Every consumer treats an empty return as "no news column", never an
+  error.
+
+### Fantasy Football Advice import (`data/ffa_import.py`) — USER-SUPPLIED, no network
+The user has an FFA subscription. Their payload carries things this app can't derive:
+`ffaValue`, `adpComposite`, Elo ratings, analyst stat lines, and a hand-written scouting
+note per player. **Nothing in this repo talks to their servers, polls their API, or
+automates a login** — `save_ffa_import` reads a file the user hands over, once.
+
+- Lives at `external_data/ffa_players.json`, **gitignored** (this repo is public — see
+  section 8). Dropping the file there by hand works exactly as well as uploading it.
+- **The STAT LINE is imported, not the point total.** Their `proj` is half-PPR, so
+  reading it straight would be silently wrong in full-PPR/TE-premium and badly wrong once
+  yardage bonuses are on. `merge_ffa_into_board` blends their stat line against this
+  app's per stat, then re-scores through `score_stats` — a blended projection still has a
+  carry count that matches its rushing yards.
+- **`diagnose_ffa_payload` exists because of a real support incident.** The user uploaded
+  `index.json` (the HAR manifest) instead of `api/players.json`; the importer correctly
+  rejected it and said nothing useful, so it looked like the upload feature was broken.
+  It now names the specific file you actually want.
+- `tools/har_extract.py` is how the payload got here: the user captured a HAR in their
+  browser, ran the script locally, and sent the unpacked `api/` folder. The script strips
+  all headers/cookies, redacts credential query params, field-redacts POST bodies, and
+  skips auth endpoints whole. **`*.har` is gitignored** — a raw HAR contains live session
+  cookies.
 
 ## 3. Key computed systems
 
@@ -302,6 +407,101 @@ the same filenames. Weekly rankings are uploaded per-session via the Weekly Rank
   cells both carrying `pct=0` would otherwise net a misleading `Edge = 0.0` ("dead even")
   instead of "not comparable" (`NaN`).
 
+### 3.5 Draft HQ engine (August 2026)
+
+Full derivations live in `docs/draft_hq_methodology.md`. This is the orientation: what
+each piece is, and what will bite you.
+
+**Why it doesn't reuse the existing scoring.** `apply_scoring_and_percentiles` implements
+this app's three fixed presets and hardcodes the rest. A draft board has to honor whatever
+a real league uses — 6-point passing TDs, .5/carry, TE premium, negative fumbles, per-game
+yardage bonuses — so `draft_board.score_stats` is a fully parameterized fourth
+implementation. It is NOT a fourth thing to keep in sync with the other three: it's
+deliberately independent, takes a scoring dict, and is the only one the draft stack uses.
+
+- **Projections are volume-based, not rank→points.** `build_projected_board` projects a
+  full stat LINE (carries/targets/yards/TDs) and then scores it under your league's
+  settings. Getting a point total from a rank curve directly would be wrong the moment you
+  toggle PPR.
+  - `build_volume_curves` — `curves[pos][stat][r]` = season total for the player who
+    FINISHED rank r, averaged over 5 seasons. Ranked on PPR **regardless of your
+    settings**: the curve describes usage at each rung of a pecking order and shouldn't
+    reshuffle every time a setting changes.
+  - `build_player_rates` — recency-weighted per-game rates, `[1.0, 0.55, 0.30, 0.15,
+    0.08]` by season. Vectorized; the per-player loop version dominated the whole build.
+  - `project_stat_lines` — blends `w·(own rate × 17 × age_factor) + (1−w)·curve_total`,
+    where `w = STAT_SELF_WEIGHT[stat] × evidence`. **Per-stat stickiness is the core
+    idea**: usage persists (0.70), efficiency regresses (0.55), TDs regress hardest
+    (0.30). A player with no history lands entirely on the curve, which is right for a
+    rookie. Role-change damping slides `w` toward zero when a player's own usage is far
+    below what his consensus rank implies (a backup QB who just won a job).
+- **The games basis is the subtlest thing in the module — read the note above
+  `PACE_GAMES` before touching it.** Own-history rates project across a full 17-game
+  season; the curve's totals are left exactly as measured. The curve's `games` entry is a
+  SELECTION ARTIFACT, not durability (missing games is one of the main ways a player ends
+  up ranked 28th), and using it as a per-player games figure left every QB ~30 points
+  under consensus. Two alternatives were built and measured and both were worse — the
+  comparison table is in the methodology doc. Do not "fix" this by rescaling the curve to
+  17; that was variant B and it dropped ECR rank-corr from 0.937 to 0.905.
+- **Aging curve** (`AGE_PEAK` / `AGE_DECLINE_PER_YEAR`) — measured, not assumed, off 1,644
+  contributor seasons matched to birthdates. RB −6.5%/yr past 25, WR −3.6% past 26, TE
+  −2.0% and QB −1.0% past 27. Applied to the **own-history side only** — the rank curve is
+  indexed by a consensus that already priced age, so adjusting both halves charges a
+  33-year-old twice. The symmetric young-player boost was tested and does literally
+  nothing (rank agreement identical to three decimals); don't re-add it without new
+  evidence.
+- **Yardage bonuses** (100/150/200/250 rush+rec, 300/400/500/600 pass, cumulative or
+  highest-only) need per-GAME yardage from a season total, so each player's weekly yardage
+  is modelled as a **gamma distribution** with a position-typical CV (rushing 0.62,
+  receiving 0.78, passing 0.35) and the thresholds integrated over it. `_gammq` implements
+  the regularized upper incomplete gamma directly — **no scipy in this project.**
+  Same for `normal_sf` / `vectorized_normal_sf`, which use `math.erfc`.
+- **Outcome range** — `Ceiling`/`Floor` are 85th/15th percentiles, from smearing each
+  player across a MEASURED finish-rank distribution (`calibrate_rank_uncertainty`), not a
+  constant: top-6 QBs/TEs land within ~10 slots, top-6 RBs/WRs scatter more than twice as
+  far. Weights are made doubly stochastic via **Sinkhorn normalization** so positional
+  point totals are conserved. `Risk` = (Ceiling−Floor)/Proj.
+- **Valuation** — `compute_starter_demand` simulates every team's lineup filling greedily
+  rather than splitting FLEX evenly across RB/WR/TE (flex goes to whoever's better at the
+  margin, which is exactly what changes with settings). `VORP` vs the first unstarted
+  player; `VOLS` vs the last dedicated-slot starter; `VONA` vs the EXPECTED best player
+  still there at your next pick. VONA is the one that resolves draft-room paralysis.
+- **`Avail Next %`** — normal survival function over ADP. This is the column that changes
+  how you draft, and the user reported it broken twice before it was actually fixed
+  (gotcha #22).
+- **Market blend** (`apply_market_blend`) — blends the board's ORDER toward ADP in rank
+  space. **`VORP` is never blended** — it stays exactly what the model says. Falls back to
+  blending toward ECR when ADP is down, because the blend is the board's main defence
+  against out-thinking the whole analyst industry on one model's say-so, and switching it
+  off when a feed dies is backwards.
+- **K/DST demotion** exists because of a measured failure: an earlier board put 26 of the
+  top 120 slots on K/DST. Two hypotheses were tested and ruled out with data (kickers are
+  NOT less predictable — K year-over-year corr 0.23 vs WR 0.16; streaming didn't explain
+  it either). Root cause was availability blindness: VORP is a correct measure of surplus
+  and a useless measure of when to spend a pick. A VOND metric was also tried and
+  **abandoned** — it rewarded deep sleepers in sparse ADP regions (Joe Mixon at overall
+  13).
+- **Positional value-add** (`draft_intel.positional_value_add`) — the "+X% to your team"
+  model. `marginal_lineup_gain(best available now) − marginal_lineup_gain(expected best at
+  next pick)`, over `_projected_full_lineup`. It is a DIFFERENCE, not a level, and that's
+  the whole point: ranking by "how good is the best one available" just re-sorts by raw
+  scoring and says take a QB every time.
+- **Mock simulator** (`draft_sim.py`) — bots draft off **Board Rank** with softmax
+  exploration, NOT off marginal lineup gain (gotcha #26). `_legal_positions` enforces
+  starters-before-backups and counts **dedicated slots only** for the backup ladder
+  (gotcha #25).
+- **Board caching** — `_board_cache_key` covers every setting that changes a number, so
+  toggling PPR rebuilds and toggling a display option doesn't. Underscore-prefixed frames
+  are passed unhashed (gotcha #2 applies here in full force).
+
+**Model agreement, as of the August 2026 audit** (keep this honest if you change
+anything): vs FantasyPros ECR rank-corr **0.937**, median positional |bias| 9.0; vs FFA
+Value 0.896 / 10.5. Projected points vs FFA analyst projections r=0.918, MAE 22.0, bias
+QB −7 / RB +2 / WR +3 / TE +8. Known remaining disagreements (veteran TEs ranked higher
+here, young ascending WRs lower) are documented with reasons in §5 of the methodology doc.
+There's an audit script pattern worth reusing — rebuild the board, join ECR and FFA Value,
+report rank-corr + per-position bias + a sanity-check block.
+
 ## 4. UI conventions
 
 - **Stat tiles / hero tiles / team banner** (July 2026 polish pass) -
@@ -377,6 +577,36 @@ the same filenames. Weekly rankings are uploaded per-session via the Weekly Rank
 - Seasons with no weekly stats yet (e.g. 2026 pre-kickoff) show the schedule as the
   game log; detect via `'week' not in p_data.columns` — NOT via `log_df.empty` (gotcha
   #6).
+
+### Draft HQ UI conventions (August 2026)
+- **Position colors are global and mainstream** (`config.POSITION_COLORS`): QB orange
+  `#f59e0b`, RB green `#22c55e`, WR blue `#60a5fa`, TE purple `#c084fc`, K pink, DST cyan.
+  Chosen to match what every other fantasy site uses, so the board reads correctly to
+  someone who's used one. `get_position_chip_bg()` gives the muted background for chips.
+  **Every place a player is listed carries the position color** — user requirement, not a
+  nice-to-have: board cells, roster slots, the draft grid, the recent-picks strip, the
+  value-add cards. `ui.styling` has an `is_position` styling branch alongside `is_team`.
+- **The board table's alignment bug is fixed and easy to reintroduce.**
+  `div[data-testid="stDataFrame"]` needs `box-sizing: border-box !important` and
+  `overflow: hidden !important` — the 6px padding + 1px border were being added OUTSIDE
+  the content box, so the canvas rendered ~14px wider than its frame and visibly
+  overhung its background. Verified via measured `elW`/`canvasW` in the browser.
+- **Hover language is shared across every clickable surface**:
+  `transform: translateY(-1px) scale(1.015)` + glow on hover, `scale(0.985)` on active.
+  Applied to `.rp-card` (recent picks), `.pv-card` (value-add), `.db-cell` (draft grid)
+  and buttons so the whole tab feels like one product.
+- **Position filter is BUTTONS, not a dropdown** (All/QB/RB/WR/TE/FLEX/K/DST) — explicit
+  user requirement. The active filter also scopes the single pick recommendation.
+- **One recommendation, not a list.** `_render_single_recommendation` shows exactly one
+  player, scoped by the position filter. It used to be a top-6 list and the user asked for
+  it cut to one.
+- **Live draft and mock share one surface.** `_draft_context` unifies both behind one
+  interface so every panel below works identically; there is no separate mock tab and no
+  separate draft-board tab (both were merged in, deliberately).
+- **Player profile jump uses `on_click`, not an inline branch.** `switch_tab` writes to
+  the keyed `active_tab` widget, so it is only legal from a callback (gotcha #1). Verified
+  that jumping to Player Search and coming back preserves both draft state and the
+  selected row.
 
 ## 5. Gotchas — every one of these was a real bug here
 
@@ -549,6 +779,86 @@ the same filenames. Weekly rankings are uploaded per-session via the Weekly Rank
     stat is wired correctly - verify the raw column name actually exists in
     `pff[...].columns` for the real loaded file, not just that the code runs.**
 
+### Draft HQ gotchas (August 2026 — all real, all found on real data)
+
+18. **A prefix filter over stat columns silently drops `receptions`.** The value curves
+    selected scored stats with `startswith(('passing_', 'rushing_', 'receiving_', ...))`.
+    `receptions` does not start with `receiving_`, so **PPR contributed exactly zero to
+    every curve** — WR1 read 265 points instead of 380. It computed cleanly, rendered
+    cleanly, and just quietly priced every receiver like it was a standard league.
+    `score_stats` now names every stat explicitly via `_col`, which makes this whole class
+    of bug impossible. **Never reintroduce a prefix filter over stat columns.**
+
+19. **A rank curve's `games` figure is a selection artifact, not durability.** Games
+    played by whoever FINISHED rank r slopes 16.6 (QB1) → 10.6 (QB28), but that slope is
+    mostly "missing games is how you end up ranked 28th". Using it as a per-player games
+    multiplier put every QB ~30 points under consensus. The tempting fix — rescale the
+    curve UP to a flat 17 — is worse: it invents a player who plays a full season and
+    still finishes 28th, flattening every positional curve (ECR rank-corr 0.937 → 0.905,
+    all four positions 15-28 points ABOVE consensus). A third attempt using each player's
+    own games-per-season also failed, because at this sample size that measures role
+    changes and rookie seasons rather than health. See the `PACE_GAMES` note.
+
+20. **Any "measure what the free pool returns" calculation needs a HINDSIGHT check.**
+    `build_streaming_replacement` originally defined "rostered" by FINAL season totals, so
+    the leftover free pool was systematically the worst players by construction — the
+    measurement was guaranteed to make streaming look bad. Fixed to use PRIOR-season
+    finish. (The corrected number still came in below the last starter, which correctly
+    REJECTED the streaming hypothesis rather than confirming it — a fixed measurement that
+    changes your conclusion is the point.)
+
+21. **Sinkhorn-balanced weights can push a player's ceiling below his own projection.**
+    Balancing the finish-probability matrix in both directions conserves positional point
+    totals, which is what you want for the LEVEL — but reading percentiles off the
+    balanced weights put the top player's 85th percentile under his own expectation.
+    Percentiles use the row-normalized (unbalanced) weights, plus a
+    `np.maximum(ceiling, projected)` clamp. There is a sanity check for exactly this.
+
+22. **`next_pick_for` must index by how many picks YOU have made, not the total.** Using
+    the total picks logged made `Avail Next %` freeze — the user reported it twice before
+    it was actually fixed. Correct form is `my_picks[len(my_roster)]`. Verify by watching
+    it advance 20 → 29 → 44 across three of your own picks, not by reading the code.
+
+23. **A projected stat line can score NEGATIVE and it looks completely normal.** Twenty
+    deep-bench players sat below zero, where a rank curve's thin share of fumbles and
+    interceptions outweighed a near-zero share of production. `Proj Pts` is now floored at
+    zero. A season projection is an expectation; no draftable player has a negative one.
+
+24. **A partial-coverage import will blank a wider column if you assign instead of
+    fill.** `merge_ffa_into_board` wrote `out[col] = [ffa_value_or_None for each row]`.
+    FFA's export covers ~260 players and the board carries ~700, so importing silently
+    DELETED `Age` for the ~440 players it doesn't list — a column with 92% coverage from
+    birthdates, replaced by one with 42%. Passthrough columns now `combine_first` onto
+    whatever's already there.
+
+25. **A single FLEX slot is not a full slot for RB, WR AND TE.** `draft_sim`'s backup
+    ladder counted it three times, which produced rosters with 3-4 tight ends and a QB2 in
+    round 3. Fixed to dedicated slots only, plus a no-backups-until-starters-are-full
+    rule. Roster construction is the thing users notice first when a sim is wrong.
+
+26. **Don't draft bots off marginal lineup gain, and don't use a deterministic argmax.**
+    On an empty lineup, marginal gain sees Josh Allen's ~150-point edge over every RB and
+    takes a QB with the 1.01. Bots draft off Board Rank instead. Separately, a
+    deterministic pick made the pick-odds panel read 100% on one position — bots use a
+    softmax with `explore=0.6`.
+
+27. **When a user says a feature "did nothing", check what file they actually gave it
+    before debugging the parser.** The FFA upload was rejecting `index.json` (the HAR
+    manifest) exactly as designed and reporting only "no recognisable player list", which
+    reads identically to "this feature is broken". `diagnose_ffa_payload` now names the
+    file they want (`api/players.json`). A correct rejection with a useless message is a
+    bug.
+
+28. **A same-URL POST repeated N times will overwrite itself if you key output files by
+    URL alone.** `tools/har_extract.py` lost 15 of 16 captures of one endpoint. It now
+    distinguishes two collision types: different URLs sharing a basename get a hash
+    suffix, the same URL repeated gets an ordinal (`_002`, `_003`).
+
+29. **A string-replace edit that lands inside a docstring can produce prose outside it.**
+    Left orphaned text after a closing `"""` and got `SyntaxError: invalid decimal
+    literal` — a genuinely confusing error for what was a documentation edit. Worth a
+    `py_compile` after any docstring surgery.
+
 ## 6. Verification workflow (what "done" means here)
 
 1. `python -m py_compile <changed files>` — necessary, wildly insufficient.
@@ -566,11 +876,30 @@ Known test-environment quirk: the browser tooling's synthetic clicks don't regis
 glide-data-grid's canvas hit-testing, so table row-click navigation can only be verified
 code-level + manually.
 
+**For Draft HQ specifically, "done" also means a measured audit.** Model changes are not
+verifiable by eyeballing a board — every change in the August 2026 pass was accepted or
+rejected on numbers. The pattern: rebuild the board, join FantasyPros ECR and FFA Value,
+and report (a) rank correlation and median positional bias against each, (b) projected
+points vs FFA's analyst projections per position, (c) a block of sanity assertions
+(Ceiling ≥ Proj, Floor ≤ Proj, no negative projections, Avail Next in 0-100, no K/DST in
+the top 100, tiers monotone with points, every position has a replacement level).
+
+Three changes in that pass were BUILT, MEASURED, AND REJECTED — a flat-17 curve rescale,
+per-player durability games, and a symmetric young-player age boost. If a change doesn't
+improve agreement, it doesn't ship, and the rejection gets written down next to the
+constant so nobody tries it again.
+
+Also worth knowing: in a sandboxed environment the ADP column reads empty, because
+`external_data/ffa_players.json` is gitignored (so absent) and Fantasy Football
+Calculator is network-blocked. That is expected, not a bug — ADP falls back to the ECR
+estimate and the source label says so.
+
 ## 7. Deliberately NOT done / parked
 
 - **ID-based PFF joins** via the crosswalk (section 2) — known-good approach, real
   refactor (~15 call sites), unstarted.
-- **Injury reports** (`nflreadpy.load_injuries`, 2019+) — available, not surfaced.
+- **Injury reports** (`nflreadpy.load_injuries`, 2019+) — surfaced in Draft HQ's News
+  sub-tab as of August 2026; still not surfaced on the other nine tabs.
 - **WP (win probability) surfacing** — EPA/success rate/CPOE are now surfaced (section 3);
   WP itself is still an unused pbp column.
 - **Literal route tree / spray chart** — needs route-geometry data this app doesn't have
@@ -590,12 +919,50 @@ code-level + manually.
 - `stats_player_reg_*.csv`, `ftn_charting_*.csv`, `otc_players*.csv`,
   `teams_colors_logos.csv` — on disk, unused.
 
+### Draft HQ specifically
+- **Real-time sync to a live draft league** — investigated and answered: FFA does NOT do
+  this either. Their `DraftSitePicker` is an ADP-SOURCE selector, and `LiveHelper` is a
+  premium in-simulator panel, not a league connection. Sleeper's public API does support
+  draft-pick polling and `_render_live_sync` uses it; ESPN/Yahoo need OAuth (Yahoo is
+  already blocked, see above). Paste-parser + Sleeper sync are the substitutes.
+- **Reverse-engineering FFA's position score** — their draft assistant computes
+  `score = strategyFreq + boostPct/100 + valuePct` where `boostPct = (dynamicMultiplier −
+  1) × 100`, but the multipliers come from their SERVER and are not recoverable from the
+  client bundle. `positional_value_add` is a different route to the same question and has
+  the advantage of being explainable line by line. Don't go looking for the multipliers
+  again — they aren't there.
+- **VOND (value over next-drafted)** — built, measured, abandoned. Rewarded deep sleepers
+  in sparse ADP regions (Joe Mixon at overall 13).
+- **Symmetric young-player age boost** — built, measured, does nothing (see the
+  `AGE_ADJUST_MIN` note in `draft_projections.py`). Don't re-add without new evidence.
+- **Historical preseason ECR archive** — would make `calibrate_rank_uncertainty` properly
+  correct (regress finish against PRESEASON consensus instead of year-over-year finish).
+  No free source publishes one; `CONSENSUS_SKILL_SHRINK = 0.75` is the stand-in.
+- **ID-based joins in the draft stack** — `db_playerids.csv` is already fetched and
+  carries sleeper/espn/yahoo/fantasypros/gsis IDs. Live sync uses `sleeper_id` where the
+  platform gives one; the board's own merges are still two-tier name matching
+  (`clean_name_exact` → `clean_name_for_merge`). Same known-possible refactor as the PFF
+  one above.
+
 ## 8. Constraints (user-set, don't violate)
 
 - Don't restructure app.py's tab wiring or undo lazy tab execution.
 - Don't rename files in `pff_imports/` or the root CSVs.
 - Don't remove the plaintext-API-key warning in Live Odds.
-- No new paid data sources or heavyweight dependencies.
+- No new paid data sources or heavyweight dependencies. **No scipy** — the draft engine
+  needs a gamma distribution and a normal survival function and implements both directly
+  (`_gammq`, `math.erfc`) rather than pulling the dependency in.
+- **This repo is PUBLIC and the user is fine with that.** The condition is that FFA's paid
+  data is upload-only and never committed: `external_data/ffa_players.json` and `*.har`
+  are gitignored and must stay that way. No code may fetch from FFA's servers.
+- **Don't change the Player Search tab.** Direct user instruction. Draft HQ links INTO it
+  (`switch_tab(TAB_PLAYER_SEARCH, jump_to_player=...)`) and consumes its existing context
+  keys; it does not modify it.
+- **Don't touch externally-sourced stats.** FFA Value, FFA ADP, FFA projections,
+  FantasyPros ECR, dynasty values, injury designations and news are displayed exactly as
+  fetched. Everything the app computes itself is fair game to improve — that distinction
+  is the user's, and it's why `docs/draft_hq_methodology.md` splits its stats into
+  "sourced" and "computed" up front.
 - Historical depth standard is 2019 (`config.AVAILABLE_SEASONS`) — one-line change if
   the user ever pulls more PFF years.
 - A separate trimmed distributable lives at `C:\FantasyF_NFLScholar_dad\` (+

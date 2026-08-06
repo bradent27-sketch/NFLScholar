@@ -29,8 +29,15 @@ asset turns out to matter you can go pull that one deliberately.
 
 CREDENTIALS: a raw HAR carries every cookie and Authorization header the
 browser sent, so committing one publishes a live login session for the
-captured site. This copies no headers, no cookies and no request bodies, and
-redacts credential-looking query parameters from every URL it records.
+captured site. This copies no headers and no cookies, and redacts
+credential-looking query parameters from every URL it records.
+
+POST request bodies ARE recorded, field-redacted, because for a POST API the
+body is the question - a draft assistant's response means nothing without the
+roster state and pick number that were sent to get it. Credential-looking
+keys are blanked at any nesting depth, and auth/login endpoints are skipped
+whole rather than field-redacted, since nothing in a login body is worth
+keeping and one near-miss on the pattern would leak a password.
 
 Usage
     python tools/har_extract.py capture.har -o reference/ffa
@@ -116,23 +123,99 @@ def _body_text(response):
     return text
 
 
-def _filename_for(url, category, seen_names):
-    """A readable, unique, filesystem-safe name derived from the URL path."""
+def _filename_for(url, category, used, url_seen):
+    """
+    A readable, unique, filesystem-safe name derived from the URL path.
+
+    TWO different collisions have to be handled, and conflating them loses
+    data. Hashing the URL alone (the first version of this) disambiguated
+    /api/sos?table=overall from /api/sos?table=rushing correctly - but every
+    REPEAT call to one endpoint hashes identically, so a draft assistant
+    polled fifteen times through a draft wrote fifteen responses over the
+    top of each other and only the last survived. Those repeats are the
+    single most interesting thing in a draft capture: they're the same
+    endpoint answering as your roster fills up.
+
+    So: different URL sharing a basename gets a URL hash, the SAME URL hit
+    again gets a sequential number in capture order. Ordinals rather than
+    content hashes because the order is the meaning - _001 through _015 is
+    the draft unfolding. Both are deterministic, so re-running the extractor
+    on one capture always produces the same filenames.
+    """
     parts = urlsplit(url)
     stem = os.path.basename(parts.path) or (parts.path.strip('/').replace('/', '_')) or 'index'
     stem = re.sub(r'[^A-Za-z0-9._-]', '_', stem)[:70] or 'response'
     ext = {'api': '.json', 'js': '.js', 'css': '.css', 'html': '.html', 'other': '.txt'}[category]
     if not stem.lower().endswith(ext):
         stem += ext
-    # Disambiguate same-named responses (many endpoints end in /data) with a
-    # short hash of the full URL rather than a counter, so re-running the
-    # extractor produces the same filenames.
-    if stem in seen_names:
-        digest = hashlib.sha1(url.encode()).hexdigest()[:6]
-        root, dot, tail = stem.partition('.')
-        stem = f"{root}_{digest}{dot}{tail}"
-    seen_names.add(stem)
-    return stem
+    root = stem[:-len(ext)]
+
+    owner = url_seen.get(stem)
+    if owner is not None and owner != url:
+        # A different endpoint already claimed this basename.
+        root = f"{root}_{hashlib.sha1(url.encode()).hexdigest()[:6]}"
+        stem = root + ext
+        url_seen.setdefault(stem, url)
+    else:
+        url_seen.setdefault(stem, url)
+
+    candidate = stem
+    ordinal = 1
+    while candidate in used:
+        ordinal += 1
+        candidate = f"{root}_{ordinal:03d}{ext}"
+    used.add(candidate)
+    return candidate
+
+
+# Keys whose values are credentials, redacted wherever they appear in a
+# captured request body (at any nesting depth).
+_SECRET_KEY = re.compile(
+    r'(pass|passwd|password|token|secret|auth|apikey|api_key|jwt|session|'
+    r'cookie|signature|otp|pin|ssn|card|cvv)', re.I)
+
+# Endpoints whose request bodies are credentials by definition. Skipped
+# whole rather than field-redacted.
+_AUTH_URL = re.compile(r'/(login|signin|sign-in|auth|oauth|token|register|'
+                       r'signup|sign-up|password|session)s?(/|\?|$)', re.I)
+
+
+def _redact_structure(value):
+    """Recursively blank credential-looking keys in a decoded JSON body."""
+    if isinstance(value, dict):
+        return {k: ('REDACTED' if _SECRET_KEY.search(str(k)) else _redact_structure(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_structure(v) for v in value]
+    return value
+
+
+def _request_body(request, max_chars=20000):
+    """
+    The POST body that produced a response, with credential fields blanked.
+
+    Worth capturing despite the extra care needed: for a POST API the body IS
+    the question. A draft assistant's response is meaningless without knowing
+    the roster state and pick number that were sent to get it - you'd see the
+    answer with no idea what was asked. Auth endpoints are skipped entirely
+    rather than field-redacted, since there is nothing in a login body worth
+    keeping and a near-miss on the redaction pattern would leak a password.
+    """
+    url = request.get('url') or ''
+    if _AUTH_URL.search(url):
+        return {'skipped': 'auth endpoint'}
+    post = request.get('postData') or {}
+    text = post.get('text')
+    if not text:
+        return None
+    try:
+        return _redact_structure(json.loads(text))
+    except Exception:
+        # Not JSON (form-encoded, or truncated by the browser) - keep a
+        # bounded snippet only if it carries no credential-looking keys.
+        if _SECRET_KEY.search(text[:2000]):
+            return {'skipped': 'non-JSON body containing credential-like keys'}
+        return {'raw': text[:max_chars]}
 
 
 def _pretty(text, category):
@@ -171,7 +254,7 @@ def main():
     print(f"{len(entries):,} requests in capture.\n")
 
     out_dir = args.out or (os.path.splitext(args.har)[0] + '_unpacked')
-    manifest, seen_names, kept_bytes = [], set(), Counter()
+    manifest, used_names, url_seen, kept_bytes = [], set(), {}, Counter()
     counts = Counter()
     written = 0
 
@@ -225,11 +308,14 @@ def main():
         if not args.list:
             folder = os.path.join(out_dir, category)
             os.makedirs(folder, exist_ok=True)
-            name = _filename_for(url, category, seen_names)
+            name = _filename_for(url, category, used_names, url_seen)
             with open(os.path.join(folder, name), 'w', encoding='utf-8') as fh:
                 fh.write(_pretty(body, category))
             record['file'] = f"{category}/{name}"
             written += 1
+            body_sent = _request_body(request)
+            if body_sent is not None:
+                record['request_body'] = body_sent
         manifest.append(record)
 
     print(f"{'CATEGORY':<10} {'FILES':>7} {'SIZE':>12}")
@@ -261,8 +347,8 @@ def main():
     print(f"Wrote {written:,} files to {out_dir}/")
     print(f"index.json lists all {len(entries):,} requests including skipped ones, "
           "so nothing is lost track of.")
-    print("No headers, cookies or request bodies were copied; credential-like "
-          "query parameters are redacted.")
+    print("No headers or cookies copied. Credential-like query parameters are "
+          "redacted, POST bodies are field-redacted, auth endpoints skipped whole.")
 
 
 if __name__ == '__main__':

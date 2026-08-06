@@ -658,6 +658,73 @@ def project_points(board, curves, rank_sd_scale=1.0, calibration=None):
     return out
 
 
+def add_outcome_range_from_projections(board, calibration=None, rank_sd_scale=1.0):
+    """
+    Ceiling and Floor for a board whose Proj Pts already came from somewhere
+    else (the volume-based stat-line projections, or an FFA import).
+
+    The projection itself is left completely untouched - only the range
+    around it is added. The implied value curve is simply that position's own
+    projected points sorted descending, so the outcome range is expressed in
+    the same units as the projection that produced it rather than against a
+    historical curve the projection never saw. A player is then spread over
+    the finishes he could plausibly land on using the same measured rank
+    uncertainty as everywhere else, and Ceiling/Floor are read off the 15th
+    and 85th percentiles of that spread.
+
+    Kept separate from project_points because these are now two different
+    jobs. project_points DERIVES a projection from a rank; this one only
+    describes the uncertainty around a projection that already exists.
+    """
+    if board.empty or 'Proj Pts' not in board.columns:
+        return board
+
+    out = board.copy()
+    out['Ceiling'] = np.nan
+    out['Floor'] = np.nan
+    sd_all = _rank_uncertainty(out, calibration) * float(rank_sd_scale)
+    pos_upper = out['Pos'].astype(str).str.upper()
+
+    for pos in pos_upper.unique():
+        mask = (pos_upper == pos) & out['Proj Pts'].notna()
+        if mask.sum() < 3:
+            out.loc[mask, 'Ceiling'] = out.loc[mask, 'Proj Pts']
+            out.loc[mask, 'Floor'] = out.loc[mask, 'Proj Pts']
+            continue
+        subset = out.loc[mask]
+        curve = np.sort(subset['Proj Pts'].to_numpy(dtype=float))[::-1]
+        ranks = subset['Proj Pts'].rank(ascending=False, method='first').to_numpy(dtype=float)
+        sds = np.maximum(sd_all[mask.to_numpy()], 0.75)
+
+        finishes = np.arange(1, len(curve) + 1, dtype=float)
+        z = (finishes[None, :] - ranks[:, None]) / sds[:, None]
+        # Row-normalized, NOT Sinkhorn-balanced. The balancing exists to
+        # conserve a position's total points when the smearing is producing
+        # the projection itself; here the projection already exists and all
+        # that's wanted is each player's own distribution over finishes.
+        # Balancing it drags probability mass off the top of the board to
+        # satisfy the column constraint, which pushed the best player's
+        # "ceiling" several slots BELOW his own projection - a ceiling that
+        # is worse than the expectation is obviously wrong.
+        weights = np.exp(-0.5 * z ** 2)
+        totals = weights.sum(axis=1, keepdims=True)
+        totals[totals == 0] = 1.0
+        weights = weights / totals
+        cdf = np.cumsum(weights, axis=1)
+        ceiling = curve[np.argmax(cdf >= 0.15, axis=1)]
+        floor = curve[np.argmax(cdf >= 0.85, axis=1)]
+        # A player at the very top of his position has nowhere above him to
+        # regress toward, so clamp rather than let the discretized curve
+        # hand back a ceiling under his own projection.
+        projected = subset['Proj Pts'].to_numpy(dtype=float)
+        out.loc[mask, 'Ceiling'] = np.maximum(ceiling, projected)
+        out.loc[mask, 'Floor'] = np.minimum(floor, projected)
+
+    for column in ('Ceiling', 'Floor'):
+        out[column] = pd.to_numeric(out[column], errors='coerce').round(1)
+    return out
+
+
 def blend_with_recent_production(board, recent_df, weight):
     """
     Optionally pull projections toward each player's own most recent
@@ -1220,9 +1287,20 @@ def build_draft_board(ecr_board, settings, adp_df=None, next_pick=None,
         return pd.DataFrame(), {}
 
     settings = {**settings, 'baseline_season': latest_season}
-    curves = build_positional_value_curves(settings['scoring'], latest_season)
     calibration = calibrate_rank_uncertainty(settings['scoring'], latest_season)
-    board = project_points(ecr_board, curves, rank_sd_scale=rank_sd_scale, calibration=calibration)
+
+    # A board arriving with Proj Pts already filled in came from the
+    # volume-based stat-line projections (data.draft_projections) or an FFA
+    # import, and re-deriving points from consensus rank here would throw
+    # that away and replace a real projection with an analogy. In that case
+    # only the outcome RANGE is added on top.
+    has_projection = 'Proj Pts' in ecr_board.columns and ecr_board['Proj Pts'].notna().any()
+    if has_projection:
+        board = add_outcome_range_from_projections(
+            ecr_board, calibration=calibration, rank_sd_scale=rank_sd_scale)
+    else:
+        curves = build_positional_value_curves(settings['scoring'], latest_season)
+        board = project_points(ecr_board, curves, rank_sd_scale=rank_sd_scale, calibration=calibration)
     board = blend_with_recent_production(board, recent_df, recent_weight)
     # Tiering runs AFTER replacement level, not before, because it needs to
     # know who is actually draftable - see assign_tiers on why clustering
@@ -1233,8 +1311,8 @@ def build_draft_board(ecr_board, settings, adp_df=None, next_pick=None,
     board = attach_adp(board, adp_df, market_weight=market_weight)
     board = add_availability(board, next_pick)
     board = compute_vona(board, next_pick)
-    meta['curves'] = {k: len(v) for k, v in curves.items()}
-    meta['has_curves'] = bool(curves)
+    meta['has_curves'] = True
+    meta['projection_source'] = 'stat line' if has_projection else 'rank curve'
     meta['rank_sd_calibration'] = calibration
     return board.sort_values('VORP', ascending=False).reset_index(drop=True), meta
 

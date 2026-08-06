@@ -386,7 +386,7 @@ def marginal_lineup_gain(roster, candidate, settings):
     return max(0.0, float(depth_value)) * BENCH_VALUE_DISCOUNT
 
 
-def autopick_for_user(state, settings, pool, value_col='VORP'):
+def autopick_for_user(state, settings, pool, value_col='VORP', explore=0.0, rng=None):
     """
     Best available for THIS roster - scored by marginal starting-lineup gain
     (see marginal_lineup_gain), not by raw board value.
@@ -408,14 +408,36 @@ def autopick_for_user(state, settings, pool, value_col='VORP'):
     col = value_col if value_col in pool_legal.columns and pool_legal[value_col].notna().any() else 'Proj Pts'
 
     shortlist = pool_legal.nlargest(min(len(pool_legal), 40), col)
-    best_row, best_score = None, -np.inf
+    scores, rows = [], []
     for _, row in shortlist.iterrows():
         candidate = {'Pos': str(row['Pos']).upper(),
                      'Proj Pts': row.get('Proj Pts'), 'VORP': row.get('VORP')}
-        score = marginal_lineup_gain(my_roster, candidate, settings)
-        if score > best_score:
-            best_row, best_score = row, score
-    return best_row if best_row is not None else shortlist.iloc[0]
+        scores.append(marginal_lineup_gain(my_roster, candidate, settings))
+        rows.append(row)
+    if not rows:
+        return None
+    scores = np.asarray(scores, dtype=float)
+
+    if explore <= 0:
+        return rows[int(np.argmax(scores))]
+
+    # Stochastic pick, for simulations that need a DISTRIBUTION of what you
+    # might do rather than a single answer.
+    #
+    # A strict argmax makes every simulated draft take the same player at the
+    # same pick, so "what position lands here" comes back 100% one position
+    # every time - technically true of a robot, useless as advice. Real
+    # drafters choose among several near-equivalent options, and it's that
+    # variety that makes the resulting frequencies mean something. Softmax
+    # over the marginal-value scores keeps the choice sensible while
+    # admitting that a two-point edge is not a decision.
+    rng = rng or np.random.default_rng()
+    spread = float(np.std(scores)) or 1.0
+    weights = np.exp((scores - scores.max()) / max(spread * float(explore), 1e-6))
+    total = weights.sum()
+    if not np.isfinite(total) or total <= 0:
+        return rows[int(np.argmax(scores))]
+    return rows[int(rng.choice(len(rows), p=weights / total))]
 
 
 def simulate_full_draft(board, settings, my_slot, rounds, seed=None, reach_window=3.0,

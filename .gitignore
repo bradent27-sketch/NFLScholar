@@ -3,6 +3,11 @@
 # this file before sharing the folder.
 .streamlit/odds_api_key.txt
 
+# Imported Fantasy Football Advice data. This is paid subscription content
+# belonging to FFA, imported for personal use via tools/har_extract.py +
+# data/ffa_import.py - it should live on your machine, not in a git repo.
+external_data/ffa_players.json
+
 # Raw browser HAR captures. A HAR carries every cookie and Authorization
 # header the browser sent, so committing one publishes a live login session
 # for whatever site was captured. Run it through tools/har_extract.py first

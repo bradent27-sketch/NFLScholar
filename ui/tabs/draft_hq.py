@@ -36,6 +36,13 @@ from data.draft_sim import (
     current_round, record_pick, available_players, grade_draft, autopick_for_user,
     run_many_drafts, pick_slot_comparison, optimal_lineup_points,
 )
+from data.draft_projections import build_projected_board
+from data.draft_sos import build_team_sos, attach_sos_to_board, adp_quartiles, WEEK_PRESETS
+from data.draft_intel import (
+    classify_strategy, pick_intel, outcome_distribution, roster_percentile,
+    positional_run_pressure,
+)
+from data.ffa_import import load_ffa_import, save_ffa_import, merge_ffa_into_board
 from data.loaders import fetch_sleeper_draft_picks
 from data.transforms import parse_pasted_draft_picks, match_names_to_board
 from data.utils import calculate_percentile
@@ -56,7 +63,8 @@ SIM_KEY = 'dhq_sim_state'
 # the number keeps it in the only context where it means anything.
 BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Pos Rk', 'Tier', 'Proj Pts', 'VORP', 'VONA',
-    'ADP', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor', 'Risk', 'Bye', 'ECR',
+    'ADP', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor', 'Risk',
+    'SOS', 'Bye', 'FFA Value', 'ECR',
 ]
 
 
@@ -193,6 +201,9 @@ def _league_settings_ui():
             st.markdown("**Board & market**")
             board_format = st.selectbox("Ranking board", list(ECR_BOARDS.keys()), key="dhq_board_fmt")
             adp_year = st.selectbox("ADP season", AVAILABLE_SEASONS_WITH_UPCOMING, index=0, key="dhq_adp_year")
+            sos_window = st.selectbox("Schedule window", list(WEEK_PRESETS.keys()), key="dhq_sos_window",
+                help="Strength of schedule is graded per position group — backs against run "
+                     "defenses, passers and pass catchers against pass defenses.")
             adp_upload = st.file_uploader(
                 "Upload ADP CSV (overrides live)", type=["csv"], key="dhq_adp_upload",
                 help="Any CSV with a player-name column and an ADP/rank column. Overrides the "
@@ -224,10 +235,27 @@ def _league_settings_ui():
             )
             tiers = st.slider("Max tiers per position", 3, 12, 8, key="dhq_tiers")
             baseline_season = st.selectbox(
-                "Value-curve baseline through", AVAILABLE_SEASONS_WITH_UPCOMING[1:], index=0,
+                "Projection baseline through", AVAILABLE_SEASONS_WITH_UPCOMING[1:], index=0,
                 key="dhq_curve_season",
-                help="Last completed season used to build the historical points-by-positional-finish curves.",
+                help="Last completed season used to build the usage curves and player rates.",
             )
+
+        st.markdown("---")
+        st.markdown("**Import Fantasy Football Advice projections** (optional)")
+        st.caption(
+            "Drop in an FFA player export and the board will use their analysts' projected "
+            "STAT LINE — carries, yards, receptions — re-scored under your league settings, "
+            "plus their FFA Value and written player notes. Importing the stat line rather "
+            "than their point total is what keeps it correct: their export is half-PPR, so "
+            "reading their points straight off would be wrong in any other format."
+        )
+        f1, f2 = st.columns([2, 1])
+        with f1:
+            ffa_upload = st.file_uploader("FFA players JSON", type=["json"], key="dhq_ffa_upload")
+        with f2:
+            ffa_weight = st.slider("Trust FFA stat line", 0, 100, 100, 5, key="dhq_ffa_weight",
+                help="100 = use their projections outright, 0 = keep this app's own and take "
+                     "only their notes and value score.") / 100.0
 
     scoring = dict(DEFAULT_SCORING)
     scoring.update({
@@ -249,6 +277,7 @@ def _league_settings_ui():
         'adp_year': int(adp_year), 'adp_upload': adp_upload,
         'uncertainty': float(uncertainty), 'tiers': int(tiers),
         'baseline_season': int(baseline_season), 'market_weight': float(market_weight),
+        'sos_window': sos_window, 'ffa_upload': ffa_upload, 'ffa_weight': float(ffa_weight),
     }
 
 
@@ -273,6 +302,7 @@ def _board_cache_key(settings, next_pick, adp_meta):
         settings['num_teams'], settings['board_format'], settings['draft_type'],
         next_pick, settings['uncertainty'], settings['tiers'],
         settings['baseline_season'], settings['market_weight'],
+        settings['sos_window'], settings['ffa_weight'], settings.get('ffa_rows', 0),
         # str() rather than float() - scoring now carries 'bonus_mode',
         # which is a string, and float()-ing every value would raise the
         # moment the settings panel is opened.
@@ -283,7 +313,7 @@ def _board_cache_key(settings, next_pick, adp_meta):
 
 
 @st.cache_data(show_spinner=False)
-def _cached_board(_ecr_board, _adp_df, _settings, cache_key):
+def _cached_board(_ecr_board, _adp_df, _ffa_df, _settings, cache_key):
     """
     Cache the assembled board on the SETTINGS, not on the DataFrames.
 
@@ -294,12 +324,36 @@ def _cached_board(_ecr_board, _adp_df, _settings, cache_key):
     determines the output for a given source snapshot, which is what makes
     that safe here.
     """
-    return build_draft_board(
-        _ecr_board, _settings, adp_df=_adp_df, next_pick=cache_key[3],
+    scoring = _settings['scoring']
+    season = _settings['baseline_season']
+
+    # Volume-based stat-line projections first, so build_draft_board sees a
+    # board that already carries Proj Pts and only adds the outcome range
+    # around it (see add_outcome_range_from_projections).
+    projected, proj_meta = build_projected_board(
+        _ecr_board, scoring, latest_season=season, ppr_for_ranking=float(scoring.get('rec', 1.0)))
+
+    ffa_meta = {}
+    if _ffa_df is not None and not _ffa_df.empty:
+        projected, ffa_meta = merge_ffa_into_board(
+            projected, _ffa_df, stat_line_weight=_settings['ffa_weight'], scoring=scoring)
+
+    board, meta = build_draft_board(
+        projected, _settings, adp_df=_adp_df, next_pick=cache_key[3],
         tiers_per_position=_settings['tiers'], rank_sd_scale=_settings['uncertainty'],
-        latest_season=_settings['baseline_season'],
-        market_weight=_settings['market_weight'],
+        latest_season=season, market_weight=_settings['market_weight'],
     )
+
+    week_start, week_end = WEEK_PRESETS.get(_settings['sos_window'], (1, 17))
+    sos = build_team_sos(_settings['adp_year'], season, week_start, week_end,
+                         scoring_ppr=float(scoring.get('rec', 1.0)))
+    board = attach_sos_to_board(board, sos)
+    board = adp_quartiles(board)
+
+    meta['projection'] = proj_meta
+    meta['ffa'] = ffa_meta
+    meta['sos_window'] = (week_start, week_end)
+    return board, meta
 
 
 def _load_board(settings, next_pick):
@@ -320,7 +374,18 @@ def _load_board(settings, next_pick):
     adp_meta['rows'] = int(len(adp_df))
     status['adp'] = adp_meta
 
-    board, meta = _cached_board(ecr_board, adp_df, settings,
+    # FFA import: an upload persists to disk, otherwise whatever was saved
+    # last time is picked up automatically so it survives a restart.
+    ffa_df, ffa_err = pd.DataFrame(), None
+    upload = settings.get('ffa_upload')
+    if upload is not None:
+        ffa_df, ffa_err = save_ffa_import(upload)
+    else:
+        ffa_df, ffa_err = load_ffa_import()
+    status['ffa'] = {'rows': int(len(ffa_df)), 'error': ffa_err}
+    settings = {**settings, 'ffa_rows': int(len(ffa_df))}
+
+    board, meta = _cached_board(ecr_board, adp_df, ffa_df, settings,
                                 _board_cache_key(settings, next_pick, adp_meta))
     return board, meta, adp_df, adp_meta, status
 
@@ -350,8 +415,16 @@ def _render_source_status(status, meta):
             extra = (f" — showing {adp_meta['teams']}-team ADP for your "
                      f"{adp_meta['requested_teams']}-team league (nearest published size)")
         bits.append(f"✅ ADP from {src}{extra}")
-    if meta.get('has_curves'):
-        bits.append(f"✅ Value curves built from local history for {', '.join(sorted(meta.get('curves', {})))}")
+    projection = meta.get('projection') or {}
+    if projection.get('volume_projections'):
+        n = projection.get('players_with_history', 0)
+        bits.append(f"✅ Stat-line projections from {n:,} players of local history")
+    ffa = status.get('ffa') or {}
+    if ffa.get('error'):
+        bits.append(f"⚠️ FFA import: {str(ffa['error'])[:70]}")
+    elif ffa.get('rows'):
+        matched = (meta.get('ffa') or {}).get('matched', 0)
+        bits.append(f"✅ FFA import: {matched} of {ffa['rows']} players matched")
     st.caption("  •  ".join(bits))
 
 
@@ -384,7 +457,19 @@ def _render_roster_panel(settings):
         st.dataframe(rdf, width="stretch", hide_index=True,
                      height=df_auto_height(min(len(rdf), 18)))
         starters_pts, _ = optimal_lineup_points(mine, settings)
-        st.caption(f"Best starting lineup projects **{starters_pts:.0f} pts**")
+        # A raw point total is unreadable on its own - 1,850 means nothing
+        # without knowing this slot in this format produces 1,700-1,950. The
+        # percentile against a simulated distribution is the number that can
+        # actually be acted on, and it's what every reference tool reports.
+        grade = None
+        distribution = st.session_state.get('dhq_outcome_dist')
+        if distribution:
+            grade = roster_percentile(starters_pts, distribution)
+        if grade is not None:
+            st.caption(f"Best starting lineup projects **{starters_pts:.0f} pts** "
+                       f"— **{grade:.0f}th percentile** for this slot")
+        else:
+            st.caption(f"Best starting lineup projects **{starters_pts:.0f} pts**")
 
     needs = roster_needs(mine, settings)
     open_slots = [f"{n}x {pos}" for pos, n in needs.items() if n > 0]
@@ -626,6 +711,7 @@ def _render_board_table(board, settings, ctx, key_prefix, columns=None):
                 st.rerun()
     else:
         st.caption("Click a row to draft that player to your team or mark him as taken.")
+    _render_player_detail(board, selected)
 
 
 def _render_positional_scarcity(board, settings):
@@ -660,6 +746,119 @@ def _render_positional_scarcity(board, settings):
                      height=df_auto_height(len(rows)))
 
 
+
+def _render_strategy_panel(settings):
+    """
+    The archetype your picks have actually committed you to.
+
+    Descriptive, not prescriptive, on purpose - "you are two picks into Zero
+    RB" is a fact you can act on, where an abstract recommendation mid-draft
+    is just noise competing with the board. It also makes the pick odds
+    below readable, since what counts as a good next pick depends entirely
+    on which shape you're already building.
+    """
+    mine = _my_roster()
+    strategy = classify_strategy(mine, settings)
+    st.markdown("**Your strategy**")
+    if not strategy['primary']:
+        st.caption("Not classified yet — make a pick or two.")
+        return
+    confidence = strategy['confidence']
+    st.markdown(f"### {strategy['primary']}")
+    st.caption(strategy['label'])
+    st.progress(min(1.0, confidence), text=f"confidence {confidence:.0%}")
+    alternates = [c for c in strategy['candidates'][1:] if c['weight'] > 0.08]
+    if alternates:
+        st.caption("Or pivot to: " + ", ".join(f"{c['id']} ({c['weight']:.0%})" for c in alternates))
+
+
+def _render_pick_odds(board, settings, ctx):
+    """
+    What positions actually get taken at your upcoming picks - overall, and
+    in the simulated drafts that finished in the top quartile.
+
+    The two columns are the whole point. The first describes what usually
+    happens; the second describes what happens when things go WELL from
+    exactly where you're sitting. When they disagree, that gap is the
+    advice.
+
+    Run on demand rather than automatically: it simulates the rest of the
+    draft dozens of times, which is seconds of work, and nobody wants their
+    board to stall every time they mark a player gone.
+    """
+    st.markdown("**Odds at your next picks**")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        n_sims = st.number_input("Sims", 10, 200, 40, step=10, key="dhq_intel_sims")
+    with c2:
+        st.write("")
+        run = st.button("Run pick odds", key="dhq_intel_run")
+
+    if run:
+        signature = tuple((p['Player'], bool(p.get('mine'))) for p in _drafted_list())
+        with st.spinner(f"Simulating {int(n_sims)} drafts forward from here..."):
+            st.session_state['dhq_intel'] = pick_intel(
+                board, settings, settings['my_slot'], ctx['rounds'], signature,
+                n_sims=int(n_sims))
+            # Same run also gives the scale the roster grade is read against,
+            # so the percentile costs nothing extra.
+            st.session_state['dhq_outcome_dist'] = outcome_distribution(
+                board, settings, settings['my_slot'], ctx['rounds'],
+                n_sims=max(12, int(n_sims) // 2))
+
+    intel = st.session_state.get('dhq_intel')
+    if not intel:
+        st.caption("Run this to see which positions land at your next picks, and which ones "
+                   "the best-finishing drafts took there.")
+        return
+
+    for offset, entry in enumerate(intel.get('rounds', [])):
+        overall = ", ".join(f"{x['pos']} {x['freq']:.0%}" for x in entry['positions'][:4]) or "—"
+        best = ", ".join(f"{x['pos']} {x['freq']:.0%}" for x in entry['top_quartile'][:4]) or "—"
+        label = "Your next pick" if offset == 0 else f"Pick +{offset}"
+        st.markdown(f"**{label}**")
+        st.caption(f"typical: {overall}")
+        st.caption(f"best drafts: {best}")
+    st.caption(f"From {intel['sims']} simulated drafts. Top quartile = final starting lineup "
+               f"above {intel['top_quartile_cutoff']:.0f} pts.")
+
+
+def _render_run_pressure(settings):
+    """Which positions the room is currently draining faster than baseline demand."""
+    rows = positional_run_pressure(_drafted_list(), settings)
+    if not rows:
+        return
+    hot = [r for r in rows if r['Pressure'] >= 12]
+    if hot:
+        st.warning("Run in progress: " + ", ".join(
+            f"{r['Pos']} ({r['Recent share']:.0f}% of the last 12 picks vs {r['Baseline share']:.0f}% normal)"
+            for r in hot[:2]))
+
+
+def _render_player_detail(board, selected):
+    """Notes and the projected stat line for whoever is selected."""
+    if not selected:
+        return
+    row = board[board['Player'] == selected]
+    if row.empty:
+        return
+    row = row.iloc[0]
+    notes = row.get('Notes')
+    stat_bits = []
+    for label, column in (('carries', 'carries'), ('targets', 'targets'),
+                          ('rush yds', 'rushing_yards'), ('rec', 'receptions'),
+                          ('rec yds', 'receiving_yards'), ('pass yds', 'passing_yards')):
+        value = row.get(column)
+        if pd.notna(value) and float(value) > 0:
+            stat_bits.append(f"{float(value):.0f} {label}")
+    if stat_bits:
+        st.caption("Projected: " + " · ".join(stat_bits) +
+                   f"  ({row.get('proj_basis', 'projection')})")
+    if isinstance(notes, str) and notes.strip():
+        with st.expander(f"Player note — {selected}", expanded=False):
+            st.write(notes)
+
+
 def _render_draft_room(board, settings, ctx):
     top = st.columns(4)
     top[0].metric("Picks made", ctx['picks_made'])
@@ -668,6 +867,7 @@ def _render_draft_room(board, settings, ctx):
     top[3].metric("Your roster", len(_my_roster()))
 
     _render_live_sync(board)
+    _render_run_pressure(settings)
     _render_recommendations(board, settings, ctx)
     st.caption(
         "Proj Pts are season totals under YOUR scoring, from what players finishing at each "
@@ -683,6 +883,10 @@ def _render_draft_room(board, settings, ctx):
         _render_board_table(board, settings, ctx, key_prefix="dhq_room")
     with right:
         _render_roster_panel(settings)
+        st.markdown("---")
+        _render_strategy_panel(settings)
+        st.markdown("---")
+        _render_pick_odds(board, settings, ctx)
     # Full width rather than in the sidebar column - it's a 5-column table
     # and the narrow column truncated its last two columns entirely.
     _render_positional_scarcity(board, settings)

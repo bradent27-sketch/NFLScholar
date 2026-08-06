@@ -1,8 +1,8 @@
 """
 The draft valuation engine: turns a consensus ranking plus your league's
-settings into projected points, value over replacement, tiers, auction
-dollars, and - the part that actually decides picks - the probability a
-player survives to your next pick.
+settings into projected points, value over replacement, tiers, and - the
+part that actually decides picks - the probability a player survives to
+your next pick.
 
 WHY NOT JUST RANK BY PROJECTED POINTS: because a ranking answers the wrong
 question. On the clock you are not asking "who is best?", you are asking
@@ -272,7 +272,7 @@ def build_positional_value_curves(scoring, latest_season, n_seasons=CURVE_SEASON
     from this app's own local weekly data, at each league's actual scoring
     settings. Change PPR from 1.0 to 0.5 and the WR curve genuinely
     flattens, the RB curve doesn't, and every downstream number (VORP,
-    auction dollars, tier breaks) moves accordingly.
+    tier breaks) moves accordingly.
 
     Pre-2021 seasons are scaled by 17/16 so a 16-game season's totals don't
     drag the curve down relative to current ones.
@@ -562,6 +562,56 @@ def _rank_uncertainty(board, calibration=None):
     return np.maximum(base * ratio, 1.0)
 
 
+def _balanced_finish_weights(weights, iters=40):
+    """
+    Make the finish-probability matrix conserve total points within a
+    position, by enforcing that finish slots get claimed exactly as often as
+    they exist.
+
+    THE PROBLEM THIS FIXES, because it is subtle and it distorted the board
+    across positions: spreading each player over the finishes he might land
+    on necessarily pulls the top of a position DOWN, since the curve is
+    steeply convex there and a projected RB1 lands at RB4 as easily as he
+    stays at RB1. That correction is right. But the size of it scales with
+    how uncertain the position is - and RB/WR carry roughly twice the
+    measured rank uncertainty of QB/TE. So the raw version deflated elite
+    RB/WR about twice as hard as elite QBs, which is not a real football
+    fact, it's an artifact of the smearing. The visible symptom was elite
+    QBs floating up the overall board past where any real draft takes them.
+
+    The fix is a conservation law. There are N players and N finish slots;
+    every player finishes somewhere, and every slot is filled by exactly one
+    player. So the matrix should be doubly stochastic - rows sum to 1
+    (each player lands somewhere) AND columns sum to their share (each slot
+    is claimed once). Alternately normalizing rows and columns (Sinkhorn)
+    converges to the closest such matrix. Total projected points per
+    position then equals the total the position actually scored, so the
+    smearing redistributes value within a position instead of quietly
+    destroying it - and it destroys none of it more aggressively at RB than
+    at QB.
+    """
+    w = np.array(weights, dtype=float)
+    n_players, n_slots = w.shape
+    if n_players == 0 or n_slots == 0:
+        return w
+    # Each slot should carry the same total mass, and the masses must add up
+    # to one whole player per row.
+    col_target = n_players / float(n_slots)
+    for _ in range(iters):
+        row_sums = w.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1.0
+        w /= row_sums
+        col_sums = w.sum(axis=0, keepdims=True)
+        col_sums[col_sums == 0] = 1.0
+        w *= col_target / col_sums
+    # End on a row normalization so each player's distribution is a proper
+    # one; after convergence the columns are already within rounding of
+    # target, so this costs nothing.
+    row_sums = w.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    return w / row_sums
+
+
 def project_points(board, curves, rank_sd_scale=1.0, calibration=None):
     """
     Attach Proj Pts / Ceiling / Floor to a board carrying Pos + Pos Rank.
@@ -592,10 +642,7 @@ def project_points(board, curves, rank_sd_scale=1.0, calibration=None):
         finishes = np.arange(1, len(curve) + 1, dtype=float)
         # weights[i, k] = P(player i finishes at slot k)
         z = (finishes[None, :] - ranks[:, None]) / sds[:, None]
-        weights = np.exp(-0.5 * z ** 2)
-        totals = weights.sum(axis=1, keepdims=True)
-        totals[totals == 0] = 1.0
-        weights = weights / totals
+        weights = _balanced_finish_weights(np.exp(-0.5 * z ** 2))
 
         out.loc[mask, 'Proj Pts'] = weights @ curve
         cdf = np.cumsum(weights, axis=1)
@@ -679,6 +726,125 @@ def compute_starter_demand(board, settings):
     return started
 
 
+# Positions where the waiver wire stays genuinely deep all season, because
+# all 32 NFL teams field one and a 12-team league rosters far fewer. These
+# are the positions where "replacement" is not the last rostered player -
+# it's whoever you stream, which is a much higher bar. RB/WR/TE are absent
+# on purpose: leagues roster 60+ of them, and the free pool really is
+# replacement level.
+STREAMABLE_POSITIONS = ['QB', 'K', 'DST']
+
+# How many free options a streamer realistically rotates between, chosen on
+# prior form. Averaging the top 2 rather than always taking the single best
+# reflects that the obvious pickup isn't always startable (bye, injury,
+# someone else grabbed him first).
+STREAMING_CHOICE_DEPTH = 2
+
+# A streamer needs some evidence before picking someone up, so the
+# simulation below only considers free players with at least this many
+# games already played that season.
+STREAMING_MIN_PRIOR_GAMES = 2
+
+
+@st.cache_data(show_spinner=False)
+def build_streaming_replacement(scoring, latest_season, rostered_counts, n_seasons=CURVE_SEASONS):
+    """
+    Measure what streaming a position off waivers actually returns over a
+    full season, instead of assuming replacement is the last rostered
+    player's season total.
+
+    WHY THIS EXISTS: standard VORP puts QB replacement at QB12 in a 12-team
+    1QB league, which then prices an elite quarterback as a top-12 overall
+    pick. Real drafts - especially sharp ones - never take one there, and
+    they're right. The reason is that QB12's SEASON TOTAL is not what you
+    get by passing on quarterbacks. All 32 teams start one, only 12 are
+    rostered, so every week there are ~20 free quarterbacks and you start
+    the best matchup among them. Cherry-picking weekly from a deep free
+    pool returns far more than any single unrostered player's season total,
+    which means the true replacement bar is much higher and the surplus of
+    an elite QB much smaller.
+
+    Measured by simulating the strategy WITHOUT hindsight, which is the only
+    way this number means anything. Each week, the free players are ranked
+    by how they'd scored up to that point in the season - information a real
+    streamer actually has - and the best of them is started. What he then
+    scored THAT week is what gets banked. Summing across the season gives
+    what streaming really returned.
+
+    The naive version of this measurement (rank free players by what they
+    scored in the week being simulated, then start the winner) produces
+    numbers well above the position's own #1 finisher, because it is
+    cherry-picking a weekly maximum out of ~20 candidates after the results
+    are in. That is not a baseline, it's a leak.
+
+    The same logic self-corrects for superflex without special-casing: pass
+    a rostered count of 24 instead of 12 and the free pool that's left is
+    genuinely bad, so the measured streaming value drops and elite QBs
+    regain their surplus - which is exactly right for that format.
+
+    Returns {pos: season points}, empty when local history is unavailable.
+    """
+    from data.loaders import load_weekly_stats_history
+    hist = load_weekly_stats_history()
+    if hist is None or hist.empty or 'season' not in hist.columns:
+        return {}
+
+    df = hist[pd.to_numeric(hist['week'], errors='coerce').fillna(0) > 0].copy()
+    if 'season_type' in df.columns:
+        df = df[df['season_type'].astype(str).str.upper().isin(['REG', 'REGULAR'])]
+    name_col = 'player_display_name' if 'player_display_name' in df.columns else 'player_name'
+    if name_col not in df.columns or 'position' not in df.columns:
+        return {}
+    seasons = sorted([s for s in df['season'].dropna().unique() if s <= latest_season])[-n_seasons:]
+    if not seasons:
+        return {}
+    df = df[df['season'].isin(seasons)]
+    df['_points'] = score_stats(df, scoring)
+
+    out = {}
+    for pos, n_rostered in dict(rostered_counts).items():
+        if pos not in STREAMABLE_POSITIONS:
+            continue
+        pos_rows = df[df['position'].astype(str).str.upper() == pos]
+        if pos_rows.empty:
+            continue
+        per_season = []
+        for season in seasons:
+            season_rows = pos_rows[pos_rows['season'] == season]
+            if season_rows.empty:
+                continue
+            totals = season_rows.groupby(name_col)['_points'].sum().sort_values(ascending=False)
+            rostered = set(totals.head(int(n_rostered)).index)
+            free_rows = season_rows[~season_rows[name_col].isin(rostered)]
+            if free_rows.empty:
+                continue
+
+            banked = 0.0
+            weeks = sorted(free_rows['week'].dropna().unique())
+            for week in weeks:
+                prior = free_rows[free_rows['week'] < week]
+                this_week = free_rows[free_rows['week'] == week]
+                if prior.empty or this_week.empty:
+                    continue
+                form = prior.groupby(name_col)['_points'].agg(['mean', 'count'])
+                form = form[form['count'] >= STREAMING_MIN_PRIOR_GAMES]
+                if form.empty:
+                    continue
+                # Pick on prior form only - no knowledge of this week's result.
+                candidates = form.nlargest(STREAMING_CHOICE_DEPTH, 'mean').index
+                actual = this_week[this_week[name_col].isin(candidates)]['_points']
+                if not actual.empty:
+                    banked += float(actual.mean())
+            if banked <= 0:
+                continue
+            if season < 2021:
+                banked *= MODERN_SEASON_GAMES / 16.0
+            per_season.append(banked)
+        if per_season:
+            out[pos] = float(np.mean(per_season))
+    return out
+
+
 def add_value_over_replacement(board, settings):
     """
     VORP (vs. the first player who would NOT be started anywhere in the
@@ -709,11 +875,28 @@ def add_value_over_replacement(board, settings):
         ls_idx = min(max(n_teams * int(roster.get(pos, 0)) - 1, 0), len(pos_pts) - 1)
         last_starter[pos] = float(pos_pts[ls_idx])
 
+    # Raise the bar at QB/K/DST to what streaming actually returns. Only
+    # ever raises it - if the measured streaming value comes out below the
+    # last rostered player (which happens in superflex, where the free pool
+    # really is barren), the standard baseline is already the harder test
+    # and is kept.
+    streaming_used = {}
+    if settings.get('use_streaming_baseline', True):
+        streaming = build_streaming_replacement(
+            settings['scoring'], settings.get('baseline_season', 2025),
+            tuple(sorted((p, int(started.get(p, 0))) for p in STREAMABLE_POSITIONS)),
+        )
+        for pos, value in (streaming or {}).items():
+            if pos in replacement and value > replacement[pos]:
+                streaming_used[pos] = round(value, 1)
+                replacement[pos] = value
+
     pos_upper = out['Pos'].astype(str).str.upper()
     out['VORP'] = (out['Proj Pts'] - pos_upper.map(replacement)).round(1)
     out['VOLS'] = (out['Proj Pts'] - pos_upper.map(last_starter)).round(1)
     out['Ceiling VORP'] = (out['Ceiling'] - pos_upper.map(replacement)).round(1)
-    meta = {'started': started, 'replacement': replacement, 'last_starter': last_starter}
+    meta = {'started': started, 'replacement': replacement, 'last_starter': last_starter,
+            'streaming_replacement': streaming_used}
     return out, meta
 
 
@@ -801,40 +984,7 @@ def assign_tiers(board, tiers_per_position=8):
     return out
 
 
-def add_auction_values(board, settings):
-    """
-    Convert surplus value into dollars for auction/salary-cap leagues.
-
-    Standard value-based split: every rostered player costs at least $1, and
-    whatever budget is left over league-wide is divided in proportion to
-    each player's share of total surplus value. Only the players who will
-    actually be rostered (num_teams x roster size) get a share - letting
-    replacement-level players dilute the pool is what makes naive auction
-    calculators price every stud $8 too cheap.
-    """
-    if board.empty or 'VORP' not in board.columns:
-        return board
-    out = board.copy()
-    n_teams = int(settings['num_teams'])
-    budget = float(settings.get('auction_budget', 200))
-    roster = settings['roster']
-    roster_size = sum(int(roster.get(k, 0)) for k in
-                      ['QB', 'RB', 'WR', 'TE', 'K', 'DST', 'FLEX', 'SUPERFLEX', 'BENCH'])
-    roster_size = max(roster_size, 1)
-
-    total_slots = n_teams * roster_size
-    money_pool = n_teams * budget - total_slots  # $1 minimum per slot held back
-    drafted_pool = out.nlargest(min(total_slots, len(out)), 'VORP')
-    surplus = drafted_pool['VORP'].clip(lower=0.01).sum()
-    if surplus <= 0 or money_pool <= 0:
-        out['Auction $'] = np.nan
-        return out
-    dollars = 1.0 + out['VORP'].clip(lower=0) / surplus * money_pool
-    out['Auction $'] = dollars.where(out.index.isin(drafted_pool.index), np.nan).round(0)
-    return out
-
-
-def attach_adp(board, adp_df):
+def attach_adp(board, adp_df, market_weight=0.0):
     """
     Join market ADP onto the board and derive the value gap.
 
@@ -862,6 +1012,14 @@ def attach_adp(board, adp_df):
         out['Board Rank'] = out['ECR'].rank(method='first')
     out['Board Rank'] = out['Board Rank'].round().astype('Int64')
 
+    # Positional rank as a readable label ("RB3", "QB1"). Raw Proj Pts are
+    # not comparable across positions - every QB outscores every running
+    # back, so a points column alone makes the board look like it thinks
+    # the QB1 is the best player alive. This is the cheapest possible guard
+    # against reading it that way: it puts each projection back in the only
+    # context where it means anything.
+    out['Pos Rk'] = out['Pos'].astype(str).str.upper() + out['Pos Rank'].astype(str)
+
     if adp_df is None or adp_df.empty:
         out['ADP'] = np.nan
         out['ADP SD'] = np.nan
@@ -881,7 +1039,49 @@ def attach_adp(board, adp_df):
     b_loose = clean_name_for_merge(out['Player'])
     out['ADP'] = b_exact.map(exact_map).fillna(b_loose.map(loose_map))
     out['ADP SD'] = b_exact.map(sd_exact).fillna(b_loose.map(sd_loose)) if sd_exact else np.nan
+
+    out = apply_market_blend(out, market_weight)
     out['Value vs ADP'] = (out['ADP'] - out['Board Rank']).round(1)
+    return out
+
+
+def apply_market_blend(board, market_weight):
+    """
+    Pull the board's ordering toward the market by a chosen amount.
+
+    Value-based drafting and the market disagree most sharply at
+    quarterback: with replacement set at the last starting QB, VBD prices an
+    elite QB as a top-15 overall pick in a 1QB league, and real drafts -
+    sharp ones especially - take him twenty-plus picks later. That gap is
+    genuine disagreement, not an error in either direction. Analysts have
+    argued the elite-QB discount is a market inefficiency for years, and the
+    market has gone on discounting them anyway.
+
+    This board does not pretend to settle it. VORP stays exactly what the
+    model says - it is never blended - and this only moves the ORDER the
+    board is presented in, so you can decide how much deference the market
+    gets. At 0 you draft the model; at 100 you draft ADP; in between you get
+    a board that respects value while refusing to reach three rounds ahead
+    of the room for it.
+
+    Blending happens in rank space rather than on points because the two
+    inputs have no common unit - projected points and average draft position
+    aren't convertible, but their orderings are directly comparable.
+    """
+    out = board.copy()
+    weight = float(market_weight or 0)
+    if weight <= 0 or 'ADP' not in out.columns or out['ADP'].notna().sum() < 10:
+        return out
+
+    model_rank = out['Board Rank'].astype(float)
+    # A player the market hasn't priced can't be blended toward it, so he
+    # keeps his model rank rather than being shoved to the back of the board
+    # for the crime of being unlisted.
+    adp_rank = out['ADP'].rank(method='first')
+    adp_rank = adp_rank.fillna(model_rank)
+
+    blended = (1 - weight) * model_rank + weight * adp_rank
+    out['Board Rank'] = blended.rank(method='first').round().astype('Int64')
     return out
 
 
@@ -1004,21 +1204,22 @@ def add_risk_labels(board):
 
 def build_draft_board(ecr_board, settings, adp_df=None, next_pick=None,
                       recent_df=None, recent_weight=0.0, tiers_per_position=8,
-                      rank_sd_scale=1.0, latest_season=2025):
+                      rank_sd_scale=1.0, latest_season=2025, market_weight=0.0):
     """
     The whole pipeline, in the order the pieces depend on each other.
 
     Ordering is load-bearing: projections must exist before replacement
     level can be computed (replacement level is defined in terms of
     projected points), replacement level must exist before VORP, VORP
-    before auction dollars and before VONA, and ADP must be attached before
-    availability - which VONA in turn needs. Reordering any of these
+    before VONA, and ADP must be attached before availability - which VONA
+    in turn needs. Reordering any of these
     silently produces a board full of NaN rather than an error, which is
     exactly the kind of failure that would go unnoticed until draft night.
     """
     if ecr_board is None or ecr_board.empty:
         return pd.DataFrame(), {}
 
+    settings = {**settings, 'baseline_season': latest_season}
     curves = build_positional_value_curves(settings['scoring'], latest_season)
     calibration = calibrate_rank_uncertainty(settings['scoring'], latest_season)
     board = project_points(ecr_board, curves, rank_sd_scale=rank_sd_scale, calibration=calibration)
@@ -1028,9 +1229,8 @@ def build_draft_board(ecr_board, settings, adp_df=None, next_pick=None,
     # the undraftable tail wrecks resolution where it matters.
     board, meta = add_value_over_replacement(board, settings)
     board = assign_tiers(board, tiers_per_position=tiers_per_position)
-    board = add_auction_values(board, settings)
     board = add_risk_labels(board)
-    board = attach_adp(board, adp_df)
+    board = attach_adp(board, adp_df, market_weight=market_weight)
     board = add_availability(board, next_pick)
     board = compute_vona(board, next_pick)
     meta['curves'] = {k: len(v) for k, v in curves.items()}

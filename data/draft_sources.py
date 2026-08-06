@@ -103,7 +103,7 @@ FFC_FORMATS = {
 FFC_SUPPORTED_TEAM_COUNTS = [8, 10, 12, 14]
 
 
-def _fetch_bytes(urls, timeout=25, params=None):
+def _fetch_bytes(urls, timeout=25, params=None, headers=None):
     """
     Try each URL in order, returning the first successful response body.
 
@@ -116,7 +116,8 @@ def _fetch_bytes(urls, timeout=25, params=None):
     last_err = None
     for url in urls:
         try:
-            resp = requests.get(url, timeout=timeout, headers=_REQUEST_HEADERS, params=params)
+            resp = requests.get(url, timeout=timeout,
+                                headers={**_REQUEST_HEADERS, **(headers or {})}, params=params)
             if resp.status_code == 200 and resp.content:
                 return resp.content, None
             last_err = f"HTTP {resp.status_code}"
@@ -321,60 +322,6 @@ def fetch_ffc_adp(scoring, num_teams, is_superflex, year):
         return pd.DataFrame(), meta
 
 
-@st.cache_data(ttl=60 * 30, show_spinner=False)
-def fetch_sleeper_adp(scoring, is_superflex):
-    """
-    Sleeper ADP via their public (no-auth) stats endpoint.
-
-    Kept as a second source rather than the primary because Sleeper's user
-    base drafts a distinctly different board than the industry-wide market
-    (their default scoring and their own rankings pull it), and because
-    they publish one ADP per format rather than per league size. When the
-    two sources disagree sharply on a player it's usually a real signal
-    about where he's actually going in YOUR platform's drafts, which is why
-    the UI can show either.
-    """
-    fmt = 'dynasty' if False else ('2qb' if is_superflex else {
-        'Standard': 'std', 'Half-PPR': 'half_ppr', 'Full PPR': 'ppr'}.get(scoring, 'ppr'))
-    content, err = _fetch_bytes([
-        f"https://api.sleeper.app/v1/players/nfl/adp/{fmt}",
-        "https://api.sleeper.app/v1/players/nfl",
-    ])
-    if content is None:
-        return pd.DataFrame(), {'source': 'Sleeper', 'error': err}
-    try:
-        import json
-        payload = json.loads(content)
-        rows = []
-        if isinstance(payload, dict):
-            # The /players/nfl fallback shape: a dict of player_id -> player
-            # object carrying 'search_rank', which is Sleeper's own popularity
-            # ordering. It is NOT a true ADP, so it's labelled as a proxy
-            # downstream rather than passed off as drafted-position data.
-            for pid, obj in payload.items():
-                if not isinstance(obj, dict):
-                    continue
-                rank = obj.get('search_rank')
-                name = obj.get('full_name') or f"{obj.get('first_name','')} {obj.get('last_name','')}".strip()
-                if rank is None or rank > 1000 or not name:
-                    continue
-                rows.append({'Player': name, 'Pos': obj.get('position'),
-                             'Team': obj.get('team'), 'ADP': rank, 'sleeper_id': pid})
-        elif isinstance(payload, list):
-            for obj in payload:
-                rows.append({'Player': obj.get('name'), 'Pos': obj.get('position'),
-                             'Team': obj.get('team'), 'ADP': obj.get('adp')})
-        if not rows:
-            return pd.DataFrame(), {'source': 'Sleeper', 'error': 'empty payload'}
-        df = pd.DataFrame(rows).dropna(subset=['ADP'])
-        df['ADP'] = pd.to_numeric(df['ADP'], errors='coerce')
-        df = df.dropna(subset=['ADP']).sort_values('ADP').reset_index(drop=True)
-        df['ADP'] = df['ADP'].rank(method='first')
-        return df, {'source': 'Sleeper (popularity proxy)', 'error': None}
-    except Exception as exc:
-        return pd.DataFrame(), {'source': 'Sleeper', 'error': f"parse failed: {exc}"}
-
-
 def parse_adp_upload(uploaded_file):
     """
     Any CSV with a player-name column and an ADP-ish column. The escape
@@ -409,37 +356,31 @@ def parse_adp_upload(uploaded_file):
     return out.sort_values('ADP').reset_index(drop=True)
 
 
-def fetch_adp(scoring, num_teams, is_superflex, year, source='Auto', uploaded=None):
+def fetch_adp(scoring, num_teams, is_superflex, year, uploaded=None):
     """
-    Resolve ADP from whichever source is available, in preference order.
+    Resolve ADP: an uploaded CSV if there is one, otherwise Fantasy Football
+    Calculator, otherwise nothing.
 
-    Preference order is deliberate: an explicit upload always wins (the user
-    knows their own league better than any public market), then FFC because
-    it's the only source that varies by league size, then Sleeper, then -
-    critically - nothing. An absent ADP is left absent rather than silently
-    substituting ECR for it: ECR (what experts think) and ADP (what drafters
-    actually do) disagreeing IS the signal this board sells, so quietly
-    aliasing one to the other would manufacture agreement everywhere and
-    make every "value vs market" number read 0.00.
+    ONLY ONE LIVE SOURCE, ON PURPOSE. This previously also offered Sleeper,
+    built on their /players/nfl 'search_rank' field - which is a popularity
+    ordering, not average draft position. It returned whole-number ranks and
+    put the consensus QB1 second overall, which no 1QB draft has ever done.
+    A number that looks like ADP, sorts like ADP, and is labelled ADP but
+    isn't measured from drafts is worse than no number at all: every
+    downstream column built on it (value-vs-market, survival probability,
+    VONA, and the entire mock draft opponent model) inherits the error while
+    still looking authoritative. Removed rather than relabelled.
+
+    An absent ADP is left absent rather than silently substituting ECR. ECR
+    (what analysts think) and ADP (what drafters do) disagreeing IS the
+    signal this board sells, so aliasing one to the other would manufacture
+    agreement everywhere and make every value-vs-market number read 0.
     """
     if uploaded is not None:
         up = parse_adp_upload(uploaded)
         if not up.empty:
             return up, {'source': 'Uploaded CSV', 'error': None, 'teams': num_teams}
-
-    attempts = []
-    if source in ('Auto', 'Fantasy Football Calculator'):
-        attempts.append(lambda: fetch_ffc_adp(scoring, num_teams, is_superflex, year))
-    if source in ('Auto', 'Sleeper'):
-        attempts.append(lambda: fetch_sleeper_adp(scoring, is_superflex))
-
-    last_meta = {'source': 'none', 'error': 'no source attempted'}
-    for attempt in attempts:
-        df, meta = attempt()
-        if not df.empty:
-            return df, meta
-        last_meta = meta
-    return pd.DataFrame(), last_meta
+    return fetch_ffc_adp(scoring, num_teams, is_superflex, year)
 
 
 @st.cache_data(ttl=60 * 20, show_spinner=False)
@@ -450,14 +391,28 @@ def fetch_injury_report(year):
     Deliberately TTL'd far shorter than the market data: a Wednesday
     practice report or a Saturday IR move is exactly the sort of thing that
     should invalidate a cached board within the hour, not within the day.
+
+    Falls back a season at a time when the requested year has no feed yet.
+    That is the normal case during draft season, not an edge case: you draft
+    the 2026 season in August 2026, and nflverse has no 2026 injury rows
+    until games start - so asking for the season you're drafting raises
+    "Season must be between 2009 and 2025" every single time. Last season's
+    designations are stale for lineup decisions but still tell you who ended
+    the year hurt, which is exactly the draft-relevant question.
     """
-    try:
-        import nflreadpy
-        df = nflreadpy.load_injuries([year]).to_pandas()
-    except Exception as exc:
-        return pd.DataFrame(), f"{type(exc).__name__}: {exc}"
-    if df is None or df.empty:
-        return pd.DataFrame(), "no rows"
+    attempted = []
+    for candidate in (int(year), int(year) - 1, int(year) - 2):
+        try:
+            import nflreadpy
+            df = nflreadpy.load_injuries([candidate]).to_pandas()
+        except Exception as exc:
+            attempted.append(f"{candidate}: {type(exc).__name__}")
+            continue
+        if df is not None and not df.empty:
+            year = candidate
+            break
+    else:
+        return pd.DataFrame(), "; ".join(attempted) or "no injury data"
     name_col = next((c for c in ('full_name', 'player_name', 'gsis_id') if c in df.columns), None)
     if not name_col:
         return pd.DataFrame(), "unexpected schema"
@@ -473,6 +428,7 @@ def fetch_injury_report(year):
         'Practice Status': df.get('practice_status', pd.Series(index=df.index, dtype=str)),
     })
     out = out[out['Injury Status'].notna() & out['Injury Status'].astype(str).str.strip().ne('')]
+    out.attrs['season'] = year
     return out.reset_index(drop=True), None
 
 
@@ -488,9 +444,20 @@ def fetch_player_news(limit=60):
     network, so every consumer treats an empty return as "no news column"
     rather than an error.
     """
+    # Several candidates because ESPN's public JSON endpoints move around and
+    # some networks 403 the site.api host specifically. Tried in order; the
+    # first that answers wins.
     content, err = _fetch_bytes([
         "https://site.api.espn.com/apis/site/v2/sports/football/nfl/news",
-    ], params={'limit': limit})
+        "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl/news",
+        "https://site.api.espn.com/apis/site/v2/sports/football/nfl/teams/news",
+    ], params={'limit': limit}, headers={
+        # ESPN's edge rejects requests without a browser-ish Accept and
+        # Referer on some paths.
+        'Accept': 'application/json, text/plain, */*',
+        'Referer': 'https://www.espn.com/nfl/',
+        'Origin': 'https://www.espn.com',
+    })
     if content is None:
         return pd.DataFrame(), err
     try:

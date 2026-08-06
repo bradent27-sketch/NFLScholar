@@ -25,11 +25,13 @@ import streamlit as st
 from config import AVAILABLE_SEASONS_WITH_UPCOMING, TAB_PLAYER_SEARCH
 from data.draft_sources import (
     ECR_BOARDS, load_ecr_raw, build_ecr_board, fetch_adp, fetch_injury_report,
-    fetch_player_news, load_dynasty_values, ecr_age_days, ADP_SOURCE_NOTES,
+    fetch_player_news, load_dynasty_values, ecr_age_days,
+    ADP_SOURCE_CHOICES, parse_adp_upload,
 )
 from data.draft_board import (
     DEFAULT_SCORING, DEFAULT_ROSTER, build_draft_board, recommend_picks,
     roster_needs, snake_pick_numbers, next_pick_for, DRAFTABLE_POSITIONS,
+    refresh_pick_context,
 )
 from data.draft_sim import (
     prepare_sim_pool, init_draft_state, run_until_user_pick, team_on_clock,
@@ -61,10 +63,14 @@ SIM_KEY = 'dhq_sim_state'
 # back - so a points column read on its own makes the board look like it
 # rates the QB1 the best player in football. Seeing "QB1" and "RB3" next to
 # the number keeps it in the only context where it means anything.
+# ADP and ECR sit side by side: they are the two market/expert reads of the
+# same player, and their DISAGREEMENT is the informative part. Split to
+# opposite ends of a nineteen-column table that comparison needed a
+# horizontal scroll and a memory of the first number.
 BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'Proj Pts', 'VORP', 'VONA',
-    'FFA Rank', 'ADP', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
-    'Risk', 'SOS', 'Bye', 'ECR',
+    'FFA Rank', 'ADP', 'ECR', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
+    'Risk', 'SOS', 'Bye',
 ]
 
 
@@ -120,39 +126,104 @@ def _undo_last():
 # Settings
 # ---------------------------------------------------------------------------
 
-def _league_settings_ui():
-    """League configuration. Returns a settings dict the whole engine keys off."""
-    # Collapsed by default, matching the convention the VORP tab already
-    # set: during a draft the board is what you stare at, and a full wall of
-    # scoring inputs above it pushes the actual decision surface off-screen.
-    # Settings get configured once before the draft, then never touched.
-    with st.expander("⚙️ League Settings & Data Sources", expanded=False):
+# Every league setting, with the value used before the panel has ever been
+# opened.
+#
+# This table exists because the settings panel is now genuinely absent from
+# the page when it's closed, rather than merely collapsed. An st.expander
+# still runs its whole body while collapsed, so the old code could read the
+# widgets' return values unconditionally; a conditionally-rendered panel
+# can't, and Streamlit garbage-collects a widget's session_state entry after
+# a run in which that widget wasn't instantiated. So the values live here
+# instead, in a plain dict that nothing cleans up, and the widgets read from
+# and write back to it. That also means closing the panel genuinely stops
+# executing ~50 widgets on every rerun during a draft.
+SETTINGS_KEY = 'dhq_cfg'
+SETTINGS_OPEN_KEY = 'dhq_settings_open'
+ADP_UPLOAD_KEY = 'dhq_adp_upload_df'
+
+SETTING_DEFAULTS = {
+    'teams': 12, 'draft_type': 'Snake', 'slot': 5,
+    'qb': 1, 'rb': 2, 'wr': 2, 'te': 1,
+    'flex': 1, 'superflex': 0, 'k': 1, 'dst': 1, 'bench': 6,
+    'ppr': 1.0, 'te_prem': 0.0, 'pass_td': 4, 'pass_yd': 0.04, 'ppc': 0.0,
+    'bonus_mode': 'cumulative',
+    'rush_yd': 0.1, 'rec_yd': 0.1, 'rush_td': 6, 'rec_td': 6, 'int': -2, 'fum': -2,
+    'board_fmt': 'Redraft 1QB', 'adp_year': AVAILABLE_SEASONS_WITH_UPCOMING[0],
+    'adp_source': 'Auto', 'sos_window': None, 'market_weight': 40,
+    'uncertainty': 1.0, 'tiers': 8, 'curve_season': AVAILABLE_SEASONS_WITH_UPCOMING[1],
+    'ffa_weight': 0,
+    # Simulated-opponent ranking blend, as percentages. See
+    # data.draft_sim.build_opponent_ranking.
+    'bot_adp': 50, 'bot_ecr': 50, 'bot_ffa': 0,
+}
+for _threshold in (100, 150, 200, 250):
+    SETTING_DEFAULTS[f'bonus_rush_{_threshold}'] = 0.0
+    SETTING_DEFAULTS[f'bonus_rec_{_threshold}'] = 0.0
+for _threshold in (300, 400, 500, 600):
+    SETTING_DEFAULTS[f'bonus_pass_{_threshold}'] = 0.0
+
+
+def _cfg():
+    """The persisted league configuration, seeded with defaults on first use."""
+    cfg = st.session_state.setdefault(SETTINGS_KEY, {})
+    for key, value in SETTING_DEFAULTS.items():
+        cfg.setdefault(key, value)
+    if cfg.get('sos_window') not in WEEK_PRESETS:
+        cfg['sos_window'] = list(WEEK_PRESETS.keys())[0]
+    return cfg
+
+
+def _pick_index(options, value, default=0):
+    """Index of a stored choice in a selectbox's options, tolerant of drift."""
+    try:
+        return list(options).index(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _render_settings_panel(cfg):
+    """
+    The full-width settings surface, rendered only while it's open.
+
+    Every widget reads its current value out of `cfg` and writes the new one
+    straight back, so the dict is the single source of truth and the panel
+    can disappear entirely between uses without losing anything.
+    """
+    with st.container(border=True):
         c1, c2, c3, c4 = st.columns(4)
         with c1:
             st.markdown("**League**")
-            num_teams = st.number_input("Teams", 4, 32, 12, key="dhq_teams")
-            draft_type = st.selectbox("Draft type", ["Snake", "Linear", "Auction"], key="dhq_draft_type")
-            my_slot = st.number_input("Your draft slot", 1, int(num_teams), min(5, int(num_teams)), key="dhq_slot")
+            cfg['teams'] = st.number_input("Teams", 4, 32, int(cfg['teams']))
+            cfg['draft_type'] = st.selectbox(
+                "Draft type", ["Snake", "Linear", "Auction"],
+                index=_pick_index(["Snake", "Linear", "Auction"], cfg['draft_type']))
+            cfg['slot'] = st.number_input("Your draft slot", 1, int(cfg['teams']),
+                                          min(int(cfg['slot']), int(cfg['teams'])))
         with c2:
             st.markdown("**Starting lineup**")
-            qb = st.number_input("QB", 0, 3, 1, key="dhq_qb")
-            rb = st.number_input("RB", 0, 5, 2, key="dhq_rb")
-            wr = st.number_input("WR", 0, 6, 2, key="dhq_wr")
-            te = st.number_input("TE", 0, 3, 1, key="dhq_te")
+            cfg['qb'] = st.number_input("QB", 0, 3, int(cfg['qb']))
+            cfg['rb'] = st.number_input("RB", 0, 5, int(cfg['rb']))
+            cfg['wr'] = st.number_input("WR", 0, 6, int(cfg['wr']))
+            cfg['te'] = st.number_input("TE", 0, 3, int(cfg['te']))
         with c3:
             st.markdown("**Flex & bench**")
-            flex = st.number_input("FLEX (RB/WR/TE)", 0, 4, 1, key="dhq_flex")
-            superflex = st.number_input("SUPERFLEX (QB too)", 0, 2, 0, key="dhq_superflex")
-            k = st.number_input("K", 0, 2, 1, key="dhq_k")
-            dst = st.number_input("DST", 0, 2, 1, key="dhq_dst")
-            bench = st.number_input("Bench spots", 0, 20, 6, key="dhq_bench")
+            cfg['flex'] = st.number_input("FLEX (RB/WR/TE)", 0, 4, int(cfg['flex']))
+            cfg['superflex'] = st.number_input("SUPERFLEX (QB too)", 0, 2, int(cfg['superflex']))
+            cfg['k'] = st.number_input("K", 0, 2, int(cfg['k']))
+            cfg['dst'] = st.number_input("DST", 0, 2, int(cfg['dst']))
+            cfg['bench'] = st.number_input("Bench spots", 0, 20, int(cfg['bench']))
         with c4:
             st.markdown("**Scoring**")
-            ppr = st.select_slider("PPR", options=[0.0, 0.25, 0.5, 0.75, 1.0, 1.5], value=1.0, key="dhq_ppr")
-            te_prem = st.select_slider("TE premium (extra per rec)", options=[0.0, 0.25, 0.5, 0.75, 1.0], value=0.0, key="dhq_te_prem")
-            pass_td = st.number_input("Pass TD", 0, 10, 4, key="dhq_pass_td")
-            pass_yd = st.number_input("Pts/pass yd", 0.0, 0.2, 0.04, step=0.01, format="%.2f", key="dhq_pass_yd")
-            ppc = st.number_input("Pts/carry", 0.0, 1.0, 0.0, step=0.05, key="dhq_ppc")
+            cfg['ppr'] = st.select_slider("PPR", options=[0.0, 0.25, 0.5, 0.75, 1.0, 1.5],
+                                          value=float(cfg['ppr']))
+            cfg['te_prem'] = st.select_slider("TE premium (extra per rec)",
+                                              options=[0.0, 0.25, 0.5, 0.75, 1.0],
+                                              value=float(cfg['te_prem']))
+            cfg['pass_td'] = st.number_input("Pass TD", 0, 10, int(cfg['pass_td']))
+            cfg['pass_yd'] = st.number_input("Pts/pass yd", 0.0, 0.2, float(cfg['pass_yd']),
+                                             step=0.01, format="%.2f")
+            cfg['ppc'] = st.number_input("Pts/carry", 0.0, 1.0, float(cfg['ppc']), step=0.05)
 
         st.markdown("---")
         st.markdown("**Per-game yardage bonuses**")
@@ -163,65 +234,90 @@ def _league_settings_ui():
             "yardage spread evenly. Turning these on genuinely re-prices the board toward "
             "boom-week players."
         )
-        bonus_mode = st.radio(
+        cfg['bonus_mode'] = st.radio(
             "When several thresholds are cleared in one game",
-            ["cumulative", "highest"], horizontal=True, key="dhq_bonus_mode",
+            ["cumulative", "highest"], horizontal=True,
+            index=_pick_index(["cumulative", "highest"], cfg['bonus_mode']),
             help="Cumulative: a 210-yard game pays the 100, 150 and 200 bonuses (Sleeper/ESPN "
                  "default). Highest: it pays only the 200 bonus.",
         )
         bcols = st.columns(3)
-        bonuses = {}
         with bcols[0]:
             st.caption("**Rushing yards**")
             for threshold in (100, 150, 200, 250):
-                bonuses[f'bonus_rush_{threshold}'] = st.number_input(
-                    f"{threshold}+ rush yds", 0.0, 20.0, 0.0, step=0.5, key=f"dhq_br{threshold}")
+                key = f'bonus_rush_{threshold}'
+                cfg[key] = st.number_input(f"{threshold}+ rush yds", 0.0, 20.0,
+                                           float(cfg[key]), step=0.5)
         with bcols[1]:
             st.caption("**Receiving yards**")
             for threshold in (100, 150, 200, 250):
-                bonuses[f'bonus_rec_{threshold}'] = st.number_input(
-                    f"{threshold}+ rec yds", 0.0, 20.0, 0.0, step=0.5, key=f"dhq_bc{threshold}")
+                key = f'bonus_rec_{threshold}'
+                cfg[key] = st.number_input(f"{threshold}+ rec yds", 0.0, 20.0,
+                                           float(cfg[key]), step=0.5)
         with bcols[2]:
             st.caption("**Passing yards**")
             for threshold in (300, 400, 500, 600):
-                bonuses[f'bonus_pass_{threshold}'] = st.number_input(
-                    f"{threshold}+ pass yds", 0.0, 20.0, 0.0, step=0.5, key=f"dhq_bp{threshold}")
+                key = f'bonus_pass_{threshold}'
+                cfg[key] = st.number_input(f"{threshold}+ pass yds", 0.0, 20.0,
+                                           float(cfg[key]), step=0.5)
 
         st.markdown("---")
         c5, c6, c7 = st.columns(3)
         with c5:
             st.markdown("**More scoring**")
-            rush_yd = st.number_input("Pts/rush yd", 0.0, 0.5, 0.1, step=0.01, format="%.2f", key="dhq_rush_yd")
-            rec_yd = st.number_input("Pts/rec yd", 0.0, 0.5, 0.1, step=0.01, format="%.2f", key="dhq_rec_yd")
-            rush_td = st.number_input("Rush TD", 0, 10, 6, key="dhq_rush_td")
-            rec_td = st.number_input("Rec TD", 0, 10, 6, key="dhq_rec_td")
-            pass_int = st.number_input("INT thrown", -6, 0, -2, key="dhq_int")
-            fumble = st.number_input("Fumble lost", -6, 0, -2, key="dhq_fum")
+            cfg['rush_yd'] = st.number_input("Pts/rush yd", 0.0, 0.5, float(cfg['rush_yd']),
+                                             step=0.01, format="%.2f")
+            cfg['rec_yd'] = st.number_input("Pts/rec yd", 0.0, 0.5, float(cfg['rec_yd']),
+                                            step=0.01, format="%.2f")
+            cfg['rush_td'] = st.number_input("Rush TD", 0, 10, int(cfg['rush_td']))
+            cfg['rec_td'] = st.number_input("Rec TD", 0, 10, int(cfg['rec_td']))
+            cfg['int'] = st.number_input("INT thrown", -6, 0, int(cfg['int']))
+            cfg['fum'] = st.number_input("Fumble lost", -6, 0, int(cfg['fum']))
         with c6:
             st.markdown("**Board & market**")
-            board_format = st.selectbox("Ranking board", list(ECR_BOARDS.keys()), key="dhq_board_fmt")
-            adp_year = st.selectbox("ADP season", AVAILABLE_SEASONS_WITH_UPCOMING, index=0, key="dhq_adp_year")
-            adp_source = st.selectbox(
-                "ADP source", ["Auto", "FFA import", "Uploaded CSV", "Fantasy Football Calculator"],
-                key="dhq_adp_source",
-                help="Auto prefers an uploaded CSV, then an FFA import, then Fantasy Football "
-                     "Calculator. FFC's ADP comes from mock drafts on its own free site, which "
-                     "skews casual — tight ends and quarterbacks slide later there than in real "
-                     "drafts.",
+            boards = list(ECR_BOARDS.keys())
+            cfg['board_fmt'] = st.selectbox("Ranking board", boards,
+                                            index=_pick_index(boards, cfg['board_fmt']))
+            cfg['adp_year'] = st.selectbox(
+                "ADP season", AVAILABLE_SEASONS_WITH_UPCOMING,
+                index=_pick_index(AVAILABLE_SEASONS_WITH_UPCOMING, cfg['adp_year']))
+            cfg['adp_source'] = st.selectbox(
+                "ADP source", ADP_SOURCE_CHOICES,
+                index=_pick_index(ADP_SOURCE_CHOICES, cfg['adp_source']),
+                help="Auto tries your uploaded CSV, then an FFA import, then FantasyPros' live "
+                     "consensus, then the same consensus recovered from the local ranking "
+                     "exports. Fantasy Football Calculator is a manual choice only — its ADP "
+                     "comes from free mock drafts on its own site and slides tight ends and "
+                     "quarterbacks well past where real leagues take them.",
             )
-            sos_window = st.selectbox("Schedule window", list(WEEK_PRESETS.keys()), key="dhq_sos_window",
+            windows = list(WEEK_PRESETS.keys())
+            cfg['sos_window'] = st.selectbox(
+                "Schedule window", windows, index=_pick_index(windows, cfg['sos_window']),
                 help="Strength of schedule is graded per position group — backs against run "
                      "defenses, passers and pass catchers against pass defenses.")
             adp_upload = st.file_uploader(
                 "Upload ADP CSV (overrides live)", type=["csv"], key="dhq_adp_upload",
-                help="Any CSV with a player-name column and an ADP/rank column. Overrides the "
-                     "live Fantasy Football Calculator feed.",
+                help="Any CSV with a player-name column and an ADP/rank column. Overrides every "
+                     "live source.",
             )
-            market_weight = st.slider(
-                "Market blend", 0, 100, 40, 5, key="dhq_market_weight",
+            if adp_upload is not None:
+                # Parsed and stashed immediately rather than handed on as a
+                # file object, because the uploader widget itself disappears
+                # the moment this panel is closed - and an ADP source that
+                # silently reverts when you collapse the settings would be a
+                # nasty thing to discover mid-draft.
+                parsed = parse_adp_upload(adp_upload)
+                st.session_state[ADP_UPLOAD_KEY] = parsed if not parsed.empty else None
+            if st.session_state.get(ADP_UPLOAD_KEY) is not None:
+                st.caption(f"✅ {len(st.session_state[ADP_UPLOAD_KEY])} rows held from your upload")
+                if st.button("Clear uploaded ADP", key="dhq_adp_clear"):
+                    st.session_state[ADP_UPLOAD_KEY] = None
+                    st.rerun()
+            cfg['market_weight'] = st.slider(
+                "Market blend", 0, 100, int(cfg['market_weight']), 5,
                 help="How much the board's ORDER defers to ADP. 0 = pure model, 100 = pure ADP. "
                      "VORP itself is never blended — only the ordering moves.",
-            ) / 100.0
+            )
             st.caption(
                 "Value-based drafting and the market disagree hardest at QB: with replacement "
                 "set at the last starting QB, the model prices an elite QB as a top-15 overall "
@@ -230,8 +326,8 @@ def _league_settings_ui():
             )
         with c7:
             st.markdown("**Model**")
-            uncertainty = st.slider(
-                "Projection uncertainty", 0.5, 2.0, 1.0, 0.1, key="dhq_uncertainty",
+            cfg['uncertainty'] = st.slider(
+                "Projection uncertainty", 0.5, 2.0, float(cfg['uncertainty']), 0.1,
                 help="Multiplier on the measured spread of where players actually finish "
                      "relative to their consensus rank. 1.0 = use the measured value as-is.",
             )
@@ -241,51 +337,82 @@ def _league_settings_ui():
                 "come in around ±10 finish slots; RBs and WRs scatter more than twice as far. "
                 "This slider scales that. Higher widens Ceiling/Floor and flattens the board."
             )
-            tiers = st.slider("Max tiers per position", 3, 12, 8, key="dhq_tiers")
-            baseline_season = st.selectbox(
-                "Projection baseline through", AVAILABLE_SEASONS_WITH_UPCOMING[1:], index=0,
-                key="dhq_curve_season",
+            cfg['tiers'] = st.slider("Max tiers per position", 3, 12, int(cfg['tiers']))
+            seasons = AVAILABLE_SEASONS_WITH_UPCOMING[1:]
+            cfg['curve_season'] = st.selectbox(
+                "Projection baseline through", seasons,
+                index=_pick_index(seasons, cfg['curve_season']),
                 help="Last completed season used to build the usage curves and player rates.",
             )
 
         st.markdown("---")
-        st.markdown("**Import Fantasy Football Advice projections** (optional)")
-        st.caption(
-            "Drop in an FFA player export and the board will use their analysts' projected "
-            "STAT LINE — carries, yards, receptions — re-scored under your league settings, "
-            "plus their FFA Value and written player notes. Importing the stat line rather "
-            "than their point total is what keeps it correct: their export is half-PPR, so "
-            "reading their points straight off would be wrong in any other format."
-        )
-        f1, f2 = st.columns([2, 1])
-        with f1:
+        s1, s2 = st.columns([1, 1])
+        with s1:
+            st.markdown("**How simulated opponents rank players**")
+            st.caption(
+                "Mock-draft opponents order the board by a weighted blend of these three. Pure "
+                "ADP gives you a room that has memorised the market and never has an opinion; "
+                "pure consensus rank gives you a room of analysts who all read the same page and "
+                "ignore each other. Real drafters do some of both, which is why this starts at "
+                "an even split. Weights are normalized, so only their ratio matters."
+            )
+            cfg['bot_adp'] = st.slider("Weight on ADP", 0, 100, int(cfg['bot_adp']), 5)
+            cfg['bot_ecr'] = st.slider("Weight on consensus rank (ECR)", 0, 100,
+                                       int(cfg['bot_ecr']), 5)
+            cfg['bot_ffa'] = st.slider(
+                "Weight on FFA rank", 0, 100, int(cfg['bot_ffa']), 5,
+                help="Only has an effect once an FFA export has been imported below.")
+        with s2:
+            st.markdown("**Import Fantasy Football Advice projections** (optional)")
+            st.caption(
+                "Drop in an FFA player export and the board will use their analysts' projected "
+                "STAT LINE — carries, yards, receptions — re-scored under your league settings, "
+                "plus their FFA Value and written player notes. Importing the stat line rather "
+                "than their point total is what keeps it correct: their export is half-PPR, so "
+                "reading their points straight off would be wrong in any other format."
+            )
             ffa_upload = st.file_uploader("FFA players JSON", type=["json"], key="dhq_ffa_upload")
-        with f2:
-            ffa_weight = st.slider("Blend FFA stat line into projections", 0, 100, 0, 5, key="dhq_ffa_weight",
+            cfg['ffa_weight'] = st.slider(
+                "Blend FFA stat line into projections", 0, 100, int(cfg['ffa_weight']), 5,
                 help="100 = use their projections outright, 0 = keep this app's own and take "
-                     "only their notes and value score.") / 100.0
+                     "only their notes and value score.")
 
+    return ffa_upload
+
+
+def _settings_from_cfg(cfg, ffa_upload=None):
+    """Turn the stored configuration into the dict the whole engine keys off."""
     scoring = dict(DEFAULT_SCORING)
     scoring.update({
-        'rec': float(ppr), 'te_premium': float(te_prem), 'pass_td': float(pass_td),
-        'pass_yd': float(pass_yd), 'rush_att': float(ppc), 'rush_yd': float(rush_yd),
-        'rec_yd': float(rec_yd), 'rush_td': float(rush_td), 'rec_td': float(rec_td),
-        'pass_int': float(pass_int), 'fumble_lost': float(fumble),
-        'bonus_mode': bonus_mode,
+        'rec': float(cfg['ppr']), 'te_premium': float(cfg['te_prem']),
+        'pass_td': float(cfg['pass_td']), 'pass_yd': float(cfg['pass_yd']),
+        'rush_att': float(cfg['ppc']), 'rush_yd': float(cfg['rush_yd']),
+        'rec_yd': float(cfg['rec_yd']), 'rush_td': float(cfg['rush_td']),
+        'rec_td': float(cfg['rec_td']), 'pass_int': float(cfg['int']),
+        'fumble_lost': float(cfg['fum']), 'bonus_mode': cfg['bonus_mode'],
     })
-    scoring.update({k: float(v) for k, v in bonuses.items()})
+    scoring.update({k: float(v) for k, v in cfg.items() if k.startswith('bonus_')
+                    and k != 'bonus_mode'})
     roster = dict(DEFAULT_ROSTER)
-    roster.update({'QB': int(qb), 'RB': int(rb), 'WR': int(wr), 'TE': int(te), 'K': int(k),
-                   'DST': int(dst), 'FLEX': int(flex), 'SUPERFLEX': int(superflex), 'BENCH': int(bench)})
+    roster.update({'QB': int(cfg['qb']), 'RB': int(cfg['rb']), 'WR': int(cfg['wr']),
+                   'TE': int(cfg['te']), 'K': int(cfg['k']), 'DST': int(cfg['dst']),
+                   'FLEX': int(cfg['flex']), 'SUPERFLEX': int(cfg['superflex']),
+                   'BENCH': int(cfg['bench'])})
 
     return {
-        'num_teams': int(num_teams), 'roster': roster, 'scoring': scoring,
-        'draft_type': draft_type,
-        'my_slot': int(my_slot), 'board_format': board_format,
-        'adp_year': int(adp_year), 'adp_upload': adp_upload, 'adp_source': adp_source,
-        'uncertainty': float(uncertainty), 'tiers': int(tiers),
-        'baseline_season': int(baseline_season), 'market_weight': float(market_weight),
-        'sos_window': sos_window, 'ffa_upload': ffa_upload, 'ffa_weight': float(ffa_weight),
+        'num_teams': int(cfg['teams']), 'roster': roster, 'scoring': scoring,
+        'draft_type': cfg['draft_type'],
+        'my_slot': int(min(cfg['slot'], cfg['teams'])), 'board_format': cfg['board_fmt'],
+        'adp_year': int(cfg['adp_year']),
+        'adp_upload': st.session_state.get(ADP_UPLOAD_KEY),
+        'adp_source': cfg['adp_source'],
+        'uncertainty': float(cfg['uncertainty']), 'tiers': int(cfg['tiers']),
+        'baseline_season': int(cfg['curve_season']),
+        'market_weight': float(cfg['market_weight']) / 100.0,
+        'sos_window': cfg['sos_window'], 'ffa_upload': ffa_upload,
+        'ffa_weight': float(cfg['ffa_weight']) / 100.0,
+        'bot_weights': {'ADP': float(cfg['bot_adp']), 'ECR': float(cfg['bot_ecr']),
+                        'FFA': float(cfg['bot_ffa'])},
     }
 
 
@@ -411,46 +538,65 @@ def _load_board(settings, next_pick):
 
 
 def _render_source_status(status, meta):
-    """One honest line about where every number on this board came from."""
-    bits = []
+    """
+    One honest line about where every number on this board came from.
+
+    Deliberately terse, with the explanations moved into the tooltip: this
+    now shares a row with the settings button rather than owning a line of
+    its own, and a four-sentence paragraph there would wrap to three lines
+    and give back all the vertical space that layout just bought. The short
+    form still names every source and still flags every degradation - it
+    just stops explaining each one in place.
+    """
+    bits, details = [], []
     if status.get('ecr'):
-        bits.append(f"⚠️ Rankings source unreachable ({status['ecr']}) — board is empty.")
+        bits.append("⚠️ No rankings")
+        details.append(f"Rankings source unreachable ({status['ecr']}) — the board is empty.")
     else:
-        bits.append("✅ FantasyPros consensus rankings loaded")
+        age = status.get('ecr_age')
+        stale = age is not None and age >= 3
+        bits.append(f"{'⚠️' if stale else '✅'} FantasyPros ECR" + (f" ({age}d old)" if stale else ""))
+        if stale:
+            details.append(f"Consensus rankings are {age} days old (the source refreshes "
+                           "nightly; it hasn't). Injuries and depth-chart news since then "
+                           "aren't in them.")
+
     adp_meta = status.get('adp') or {}
     if adp_meta.get('error'):
         # Truncated: a blocked-network failure returns a full urllib3
         # ProxyError repr, several hundred characters of stack detail that
         # buries the one line that matters ("no ADP, here's what to do").
         reason = str(adp_meta['error']).split('(')[0].strip(' :,)').strip()[:90]
-        bits.append(
-            f"⚠️ No live ADP ({adp_meta.get('source', 'unknown')}: {reason}). "
-            "Value-vs-market, availability and VONA columns are blank — upload an ADP CSV in "
-            "League Settings to turn them back on."
+        bits.append("⚠️ No ADP")
+        details.append(
+            f"No ADP available ({adp_meta.get('source', 'unknown')}: {reason}). "
+            "Value-vs-market, availability and VONA are blank — pick another ADP source or "
+            "upload a CSV in League Settings to turn them back on."
         )
     else:
         src = adp_meta.get('source', 'ADP')
-        extra = ""
-        if adp_meta.get('teams') and adp_meta.get('requested_teams') and adp_meta['teams'] != adp_meta['requested_teams']:
-            extra = (f" — showing {adp_meta['teams']}-team ADP for your "
-                     f"{adp_meta['requested_teams']}-team league (nearest published size)")
-        bits.append(f"✅ ADP from {src}{extra}")
+        bits.append(f"✅ ADP: {src}")
+        if adp_meta.get('note'):
+            details.append(f"{src} — {adp_meta['note']}")
+        if (adp_meta.get('teams') and adp_meta.get('requested_teams')
+                and adp_meta['teams'] != adp_meta['requested_teams']):
+            details.append(f"Showing {adp_meta['teams']}-team ADP for your "
+                           f"{adp_meta['requested_teams']}-team league (nearest published size).")
 
-    age = status.get('ecr_age')
-    if age is not None and age >= 3:
-        bits.append(f"⚠️ Consensus rankings are {age} days old (source refreshes nightly; "
-                    "it hasn't). Injuries and depth-chart news since then aren't in them.")
     projection = meta.get('projection') or {}
     if projection.get('volume_projections'):
         n = projection.get('players_with_history', 0)
-        bits.append(f"✅ Stat-line projections from {n:,} players of local history")
+        bits.append(f"✅ Projections ({n:,})")
+        details.append(f"Stat-line projections built from {n:,} players of local history.")
     ffa = status.get('ffa') or {}
     if ffa.get('error'):
-        bits.append(f"⚠️ FFA import: {str(ffa['error'])[:70]}")
+        bits.append("⚠️ FFA import")
+        details.append(f"FFA import: {str(ffa['error'])[:120]}")
     elif ffa.get('rows'):
         matched = (meta.get('ffa') or {}).get('matched', 0)
-        bits.append(f"✅ FFA import: {matched} of {ffa['rows']} players matched")
-    st.caption("  •  ".join(bits))
+        bits.append(f"✅ FFA {matched}/{ffa['rows']}")
+        details.append(f"FFA import matched {matched} of {ffa['rows']} players onto the board.")
+    st.caption("  •  ".join(bits), help="\n\n".join(details) or None)
 
 
 # ---------------------------------------------------------------------------
@@ -476,9 +622,24 @@ def _pick_context(settings):
     # whether or not the rest of the room is tracked.
     taken_by_me = len(_my_roster())
     nxt = my_picks[taken_by_me] if taken_by_me < len(my_picks) else None
+
+    # Where the ROOM is, which is not the same as how many picks you've
+    # logged. Someone who only marks their own selections has logged four
+    # picks while the draft has actually run 40 - and the availability model
+    # conditions on the current pick, so believing the low number would have
+    # it reporting round-1 odds in round 5. Your own last pick number is a
+    # hard floor on how far the draft has gone, whatever else is tracked.
+    current = picks_made + 1
+    if taken_by_me:
+        current = max(current, my_picks[taken_by_me - 1] + 1)
+    if nxt is not None:
+        # Never past your own next pick: you can't be on the clock for a
+        # pick that hasn't come around yet.
+        current = min(current, nxt)
+
     return {'picks_made': picks_made, 'rounds': rounds, 'my_picks': my_picks,
-            'next_pick': nxt, 'on_clock': picks_made + 1,
-            'round': picks_made // max(settings['num_teams'], 1) + 1}
+            'next_pick': nxt, 'on_clock': picks_made + 1, 'current_pick': current,
+            'round': (current - 1) // max(settings['num_teams'], 1) + 1}
 
 
 def _render_roster_panel(settings):
@@ -571,7 +732,7 @@ def _apply_synced_picks(picks_data, board):
     the roster panel and the recommendations correct without you having to
     re-enter your own picks by hand while the clock runs.
     """
-    my_slot = st.session_state.get('dhq_slot', 1)
+    my_slot = _cfg().get('slot', 1)
     names, mine_flags = [], []
     for p in picks_data:
         meta = p.get('metadata', {}) or {}
@@ -611,10 +772,78 @@ def _add_names_as_picks(names, board, mine):
             already.add(name)
 
 
-def _render_selectable_board(available, key_prefix, next_pick=None, columns=None, row_limit=60):
+# The per-row action columns, as (column label, action id, tooltip). These
+# replace the old select-a-row-then-click-a-button flow entirely: marking a
+# player gone is the single most repeated motion in a draft (eleven of every
+# twelve picks in a 12-team league are someone else's), and making it two
+# clicks and a scan for the right button was the wrong cost to pay dozens of
+# times an hour.
+BOARD_ACTIONS = {
+    'Live draft': [
+        ('✅', 'mine', 'Draft this player to YOUR team'),
+        ('❌', 'gone', 'Mark this player taken by another team'),
+        ('🔍', 'profile', 'Open this player in Player Search'),
+    ],
+    'Mock draft': [
+        ('✅', 'draft', 'Draft this player'),
+        ('🔍', 'profile', 'Open this player in Player Search'),
+    ],
+}
+BOARD_NONCE_KEY = 'dhq_board_nonce'
+
+
+BOARD_ROWS_KEY = 'dhq_board_rows'
+
+
+def _board_editor_changed(widget_key, action_map):
     """
-    The sortable, filterable board grid, returning whichever player is
-    currently selected (or None).
+    Widget callback for the board grid, which exists solely to make the 🔍
+    row button able to change tabs.
+
+    switch_tab writes st.session_state['active_tab'], and app.py has already
+    instantiated that keyed st.tabs widget by the time any tab body runs -
+    Streamlit only permits writes to a keyed widget's state from a callback,
+    which runs in its own pre-script phase before the next run's st.tabs()
+    call. So the jump has to happen here rather than in the normal flow. The
+    drafting actions need no such privilege and are handled in the script
+    body, where the draft context they operate on actually exists.
+    """
+    edits = (st.session_state.get(widget_key) or {}).get('edited_rows') or {}
+    players = st.session_state.get(BOARD_ROWS_KEY) or []
+    for row_index, changes in edits.items():
+        for label, value in (changes or {}).items():
+            if not value or action_map.get(label) != 'profile':
+                continue
+            try:
+                player = players[int(row_index)]
+            except (ValueError, IndexError):
+                continue
+            # Bumped so the tick doesn't survive the round trip and re-fire
+            # the moment you come back to this tab.
+            _bump_board_nonce()
+            switch_tab(TAB_PLAYER_SEARCH, jump_to_player=player)
+            return
+
+
+def _bump_board_nonce():
+    """
+    Rotate the board widget's key so its pending edits are discarded.
+
+    A data editor keeps the cells you ticked in its own widget state, keyed
+    by ROW INDEX. Act on a tick and rerun, and that same row index is still
+    ticked - but the board has thinned by one, so the tick now points at a
+    different player and fires again immediately. Giving the widget a fresh
+    key after every action makes it a brand-new widget with no history,
+    which is the only reliable way to make a one-shot row button out of a
+    persistent checkbox.
+    """
+    st.session_state[BOARD_NONCE_KEY] = st.session_state.get(BOARD_NONCE_KEY, 0) + 1
+
+
+def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None, row_limit=40):
+    """
+    The sortable, filterable board grid, returning (action, player) for
+    whichever row button was pressed.
 
     Shared by the live draft room and the mock draft on purpose. They are the
     same surface answering the same question - the only difference is whether
@@ -629,7 +858,6 @@ def _render_selectable_board(available, key_prefix, next_pick=None, columns=None
     # filters for one thing is how you end up with a board that disagrees
     # with itself.
     c2, c3 = st.columns([3, 1])
-    positions = []
     with c2:
         sort_by = st.selectbox("Sort by", ['Board Rank', 'VORP', 'VONA', 'Proj Pts',
                                            'Value vs ADP', 'ADP', 'ECR', 'Ceiling'],
@@ -637,20 +865,25 @@ def _render_selectable_board(available, key_prefix, next_pick=None, columns=None
     with c3:
         limit = st.number_input("Rows", 10, 400, row_limit, step=10, key=f"{key_prefix}_limit")
 
-    if positions:
-        available = available[available['Pos'].astype(str).str.upper().isin(positions)]
     ascending = sort_by in ('ADP', 'ECR', 'Board Rank')
     if sort_by in available.columns:
         available = available.sort_values(sort_by, ascending=ascending, na_position='last')
     view = available.head(int(limit))
 
     cols = [c for c in (columns or BOARD_COLUMNS) if c in view.columns]
-    display = view[cols].set_index('Player')
+    # Player stays a real column rather than the index so the action buttons
+    # can sit to its LEFT, which is where a hand already is when it's reading
+    # down a board. It's pinned instead, so it stays put on horizontal
+    # scroll exactly as the index used to.
+    display = view[cols].reset_index(drop=True)
+    actions = BOARD_ACTIONS.get(mode, BOARD_ACTIONS['Mock draft'])
+    for offset, (label, _, _) in enumerate(actions):
+        display.insert(offset, label, False)
 
     pct_cols = {}
     for c in ('VORP', 'VONA', 'Proj Pts'):
         if c in display.columns and display[c].notna().any():
-            pct_cols[c] = calculate_percentile(display.reset_index(), c)
+            pct_cols[c] = calculate_percentile(display, c)
     diverging = {}
     if 'Value vs ADP' in display.columns and display['Value vs ADP'].notna().any():
         max_abs = display['Value vs ADP'].abs().max()
@@ -658,6 +891,10 @@ def _render_selectable_board(available, key_prefix, next_pick=None, columns=None
             diverging['Value vs ADP'] = max_abs
 
     column_config = build_column_help_config(display, pinned_cols=['Pos', 'Team'])
+    column_config['Player'] = st.column_config.TextColumn("Player", pinned=True)
+    for label, _, tooltip in actions:
+        column_config[label] = st.column_config.CheckboxColumn(label, help=tooltip, width=44,
+                                                               pinned=True)
     if 'Avail Next %' in display.columns:
         column_config['Avail Next %'] = st.column_config.NumberColumn(
             "Avail Next %", format="%d%%",
@@ -668,34 +905,32 @@ def _render_selectable_board(available, key_prefix, next_pick=None, columns=None
             "Risk", format="%d%%",
             help="Width of the ceiling-to-floor band as a share of the projection")
 
-    # The selected player is read back off the widget's return value on every
-    # run, rather than being latched into session_state by an on_select
-    # callback.
-    #
-    # This is what makes drafting several players in a row work. A callback
-    # only fires when the selection CHANGES, and Streamlit keeps the grid's
-    # selected ROW INDEX across reruns - so after drafting the top player and
-    # removing him from the board, row 0 is still "selected" but now points at
-    # a different player. A latched value would go stale, and clicking that
-    # same top row again would change nothing and fire nothing, leaving the
-    # board unresponsive exactly when you're picking fastest. Re-reading the
-    # index each run instead means the selection simply follows down the board
-    # as players come off it.
-    event = st.dataframe(
+    action_labels = [label for label, _, _ in actions]
+    action_map = {label: action_id for label, action_id, _ in actions}
+    # Stashed for the callback, which only ever sees a row INDEX and has no
+    # other way back to a player name.
+    st.session_state[BOARD_ROWS_KEY] = display['Player'].tolist()
+    widget_key = f"{key_prefix}_editor_{st.session_state.get(BOARD_NONCE_KEY, 0)}"
+    edited = st.data_editor(
         style_plain_dataframe(display, numeric_pct_cols=pct_cols, diverging_cols=diverging),
         width="stretch", height=df_auto_height(min(len(display), 26)),
-        on_select="rerun", selection_mode="single-row", key=f"{key_prefix}_table",
-        column_config=column_config,
+        hide_index=True, column_config=column_config,
+        disabled=[c for c in display.columns if c not in action_labels],
+        key=widget_key, on_change=_board_editor_changed, args=(widget_key, action_map),
     )
-    rows = []
-    try:
-        rows = list(event.selection.rows)
-    except Exception:
-        rows = []
-    return display.index[rows[0]] if rows and rows[0] < len(display) else None
+
+    for label, action_id, _ in actions:
+        if action_id == 'profile':
+            continue
+        if label not in edited.columns:
+            continue
+        hits = edited.index[edited[label].fillna(False).astype(bool)]
+        if len(hits):
+            return action_id, str(display.loc[hits[0], 'Player'])
+    return None, None
 
 
-def _render_positional_scarcity(board, settings):
+def _render_positional_scarcity(available, settings):
     """
     How many players above replacement are left at each position.
 
@@ -703,9 +938,12 @@ def _render_positional_scarcity(board, settings):
     draft board: it turns "should I take a TE?" into a number. Two startable
     tight ends left and eleven receivers is a completely different situation
     from the reverse, and it's invisible from a ranked list.
+
+    Takes the already-thinned available pool rather than the full board, so
+    it describes whichever draft is actually on screen - reading the live
+    tracker here reported the preseason board's scarcity in the middle of a
+    mock, i.e. none at all.
     """
-    drafted = _drafted_names()
-    available = board[~board['Player'].isin(drafted)]
     rows = []
     for pos in DRAFTABLE_POSITIONS:
         pos_rows = available[available['Pos'].astype(str).str.upper() == pos]
@@ -740,7 +978,6 @@ def _render_strategy_panel(settings, roster=None):
     """
     mine = _my_roster() if roster is None else roster
     strategy = classify_strategy(mine, settings)
-    st.markdown("**Your strategy**")
     if not strategy['primary']:
         st.caption("Not classified yet — make a pick or two.")
         return
@@ -753,7 +990,7 @@ def _render_strategy_panel(settings, roster=None):
         st.caption("Or pivot to: " + ", ".join(f"{c['id']} ({c['weight']:.0%})" for c in alternates))
 
 
-def _render_pick_odds(board, settings, ctx):
+def _render_pick_odds(board, settings, ctx, dc=None):
     """
     What positions actually get taken at your upcoming picks - overall, and
     in the simulated drafts that finished in the top quartile.
@@ -776,10 +1013,19 @@ def _render_pick_odds(board, settings, ctx):
         run = st.button("Run pick odds", key="dhq_intel_run")
 
     if run:
-        signature = tuple((p['Player'], bool(p.get('mine'))) for p in _drafted_list())
+        # Conditioned on THIS draft, whichever one is running. Reading the
+        # live tracker while a mock is open would simulate forward from a
+        # draft that isn't on screen.
+        if dc and dc['mode'] == 'Mock draft':
+            signature = tuple((p['Player'], p.get('team') == dc['my_slot'])
+                              for p in dc['picks'])
+            my_slot = dc['my_slot']
+        else:
+            signature = tuple((p['Player'], bool(p.get('mine'))) for p in _drafted_list())
+            my_slot = settings['my_slot']
         with st.spinner(f"Simulating {int(n_sims)} drafts forward from here..."):
             st.session_state['dhq_intel'] = pick_intel(
-                board, settings, settings['my_slot'], ctx['rounds'], signature,
+                board, settings, my_slot, ctx['rounds'], signature,
                 n_sims=int(n_sims))
             # Same run also gives the scale the roster grade is read against,
             # so the percentile costs nothing extra.
@@ -1012,12 +1258,21 @@ def _render_draft_board_grid(picks, num_teams, my_slot, draft_type='Snake', high
     st.markdown(
         "<style>"
         ".db-wrap{overflow-x:auto;max-width:100%}"
-        ".db{border-collapse:separate;border-spacing:3px;font-size:11px}"
+        # width:100% + table-layout:fixed is what makes the board actually
+        # FILL its container. With cells pinned to a fixed 118px the table
+        # was as wide as 12 x 118px and no wider, leaving a quarter of the
+        # expander empty on a wide screen while the names inside were still
+        # being truncated. Fixed layout divides the real width evenly
+        # instead, and min-width on the table keeps the horizontal scroll
+        # for genuinely large leagues rather than crushing 16 teams into
+        # unreadable slivers.
+        ".db{border-collapse:separate;border-spacing:3px;font-size:11px;width:100%;"
+        "table-layout:fixed;min-width:760px}"
         ".db th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;opacity:.7;"
         "padding:2px 4px;white-space:nowrap}"
         ".db th.db-mine{color:#00fff9;opacity:1}"
-        ".db-rnd{font-size:10px;opacity:.5;text-align:center;min-width:20px}"
-        ".db-cell{min-width:118px;max-width:118px;padding:4px 6px;border-radius:4px;vertical-align:top}"
+        ".db-rnd{font-size:10px;opacity:.5;text-align:center;width:22px}"
+        ".db-cell{padding:4px 6px;border-radius:4px;vertical-align:top}"
         ".db-empty{background:rgba(255,255,255,0.03)}"
         ".db-mine-cell{outline:1px solid rgba(0,255,249,0.55)}"
         ".db-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
@@ -1068,16 +1323,23 @@ def _apply_position_filter(df, positions):
     return df[df['Pos'].astype(str).str.upper().isin(positions)]
 
 
-def _render_recent_picks_strip(picks, num_teams, current_pick, window=12):
+def _render_recent_picks_strip(picks, num_teams, current_pick, round_no=None,
+                               next_pick=None, window=11):
     """
-    The last dozen picks as colored cards, plus the upcoming slots as empty
-    ones.
+    The last several picks as colored cards, the upcoming slots as empty
+    ones, and where you are in the draft pinned to the right of them.
 
     This is the thing a drafter actually keeps glancing at - not a table of
-    everyone taken, just "what just happened and what's about to". Showing
-    the empty upcoming boxes alongside is what makes it readable as a
-    position on the clock rather than a log: you can see how many picks
+    everyone taken, just "what just happened, what's about to, and when am I
+    up". Showing the empty upcoming boxes alongside is what makes it readable
+    as a position on the clock rather than a log: you can see how many picks
     stand between you and your turn without counting.
+
+    The pick/round/next-pick readout lives INSIDE this strip rather than in a
+    row of metric tiles above it. Three st.metric boxes spend an enormous
+    amount of screen height to display three short numbers, and those numbers
+    are describing exactly the same thing the strip already draws - so they
+    belong on the same line as it, in the space at its right end.
     """
     start = max(1, int(current_pick) - window + 1)
     by_number = {int(p['pick']): p for p in picks if p.get('pick')}
@@ -1091,7 +1353,7 @@ def _render_recent_picks_strip(picks, num_teams, current_pick, window=12):
             bg = get_position_chip_bg(pos) or '#1a2447'
             fg = get_position_color(pos)
             name = str(pick.get('Player', ''))
-            short = name if len(name) <= 15 else name.split()[-1][:14]
+            short = name if len(name) <= 16 else name.split()[-1][:15]
             cards.append(
                 f"<div class='rp-card' style='background:{bg};border-color:{fg}'>"
                 f"<div class='rp-num'>PICK {number}</div>"
@@ -1106,18 +1368,35 @@ def _render_recent_picks_strip(picks, num_teams, current_pick, window=12):
                 f"<div class='rp-name'>{'ON THE CLOCK' if on_clock else '—'}</div>"
                 f"<div class='rp-sub'></div></div>")
 
+    if round_no is None:
+        round_no = (int(current_pick) - 1) // max(int(num_teams), 1) + 1
+    stats = [('PICK', str(int(current_pick))), ('ROUND', str(int(round_no))),
+             ('YOU’RE UP', str(int(next_pick)) if next_pick else '—')]
+    status = "".join(
+        f"<div class='rp-stat'><span class='rp-stat-k'>{k}</span>"
+        f"<span class='rp-stat-v'>{v}</span></div>" for k, v in stats)
+
     st.markdown(
         "<style>"
-        ".rp-strip{display:flex;gap:4px;overflow-x:auto;padding:2px 0 6px 0}"
-        ".rp-card{min-width:96px;max-width:96px;border-radius:5px;padding:4px 6px;"
-        "border-left:3px solid rgba(255,255,255,0.15);font-size:11px}"
+        ".rp-row{display:flex;gap:10px;align-items:stretch;padding:2px 0 8px 0}"
+        ".rp-strip{display:flex;gap:5px;overflow-x:auto;flex:1;min-width:0}"
+        ".rp-card{min-width:112px;max-width:112px;border-radius:6px;padding:6px 8px;"
+        "border-left:3px solid rgba(255,255,255,0.15);font-size:12px}"
         ".rp-empty{background:rgba(255,255,255,0.035);opacity:.55}"
         ".rp-clock{outline:1px solid rgba(0,255,249,0.7);opacity:1}"
-        ".rp-num{font-size:9px;letter-spacing:.08em;opacity:.6;font-weight:700}"
-        ".rp-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}"
-        ".rp-sub{font-size:9px;opacity:.9;letter-spacing:.03em;min-height:11px}"
+        ".rp-num{font-size:10px;letter-spacing:.08em;opacity:.6;font-weight:700}"
+        ".rp-name{font-weight:600;font-size:13px;white-space:nowrap;overflow:hidden;"
+        "text-overflow:ellipsis}"
+        ".rp-sub{font-size:10px;opacity:.9;letter-spacing:.03em;min-height:12px}"
+        ".rp-status{flex:0 0 auto;display:flex;gap:14px;align-items:center;padding:4px 12px;"
+        "border-radius:6px;background:rgba(255,255,255,0.045);"
+        "border-left:3px solid rgba(0,255,249,0.55)}"
+        ".rp-stat{display:flex;flex-direction:column;line-height:1.15}"
+        ".rp-stat-k{font-size:9px;letter-spacing:.09em;opacity:.6;font-weight:700}"
+        ".rp-stat-v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}"
         "</style>"
-        f"<div class='rp-strip'>{''.join(cards)}</div>", unsafe_allow_html=True)
+        f"<div class='rp-row'><div class='rp-strip'>{''.join(cards)}</div>"
+        f"<div class='rp-status'>{status}</div></div>", unsafe_allow_html=True)
 
 
 def _render_single_recommendation(board, settings, my_roster, next_pick, positions, label):
@@ -1189,15 +1468,21 @@ def _draft_context(board, settings, ctx, mode):
         state = st.session_state.get(SIM_KEY)
         if state is None:
             return None
-        pool, order_col, _ = prepare_sim_pool(board)
+        pool, order_col, _ = prepare_sim_pool(board, settings.get('bot_weights'))
         avail = available_players(state, pool) if not pool.empty else board.iloc[0:0]
         my_roster = [dict(p) for p in state['rosters'][state['my_slot']]]
+        # Snake order, not "this pick plus one lap": at the turn those differ
+        # by up to a full round, which is exactly where the wait-or-take
+        # decision is hardest.
+        my_picks = snake_pick_numbers(state['my_slot'], state['num_teams'], state['rounds'],
+                                      draft_type=state.get('draft_type', 'Snake'))
+        avail_pick = _availability_pick(my_picks, state['pick_no'])
         return {
             'mode': mode, 'state': state, 'pool': pool, 'order_col': order_col,
             'picks': state['picks'], 'my_roster': my_roster,
-            'available': avail,
+            'available': refresh_pick_context(avail, avail_pick, state['pick_no']),
             'current_pick': state['pick_no'],
-            'next_pick': state['pick_no'] + state['num_teams'],
+            'next_pick': state['pick_no'], 'avail_pick': avail_pick,
             'num_teams': state['num_teams'], 'my_slot': state['my_slot'],
             'complete': state['complete'],
             'on_clock_me': team_on_clock(state) == state['my_slot'],
@@ -1209,15 +1494,36 @@ def _draft_context(board, settings, ctx, mode):
         entry['pick'] = i + 1
         entry['team'] = _team_for_pick(i + 1, settings['num_teams'], settings['draft_type'])
         picks.append(entry)
+    available = board[~board['Player'].isin(_drafted_names())]
+    current = ctx['current_pick']
+    avail_pick = _availability_pick(ctx['my_picks'], current)
     return {
         'mode': mode, 'state': None, 'pool': None, 'order_col': None,
         'picks': picks, 'my_roster': _my_roster(),
-        'available': board[~board['Player'].isin(_drafted_names())],
-        'current_pick': len(picks) + 1,
-        'next_pick': ctx['next_pick'],
+        'available': refresh_pick_context(available, avail_pick, current),
+        'current_pick': current,
+        'next_pick': ctx['next_pick'], 'avail_pick': avail_pick,
         'num_teams': settings['num_teams'], 'my_slot': settings['my_slot'],
         'complete': False, 'on_clock_me': True,
     }
+
+
+def _availability_pick(my_picks, current_pick):
+    """
+    The pick number the availability model measures TO: your first pick
+    strictly after where the draft is now.
+
+    Strictly after, not "at or after", because the question the column
+    answers is "if I pass on him with this pick, does he come back to me".
+    When you're the one on the clock those two readings differ by a full
+    turn, and the 'at or after' version degenerates - it compares the board
+    to the very pick it's already conditioned on, which makes every player
+    read 100%.
+    """
+    for number in (my_picks or []):
+        if number > int(current_pick):
+            return number
+    return None
 
 
 def _commit_pick(dc, settings, player_name, mine=True, reach=3.0):
@@ -1232,8 +1538,22 @@ def _commit_pick(dc, settings, player_name, mine=True, reach=3.0):
         st.session_state[SIM_KEY] = state
     else:
         _record_pick(row.iloc[0], mine=mine)
-    st.session_state['dhq_selected'] = None
+    _bump_board_nonce()
     st.rerun()
+
+
+def _handle_board_action(action, player, dc, settings, reach):
+    """
+    Route a row button on the board to the thing it means.
+
+    'profile' is deliberately absent: jumping tabs has to happen inside a
+    widget callback (see _board_editor_changed), and by the time this runs
+    the jump has already been made.
+    """
+    if action in ('mine', 'draft'):
+        _commit_pick(dc, settings, player, mine=True, reach=reach)
+    elif action == 'gone':
+        _commit_pick(dc, settings, player, mine=False, reach=reach)
 
 
 
@@ -1248,9 +1568,10 @@ def _render_positional_value_add(board, settings, dc):
     literal - the bar is how much your projected starting lineup improves by
     spending THIS pick there instead of waiting one more turn.
     """
-    rows = positional_value_add(board, dc['my_roster'], settings, dc['next_pick'],
-                                drafted_names=_drafted_names() if dc['mode'] == 'Live draft'
-                                else {p['Player'] for p in dc['picks']})
+    # `board` here is already the available pool for whichever draft is
+    # running, so nothing further needs excluding.
+    rows = positional_value_add(board, dc['my_roster'], settings, dc['avail_pick'],
+                                drafted_names=set())
     if not rows:
         return
     from config import get_position_color, get_position_chip_bg
@@ -1285,12 +1606,6 @@ def _render_positional_value_add(board, settings, dc):
         ".pv-wait{font-size:9px;opacity:.55}"
         "</style>"
         f"<div class='pv-wrap'>{''.join(cards)}</div>", unsafe_allow_html=True)
-    st.caption(
-        "How much your projected starting lineup gains by spending this pick on each position "
-        "instead of waiting one more turn. It's a difference, not a level — that's why the "
-        "quarterback reads low even though he outscores everyone: another comparable one will "
-        "still be there."
-    )
 
 
 def _render_draft_room(board, settings, ctx):
@@ -1321,7 +1636,7 @@ def _render_draft_room(board, settings, ctx):
             reach = st.slider("Chaos", 1.0, 8.0, 3.0, 0.5, key="dhq_mock_reach",
                               help="How far simulated opponents stray from ADP.")
         if start_mock:
-            pool, order_col, _ = prepare_sim_pool(board)
+            pool, order_col, _ = prepare_sim_pool(board, settings.get('bot_weights'))
             if pool.empty:
                 st.error("No board to simulate against.")
             else:
@@ -1342,85 +1657,53 @@ def _render_draft_room(board, settings, ctx):
         st.dataframe(grades[['Rank', 'Team', 'Starters Proj', 'Bench Proj']], width="stretch",
                      hide_index=True, height=df_auto_height(len(grades)))
 
-    top = st.columns(4)
-    top[0].metric("Pick", dc['current_pick'])
-    top[1].metric("Round", (dc['current_pick'] - 1) // max(dc['num_teams'], 1) + 1)
-    top[2].metric("Your next pick", dc['next_pick'] if dc['next_pick'] else "—")
-    top[3].metric("Your roster", len(dc['my_roster']))
-
-    _render_recent_picks_strip(dc['picks'], dc['num_teams'], dc['current_pick'])
+    round_no = (dc['current_pick'] - 1) // max(dc['num_teams'], 1) + 1
+    _render_recent_picks_strip(dc['picks'], dc['num_teams'], dc['current_pick'],
+                               round_no=round_no, next_pick=dc['next_pick'])
     if mode == "Live draft":
         _render_run_pressure(settings)
 
-    _render_positional_value_add(board, settings, dc)
+    _render_positional_value_add(dc['available'], settings, dc)
     positions, label = _render_position_filter()
-    _render_single_recommendation(board, settings, dc['my_roster'], dc['next_pick'],
-                                  positions, label)
+    # Scoped to what's actually left in THIS draft, not to the full board.
+    # Reading the live tracker here was the bug that had a mock ten rounds
+    # deep still recommending the consensus 1.01: in a mock, the live
+    # tracker is empty, so "available" was the entire preseason board.
+    recommended = _render_single_recommendation(dc['available'], settings, dc['my_roster'],
+                                                dc['avail_pick'], positions, label)
 
-    selected = st.session_state.get('dhq_selected')
-    if selected and selected not in set(dc['available']['Player']):
-        selected = None
-
-    action = st.columns([1.3, 1.3, 1.3, 3])
+    action = st.columns([1.3, 1.3, 4.4])
     if mode == "Mock draft":
         with action[0]:
-            if st.button("✅ Draft selected", key="dhq_act_draft", type="primary",
-                         disabled=not selected, width="stretch"):
-                _commit_pick(dc, settings, selected, reach=reach)
-        with action[1]:
             if st.button("⏭ Auto-pick", key="dhq_act_auto", width="stretch"):
                 row = autopick_for_user(dc['state'], settings, dc['pool'])
                 if row is not None:
                     _commit_pick(dc, settings, row['Player'], reach=reach)
     else:
         with action[0]:
-            if st.button("➕ Draft to my team", key="dhq_act_mine", type="primary",
-                         disabled=not selected, width="stretch"):
-                _commit_pick(dc, settings, selected, mine=True)
-        with action[1]:
-            if st.button("❌ Taken by others", key="dhq_act_other",
-                         disabled=not selected, width="stretch"):
-                _commit_pick(dc, settings, selected, mine=False)
-        with action[2]:
-            if st.button("↩ Undo", key="dhq_act_undo", disabled=not dc['picks'],
+            if st.button("↩ Undo last pick", key="dhq_act_undo", disabled=not dc['picks'],
                          width="stretch"):
                 _undo_last()
                 st.rerun()
-    with action[2 if mode == "Mock draft" else 3]:
-        # Jumps to the real Player Search tab rather than a cut-down modal.
-        # Every bit of draft state - your picks, an in-progress mock, the
-        # selected player, the position filter - lives in st.session_state,
-        # which survives a tab switch untouched, so coming back lands you
-        # exactly where you left. The modal only ever showed a subset;
-        # this shows everything that tab does, with no changes to it.
-        # on_click, not a post-hoc `if st.button(...)`: switch_tab writes to
-        # st.session_state['active_tab'], and app.py has already instantiated
-        # that keyed st.tabs widget by the time this body runs. Streamlit only
-        # permits writes to a keyed widget's state from a callback, which runs
-        # in its own pre-script phase - the same constraint documented in
-        # ui/tabs/risers.py.
-        if selected:
-            st.button("🔍 Full player profile", key="dhq_act_profile", width="stretch",
-                      on_click=switch_tab, args=(TAB_PLAYER_SEARCH,),
-                      kwargs={'jump_to_player': selected},
-                      help="Opens the Player Search tab for this player. Your draft, mock and "
-                           "selections are all preserved — come straight back.")
-    with action[3]:
-        if selected:
-            st.caption(f"Selected: **{selected}**")
-        else:
-            st.caption("Click a row below to select a player.")
+    with action[2]:
+        st.caption("Draft straight from the board — the ✅ / ❌ / 🔍 boxes on each row take "
+                   "the player, mark him gone, or open his full profile.")
 
     left, right = st.columns([3, 1])
     with left:
         view = _apply_position_filter(dc['available'], positions)
-        picked = _render_selectable_board(view, "dhq_board", next_pick=dc['next_pick'],
-                                          row_limit=40)
-        if picked and picked != selected:
-            st.session_state['dhq_selected'] = picked
-            st.rerun()
-        _render_player_detail(board, selected)
+        act, player = _render_board_grid(view, "dhq_board", mode, next_pick=dc['avail_pick'],
+                                         row_limit=40)
+        if act and player:
+            _handle_board_action(act, player, dc, settings, reach)
+        _render_player_detail(board, recommended)
     with right:
+        st.markdown("**Your roster**")
+        # Nudged down so the QB line starts level with the top of the board
+        # table, which sits below that column's sort/rows controls. Without
+        # it the roster floats a control-height above everything it's meant
+        # to be read alongside.
+        st.markdown("<div style='height:52px'></div>", unsafe_allow_html=True)
         _render_roster_slots(settings, roster=dc['my_roster'])
         st.markdown("---")
         _render_strategy_panel(settings, roster=dc['my_roster'])
@@ -1429,8 +1712,8 @@ def _render_draft_room(board, settings, ctx):
         _render_draft_board_grid(dc['picks'], dc['num_teams'], dc['my_slot'],
                                  settings['draft_type'])
     with st.expander("📊 Pick odds & positional scarcity", expanded=False):
-        _render_pick_odds(board, settings, ctx)
-        _render_positional_scarcity(board, settings)
+        _render_pick_odds(board, settings, ctx, dc)
+        _render_positional_scarcity(dc['available'], settings)
     if mode == "Live draft":
         _render_live_sync(board)
     else:
@@ -1450,16 +1733,21 @@ def _render_mock_tools(board, settings, ctx):
     question. One mock tells you what happened; fifty tell you what usually
     happens, which is the only version worth planning around.
     """
-    pool, _, has_adp = prepare_sim_pool(board)
+    pool, _, has_market = prepare_sim_pool(board, settings.get('bot_weights'))
     if pool.empty:
         st.info("No board loaded to simulate against.")
         return
-    if not has_adp:
+    if not has_market:
         st.warning(
-            "No ADP loaded, so simulated opponents draft off this board's own value ranking "
-            "rather than the market. Useful as a stress test, but not a realistic room — treat "
-            "'who fell to me' with suspicion."
+            "No market ranking loaded, so simulated opponents draft off this board's own value "
+            "ranking rather than the market. Useful as a stress test, but not a realistic room — "
+            "treat 'who fell to me' with suspicion."
         )
+    else:
+        blend = (pool.attrs.get('opponent_ranking') or {}).get('components') or {}
+        st.caption("Opponents rank players by " + ", ".join(
+            f"{name} {weight:.0%}" for name, weight in blend.items()) +
+            " — change the mix in League Settings.")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1577,15 +1865,37 @@ def _render_news(board, settings):
 # ---------------------------------------------------------------------------
 
 def render():
-    st.markdown("<div class='custom-section-header'>DRAFT HQ</div>", unsafe_allow_html=True)
+    # No "DRAFT HQ" heading here: the tab you clicked to get here is already
+    # labelled DRAFT HQ, and repeating it costs a line of vertical space on
+    # the one screen where vertical space is scarcest.
+    #
+    # The settings control is a plain button rather than a full-width
+    # expander bar for the same reason. The status line renders into the
+    # column beside it - the two columns are laid out first and filled in
+    # afterwards, because the status text can only be written once the board
+    # has actually loaded, and it belongs on this row rather than a line of
+    # its own.
+    head_left, head_right = st.columns([1.35, 5.5], vertical_alignment="center")
+    cfg = _cfg()
+    with head_left:
+        if st.button("⚙️ League Settings & Data Sources", key="dhq_settings_btn",
+                     width="stretch",
+                     type="primary" if st.session_state.get(SETTINGS_OPEN_KEY) else "secondary"):
+            st.session_state[SETTINGS_OPEN_KEY] = not st.session_state.get(SETTINGS_OPEN_KEY, False)
+            st.rerun()
 
-    settings = _league_settings_ui()
+    ffa_upload = None
+    if st.session_state.get(SETTINGS_OPEN_KEY):
+        ffa_upload = _render_settings_panel(cfg)
+
+    settings = _settings_from_cfg(cfg, ffa_upload)
     ctx = _pick_context(settings)
 
     with skeleton_loader("table", n_rows=12, n_cols=8):
         board, meta, adp_df, adp_meta, status = _load_board(settings, ctx['next_pick'])
 
-    _render_source_status(status, meta)
+    with head_right:
+        _render_source_status(status, meta)
 
     if board.empty:
         st.error(

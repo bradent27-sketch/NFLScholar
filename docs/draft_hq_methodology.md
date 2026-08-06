@@ -27,7 +27,9 @@ Two categories run through the whole document:
 | **nflverse** injury report | Current designations | `nflreadpy`, falls back one season at a time | short TTL — a Saturday IR move should invalidate a board within the hour |
 | **ESPN site API** | Player news headlines | public JSON, several host candidates tried in order | 6h |
 | **Fantasy Football Advice** (your upload) | `ffaValue`, `adpComposite`, `proj`, Elo / PPR Elo / Dynasty Elo, analyst stat lines, scouting notes, age | **file you supply** — `external_data/ffa_players.json`, gitignored, never fetched | on upload |
-| **Fantasy Football Calculator** | ADP from mock drafts on their own site | `fantasyfootballcalculator.com/api/v1/adp` | last-resort fallback only |
+| **FantasyPros ADP** (live) | Consensus ADP averaged across NFFC, Sleeper, ESPN, CBS and RTSports | `fantasypros.com/nfl/adp/{format}.php` | 6h |
+| **FantasyPros ADP** (local) | The same consensus, recovered offline from `rankings/fantasypros_2026_*.csv` as `RK + "ECR VS. ADP"` | your own periodic export | on file change |
+| **Fantasy Football Calculator** | ADP from mock drafts on their own site | `fantasyfootballcalculator.com/api/v1/adp` | manual selection only |
 
 **FantasyPros ECR is fetched per draft format**, not reordered from one
 board: `Redraft 1QB`, `Redraft Superflex / 2QB`, `Best Ball`, `Dynasty 1QB`,
@@ -35,10 +37,32 @@ board: `Redraft 1QB`, `Redraft Superflex / 2QB`, `Best Ball`, `Dynasty 1QB`,
 up — the whole positional value structure changes when a second QB slot
 exists.
 
-**ADP preference order** (`fetch_adp`): uploaded CSV → FFA import → Fantasy
-Football Calculator → ECR-as-estimate. FFC sits last deliberately: its ADP
-comes from mock drafts run on a free public site and skews casual — tight
-ends and quarterbacks consistently slide later there than in real drafts.
+**ADP preference order** (`fetch_adp`): uploaded CSV → FFA import →
+FantasyPros ADP (live) → FantasyPros ADP (local export) → ECR-as-estimate.
+
+Fantasy Football Calculator is **no longer in the automatic chain at all** —
+it is selectable by hand and nothing else. Its ADP is measured from free mock
+drafts run on its own site, and while those are real humans, they are people
+mock-drafting for free on a calculator site. The board it produces drifts hard
+from where players actually go, sliding tight ends and quarterbacks a full
+round or more, and everything downstream (`Value vs ADP`, `Avail Next %`,
+`VONA`, the entire opponent model) inherits that error while still looking
+authoritative. A visibly missing column is better than a confidently wrong one.
+
+FantasyPros' consensus replaces it because it averages the ADP published by
+the platforms real leagues draft on, high-stakes money drafts included. It
+publishes one consensus per *format* rather than per *league size*, which is
+strictly less settings-sensitive than FFC was — a deliberate trade, since a
+generic number measured from real drafts beats a size-specific one measured
+from mocks. The UI names which is in use rather than hiding the distinction.
+
+The **local** FantasyPros path deserves its own note: the ranking CSVs already
+in `rankings/` carry an `ECR VS. ADP` column, which is exactly
+(ADP − consensus rank), so ADP is recoverable as `RK + that difference` with
+no network at all. Draft night is the worst possible moment to discover a site
+is unreachable, and the gap between a board with real ADP and one without is
+the entire value/availability half of it. This is the floor under that.
+
 When no ADP source answers at all, consensus rank stands in so the
 availability model keeps working; the source label says `ECR estimate` so
 you know it isn't real ADP.
@@ -334,11 +358,30 @@ backup. Everyone below replacement is swept into one trailing tier.
   availability model actually uses.
 - **`Value vs ADP`** = ADP − Board Rank. Positive means the market drafts him
   later than this board rates him.
-- **`Avail Next %`** — P(still on the board at your next pick). Each player's
-  draft slot is modelled as normally distributed around his ADP with the
-  spread from `effective_adp_sd`; the probability he lasts to pick N is the
-  normal survival function of `(N − expected) / sd`. Computed with
-  `math.erfc`, no scipy.
+- **`Avail Next %`** — P(still on the board at your next pick, **given that
+  he is still on the board right now**). Each player's draft slot is modelled
+  as normally distributed around his ADP with the spread from
+  `effective_adp_sd`, and the reported number is the ratio of two survival
+  probabilities: `sf((next − expected)/sd) / sf((now − expected)/sd)`.
+  Computed with `math.erfc`, no scipy; the far tail falls back to the
+  `phi(z)/z` approximation, which stays finite exactly where the direct
+  division becomes 0/0.
+
+  The conditioning is what makes the column usable rather than decorative.
+  The unconditional form asks "what are the odds this player goes after pick
+  N", and for anyone whose ADP is already past N that is ~100% no matter how
+  much of the draft has happened — so ten rounds in, the whole remaining
+  board read 100% and the column said nothing. What a drafter is actually
+  asking is "given he is *still here* at pick 109, does he last to my pick at
+  121", and every pick he survives is evidence about where he'll go.
+
+  The reference pick is your first pick **strictly after** the one on the
+  clock. Strictly, because the question is "if I pass on him now, does he
+  come back" — the *at-or-after* reading compares the board against the very
+  pick it is already conditioned on, which makes every player read 100%.
+  Both draft modes recompute this per render through
+  `refresh_pick_context`, against the pool that mode has actually thinned;
+  the cached board only carries the pre-draft baseline.
 - **`VONA`** (Value Over Next Available) = his value minus the **expected**
   best player still available at your next pick. That expectation walks the
   position's board in value order, weighting each player by the chance he is
@@ -470,11 +513,35 @@ explainable line by line.
 
 `data/draft_sim.py`
 
-Bots draft off **Board Rank** with a softmax exploration term, not off
-marginal lineup gain. Two bugs are behind that choice: drafting off marginal
-gain made bots take a QB in round 1 (on an empty lineup, Josh Allen's ~150
-point edge dominates), and a deterministic argmax made the pick-odds panel
-read 100% on a single position.
+Bots draft off a **market ranking** with an exponential exploration term, not
+off marginal lineup gain. Two bugs are behind the latter choice: drafting off
+marginal gain made bots take a QB in round 1 (on an empty lineup, Josh Allen's
+~150 point edge dominates), and a deterministic argmax made the pick-odds
+panel read 100% on a single position.
+
+**The market ranking is a blend, not a single column**
+(`build_opponent_ranking`). Three orderings are available — ADP, consensus
+rank, and an imported FFA rank — and the default is a straight 50/50 average
+of the first two, exposed as three sliders in League Settings. Pure ADP
+simulates a room that has collectively memorised last week's market and never
+has an opinion; pure ECR simulates a room of analysts who all read the same
+rankings and ignore what everyone else is doing. Real drafters do some of
+both, and neither extreme reproduces how a real room actually behaves.
+
+Two implementation details are load-bearing:
+
+- The blend happens in **rank space**. ADP is a pick number, ECR is a rank
+  and FFA Rank is a rank over a different (smaller) player set; averaging
+  those raw would let whichever column has the widest numeric spread dominate
+  for reasons unrelated to what it says. Ranking each over this board first
+  puts all three on one scale, so a weight of 0.5 genuinely means half.
+- Weights are renormalized **per player**, over whichever components have a
+  value for him. Otherwise a partial source acts as a penalty: a 260-player
+  FFA export would push the other 440 down the board purely for being absent
+  from it, handing you a mock where every unlisted player falls into your lap.
+
+Players no component priced sort behind everyone who was priced, ordered by
+this board's own value — the right guess for "the room hasn't priced him".
 
 Roster construction rules (`_legal_positions`): dedicated starting slots fill
 before any backup, and the backup ladder counts **dedicated slots only**.

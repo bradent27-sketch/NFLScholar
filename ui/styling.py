@@ -1254,7 +1254,10 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
 
     fmt = {}
     for col in df.columns:
-        if not pd.api.types.is_numeric_dtype(df[col]):
+        # Booleans are numeric as far as pandas is concerned, and a
+        # "{:.0f}" on one turns a checkbox column's True into a literal "1".
+        # They carry no decimals to decide on, so they're skipped outright.
+        if pd.api.types.is_bool_dtype(df[col]) or not pd.api.types.is_numeric_dtype(df[col]):
             continue
         if col in _FORCED_DECIMALS:
             decimals = _FORCED_DECIMALS[col]

@@ -238,12 +238,83 @@ def _bot_pick(available, counts, settings, round_no, total_rounds, picks_left, r
     return pool.iloc[idx]
 
 
-def prepare_sim_pool(board):
+# How simulated opponents rank players, as weights over the three
+# independent orderings the board carries. The default is a straight average
+# of ADP and consensus rank, which is much closer to how a real room behaves
+# than either alone: pure ADP drafts a room that has collectively memorised
+# last week's market and never has an opinion, while pure ECR drafts a room
+# of analysts who all read the same rankings and ignore what everyone else
+# is doing. Real drafters do some of both.
+#
+# FFA starts at zero because it's optional - it only exists once an import
+# has been made, and a weight that silently does nothing is worse than one
+# you turn on deliberately.
+BOT_RANK_WEIGHTS = {'ADP': 0.5, 'ECR': 0.5, 'FFA': 0.0}
+
+# Which board column carries each component.
+_BOT_RANK_COLUMNS = {'ADP': 'ADP', 'ECR': 'ECR', 'FFA': 'FFA Rank'}
+
+
+def build_opponent_ranking(board, weights=None):
+    """
+    The single ordering simulated opponents draft from, blended out of ADP,
+    consensus rank and an FFA import.
+
+    Blending happens in RANK space, not on the raw numbers. ADP is a pick
+    number, ECR is a rank and FFA Rank is a rank over a different (smaller)
+    player set - averaging those directly would let whichever column happens
+    to have the widest numeric spread dominate the result for reasons that
+    have nothing to do with what it says. Ranking each component over this
+    board first puts all three on one scale where a weight of 0.5 genuinely
+    means half.
+
+    Weights are renormalized PER PLAYER over whichever components actually
+    have a value for him. That's what stops a partial source from acting as
+    a penalty: an FFA export covering 260 players would otherwise push the
+    other 440 down the board purely for being absent from it, which would
+    hand you a mock where every unlisted player falls into your lap.
+
+    Returns (order_series, meta) with meta naming the components that
+    contributed and the effective weights after dropping empty ones.
+    """
+    weights = {**BOT_RANK_WEIGHTS, **(weights or {})}
+    ranks, used = {}, {}
+    for name, column in _BOT_RANK_COLUMNS.items():
+        weight = float(weights.get(name, 0.0) or 0.0)
+        if weight <= 0 or column not in board.columns:
+            continue
+        values = pd.to_numeric(board[column], errors='coerce')
+        # A component nobody on this board has is not a component. 30 is the
+        # same threshold prepare_sim_pool has always used for "is there
+        # really a market here".
+        if values.notna().sum() < 30:
+            continue
+        ranks[name] = values.rank(method='first')
+        used[name] = weight
+
+    if not ranks:
+        return None, {'components': {}, 'fallback': True}
+
+    total = sum(used.values())
+    used = {k: v / total for k, v in used.items()}
+
+    numerator = pd.Series(0.0, index=board.index)
+    denominator = pd.Series(0.0, index=board.index)
+    for name, rank in ranks.items():
+        present = rank.notna()
+        numerator[present] += rank[present] * used[name]
+        denominator[present] += used[name]
+
+    blended = numerator.where(denominator > 0) / denominator.replace(0, np.nan)
+    return blended, {'components': used, 'fallback': False}
+
+
+def prepare_sim_pool(board, weights=None):
     """
     The draftable pool plus the ordering bots use.
 
-    Bots follow ADP where it exists, because that is what the room does, and
-    fall back to this board's own value order where it doesn't. The
+    Bots follow the blended market ranking above where one can be built,
+    and fall back to this board's own value order where it can't. The
     distinction is returned so the UI can be honest: a mock run against
     value-ordered bots is a useful stress test but it is not a simulation of
     a real draft room, and presenting it as one would make every "he'll fall
@@ -253,18 +324,21 @@ def prepare_sim_pool(board):
         return pd.DataFrame(), None, False
 
     pool = board.copy()
-    has_adp = 'ADP' in pool.columns and pool['ADP'].notna().sum() >= 30
-    if has_adp:
-        # Players with no ADP still need an order or they'd never be drafted.
-        # Slot them behind everyone who has one, ordered by this board's own
-        # value - which is the right guess for "the room hasn't priced him".
-        max_adp = pool['ADP'].max()
-        fallback = pool['Board Rank'].astype(float) + float(max_adp)
-        pool['_order'] = pool['ADP'].fillna(fallback)
+    blended, meta = build_opponent_ranking(pool, weights)
+    has_market = blended is not None and not meta.get('fallback')
+    if has_market:
+        # Players no component priced still need an order or they'd never be
+        # drafted. Slot them behind everyone who was priced, ordered by this
+        # board's own value - the right guess for "the room hasn't priced
+        # him".
+        worst = float(blended.max())
+        fallback = pool['Board Rank'].astype(float) + worst
+        pool['_order'] = blended.fillna(fallback)
     else:
         pool['_order'] = pool['Board Rank'].astype(float)
     pool = pool.dropna(subset=['_order'])
-    return pool.sort_values('_order').reset_index(drop=True), '_order', has_adp
+    pool.attrs['opponent_ranking'] = meta
+    return pool.sort_values('_order').reset_index(drop=True), '_order', has_market
 
 
 def init_draft_state(settings, my_slot, rounds, seed=None):
@@ -548,7 +622,7 @@ def simulate_full_draft(board, settings, my_slot, rounds, seed=None, reach_windo
     is barely evidence, since one seed's positional runs are as likely to
     flatter a plan as to expose it.
     """
-    pool, order_col, has_adp = prepare_sim_pool(board)
+    pool, order_col, has_adp = prepare_sim_pool(board, settings.get('bot_weights'))
     if pool.empty:
         return None
     state = init_draft_state(settings, my_slot, rounds, seed=seed)

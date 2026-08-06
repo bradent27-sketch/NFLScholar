@@ -235,7 +235,7 @@ def pick_intel(_board, _settings, my_slot, rounds, drafted_signature, n_sims=40,
     unrelated widget does. Underscore-prefixed frames are excluded from the
     hash for the reason documented in data.transforms.
     """
-    pool, order_col, has_adp = prepare_sim_pool(_board)
+    pool, order_col, has_adp = prepare_sim_pool(_board, _settings.get('bot_weights'))
     if pool.empty:
         return {}
 

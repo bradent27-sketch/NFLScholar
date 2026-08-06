@@ -1246,9 +1246,20 @@ def attach_adp(board, adp_df, market_weight=0.0):
     # those are exactly the late-round players whose availability decides
     # whether you can wait on them.
     ecr_rank = out['ECR'].rank(method='first')
+    has_adp = pd.to_numeric(out['ADP'], errors='coerce').notna()
     out['Expected Pick'] = pd.to_numeric(out['ADP'], errors='coerce').fillna(ecr_rank)
     published = pd.to_numeric(out['ADP SD'], errors='coerce')
-    estimated = np.maximum(4.0, 0.32 * out['Expected Pick'])
+    # Two different spreads, because they describe two different things. A
+    # real ADP carries roughly 0.22x its own value in observed stdev across
+    # the published feeds - that's measured, and it's the number the
+    # availability model wants. A player with no ADP at all is being placed
+    # by consensus rank standing in for a draft slot, which is a strictly
+    # vaguer claim, so it gets a visibly wider band rather than borrowing the
+    # measured one and inheriting confidence it hasn't earned.
+    estimated = np.where(has_adp,
+                         np.maximum(2.5, 0.22 * out['Expected Pick']),
+                         np.maximum(4.0, 0.32 * out['Expected Pick']))
+    estimated = pd.Series(estimated, index=out.index)
     out['Expected Pick SD'] = published.where(published.notna() & (published > 0), estimated)
     out['Pick Source'] = np.where(pd.to_numeric(out['ADP'], errors='coerce').notna(),
                                   'ADP', 'ECR estimate')
@@ -1370,13 +1381,45 @@ def effective_adp_sd(board):
     return published.where(published.notna() & (published > 0), estimated)
 
 
-def add_availability(board, next_pick):
+def _conditional_survival(z_next, z_now):
+    """
+    P(draft slot >= next pick | draft slot >= the pick on the clock).
+
+    The plain ratio of the two survival probabilities, computed in log space
+    once both are deep enough in the tail that the ratio would otherwise be
+    0/0. For large z the normal survival function is well approximated by
+    phi(z)/z, so the ratio becomes (z_now/z_next) * exp(-(z_next^2 - z_now^2)/2),
+    which stays finite exactly where the direct division stops being.
+    """
+    p_next = vectorized_normal_sf(z_next)
+    p_now = vectorized_normal_sf(z_now)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        ratio = np.where(p_now > 1e-9, p_next / np.where(p_now > 0, p_now, 1.0), np.nan)
+        tail_ok = (z_now > 0) & (z_next > 0)
+        tail = np.exp(np.clip(-(z_next ** 2 - z_now ** 2) / 2.0, -700, 0)) * np.where(
+            tail_ok, z_now / np.where(z_next > 0, z_next, 1.0), 0.0)
+        ratio = np.where(np.isfinite(ratio), ratio, np.where(tail_ok, tail, 0.0))
+    return np.clip(ratio, 0.0, 1.0)
+
+
+def add_availability(board, next_pick, current_pick=None):
     """
     P(this player is still on the board at your next pick).
 
     Models each player's draft slot as normally distributed around his ADP
     with the spread from effective_adp_sd, so the probability he lasts to
-    pick N is just the chance his draft slot lands at or beyond N.
+    pick N is the chance his draft slot lands at or beyond N.
+
+    CONDITIONED ON WHERE THE DRAFT ACTUALLY IS, which is the part that makes
+    it usable rather than decorative. The unconditional form asks "what are
+    the odds this player goes after pick N", and for anyone whose ADP is
+    already past N that answer is ~100% no matter how much of the draft has
+    happened - so ten rounds into a draft the entire remaining board reads
+    100% and the column tells you nothing. What a drafter is actually asking
+    is "given he's STILL HERE at pick 109, does he last to my pick at 121",
+    and that conditional is a completely different (and much sharper) number:
+    every pick he survives is evidence about where he'll go, and the model
+    should spend it.
 
     This is the column that changes how you draft. Two players with nearly
     identical value are not the same pick if one is 85% to come back to you
@@ -1391,10 +1434,42 @@ def add_availability(board, next_pick):
     expected = pd.to_numeric(out.get('Expected Pick'), errors='coerce')
     if expected.isna().all():
         expected = pd.to_numeric(out.get('ADP'), errors='coerce')
-    sd = effective_adp_sd(out)
-    z = (float(next_pick) - expected) / sd.replace(0, np.nan)
-    out['Avail Next %'] = (vectorized_normal_sf(z.to_numpy()) * 100).round(0)
+    sd = effective_adp_sd(out).replace(0, np.nan)
+
+    z_next = ((float(next_pick) - expected) / sd).to_numpy(dtype=float)
+    if current_pick is None or float(current_pick) <= 1:
+        survival = vectorized_normal_sf(z_next)
+    else:
+        # The pick on the clock is where "still available" is measured from.
+        # min() with next_pick guards the degenerate case of a next pick that
+        # has already passed, which would otherwise report a probability
+        # above 1.
+        now = min(float(current_pick), float(next_pick))
+        z_now = ((now - expected) / sd).to_numpy(dtype=float)
+        survival = _conditional_survival(z_next, z_now)
+    out['Avail Next %'] = (survival * 100).round(0)
     return out
+
+
+def refresh_pick_context(board, next_pick, current_pick=None, value_col='VORP'):
+    """
+    Recompute the two columns that depend on where the draft is, for a board
+    that was assembled earlier.
+
+    The board itself is expensive and cached against league settings; these
+    two are cheap and go stale every single pick. Splitting them out is what
+    lets a mock draft in round 10 show honest availability against a board
+    that was built before the draft started - previously the whole surface
+    inherited the pick numbers from whenever the board happened to be
+    assembled, which in a mock meant it never advanced at all.
+
+    Expects `board` to already have drafted players removed, since both
+    columns are statements about who is left.
+    """
+    if board is None or board.empty:
+        return board
+    out = add_availability(board, next_pick, current_pick=current_pick)
+    return compute_vona(out, next_pick, value_col=value_col)
 
 
 def compute_vona(board, next_pick, value_col='VORP'):

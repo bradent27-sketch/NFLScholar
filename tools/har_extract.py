@@ -228,6 +228,73 @@ def _pretty(text, category):
         return text
 
 
+def _salvage_entries(text):
+    """
+    Pull whole entries out of a HAR whose JSON doesn't parse.
+
+    A big capture saved from DevTools is frequently TRUNCATED rather than
+    corrupt - the browser stops writing partway through and you get a file
+    that is 99% valid JSON with no closing brackets. json.load rejects the
+    whole thing, which throws away thousands of perfectly good responses
+    because the last one is half-written.
+
+    That is worth working around, because a HAR's `entries` is a flat array
+    of independent objects: entry 4,000 does not depend on entry 4,001, and
+    losing the tail of a capture usually means losing a few trailing image
+    requests. So this walks the array with raw_decode, taking one complete
+    entry at a time, and stops at the first one that won't parse.
+
+    Returns (entries, error_message_or_None). The caller reports how much was
+    recovered so the user knows whether to trust the result or re-capture.
+    """
+    marker = text.find('"entries"')
+    if marker < 0:
+        return [], "no \"entries\" array found - this doesn't look like a HAR file at all."
+    start = text.find('[', marker)
+    if start < 0:
+        return [], "found \"entries\" but no array after it."
+
+    decoder = json.JSONDecoder()
+    entries = []
+    i = start + 1
+    n = len(text)
+    while i < n:
+        # Skip whitespace and the commas between entries.
+        while i < n and text[i] in ' \t\r\n,':
+            i += 1
+        if i >= n or text[i] == ']':
+            return entries, None            # clean end of the array
+        try:
+            entry, i = decoder.raw_decode(text, i)
+        except ValueError as exc:
+            where = f"byte {i:,} of {n:,} ({i / n:.1%} in)"
+            return entries, f"stopped at {where}: {exc}"
+        entries.append(entry)
+    return entries, f"file ended inside the entries array after {len(entries):,} complete entries."
+
+
+def _load_har(path):
+    """Read a HAR, falling back to salvage when it doesn't parse."""
+    with open(path, 'r', encoding='utf-8', errors='replace') as fh:
+        text = fh.read()
+    try:
+        return (json.loads(text).get('log') or {}).get('entries') or [], None
+    except ValueError as exc:
+        print(f"  ! The file isn't valid JSON ({exc}).")
+        print("    Trying to salvage complete entries - a truncated capture is usually")
+        print("    still almost entirely readable.")
+        entries, err = _salvage_entries(text)
+        if not entries:
+            sys.exit(f"    Could not salvage anything: {err}")
+        print(f"    Recovered {len(entries):,} complete requests.")
+        if err:
+            print(f"    {err}")
+            print("    Everything after that point is lost - if what you needed was")
+            print("    captured late in the session, re-record with fewer requests")
+            print("    (filter DevTools to Fetch/XHR before saving).")
+        return entries, err
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -248,9 +315,7 @@ def main():
 
     original_mb = os.path.getsize(args.har) / 1e6
     print(f"Reading {args.har} ({original_mb:,.0f} MB) — this can take a minute on a large capture.")
-    with open(args.har, 'r', encoding='utf-8', errors='replace') as fh:
-        har = json.load(fh)
-    entries = (har.get('log') or {}).get('entries') or []
+    entries, salvage_note = _load_har(args.har)
     print(f"{len(entries):,} requests in capture.\n")
 
     out_dir = args.out or (os.path.splitext(args.har)[0] + '_unpacked')
@@ -342,6 +407,10 @@ def main():
         json.dump({'source_har': os.path.basename(args.har),
                    'source_mb': round(original_mb, 1),
                    'requests_total': len(entries),
+                   # Present only when the HAR didn't parse cleanly, so a
+                   # reader of the output can tell "this endpoint wasn't
+                   # called" from "the capture was cut off before it".
+                   'truncated': salvage_note,
                    'entries': manifest}, fh, indent=1)
 
     print(f"Wrote {written:,} files to {out_dir}/")

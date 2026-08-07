@@ -234,6 +234,123 @@ Age is shown as a board column and comes from **birthdate**, not from a
 published `age` field — a birthdate is a fact, an age is a fact with a
 timestamp on it. Coverage is 92% of the board.
 
+### 2.5b Aging, corrected — *the curve was doing nothing past the peak*
+
+The age term above was measured correctly and then applied in a way that
+threw the measurement away. Because the markdown is integrated only over the
+interval a player's history has to be carried forward
+(`HISTORY_LAG_SEASONS`), a **constant** rate per position makes the resulting
+multiplier constant for everyone past the peak:
+
+```
+OLD  RB   age 27:0.883  29:0.883  31:0.883  33:0.883  35:0.883  37:0.883
+```
+
+A 37-year-old back and a 27-year-old back were marked down identically. The
+curve stopped discriminating at exactly the age it should have started, and a
+draft audit found the board buying 30+ veterans — Kamara, Hill, Diggs,
+Hockenson, Kittle — rounds ahead of the market in every mock.
+
+**The fix is age-dependent rates** (`AGE_DECLINE_BANDS`), integrated across
+the same interval so the curve stays continuous at every boundary:
+
+```
+NEW  RB   age 26:0.937  28:0.883  30:0.794  32:0.694
+     WR   age 26:1.000  28:0.933  30:0.841  32:0.779
+     TE   age 28:0.980  30:0.962  32:0.900
+     QB   age 30:0.981  34:0.981  36:0.926
+```
+
+Re-measured from 1,072 year-over-year pairs, reading each band against its
+position's peak band:
+
+| | 26–28 | 28–30 | 30–32 | 32+ |
+|---|---|---|---|---|
+| RB | 0.86 | 0.73 | 0.64 | — |
+| WR | 0.84 | 0.76 | 0.72 | 0.81 |
+| TE | 0.94 | 0.77 | 0.99 | 0.87 |
+| QB | 0.93 | 0.97 | 0.92 | 0.89 |
+
+The sample is survivorship-biased **upward** — it can only contain players
+still playing six games in both seasons — so the true decline is steeper than
+this, not gentler. Rates are still set slightly inside the measurement
+because the old bands are thin (RB 30–32 is n=14).
+
+**Tight ends deliberately get a gentle curve.** Their bands are non-monotone
+(0.77 then 0.99) on small samples, so the data does not support a TE cliff,
+and inventing one to make Kelce and Kittle look right would be fitting the
+model to two players. `AGE_ADJUST_MIN` also dropped 0.75 → 0.45; at 0.75 it
+would have re-flattened the new curve for a different reason.
+
+A steeper band past 34 was built, measured and **rejected**: neutral on every
+metric, and resting on 12 RB / 26 WR / 23 TE seasons.
+
+### 2.5c Injury history — RB and TE only
+
+A season cut short predicts both more missed games *and* worse per-game
+production the following year:
+
+```
+played 15-17   n=570   next-year games 13.7   per-game retained 0.92
+played 12-14   n=300   next-year games 13.1   per-game retained 0.88
+played  8-11   n=174   next-year games 12.3   per-game retained 0.79
+played   1-7   n= 28   next-year games 13.1   per-game retained 0.83
+```
+
+Both halves are applied (`INJURY_HISTORY_BANDS`), to the own-history side of
+the blend only — the rank curve already averages over players who missed
+games, so marking it down too would charge the same injury twice. Surfaced on
+the board as **Health** ("11/17"), so a marked-down veteran explains himself.
+
+**Scoped to RB and TE by measurement, not taste.** Applied to quarterbacks it
+made them worse (MAE 50.6 → 53.2, bias −10.0 → −17.2): a QB who played eight
+games usually lost his *job*, not his health, and the rank curve has already
+priced that. Receivers were borderline (14.1 → 14.4) and are excluded on the
+same logic — a part-season for a WR is very often a rookie easing in.
+
+### 2.5d Workload — measured and deliberately NOT modelled
+
+"A back with 300 carries breaks down next year" is the most repeated claim in
+fantasy football. Tested against the same pairs, age held under 28, it is
+false — and backwards:
+
+| RB touches last year | n | next-yr games | per-game retained |
+|---|---|---|---|
+| <150 | 71 | 13.1 | 0.77 |
+| 150–225 | 72 | 13.5 | 0.87 |
+| 225–300 | 69 | 14.1 | **0.94** |
+| 300+ | 33 | 13.5 | 0.87 |
+
+Heavy usage predicts *more* games and *better* retention at every band up to
+300, and even 300+ sits above the low-usage cell. Touches proxy job security;
+the players with few of them are committee backs whose *roles* are fragile. A
+workload penalty would mark down the workhorses and promote replacement-level
+players. Not implemented, and documented here so it isn't re-added on
+intuition.
+
+### 2.5e What all of it did
+
+Measured on identical code, only the parameters swapped:
+
+| | before | age only | +injury (all) | **+injury RB/TE** |
+|---|---|---|---|---|
+| ECR rank-corr | 0.957 | 0.956 | 0.952 | **0.962** |
+| FFA rank-corr | 0.932 | 0.943 | 0.942 | **0.944** |
+| projection MAE | 20.8 | 20.2 | 20.2 | **19.8** |
+| projection bias | +2.4 | +1.1 | −1.5 | **+0.3** |
+| QB MAE | 50.4 | 50.6 | 53.2 | **50.6** |
+| RB MAE | 18.1 | 17.4 | 16.4 | **16.4** |
+| WR MAE | 15.1 | 14.1 | 14.4 | **14.1** |
+| TE MAE | 13.8 | 13.2 | 12.3 | **12.3** |
+
+The shipped variant is best or tied-best on every metric. On the flagged
+players the board now *agrees with FFA* where it previously didn't — Kittle
+rank 90 vs their 89, Diggs 121 vs 121.5, Hockenson 139 vs 133 — which means
+the remaining gap to ADP on those names is the market being the outlier, not
+this model. Two genuine residuals remain: **Kelce** (36.9, we project 147.6
+vs FFA's 109.0) and **Tyreek Hill** (32.5, 121.7 vs 69.9), both cases where
+the market has priced information no statistical model can see.
+
 ### 2.6 Scoring the line — `score_projected_lines` / `score_stats`
 
 Every stat is pulled by explicit name, never by a prefix filter. That's

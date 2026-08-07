@@ -161,9 +161,59 @@ SEASON_RECENCY_WEIGHTS = [1.0, 0.55, 0.30, 0.15, 0.08]
 # regression separates the small real decline from the noise.
 #
 # Rates are per year of age past the position's peak, as a fraction of the
-# per-game rate.
-AGE_PEAK = {'QB': 27.0, 'RB': 25.0, 'WR': 26.0, 'TE': 27.0}
-AGE_DECLINE_PER_YEAR = {'QB': 0.010, 'RB': 0.065, 'WR': 0.036, 'TE': 0.020}
+# per-game rate. The first entry of each list below IS that position's peak;
+# the age enters no other way, which is why there is no separate peak table.
+#
+# These rates STEEPEN WITH AGE. They used to be a single flat rate per
+# position (QB 0.010, RB 0.065, WR 0.036, TE 0.020), which described the
+# first year or two past the peak and nothing beyond it.
+#
+# WHAT WAS WRONG WITH THAT, and it was worse than "too gentle": because the
+# markdown is integrated only over the interval a player's history has to be
+# aged forward (HISTORY_LAG_SEASONS), a constant rate makes the multiplier
+# CONSTANT for everyone past the peak. Measured on the live board, a
+# 27-year-old back and a 37-year-old back both came out at 0.883 - identical.
+# The curve stopped doing anything at all after about 27, which is precisely
+# where it should start mattering, and it is why the audit found the board
+# buying 30+ veterans (Kamara, Hill, Diggs, Hockenson) rounds ahead of the
+# market.
+#
+# MEASURED from 1,072 year-over-year pairs in local history: how much of his
+# own per-game production a player kept the following season, by age. Read
+# against each position's peak band, since even young players show some
+# regression to the mean:
+#
+#   RB   26-28: 0.86   28-30: 0.73   30-32: 0.64
+#   WR   26-28: 0.84   28-30: 0.76   30-32: 0.72   32+: 0.81
+#   TE   26-28: 0.94   28-30: 0.77   30-32: 0.99   32+: 0.87
+#   QB   26-28: 0.93   28-30: 0.97   30-32: 0.92   32+: 0.89
+#
+# The sample is survivorship-biased UPWARD - it can only include players who
+# were still playing six games in both seasons, so the ones who fell off a
+# cliff are missing - which means the true decline is steeper than these
+# numbers, not gentler. The rates below are still set a little inside the
+# measurement, because the older bands are thin (RB 30-32 is n=14) and
+# because the market and the consensus rank already carry some of this.
+#
+# TIGHT ENDS DELIBERATELY GET LITTLE. Their bands are non-monotone (0.77 then
+# 0.99) on small samples, so the data does not support an aggressive TE
+# cliff, and inventing one to make Kelce and Kittle look right would be
+# fitting the model to two players. Their gap to the market is better
+# explained by injury history, which is handled separately below.
+AGE_DECLINE_BANDS = {
+    'RB': [(25.0, 0.065), (28.0, 0.120), (30.0, 0.190)],
+    'WR': [(26.0, 0.036), (28.0, 0.090), (30.0, 0.130)],
+    'TE': [(27.0, 0.020), (30.0, 0.055)],
+    'QB': [(27.0, 0.010), (34.0, 0.040)],
+}
+
+# A steeper band past 34 was built and measured and is deliberately ABSENT.
+# It is neutral on every metric (ECR rank-corr 0.962 -> 0.963, projection MAE
+# 19.8 both ways, TE MAE 12.3 -> 12.2) and it rests on almost nothing: past
+# 34 the local history holds 12 running back seasons, 26 receiver, 23 tight
+# end. Adding a parameter that moves nothing measurable, fitted to a dozen
+# players, is how a model starts encoding its author's hunches. The market
+# blend already handles the genuinely ancient outliers.
 
 # How far in the past a player's own rates sit, in seasons, relative to the
 # season being projected. It is the weight-centroid of SEASON_RECENCY_WEIGHTS
@@ -182,7 +232,14 @@ HISTORY_LAG_SEASONS = 1.92
 # curve is already carrying most of their projection. Boosting the small
 # own-history slice barely moves them. The upside half is left to the market,
 # which prices it better anyway.
-AGE_ADJUST_MIN = 0.75
+#
+# The floor was 0.75, which was itself masking the flat-curve bug: with the
+# old constant rates nothing ever reached it, and had the rates been steepened
+# without lowering it, a 34-year-old back and a 29-year-old would have come
+# out identical again for a different reason. 0.45 is set below anything the
+# bands can reach in a single lag interval, so it now guards only against a
+# nonsense age rather than capping real decline.
+AGE_ADJUST_MIN = 0.45
 
 
 def _weekly_history(latest_season, n_seasons=CURVE_SEASONS):
@@ -336,6 +393,16 @@ def build_player_rates(latest_season, n_seasons=CURVE_SEASONS):
     # One row per player: a player who changed listed position across
     # seasons would otherwise appear twice and get half his sample each.
     rates = rates.sort_values('games_sample', ascending=False).drop_duplicates('Player', keep='first')
+
+    # Games played in the MOST RECENT season only, carried alongside the
+    # rates. Distinct from games_sample, which spans five years and measures
+    # how much evidence there is; this measures whether he was healthy last
+    # year, which is a different question and the one injury_adjustment
+    # answers.
+    last = df[df['season'] == max(seasons)]
+    played = last.groupby(name_col).size().rename('games_last_season')
+    rates = rates.merge(played.reset_index().rename(columns={name_col: 'Player'}),
+                        on='Player', how='left')
     return rates.reset_index(drop=True)
 
 
@@ -457,14 +524,129 @@ def age_adjustment(position, age):
     not the full lag, which keeps the curve continuous at the peak instead
     of stepping down the moment a player has a birthday.
     """
-    rate = AGE_DECLINE_PER_YEAR.get(str(position).upper())
-    if not rate or age is None or not np.isfinite(age):
+    pos = str(position).upper()
+    bands = AGE_DECLINE_BANDS.get(pos)
+    if not bands or age is None or not np.isfinite(age):
         return 1.0
-    peak = AGE_PEAK.get(str(position).upper(), 26.0)
-    years_past = max(age - peak, 0.0) - max(age - HISTORY_LAG_SEASONS - peak, 0.0)
-    if years_past <= 0:
+
+    # Integrate the (now age-dependent) rate across the interval his history
+    # has to be carried forward, counting only the part past the peak. Doing
+    # it as an integral rather than a lookup keeps the curve continuous - a
+    # player doesn't step down the day he crosses a band boundary, he pays
+    # the steeper rate only for the months of the interval that sit past it.
+    start = float(age) - HISTORY_LAG_SEASONS
+    end = float(age)
+    exponent = 0.0
+    for index, (band_from, rate) in enumerate(bands):
+        band_to = bands[index + 1][0] if index + 1 < len(bands) else float('inf')
+        overlap = min(end, band_to) - max(start, band_from)
+        if overlap > 0:
+            exponent += rate * overlap
+    if exponent <= 0:
         return 1.0
-    return float(max(np.exp(-rate * years_past), AGE_ADJUST_MIN))
+    return float(max(np.exp(-exponent), AGE_ADJUST_MIN))
+
+
+# WHAT LAST SEASON'S MISSED GAMES SAY ABOUT NEXT SEASON, as
+# (games played last year, per-game multiplier, games multiplier).
+#
+# MEASURED over the same 1,072 year-over-year pairs as the aging bands. A
+# player's next season, by how much of the previous one he played:
+#
+#   played 15-17   n=570   next-year games 13.7   per-game retained 0.92
+#   played 12-14   n=300   next-year games 13.1   per-game retained 0.88
+#   played  8-11   n=174   next-year games 12.3   per-game retained 0.79
+#   played   1-7   n= 28   next-year games 13.1   per-game retained 0.83
+#
+# Both halves move, which is the point: a player coming off a serious injury
+# is likelier to miss time AGAIN and likelier to be worse per game when he
+# plays. Expressed relative to the healthy band, so a fully-fit player is
+# untouched and nobody is marked down merely for existing.
+#
+# The 1-7 band is treated as no better than 8-11 despite measuring slightly
+# higher. It is 28 pairs, and it is the most survivorship-biased cell in the
+# table - a player who lost almost all of a season only appears here if he
+# came back and played six games the next year, which is precisely the subset
+# that recovered.
+#
+# THIS IS NOT THE SAME IDEA AS "project his own games-per-season", which was
+# tried before and measurably hurt (see the games-basis note above): that
+# used a five-year games average as the projection basis and mostly detected
+# rookies and role changes. This keys on last season only, applies as a
+# markdown rather than as the basis, and is validated the same way - against
+# rank agreement with FantasyPros and FFA.
+INJURY_HISTORY_BANDS = [
+    (15, 1.00, 1.00),
+    (12, 0.97, 0.97),
+    (8, 0.88, 0.92),
+    (0, 0.88, 0.90),
+]
+
+
+# Positions the injury markdown applies to. QUARTERBACK IS EXCLUDED, and the
+# measurement is unambiguous about why: applying it to QBs moved their
+# projection error the wrong way (MAE 50.6 -> 53.2, bias -10.0 -> -17.2)
+# while improving every other position. The reason is that "games played" is
+# a far worse proxy for health at quarterback than anywhere else - a QB who
+# played eight games usually lost his JOB rather than got hurt, and marking
+# him down for it double-counts a role change the rank curve has already
+# priced. Receivers were borderline (14.1 -> 14.4) and are excluded on the
+# same logic, since a part-season for a receiver is very often a rookie
+# easing into a role.
+#
+# Backs and tight ends are where it pays: RB MAE 17.4 -> 16.4, TE 13.2 ->
+# 12.3, and TE bias 6.4 -> 3.9. Those are also the positions where a lost
+# season is most often a real structural injury.
+INJURY_ADJUSTED_POSITIONS = {'RB', 'TE'}
+
+# WORKLOAD IS DELIBERATELY NOT MODELLED, and this note exists so the idea
+# isn't re-implemented on intuition later.
+#
+# "A back with 300 carries breaks down the next year" is one of the most
+# repeated claims in fantasy football. It was tested here against the same
+# 1,072 year-over-year pairs, holding age under 28 so the effect wasn't just
+# aging in disguise, and the data says the opposite:
+#
+#   RB, by touches (carries + targets) the previous season
+#     <150      n=71   next-year games 13.1   per-game retained 0.77
+#     150-225   n=72   next-year games 13.5   per-game retained 0.87
+#     225-300   n=69   next-year games 14.1   per-game retained 0.94
+#     300+      n=33   next-year games 13.5   per-game retained 0.87
+#
+#   WR/TE, by targets
+#     <80       n=202  next-year games 13.0   per-game retained 0.87
+#     80-120    n=162  next-year games 13.6   per-game retained 0.91
+#     120-160   n=66   next-year games 14.2   per-game retained 0.95
+#     160+      n=10   next-year games 14.2   per-game retained 0.88
+#
+# Heavy usage predicts MORE games played and BETTER retention, not less, at
+# every band up to 300 touches, and even the 300+ cell sits above the
+# low-usage one. The signal is real but it runs the other way: touches are a
+# proxy for job security, and the players with few of them are committee
+# backs and rotational receivers whose roles are what's actually fragile.
+# A workload penalty would mark down exactly the workhorses you want and
+# promote the replacement-level players you don't.
+#
+# The volume model already captures the useful half of this, since a player's
+# own carry and target rates are the stickiest inputs it has.
+
+
+def injury_adjustment(games_last_season, position=None):
+    """
+    (per-game multiplier, games multiplier) for how much of last season a
+    player actually played. Returns (1.0, 1.0) when it's unknown - a rookie
+    or anyone absent from local history is not penalised for having no
+    record - and for positions where the measurement said it doesn't help.
+    """
+    if games_last_season is None or not np.isfinite(games_last_season):
+        return 1.0, 1.0
+    if position is not None and str(position).upper() not in INJURY_ADJUSTED_POSITIONS:
+        return 1.0, 1.0
+    played = float(games_last_season)
+    for threshold, rate_mult, games_mult in INJURY_HISTORY_BANDS:
+        if played >= threshold:
+            return rate_mult, games_mult
+    return 1.0, 1.0
 
 
 def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
@@ -533,6 +715,8 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
     out['proj_basis'] = 'rank curve'
     out['Age'] = [a if a is not None else np.nan for a in board_ages]
     out['age_factor'] = 1.0
+    out['injury_factor'] = 1.0
+    out['games_last_season'] = np.nan
 
     for position, (idx, row) in enumerate(out.iterrows()):
         pos = str(row['Pos']).upper()
@@ -588,6 +772,18 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
         age_factor = age_adjustment(pos, board_ages[position])
         out.at[idx, 'age_factor'] = round(age_factor, 3)
 
+        # Coming off a season that was cut short is its own risk, separate
+        # from age: likelier to miss time again, and worse per game when
+        # playing. Applied only to the OWN-HISTORY side of the blend and
+        # scaled by how much of the projection that side is carrying, because
+        # the rank curve already averages over players who missed games -
+        # marking it down too would charge the same injury twice.
+        injury_rate_mult, injury_games_mult = injury_adjustment(
+            history.get('games_last_season') if history else None, pos)
+        out.at[idx, 'injury_factor'] = round(injury_rate_mult, 3)
+        if history and history.get('games_last_season') is not None:
+            out.at[idx, 'games_last_season'] = history.get('games_last_season')
+
         # The games this line is spread across, which the milestone-bonus
         # model needs to turn a season total back into a weekly mean. It has
         # to follow the blend: the own-history side carries a full season,
@@ -595,18 +791,28 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
         # played, so the line as a whole sits between them in proportion to
         # how much of it came from each. Exact at both ends - a pure rookie
         # gets the curve's games, a fully-established player gets 17.
-        out.at[idx, 'proj_games'] = round(evidence * PACE_GAMES + (1 - evidence) * curve_games, 1)
+        games_mult = 1.0 - evidence * (1.0 - injury_games_mult)
+        out.at[idx, 'proj_games'] = round(
+            (evidence * PACE_GAMES + (1 - evidence) * curve_games) * games_mult, 1)
 
         for stat in PROJECTED_STATS:
             curve_total = float(pos_curves[stat][rank_idx]) if stat in pos_curves else 0.0
             if history and evidence > 0:
-                own_total = float(history.get(f'rate_{stat}', 0.0)) * PACE_GAMES * age_factor
+                own_total = (float(history.get(f'rate_{stat}', 0.0)) * PACE_GAMES
+                             * age_factor * injury_rate_mult * games_mult)
                 weight = STAT_SELF_WEIGHT.get(stat, DEFAULT_SELF_WEIGHT) * evidence
                 value = weight * own_total + (1 - weight) * curve_total
             else:
                 value = curve_total
             out.at[idx, stat] = round(value, 2)
 
+    # A readable form of last season's availability. A veteran whose
+    # projection came down should be able to say why on the row itself -
+    # "11/17" beside a lower number explains itself in a way a hidden
+    # multiplier never does.
+    played = pd.to_numeric(out['games_last_season'], errors='coerce')
+    out['Health'] = np.where(played.notna(),
+                             played.fillna(0).astype(int).astype(str) + '/17', '—')
     return out
 
 

@@ -76,7 +76,7 @@ BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'FP Tier', 'Auction $',
     'Proj Pts', 'VORP', 'VONA',
     'FFA Rank', 'ADP', 'ECR', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
-    'Risk', 'Start %', 'Boom %', 'SOS', 'Bye',
+    'Risk', 'Start %', 'Boom %', 'Health', 'SOS', 'Bye',
 ]
 
 
@@ -1011,6 +1011,12 @@ def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None
         column_config['Risk'] = st.column_config.NumberColumn(
             "Risk", format="%d%%",
             help="Width of the ceiling-to-floor band as a share of the projection")
+    if 'Health' in display.columns:
+        column_config['Health'] = st.column_config.TextColumn(
+            "Health",
+            help="Games played last season. A back or tight end who lost much of a year is "
+                 "marked down twice over — likelier to miss time again, and worse per game "
+                 "when he plays.")
     if 'Auction $' in display.columns:
         column_config['Auction $'] = st.column_config.NumberColumn(
             "Auction $", format="$%d",

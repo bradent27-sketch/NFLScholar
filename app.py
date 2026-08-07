@@ -4,12 +4,35 @@ and tab wiring only; all data/UI logic lives in data/ and ui/.
 """
 import traceback
 
+import pandas as pd
 import streamlit as st
 
-from config import TAB_LABELS
-from ui.styling import inject_theme
-from ui.components import render_data_health_sidebar, ensure_pff_imports_dir, render_intro_and_glossary
-from ui.tabs import (
+# Keep pandas' string columns on numpy objects rather than Arrow.
+#
+# THIS PREVENTS HARD CRASHES, not a deprecation warning. pandas 3 stores
+# strings in Arrow by default when pyarrow is installed, and on this stack
+# (pandas 3.0.5 / pyarrow 25.0.0) that combination segfaults - the whole
+# interpreter dies, with no traceback and no Streamlit error page, so the app
+# just vanishes mid-draft. It was reproduced repeatedly a few picks into a
+# session and traced with faulthandler into pyarrow: first in `compute.take`
+# during a boolean row selection, then, once that call site was worked
+# around, in `string_arrow._from_sequence` during a plain `.astype(str)`.
+#
+# Chasing it call site by call site was the wrong shape of fix - the hazard
+# is every string operation in the process, and this app does thousands. One
+# option at startup moves all of them onto the numpy path, which is where
+# they were before pandas 3 and is unaffected.
+#
+# Set before any module builds a DataFrame, hence its position above the
+# project imports.
+pd.options.mode.string_storage = "python"
+
+from config import TAB_LABELS  # noqa: E402
+from ui.styling import inject_theme  # noqa: E402
+from ui.components import (  # noqa: E402
+    render_data_health_sidebar, ensure_pff_imports_dir, render_intro_and_glossary,
+)
+from ui.tabs import (  # noqa: E402
     player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, vorp_draft, live_odds, player_compare,
     draft_hq,
 )

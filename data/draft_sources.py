@@ -152,12 +152,46 @@ def _fetch_bytes(urls, timeout=25, params=None, headers=None):
     return None, last_err or "unreachable"
 
 
+def _to_numpy_backed(df):
+    """
+    Move string columns off Arrow storage and onto plain numpy objects.
+
+    THIS IS A CRASH FIX, not a preference. pandas 3 backs string columns with
+    Arrow by default, and on pandas 3.0.5 / pyarrow 25.0.0 a boolean row
+    selection over one of these frames segfaults inside pyarrow's
+    `compute.take` - it takes the whole interpreter down rather than raising,
+    so during a draft the app simply disappears with no error to show.
+
+    It needs three things lined up, which is why it looks intermittent: a
+    wide frame of Arrow strings, a trip through st.cache_data's
+    serialisation, and repeated boolean masking on every rerun. The ECR table
+    is all three - 5,000 rows, 25 columns, cached, and re-filtered seven
+    times per rerun to build the board. It reproduced reliably about four
+    picks into a session and was traced with faulthandler to
+    `ecr_raw[page_types == page]`.
+
+    Converting once at load is the fix rather than patching each call site,
+    because every consumer of these frames slices them and any of those
+    slices is a live crash.
+    """
+    if df is None or df.empty:
+        return df
+    for column in df.columns:
+        dtype = df[column].dtype
+        if pd.api.types.is_numeric_dtype(dtype) or pd.api.types.is_bool_dtype(dtype):
+            continue
+        if pd.api.types.is_datetime64_any_dtype(dtype):
+            continue
+        df[column] = df[column].astype(object)
+    return df
+
+
 def _fetch_csv(filename):
     content, err = _fetch_bytes([h.format(f=filename) for h in _DP_HOSTS])
     if content is None:
         return pd.DataFrame(), err
     try:
-        return pd.read_csv(io.BytesIO(content), low_memory=False), None
+        return _to_numpy_backed(pd.read_csv(io.BytesIO(content), low_memory=False)), None
     except Exception as exc:
         return pd.DataFrame(), f"parse failed: {exc}"
 
@@ -308,7 +342,12 @@ def build_ecr_board(ecr_raw, board='Redraft 1QB', include_positional_depth=True)
         return pd.DataFrame()
 
     page = ECR_BOARDS.get(board, 'redraft-overall')
-    df = ecr_raw[ecr_raw['page_type'] == page].copy()
+    # Masked with a plain numpy array. This column is filtered seven times
+    # per rerun (the overall board plus six positional pages), and keeping it
+    # off Arrow storage here is belt-and-braces against the pyarrow segfault
+    # documented in app.py - cheap on a frame this size either way.
+    page_types = ecr_raw['page_type'].astype('object').to_numpy()
+    df = ecr_raw[page_types == page].copy()
     if df.empty:
         return pd.DataFrame()
 
@@ -335,7 +374,9 @@ def build_ecr_board(ecr_raw, board='Redraft 1QB', include_positional_depth=True)
         # from positional rank rather than invented: see the offset below.
         pos_frames = []
         for pos, pos_page in ECR_POSITION_PAGES.items():
-            pos_rows = ecr_raw[ecr_raw['page_type'] == pos_page]
+            # Same Arrow-comparison hazard as the overall board above, and
+            # this one runs six more times per rerun.
+            pos_rows = ecr_raw[page_types == pos_page]
             if pos_rows.empty:
                 continue
             tidy = _tidy(pos_rows)

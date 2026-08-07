@@ -1218,6 +1218,58 @@ def depth_multiplier(pos, my_roster, slots, absence):
     return expected_start_share(str(pos).upper(), held + 1, slots, absence)
 
 
+def manpower_demand(board, settings, absence=None):
+    """
+    How many players at each position a league actually CONSUMES over a
+    season, as opposed to how many starting slots it has.
+
+    The standard replacement bar answers "who is the last player started
+    league-wide this week" and sets replacement at, say, RB24 in a 12-team
+    league. That quietly assumes every starter plays every week. They don't -
+    a draftable back misses about a fifth of the season - so those 24 starting
+    slots have to be filled roughly 24 x 17 times by a pool that is only
+    available 79% of the time, and the league really burns through closer to
+    thirty running backs. The bar belongs where the last of THOSE sits.
+
+    This is the man-games baseline, the third option alongside VOLS (the last
+    dedicated starter) and VORP (the last player started anywhere). It matters
+    most where it differs between positions, and its practical effect on this
+    board is to lift running backs and receivers relative to quarterbacks and
+    tight ends - not because backs are better, but because a season eats more
+    of them, which is exactly the reasoning real drafters apply and pure
+    starter-count VBD cannot express.
+
+    STREAMABLE POSITIONS ARE DELIBERATELY EXCLUDED, and getting this wrong
+    the first time is instructive. Applied naively the adjustment sets
+    quarterback replacement at QB16 instead of QB12 and hands every starting
+    QB about twenty points of surplus he hasn't earned - undoing the entire
+    elite-QB discount this board is careful about. The flaw is in the premise:
+    the extra man-games at quarterback are not covered by rostering a
+    sixteenth one, they're covered off waivers, because thirty-two teams start
+    a QB and twelve are owned. A position whose absences are met from the free
+    pool does not need a deeper DRAFTED pool, and its bar is already set by
+    what streaming returns.
+
+    What survives is the part with real content: a season consumes far more
+    running backs and receivers than it has starting slots, and their absences
+    genuinely do have to be covered from your own bench.
+    """
+    started = compute_starter_demand(board, settings)
+    if absence is None:
+        absence = measure_absence_rates(settings.get('baseline_season', 2025))
+    demand = {}
+    for pos, count in started.items():
+        if pos in STREAMABLE_POSITIONS:
+            demand[pos] = count
+            continue
+        rate = float(np.clip(absence.get(pos, 0.0) or 0.0, 0.0, 0.6))
+        # Bye weeks are excluded on purpose. Everyone has exactly one, so a
+        # bye is a slot the league covers by rostering depth it already has,
+        # not a reason the player pool has to be deeper.
+        demand[pos] = count / max(1e-6, 1.0 - rate)
+    return demand
+
+
 def add_value_over_replacement(board, settings):
     """
     VORP (vs. the first player who would NOT be started anywhere in the
@@ -1238,12 +1290,21 @@ def add_value_over_replacement(board, settings):
     n_teams = int(settings['num_teams'])
     roster = settings['roster']
 
+    # The bar sits at the last player the league actually consumes across a
+    # season, not the last one it starts in a given week - see
+    # manpower_demand. Switchable so the older behaviour stays reachable, and
+    # so the two can be compared rather than argued about.
+    demand = dict(started)
+    if settings.get('use_manpower_baseline', True):
+        demand = {pos: int(round(value))
+                  for pos, value in manpower_demand(out, settings).items()}
+
     replacement, last_starter = {}, {}
     for pos in DRAFTABLE_POSITIONS:
         pos_pts = out.loc[out['Pos'].astype(str).str.upper() == pos, 'Proj Pts'].dropna().sort_values(ascending=False).to_numpy()
         if len(pos_pts) == 0:
             continue
-        r_idx = min(started.get(pos, 0), len(pos_pts) - 1)
+        r_idx = min(demand.get(pos, 0), len(pos_pts) - 1)
         replacement[pos] = float(pos_pts[r_idx])
         ls_idx = min(max(n_teams * int(roster.get(pos, 0)) - 1, 0), len(pos_pts) - 1)
         last_starter[pos] = float(pos_pts[ls_idx])
@@ -1268,8 +1329,8 @@ def add_value_over_replacement(board, settings):
     out['VORP'] = (out['Proj Pts'] - pos_upper.map(replacement)).round(1)
     out['VOLS'] = (out['Proj Pts'] - pos_upper.map(last_starter)).round(1)
     out['Ceiling VORP'] = (out['Ceiling'] - pos_upper.map(replacement)).round(1)
-    meta = {'started': started, 'replacement': replacement, 'last_starter': last_starter,
-            'streaming_replacement': streaming_used}
+    meta = {'started': started, 'demand': demand, 'replacement': replacement,
+            'last_starter': last_starter, 'streaming_replacement': streaming_used}
     return out, meta
 
 

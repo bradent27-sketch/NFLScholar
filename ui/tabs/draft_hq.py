@@ -40,6 +40,8 @@ from data.draft_sim import (
 )
 from data.draft_projections import build_projected_board
 from data.draft_sos import build_team_sos, attach_sos_to_board, adp_quartiles, WEEK_PRESETS
+from data.draft_weekly import attach_consistency
+from data.draft_season_sim import grade_roster_wins, simulate_seasons
 from data.draft_intel import (
     pick_intel, outcome_distribution, roster_percentile,
     positional_run_pressure, positional_value_add,
@@ -74,7 +76,7 @@ BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'FP Tier', 'Auction $',
     'Proj Pts', 'VORP', 'VONA',
     'FFA Rank', 'ADP', 'ECR', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
-    'Risk', 'SOS', 'Bye',
+    'Risk', 'Start %', 'Boom %', 'SOS', 'Bye',
 ]
 
 
@@ -545,6 +547,9 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _settings, cache_key):
                          scoring_ppr=float(scoring.get('rec', 1.0)))
     board = attach_sos_to_board(board, sos)
     board = adp_quartiles(board)
+    # How his points ARRIVE, which nothing else on the board describes: every
+    # other spread here is a season-total percentile.
+    board = attach_consistency(board, _settings)
 
     # FFA's ranking sits beside VORP and VONA as just another column, rather
     # than in a tab of its own. Two independent rankings are most useful read
@@ -1075,6 +1080,62 @@ def _render_positional_scarcity(available, settings):
         st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True,
                      height=df_auto_height(len(rows)))
 
+
+
+def _render_roster_outlook(board, settings, dc):
+    """
+    What your roster is worth in the currency the league actually pays out
+    in: wins.
+
+    A projected point total is a real answer to the wrong question. Seasons
+    are seventeen head-to-head games, so a steadier roster beats a
+    boom-and-bust one of identical projection - measurably, by about half a
+    win - and no points figure can show that. This runs the season a few
+    hundred times against a field of competently-drafted teams and reports
+    the record.
+
+    Run on demand rather than on every pick: it's a second of work, and a
+    board that stalls each time you mark a player gone is worse than one that
+    waits to be asked.
+    """
+    roster = dc.get('my_roster') or []
+    if not roster:
+        return
+    st.markdown("---")
+    signature = tuple((p.get('Player'), str(p.get('Pos', '')).upper(),
+                       float(p['Proj Pts']) if pd.notna(p.get('Proj Pts')) else None,
+                       float(p['Bye']) if pd.notna(p.get('Bye')) else None)
+                      for p in roster)
+
+    if st.button("📈 Project my season", key="dhq_wins_run", width="stretch"):
+        with st.spinner("Simulating seasons..."):
+            st.session_state['dhq_wins'] = grade_roster_wins(
+                board, settings, signature, dc['my_slot'])
+        st.session_state['dhq_wins_sig'] = signature
+
+    outlook = st.session_state.get('dhq_wins')
+    if not outlook:
+        st.caption("Projects your record against a field of drafted teams — wins, not points.")
+        return
+    stale = st.session_state.get('dhq_wins_sig') != signature
+    st.markdown(
+        "<style>.wo{display:flex;gap:14px;padding:6px 10px;border-radius:6px;"
+        "background:rgba(255,255,255,0.045);border-left:3px solid rgba(0,255,249,0.55)}"
+        ".wo-b{display:flex;flex-direction:column;line-height:1.15}"
+        ".wo-k{font-size:9px;letter-spacing:.09em;opacity:.6;font-weight:700}"
+        ".wo-v{font-size:17px;font-weight:700;font-variant-numeric:tabular-nums}</style>"
+        f"<div class='wo'>"
+        f"<div class='wo-b'><span class='wo-k'>WINS</span>"
+        f"<span class='wo-v'>{outlook['wins']:.1f}</span></div>"
+        f"<div class='wo-b'><span class='wo-k'>PLAYOFFS</span>"
+        f"<span class='wo-v'>{outlook['playoff_pct']:.0f}%</span></div>"
+        f"<div class='wo-b'><span class='wo-k'>IN LEAGUE</span>"
+        f"<span class='wo-v'>{outlook['rank']}/{outlook['teams']}</span></div>"
+        "</div>", unsafe_allow_html=True)
+    st.caption(
+        f"Typical record {outlook['wins_p25']:.0f}–{outlook['wins_p75']:.0f} wins, "
+        f"{outlook['points']:,.0f} pts. The field averages {outlook['field_wins']:.1f}."
+        + ("  ⚠️ Out of date — you've drafted since." if stale else ""))
 
 
 def _render_pick_odds(board, settings, ctx, dc=None):
@@ -1774,6 +1835,26 @@ def _render_draft_room(board, settings, ctx):
         grades = grade_draft(dc['state'], settings)
         st.dataframe(grades[['Rank', 'Team', 'Starters Proj', 'Bench Proj']], width="stretch",
                      hide_index=True, height=df_auto_height(len(grades)))
+        # Every roster in the room is known here, so the season can be played
+        # out against the teams that actually drafted rather than against a
+        # reconstructed field - the one place this simulation has no
+        # guesswork in its opponents at all.
+        if st.button("📈 Play the season out", key="dhq_mock_season", width="stretch"):
+            with st.spinner("Simulating seasons for all teams..."):
+                rosters = {team: [dict(p) for p in players]
+                           for team, players in dc['state']['rosters'].items()}
+                table = simulate_seasons(rosters, board, settings, n_sims=200)
+            if not table.empty:
+                table = table.reset_index().rename(columns={'Team': 'Slot'})
+                table['Slot'] = table['Slot'].map(
+                    lambda t: f"Team {t}" + (" ★" if t == dc['my_slot'] else ""))
+                st.dataframe(table.sort_values('Wins', ascending=False), width="stretch",
+                             hide_index=True, height=df_auto_height(len(table)))
+                st.caption(
+                    "Wins, not points. Each season redraws the schedule and re-rolls every "
+                    "player's weeks from the real distribution of scores at his projected rank, "
+                    "with lineups set on projections rather than on hindsight."
+                )
 
     round_no = (dc['current_pick'] - 1) // max(dc['num_teams'], 1) + 1
     # The board lives beside the strip rather than in an expander at the
@@ -1856,6 +1937,7 @@ def _render_draft_room(board, settings, ctx):
         # to be read alongside.
         st.markdown("<div style='height:52px'></div>", unsafe_allow_html=True)
         _render_roster_slots(settings, roster=dc['my_roster'])
+        _render_roster_outlook(board, settings, dc)
 
     with st.expander("📊 Pick odds & positional scarcity", expanded=False):
         _render_pick_odds(board, settings, ctx, dc)

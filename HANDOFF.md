@@ -527,9 +527,9 @@ deliberately independent, takes a scoring dict, and is the only one the draft st
   are passed unhashed (gotcha #2 applies here in full force).
 
 **Model agreement, as of the August 2026 audit** (keep this honest if you change
-anything): vs FantasyPros ECR rank-corr **0.937**, median positional |bias| 9.0; vs FFA
-Value 0.896 / 10.5. Projected points vs FFA analyst projections r=0.918, MAE 22.0, bias
-QB −7 / RB +2 / WR +3 / TE +8. Known remaining disagreements (veteran TEs ranked higher
+anything): vs FantasyPros ECR rank-corr **0.941**, median positional |bias| 8.0
+(QB −4, RB −5, WR +9, TE −8); vs FFA Value 0.901 / 10.0. Projected points vs FFA analyst
+projections r=0.918, MAE 22.0, bias QB −7 / RB +2 / WR +3 / TE +8. Known remaining disagreements (veteran TEs ranked higher
 here, young ascending WRs lower) are documented with reasons in §5 of the methodology doc.
 There's an audit script pattern worth reusing — rebuild the board, join ECR and FFA Value,
 report rank-corr + per-position bias + a sanity-check block.

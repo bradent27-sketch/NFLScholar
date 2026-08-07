@@ -659,8 +659,9 @@ changes above.
 **Agreement:**
 
 ```
-vs FantasyPros ECR    rank-corr = 0.937   median |bias| =  9.0
-vs FFA Value          rank-corr = 0.896   median |bias| = 10.5
+vs FantasyPros ECR    rank-corr = 0.941   median |bias| =  8.0
+                      by position: QB −4, RB −5, WR +9, TE −8
+vs FFA Value          rank-corr = 0.901   median |bias| = 10.0
 
 Projected points vs FFA analyst projections (both half-PPR, n=336):
   overall  r = 0.918   MAE = 22.0
@@ -677,8 +678,10 @@ replacement level.
 
 **Remaining known disagreements, and why:**
 
-- **Veteran tight ends** (Kelce ranked 68 here vs ECR 98; LaPorta 59 vs 85;
-  Kittle 58 vs 106). The aging markdown the data supports is a few percent
+- **Veteran tight ends** (Kelce ranked 69 here vs ECR 98; LaPorta 62 vs 85).
+  Much smaller than it was — the TE streaming baseline took the median TE
+  bias from −19 to −8 vs ECR — but not gone. The aging markdown the data
+  supports is a few percent
   and moves them two or three spots. The market's markdown is much larger and
   reflects situation-specific analyst judgment — scheme change, target
   competition, an explicit "he's done" read — that a statistical model can't

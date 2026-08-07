@@ -46,7 +46,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from data.draft_sources import vectorized_normal_sf
+from data.draft_sources import vectorized_normal_sf, normal_sf
 
 # Positions this board drafts. IDP is deliberately out of scope here (same
 # call the rest of the app already makes for its fantasy-facing tabs), but
@@ -837,6 +837,12 @@ STREAMABLE_POSITIONS = ['QB', 'TE', 'K', 'DST']
 # rather than a judgement about their value.
 LATE_ROUND_POSITIONS = ['K', 'DST']
 
+# Spare picks beyond the K/DST slots themselves before those positions start
+# being suggested. One, so with a kicker and a defense still to fill they
+# appear with three picks left - late enough to match how drafts actually go,
+# early enough that you can't run out of room.
+LATE_ROUND_GRACE = 1
+
 # How many free options a streamer realistically rotates between, chosen on
 # prior form. Averaging the top 2 rather than always taking the single best
 # reflects that the obvious pickup isn't always startable (bye, injury,
@@ -1126,17 +1132,72 @@ def measure_absence_rates(latest_season, n_seasons=CURVE_SEASONS):
 def lineup_slots_per_team(board, settings):
     """
     How many starting slots ONE roster devotes to each position, flex
-    included and allocated by where flex points actually go.
+    included.
 
-    Just compute_starter_demand divided by the league size, which is what
-    makes the flex share empirical rather than assumed: in PPR it lands
-    mostly on receivers, in superflex almost entirely on quarterbacks.
-    Fractional on purpose - "receivers occupy 2.9 slots" is a more honest
-    input to the depth model than rounding to 3.
+    DERIVED FROM SETTINGS, NOT FROM THE BOARD IN FRONT OF IT. An earlier
+    version divided compute_starter_demand by the league size, which made the
+    flex share pleasingly empirical - but that function allocates flex by
+    walking the pool it is handed, and mid-draft that pool has had its best
+    receivers taken. Ten rounds in it was reporting that tight ends occupy
+    1.75 starting slots and receivers 2.25, which is an artifact of who was
+    left rather than a fact about the league, and the depth model downstream
+    then priced a third tight end as most of a starter.
+
+    Flex is split across the eligible positions in proportion to their
+    dedicated starting slots, which is stable, moves correctly with settings
+    (a 3-WR league sends more flex to receivers, superflex sends it to
+    quarterbacks) and cannot drift as players come off the board.
+
+    `board` is kept in the signature for callers and for symmetry; nothing
+    reads it.
     """
-    n_teams = max(int(settings['num_teams']), 1)
-    started = compute_starter_demand(board, settings)
-    return {pos: started.get(pos, 0) / n_teams for pos in DRAFTABLE_POSITIONS}
+    roster = settings['roster']
+    slots = {pos: float(roster.get(pos, 0)) for pos in DRAFTABLE_POSITIONS}
+    for slot_name, eligible in (('FLEX', FLEX_ELIGIBLE), ('SUPERFLEX', SUPERFLEX_ELIGIBLE)):
+        count = float(roster.get(slot_name, 0))
+        if count <= 0:
+            continue
+        weights = {pos: max(float(roster.get(pos, 0)), 0.0) for pos in eligible}
+        total = sum(weights.values())
+        if total <= 0:
+            weights = {pos: 1.0 for pos in eligible}
+            total = float(len(eligible))
+        for pos, weight in weights.items():
+            slots[pos] = slots.get(pos, 0.0) + count * weight / total
+    return slots
+
+
+def contingency_value(points, ceiling, pos, share, waiver_points):
+    """
+    What a player who does NOT crack your starting lineup is worth: an OPTION
+    on him beating whatever you could have picked up free, in the weeks he'd
+    actually be startable.
+
+    An option is valued on its upside. You are not stuck with a late-round
+    pick who busts - you drop him and stream the position - so the downside is
+    bounded near zero while the upside is a starter you didn't pay for. That
+    is why high-variance late running backs are worth more than their
+    projections suggest and why a safe, low-ceiling backup is worth less than
+    it looks. E[max(X - waiver, 0)] with X normal around the projection, its
+    spread taken from the board's own Ceiling.
+
+    Lives here rather than in data.draft_intel because both the board's
+    recommendations and the positional value-add panel need it, and
+    draft_intel already imports this module.
+    """
+    if points is None or pd.isna(points) or share <= 0:
+        return 0.0
+    mean = float(points)
+    waiver = float(waiver_points or 0.0)
+    if ceiling is not None and pd.notna(ceiling) and float(ceiling) > mean:
+        # Ceiling is the 85th percentile outcome, 1.036 standard deviations up.
+        sigma = max(1.0, (float(ceiling) - mean) / 1.036)
+    else:
+        sigma = max(1.0, 0.25 * abs(mean))
+    z = (waiver - mean) / sigma
+    density = float(np.exp(-0.5 * z * z) / np.sqrt(2 * np.pi))
+    expected_excess = sigma * density + (mean - waiver) * normal_sf(z)
+    return max(0.0, float(share) * expected_excess)
 
 
 def expected_start_share(pos, depth, slots, absence):
@@ -1880,6 +1941,27 @@ def roster_needs(my_roster, settings):
     return needs
 
 
+# Bench copies of a position anyone would actually carry, beyond their
+# starting slots. Mirrors data.draft_sim.BENCH_DEPTH_ALLOWANCE so the advice
+# and the simulated opponents obey one rule: one backup quarterback and one
+# backup tight end, none at kicker or defense, and real depth only at running
+# back and receiver where injuries and byes are covered from your own bench.
+BENCH_DEPTH_ALLOWANCE = {'QB': 1, 'RB': 4, 'WR': 4, 'TE': 1, 'K': 0, 'DST': 0}
+
+
+def _roster_cap(pos, settings):
+    """The most of `pos` anyone would sensibly roster in this league."""
+    roster = settings['roster']
+    starters = float(roster.get(pos, 0))
+    if pos in SUPERFLEX_ELIGIBLE:
+        starters += float(roster.get('SUPERFLEX', 0))
+    if pos in FLEX_ELIGIBLE:
+        # A flex slot is one claim shared across three positions, so it
+        # counts as a third of a slot each rather than a whole one for all.
+        starters += float(roster.get('FLEX', 0)) / len(FLEX_ELIGIBLE)
+    return max(1, int(round(starters + BENCH_DEPTH_ALLOWANCE.get(pos, 1))))
+
+
 def _need_multiplier(pos, needs, settings, depth_share=None):
     """
     How much to weight a position by what your roster still needs.
@@ -1953,8 +2035,53 @@ def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_c
     # worse answer than the one the suppression exists to prevent.
     starters_left = sum(n for pos, n in needs.items()
                         if pos not in LATE_ROUND_POSITIONS and n > 0)
-    if starters_left > 0 and not allow_late_round:
-        avail = avail[~avail['Pos'].astype(str).str.upper().isin(LATE_ROUND_POSITIONS)]
+
+    # Kickers and defenses are held back until the LAST FEW PICKS, not merely
+    # until the skill starters are filled.
+    #
+    # The old test - "are any non-K/DST starting slots still open" - goes
+    # false around round 8 in a normal 15-round draft, and from that moment a
+    # kicker outscored everything left on the board: his slot is empty so he
+    # gets the open-slot bonus, and his surplus over replacement is large next
+    # to the bench receivers he's competing with. A recommendation-driven mock
+    # took Brandon Aubrey at pick 101 and the Texans defense at 116, five
+    # rounds before anyone sane takes either.
+    #
+    # The simulator's bots have always known better (LATE_ROUND_ONLY in
+    # data.draft_sim); this brings the advice into line with them. The gate
+    # opens once you have barely enough picks left to fill those slots, which
+    # is exactly when a real drafter starts thinking about them.
+    total_rounds = sum(int(settings['roster'].get(k, 0)) for k in
+                       ['QB', 'RB', 'WR', 'TE', 'K', 'DST', 'FLEX', 'SUPERFLEX', 'BENCH'])
+    picks_left = max(0, total_rounds - len(my_roster or []))
+    late_slots_needed = sum(int(needs.get(pos, 0)) for pos in LATE_ROUND_POSITIONS)
+    late_round_time = picks_left <= late_slots_needed + LATE_ROUND_GRACE
+    # Blocked outright once the slot is filled, rather than merely discounted.
+    # A second kicker is never the right pick in any league that starts one -
+    # you stream the position - and with a full roster in the final round
+    # every position's depth share collapses to about the same small number,
+    # so nothing else was left to stop it. A mock took Brandon Aubrey in round
+    # 13 and Jake Bates in round 15.
+    blocked = [pos for pos in LATE_ROUND_POSITIONS
+               if int(needs.get(pos, 0)) <= 0 or starters_left > 0 or not late_round_time]
+
+    # Nobody rosters more of a position than they could conceivably use, and
+    # the simulator's bots have always known it (_position_limits in
+    # data.draft_sim). The advice didn't, and drifted past the same line the
+    # bots respect: recommendation-driven mocks came out holding three
+    # quarterbacks in a one-QB league, because with a full roster every
+    # position's option value shrinks to roughly the same small number and
+    # the ordering between them becomes noise. Capping is the honest fix -
+    # the model genuinely cannot tell those picks apart, so the constraint
+    # has to come from roster construction rather than from valuation.
+    held = pd.Series([str(p.get('Pos', '')).upper() for p in (my_roster or [])],
+                     dtype=object).value_counts().to_dict()
+    for pos in DRAFTABLE_POSITIONS:
+        if held.get(pos, 0) >= _roster_cap(pos, settings):
+            blocked.append(pos)
+
+    if blocked and not allow_late_round:
+        avail = avail[~avail['Pos'].astype(str).str.upper().isin(set(blocked))]
         if avail.empty:
             return pd.DataFrame()
 
@@ -1984,6 +2111,30 @@ def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_c
         if not playable.empty:
             avail = playable
 
+    # What a free pickup at each position is worth, for the option value
+    # below. Measured off the pool actually left rather than a constant, so
+    # it falls through the draft exactly as the waiver wire does.
+    waiver_points = {}
+    for pos in DRAFTABLE_POSITIONS:
+        pos_points = board.loc[board['Pos'].astype(str).str.upper() == pos, 'Proj Pts'].dropna()
+        if pos_points.empty:
+            continue
+        ordered = pos_points.sort_values(ascending=False).to_numpy()
+        index = min(int(round(slots.get(pos, 1) * settings['num_teams'])), len(ordered) - 1)
+        waiver_points[pos] = float(ordered[index])
+
+    # Once every starting slot at a position is full the question stops being
+    # "what do I lose by waiting" and becomes "what is this bench spot worth",
+    # and those need different arithmetic. Left on VONA, the model kept
+    # naming backup quarterbacks: with a full roster every position's depth
+    # share collapses to roughly the same small number, the multiplier stops
+    # discriminating, and whoever has the biggest raw VONA wins - which late
+    # in a draft is the best remaining QB, a player who would never start.
+    # Option value separates them properly, because it prices the gap to a
+    # free replacement rather than to the next man at his own position, and
+    # that gap is tiny at a streamable position and real at receiver.
+    use_option_value = starters_left == 0
+
     rows = []
     for _, r in avail.nlargest(min(60, len(avail)), base_col).iterrows():
         pos = str(r['Pos']).upper()
@@ -1991,11 +2142,17 @@ def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_c
         reasons = []
 
         mult = _need_multiplier(pos, needs, settings, depth_shares.get(pos))
-        # Scaling a NEGATIVE value by a fraction makes it bigger, which would
-        # promote exactly the players the multiplier is meant to bury. Applied
-        # around zero instead, so shrinking always moves a score toward zero
-        # whichever side of it the player sits on.
-        score = base * mult if base >= 0 else base / max(mult, 0.02)
+        if use_option_value and needs.get(pos, 0) <= 0:
+            score = contingency_value(r.get('Proj Pts'), r.get('Ceiling'), pos,
+                                      depth_shares.get(pos, 0.0),
+                                      waiver_points.get(pos, 0.0))
+            base = max(base, 1.0)      # only used to scale the nudges below
+        else:
+            # Scaling a NEGATIVE value by a fraction makes it bigger, which
+            # would promote exactly the players the multiplier is meant to
+            # bury. Applied around zero instead, so shrinking always moves a
+            # score toward zero whichever side of it the player sits on.
+            score = base * mult if base >= 0 else base / max(mult, 0.02)
         if mult > 1.0:
             reasons.append(f"fills an open {pos} slot" if needs.get(pos, 0) > 0 else "flex-eligible need")
         elif mult < 0.5:

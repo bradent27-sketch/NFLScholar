@@ -394,54 +394,15 @@ def _replacement_context(available, settings):
 
 def _contingency_value(player, pos, my_roster, settings, replacement):
     """
-    What a player who does NOT crack your starting lineup is worth: an
-    OPTION on him beating what you could have picked up free, in the weeks
-    he'd actually be startable.
-
-    Two things make this the right shape for a late pick, and both are
-    missing from a plain points-above-replacement read:
-
-    An option is valued on its upside, not its mean. You are not stuck with
-    a late-round pick who busts - you drop him and stream the position, so
-    the downside is bounded at roughly zero while the upside is a starter
-    you didn't pay for. That is why late running backs are worth more than
-    their projections suggest (one injury ahead of them and they inherit a
-    workload) and why a safe, low-variance backup is worth less than it
-    looks. Computed as E[max(X - waiver, 0)] with X normal around the
-    projection, its spread taken from the board's own Ceiling.
-
-    And the option only pays in weeks he'd be in your lineup, which is
-    where expected_start_share comes in - the whole answer to "should I
-    take another tight end". A third receiver walks into a flex slot nearly
-    every week; a second tight end plays about three weeks a year and a
-    third plays none, because only one can ever start. Pricing both off
-    league-wide surplus says they're comparable. They are not.
+    Thin wrapper over draft_board.contingency_value that works out this
+    roster's depth at the position first. The valuation itself is shared with
+    recommend_picks so the panel and the board's advice can never drift apart.
     """
-    from data.draft_board import depth_multiplier
+    from data.draft_board import depth_multiplier, contingency_value
 
-    points = player.get('Proj Pts')
-    if points is None or pd.isna(points):
-        return 0.0
     share = depth_multiplier(pos, my_roster, replacement['slots'], replacement['absence'])
-    if share <= 0:
-        return 0.0
-
-    mean = float(points)
-    waiver = float(replacement['waiver'].get(pos, 0.0))
-    ceiling = player.get('Ceiling')
-    # Ceiling is the 85th percentile outcome, which is 1.036 standard
-    # deviations up. Falling back to a quarter of the projection keeps this
-    # working on a board with no outcome range attached.
-    if ceiling is not None and pd.notna(ceiling) and float(ceiling) > mean:
-        sigma = max(1.0, (float(ceiling) - mean) / 1.036)
-    else:
-        sigma = max(1.0, 0.25 * abs(mean))
-
-    z = (waiver - mean) / sigma
-    density = float(np.exp(-0.5 * z * z) / np.sqrt(2 * np.pi))
-    from data.draft_sources import normal_sf
-    expected_excess = sigma * density + (mean - waiver) * normal_sf(z)
-    return max(0.0, share * expected_excess)
+    return contingency_value(player.get('Proj Pts'), player.get('Ceiling'), pos, share,
+                             replacement['waiver'].get(pos, 0.0))
 
 
 def positional_value_add(board, my_roster, settings, next_pick, drafted_names=None,

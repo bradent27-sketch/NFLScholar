@@ -45,6 +45,9 @@ from data.draft_intel import (
     positional_run_pressure, positional_value_add,
 )
 from data.ffa_import import load_ffa_import, save_ffa_import, merge_ffa_into_board
+from data.fantasypros_import import (
+    load_cheatsheet, merge_cheatsheet_into_board, save_upload as save_fp_upload,
+)
 from data.loaders import fetch_sleeper_draft_picks
 from data.transforms import parse_pasted_draft_picks, match_names_to_board
 from data.utils import calculate_percentile
@@ -68,7 +71,8 @@ SIM_KEY = 'dhq_sim_state'
 # opposite ends of a nineteen-column table that comparison needed a
 # horizontal scroll and a memory of the first number.
 BOARD_COLUMNS = [
-    'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'Proj Pts', 'VORP', 'VONA',
+    'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'FP Tier', 'Auction $',
+    'Proj Pts', 'VORP', 'VONA',
     'FFA Rank', 'ADP', 'ECR', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
     'Risk', 'SOS', 'Bye',
 ]
@@ -400,6 +404,23 @@ def _render_settings_panel(cfg):
                 "reading their points straight off would be wrong in any other format."
             )
             ffa_upload = st.file_uploader("FFA players JSON", type=["json"], key="dhq_ffa_upload")
+            st.markdown("**Import a FantasyPros cheat sheet** (optional)")
+            st.caption(
+                "Adds auction dollar values, their analysts' tiers alongside this board's own, "
+                "and a written note per player. Auction values are the piece nothing else here "
+                "can produce — VORP says who is worth more, not whether that's a $47 player or "
+                "a $12 one, which is the entire question in an auction. Drop in the "
+                "getCheatSheet response; add the draft room's player array too and every player "
+                "resolves instead of ~80%."
+            )
+            fp_upload = st.file_uploader("FantasyPros cheat sheet / player array",
+                                         type=["json", "html", "txt"], key="dhq_fp_upload")
+            if fp_upload is not None:
+                kind, fp_error = save_fp_upload(fp_upload)
+                if fp_error:
+                    st.error(fp_error)
+                elif kind:
+                    st.success(f"Saved the {kind}.")
             cfg['ffa_weight'] = st.slider(
                 "Blend FFA stat line into projections", 0, 100, int(cfg['ffa_weight']), 5,
                 help="100 = use their projections outright, 0 = keep this app's own and take "
@@ -585,6 +606,16 @@ def _load_board(settings, next_pick):
 
     board, meta = _cached_board(ecr_board, adp_df, ffa_df, settings,
                                 _board_cache_key(settings, next_pick, adp_meta))
+
+    # Merged after the cached build rather than inside it: this is pure
+    # annotation - auction values, their analysts' tiers, their notes - and
+    # none of it feeds a calculation, so it has no business invalidating a
+    # board rebuild when the file changes.
+    sheet, sheet_err = load_cheatsheet()
+    status['cheatsheet'] = {'rows': int(len(sheet)), 'error': sheet_err}
+    if not sheet.empty:
+        board, sheet_meta = merge_cheatsheet_into_board(board, sheet)
+        status['cheatsheet'].update(sheet_meta)
     return board, meta, adp_df, adp_meta, status
 
 
@@ -645,6 +676,14 @@ def _render_source_status(status, meta):
         n = projection.get('players_with_history', 0)
         bits.append(f"✅ Projections ({n:,})")
         details.append(f"Stat-line projections built from {n:,} players of local history.")
+    sheet = status.get('cheatsheet') or {}
+    if sheet.get('error'):
+        bits.append("⚠️ Cheat sheet")
+        details.append(f"FantasyPros cheat sheet: {str(sheet['error'])[:140]}")
+    elif sheet.get('rows'):
+        bits.append(f"✅ FP sheet {sheet.get('matched', 0)}/{sheet['rows']}")
+        details.append(f"FantasyPros cheat sheet matched {sheet.get('matched', 0)} of "
+                       f"{sheet['rows']} players — auction values, their tiers and analyst notes.")
     ffa = status.get('ffa') or {}
     if ffa.get('error'):
         bits.append("⚠️ FFA import")
@@ -967,6 +1006,15 @@ def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None
         column_config['Risk'] = st.column_config.NumberColumn(
             "Risk", format="%d%%",
             help="Width of the ceiling-to-floor band as a share of the projection")
+    if 'Auction $' in display.columns:
+        column_config['Auction $'] = st.column_config.NumberColumn(
+            "Auction $", format="$%d",
+            help="FantasyPros auction value under a $200 budget, from your imported cheat sheet")
+    if 'FP Tier' in display.columns:
+        column_config['FP Tier'] = st.column_config.NumberColumn(
+            "FP Tier", format="%d",
+            help="FantasyPros analysts' own tier. Shown beside this board's computed Tier "
+                 "on purpose — where they disagree is the interesting part.")
 
     action_labels = [label for label, _, _ in actions]
     action_map = {label: action_id for label, action_id, _ in actions}
@@ -1120,9 +1168,18 @@ def _render_player_detail(board, selected):
     if stat_bits:
         st.caption("Projected: " + " · ".join(stat_bits) +
                    f"  ({row.get('proj_basis', 'projection')})")
-    if isinstance(notes, str) and notes.strip():
-        with st.expander(f"Player note — {selected}", expanded=False):
-            st.write(notes)
+    # Two independent sets of analyst notes where both exist. Shown side by
+    # side rather than merged: they're written by different people at
+    # different times, and where they disagree that IS the read.
+    written = [(source, text) for source, text in
+               (('FFA', notes), ('FantasyPros', row.get('FP Note')))
+               if isinstance(text, str) and text.strip()]
+    if written:
+        label = " / ".join(source for source, _ in written)
+        with st.expander(f"Analyst notes — {selected} ({label})", expanded=False):
+            for source, text in written:
+                st.markdown(f"**{source}**")
+                st.write(text)
 
 
 

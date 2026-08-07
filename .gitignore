@@ -8,6 +8,12 @@
 # data/ffa_import.py - it should live on your machine, not in a git repo.
 external_data/ffa_players.json
 
+# FantasyPros cheat-sheet import (auction values, expert tiers, analyst
+# notes). Same reasoning as the FFA import above: subscription content,
+# imported for personal use, belongs on your machine rather than in a repo.
+external_data/fantasypros_cheatsheet.json
+external_data/fantasypros_players.json
+
 # Raw browser HAR captures. A HAR carries every cookie and Authorization
 # header the browser sent, so committing one publishes a live login session
 # for whatever site was captured. Run it through tools/har_extract.py first

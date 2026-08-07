@@ -26,7 +26,7 @@ from config import AVAILABLE_SEASONS_WITH_UPCOMING, TAB_PLAYER_SEARCH
 from data.draft_sources import (
     ECR_BOARDS, load_ecr_raw, build_ecr_board, fetch_adp, fetch_injury_report,
     fetch_player_news, load_dynasty_values, ecr_age_days,
-    ADP_SOURCE_CHOICES, parse_adp_upload,
+    ADP_SOURCE_CHOICES, parse_adp_upload, parse_ecr_upload,
 )
 from data.draft_board import (
     DEFAULT_SCORING, DEFAULT_ROSTER, build_draft_board, recommend_picks,
@@ -141,6 +141,8 @@ def _undo_last():
 SETTINGS_KEY = 'dhq_cfg'
 SETTINGS_OPEN_KEY = 'dhq_settings_open'
 ADP_UPLOAD_KEY = 'dhq_adp_upload_df'
+ECR_UPLOAD_KEY = 'dhq_ecr_upload_df'
+ECR_UPLOAD_ERROR_KEY = 'dhq_ecr_upload_error'
 
 SETTING_DEFAULTS = {
     'teams': 12, 'draft_type': 'Snake', 'slot': 5,
@@ -278,6 +280,32 @@ def _render_settings_panel(cfg):
             boards = list(ECR_BOARDS.keys())
             cfg['board_fmt'] = st.selectbox("Ranking board", boards,
                                             index=_pick_index(boards, cfg['board_fmt']))
+            ecr_upload = st.file_uploader(
+                "Upload FantasyPros rankings CSV", type=["csv"], key="dhq_ecr_upload",
+                help="Overrides the live consensus feed. The live one comes from a nightly "
+                     "third-party mirror of FantasyPros, and that mirror can stall — it has. "
+                     "Export the Draft Rankings view from FantasyPros and drop it here to be "
+                     "certain the board is current. Include BEST/WORST/STD DEV if the export "
+                     "offers them; that spread is what Upside, Bust and Risk are built from.",
+            )
+            if ecr_upload is not None:
+                parsed, ecr_error = parse_ecr_upload(ecr_upload)
+                # Parsed and held rather than kept as a file handle, for the
+                # same reason as the ADP upload: this widget stops existing
+                # the moment the panel closes.
+                st.session_state[ECR_UPLOAD_KEY] = None if parsed.empty else parsed
+                st.session_state[ECR_UPLOAD_ERROR_KEY] = ecr_error
+            if st.session_state.get(ECR_UPLOAD_ERROR_KEY):
+                st.error(st.session_state[ECR_UPLOAD_ERROR_KEY])
+            held_ecr = st.session_state.get(ECR_UPLOAD_KEY)
+            if held_ecr is not None and not held_ecr.empty:
+                spread = 'with' if held_ecr['ECR SD'].notna().any() else 'without'
+                st.caption(f"✅ Using your export — {len(held_ecr)} players, {spread} "
+                           "expert spread")
+                if st.button("Back to the live feed", key="dhq_ecr_clear"):
+                    st.session_state[ECR_UPLOAD_KEY] = None
+                    st.session_state[ECR_UPLOAD_ERROR_KEY] = None
+                    st.rerun()
             cfg['adp_year'] = st.selectbox(
                 "ADP season", AVAILABLE_SEASONS_WITH_UPCOMING,
                 index=_pick_index(AVAILABLE_SEASONS_WITH_UPCOMING, cfg['adp_year']))
@@ -413,7 +441,18 @@ def _settings_from_cfg(cfg, ffa_upload=None):
         'ffa_weight': float(cfg['ffa_weight']) / 100.0,
         'bot_weights': {'ADP': float(cfg['bot_adp']), 'ECR': float(cfg['bot_ecr']),
                         'FFA': float(cfg['bot_ffa'])},
+        # Part of the board cache key, so swapping the consensus source
+        # rebuilds the board instead of serving the previous one.
+        'ecr_signature': _ecr_signature(),
     }
+
+
+def _ecr_signature():
+    """A hashable summary of which consensus rankings are in play."""
+    uploaded = st.session_state.get(ECR_UPLOAD_KEY)
+    if uploaded is None or uploaded.empty:
+        return ('live', 0)
+    return ('upload', int(len(uploaded)), float(uploaded['ECR'].sum()))
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +477,7 @@ def _board_cache_key(settings, next_pick, adp_meta):
         next_pick, settings['uncertainty'], settings['tiers'],
         settings['baseline_season'], settings['market_weight'],
         settings['sos_window'], settings['ffa_weight'], settings.get('ffa_rows', 0),
-        settings.get('adp_source', 'Auto'),
+        settings.get('adp_source', 'Auto'), settings.get('ecr_signature'),
         # str() rather than float() - scoring now carries 'bonus_mode',
         # which is a string, and float()-ing every value would raise the
         # moment the settings panel is opened.
@@ -503,12 +542,25 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _settings, cache_key):
 def _load_board(settings, next_pick):
     """Fetch sources and assemble the board, reporting what did and didn't load."""
     status = {}
-    ecr_raw, ecr_err = load_ecr_raw()
-    status['ecr'] = ecr_err
-    if ecr_raw is None or ecr_raw.empty:
-        return pd.DataFrame(), {}, pd.DataFrame(), {}, status
+    # An uploaded FantasyPros export wins over the live mirror outright. It's
+    # a deliberate act by someone who has just looked at the rankings, which
+    # is better evidence of freshness than anything this code can check - and
+    # the mirror is exactly the thing that can silently stop updating.
+    uploaded_ecr = st.session_state.get(ECR_UPLOAD_KEY)
+    if uploaded_ecr is not None and not uploaded_ecr.empty:
+        ecr_board = uploaded_ecr
+        status['ecr'] = None
+        status['ecr_source'] = 'your FantasyPros export'
+        status['ecr_age'] = None
+    else:
+        ecr_raw, ecr_err = load_ecr_raw()
+        status['ecr'] = ecr_err
+        if ecr_raw is None or ecr_raw.empty:
+            return pd.DataFrame(), {}, pd.DataFrame(), {}, status
+        ecr_board = build_ecr_board(ecr_raw, settings['board_format'])
+        status['ecr_source'] = 'FantasyPros via DynastyProcess'
+        status['ecr_age'] = ecr_age_days(ecr_raw)
 
-    ecr_board = build_ecr_board(ecr_raw, settings['board_format'])
     is_superflex = int(settings['roster'].get('SUPERFLEX', 0)) > 0
     scoring_label = ('Full PPR' if settings['scoring']['rec'] >= 0.75
                      else 'Half-PPR' if settings['scoring']['rec'] >= 0.25 else 'Standard')
@@ -530,7 +582,6 @@ def _load_board(settings, next_pick):
     adp_meta = dict(adp_meta or {})
     adp_meta['rows'] = int(len(adp_df))
     status['adp'] = adp_meta
-    status['ecr_age'] = ecr_age_days(ecr_raw)
 
     board, meta = _cached_board(ecr_board, adp_df, ffa_df, settings,
                                 _board_cache_key(settings, next_pick, adp_meta))
@@ -552,14 +603,20 @@ def _render_source_status(status, meta):
     if status.get('ecr'):
         bits.append("⚠️ No rankings")
         details.append(f"Rankings source unreachable ({status['ecr']}) — the board is empty.")
+    elif status.get('ecr_source') == 'your FantasyPros export':
+        bits.append("✅ ECR: your export")
+        details.append("Consensus rankings are coming from the CSV you uploaded, not the live "
+                       "mirror. Clear it in League Settings to go back to the feed.")
     else:
         age = status.get('ecr_age')
         stale = age is not None and age >= 3
         bits.append(f"{'⚠️' if stale else '✅'} FantasyPros ECR" + (f" ({age}d old)" if stale else ""))
         if stale:
-            details.append(f"Consensus rankings are {age} days old (the source refreshes "
-                           "nightly; it hasn't). Injuries and depth-chart news since then "
-                           "aren't in them.")
+            details.append(
+                f"Consensus rankings are {age} days old. They come from DynastyProcess's "
+                "nightly mirror of FantasyPros, and that mirror has stopped refreshing — "
+                "there is no fresher copy to fetch. Injuries and depth-chart news since then "
+                "aren't in them. Upload a FantasyPros export in League Settings to override it.")
 
     adp_meta = status.get('adp') or {}
     if adp_meta.get('error'):
@@ -790,6 +847,7 @@ BOARD_ACTIONS = {
     ],
 }
 BOARD_NONCE_KEY = 'dhq_board_nonce'
+BOARD_OPEN_KEY = 'dhq_board_open'
 
 
 BOARD_ROWS_KEY = 'dhq_board_rows'
@@ -892,8 +950,13 @@ def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None
 
     column_config = build_column_help_config(display, pinned_cols=['Pos', 'Team'])
     column_config['Player'] = st.column_config.TextColumn("Player", pinned=True)
-    for label, _, tooltip in actions:
-        column_config[label] = st.column_config.CheckboxColumn(label, help=tooltip, width=44,
+    for label, _, _tooltip in actions:
+        # No help= on these three. The tooltip renders an ⓘ badge INSIDE the
+        # header cell, and next to a one-character emoji in a 44px column
+        # there isn't room for both - the header came out as a clipped icon
+        # and a sliver of emoji. What each button does is written in the
+        # caption above the table, where there's room to say it properly.
+        column_config[label] = st.column_config.CheckboxColumn(label, width="small",
                                                                pinned=True)
     if 'Avail Next %' in display.columns:
         column_config['Avail Next %'] = st.column_config.NumberColumn(
@@ -1660,14 +1723,25 @@ def _render_draft_room(board, settings, ctx):
     # bottom of the page: it's a glance-at-it-mid-pick view ("who's hoarding
     # backs", "is the turn about to strip receivers"), and a view you have
     # to scroll past the whole draft table to reach may as well not exist
-    # while a clock is running. A popover keeps it one click away and costs
-    # no vertical space when closed.
+    # while a clock is running.
+    #
+    # A plain toggle button rather than st.popover, because a popover panel
+    # is anchored to its trigger and capped at a few hundred pixels - a
+    # twelve-column draft board rendered inside one is a postage stamp with
+    # its own scrollbar. Toggling a full-width block below the row gives the
+    # grid the whole screen, which is the only width it's readable at.
     strip_col, board_col = st.columns([9, 1.5], vertical_alignment="center")
     with strip_col:
         _render_recent_picks_strip(dc['picks'], dc['num_teams'], dc['current_pick'],
                                    round_no=round_no, next_pick=dc['next_pick'])
     with board_col:
-        with st.popover("🗂 Draft board", width="stretch"):
+        board_open = st.session_state.get(BOARD_OPEN_KEY, False)
+        if st.button("🗂 Draft board", key="dhq_board_toggle", width="stretch",
+                     type="primary" if board_open else "secondary"):
+            st.session_state[BOARD_OPEN_KEY] = not board_open
+            st.rerun()
+    if st.session_state.get(BOARD_OPEN_KEY):
+        with st.container(border=True):
             _render_draft_board_grid(dc['picks'], dc['num_teams'], dc['my_slot'],
                                      settings['draft_type'])
     if mode == "Live draft":

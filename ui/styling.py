@@ -1139,6 +1139,37 @@ _FORCED_DECIMALS = {
 }
 
 
+# Tier colours, cycling from best to worst. Deliberately a categorical ramp
+# rather than a continuous gradient: a tier IS a category - the whole point
+# of tiering is that everyone inside one is interchangeable and the step
+# BETWEEN two is a real cliff. A smooth gradient would draw the cliff as a
+# gentle slope, which is the one thing the column exists to contradict.
+#
+# Ordered cool-to-warm so the eye reads "elite -> deep" without a legend,
+# and the band boundaries land where a scan naturally stops.
+TIER_COLORS = [
+    '#1b6ac9',  # 1 - elite
+    '#1f8a70',  # 2
+    '#3f9d3a',  # 3
+    '#8a9a1e',  # 4
+    '#b8860b',  # 5
+    '#c26a1c',  # 6
+    '#b3452c',  # 7
+    '#8e3b52',  # 8+
+]
+
+
+def get_tier_color(tier):
+    """Background for a tier cell, or None when there's no tier to show."""
+    try:
+        index = int(tier) - 1
+    except (TypeError, ValueError):
+        return None
+    if index < 0:
+        return None
+    return TIER_COLORS[min(index, len(TIER_COLORS) - 1)]
+
+
 def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None):
     """
     Sortable Styler for st.dataframe (historical totals, risers, rookie
@@ -1214,8 +1245,16 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
         pct_vals = pct_arrays.get(col)
         is_team = col == 'Team'
         is_position = col in ('Pos', 'Position')
+        is_tier = col == 'Tier'
         out = []
         for pos, v in enumerate(values):
+            if is_tier:
+                # Handled before the percentile branch so a Tier column that
+                # also appears in numeric_pct_cols still reads as tiers.
+                tier_bg = get_tier_color(v)
+                out.append(f"background-color:{tier_bg}; color:#ffffff; font-weight:bold;"
+                           if tier_bg else _DEFAULT_STYLE)
+                continue
             if matchup_vals is not None and pos < len(matchup_vals):
                 bg = get_matchup_color(matchup_vals[pos])
                 out.append(f'background-color:{bg}; color:#ffffff; font-weight:bold;')

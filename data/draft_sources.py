@@ -217,6 +217,79 @@ def load_dynasty_values():
     return df, None
 
 
+def parse_ecr_upload(uploaded_file):
+    """
+    A FantasyPros rankings export straight into the board's ECR columns.
+
+    WHY THIS EXISTS: every consensus rank on this board comes from
+    DynastyProcess's nightly mirror of FantasyPros, and that mirror can
+    simply stop - it did, sitting on a 2026-07-31 scrape for a week with no
+    fresher copy to fetch. There is no way to fix that from this side, and
+    "your rankings are stale and there's nothing you can do" is a bad answer
+    two days before a draft. Exporting the CSV yourself takes ten seconds and
+    is always current.
+
+    Accepts their export as-is: RK, TIERS, "PLAYER NAME", TEAM, POS, "BYE
+    WEEK", "ECR VS. ADP". Also accepts the wider export that carries BEST /
+    WORST / AVG / STD DEV, which is strictly better - that spread is what
+    Upside/Bust/Risk are built from, and without it those columns fall back
+    to a modelled estimate.
+
+    Returns (df, error) shaped exactly like build_ecr_board's output, so it
+    drops in wherever the live board does.
+    """
+    if uploaded_file is None:
+        return pd.DataFrame(), None
+    try:
+        uploaded_file.seek(0)
+        raw = pd.read_csv(uploaded_file)
+    except Exception as exc:
+        return pd.DataFrame(), f"couldn't read that file: {exc}"
+
+    raw.columns = [str(c).strip().upper() for c in raw.columns]
+    lower = {c: c for c in raw.columns}
+
+    def _col(*names):
+        for name in names:
+            if name in lower:
+                return raw[name]
+        return None
+
+    names = _col('PLAYER NAME', 'PLAYER', 'NAME')
+    rank = _col('RK', 'RANK', 'ECR', 'AVG.', 'OVERALL')
+    if names is None or rank is None:
+        return pd.DataFrame(), ("that CSV has no player-name and rank columns — export the "
+                                "Draft Rankings view from FantasyPros (the one with RK, "
+                                "PLAYER NAME, POS).")
+
+    pos = _col('POS', 'POSITION')
+    out = pd.DataFrame({
+        'Player': names.astype(str).str.strip().str.strip('"'),
+        # Their POS carries a positional rank suffix ("WR1"); the board's Pos
+        # is a bare code everywhere else.
+        'Pos': (pos.astype(str).str.upper().str.replace(r'\d+$', '', regex=True).str.strip()
+                if pos is not None else ''),
+        'Team': (_col('TEAM', 'TM').astype(str).str.strip()
+                 if _col('TEAM', 'TM') is not None else ''),
+        'ECR': pd.to_numeric(rank, errors='coerce'),
+        'Bye': pd.to_numeric(_col('BYE WEEK', 'BYE'), errors='coerce')
+               if _col('BYE WEEK', 'BYE') is not None else np.nan,
+    })
+    for column, candidates in (('ECR SD', ('STD DEV', 'SD', 'STDEV')),
+                               ('ECR Best', ('BEST',)),
+                               ('ECR Worst', ('WORST',))):
+        series = _col(*candidates)
+        out[column] = pd.to_numeric(series, errors='coerce') if series is not None else np.nan
+
+    out = out.dropna(subset=['ECR'])
+    out = out[out['Player'].ne('') & out['Player'].str.lower().ne('nan')]
+    if out.empty:
+        return pd.DataFrame(), "no ranked players found in that file."
+    out = out.sort_values('ECR').drop_duplicates(subset=['Player'], keep='first')
+    out['Pos Rank'] = out.groupby('Pos')['ECR'].rank(method='first').astype(int)
+    return out.reset_index(drop=True), None
+
+
 def build_ecr_board(ecr_raw, board='Redraft 1QB', include_positional_depth=True):
     """
     One clean board out of the stacked ECR table: consensus rank, the spread

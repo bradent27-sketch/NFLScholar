@@ -678,15 +678,23 @@ replacement level.
 
 **Remaining known disagreements, and why:**
 
-- **Veteran tight ends** (Kelce ranked 69 here vs ECR 98; LaPorta 62 vs 85).
-  Much smaller than it was — the TE streaming baseline took the median TE
-  bias from −19 to −8 vs ECR — but not gone. The aging markdown the data
-  supports is a few percent
-  and moves them two or three spots. The market's markdown is much larger and
-  reflects situation-specific analyst judgment — scheme change, target
-  competition, an explicit "he's done" read — that a statistical model can't
-  derive from box scores. The market blend is the intended lever here; raise
-  it if you want the board to defer more.
+- **Veteran tight ends** — **George Kittle is the largest single deviation on
+  the board**: ranked 60 here against ECR 106, on a projection of 162.8 vs
+  FFA's 129.7. Kelce 69 vs 98 and LaPorta 62 vs 85 are the same shape,
+  smaller. The median TE bias improved from −19 to −8 vs ECR when TE entered
+  the streaming baseline, so the *systematic* part of this is largely fixed;
+  what's left is per-player. The aging markdown the data supports is a few
+  percent and moves them two or three spots. The market's markdown is much
+  larger and reflects situation-specific analyst judgment — scheme change,
+  target competition, an explicit "he's done" read — that a statistical model
+  can't derive from box scores. The market blend is the intended lever here;
+  raise it if you want the board to defer more.
+
+  Kittle specifically will not show up in a "top-100 ECR" deviation scan,
+  because his ECR is 106 — outside the window. Any audit of where this board
+  disagrees with consensus has to look at players the MODEL rates highly too,
+  not just ones the market does, or it will systematically miss exactly the
+  cases where the model is most out on a limb.
 - **Young ascending receivers** (Odunze, Egbuka, McConkey, Watson ranked
   ~20–27 spots lower here). Their thin history pulls them toward the rank
   curve; analysts price expected role growth. Tested a symmetric young-player

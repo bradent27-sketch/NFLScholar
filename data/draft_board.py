@@ -40,6 +40,8 @@ player who finished #1 is by definition whoever got luckiest, and nobody is
 reliably that guy in advance. Smearing across plausible finishes removes
 that bias instead of baking it into every pick.
 """
+import math
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -804,10 +806,31 @@ def compute_starter_demand(board, settings):
 # Positions where the waiver wire stays genuinely deep all season, because
 # all 32 NFL teams field one and a 12-team league rosters far fewer. These
 # are the positions where "replacement" is not the last rostered player -
-# it's whoever you stream, which is a much higher bar. RB/WR/TE are absent
-# on purpose: leagues roster 60+ of them, and the free pool really is
-# replacement level.
-STREAMABLE_POSITIONS = ['QB', 'K', 'DST']
+# it's whoever you stream, which is a much higher bar.
+#
+# TIGHT END BELONGS HERE, and leaving it out was distorting the whole back
+# half of the board. The original reasoning ("leagues roster 60+ of them")
+# is true of running backs and receivers and simply false of tight ends: a
+# 12-team league that starts one TE rosters roughly fifteen, against 32 NFL
+# starters, so ~17 startable tight ends sit free all season. That is the
+# same structure as quarterback, and it has the same consequence - the real
+# cost of passing on tight ends is far lower than "the 13th best one's
+# season total", which is what the standard baseline assumes.
+#
+# The symptom this fixes: with replacement set at TE13, every tight end from
+# roughly TE8 to TE14 carried positive VORP, floated 30-40 picks above his
+# ADP, and the board went on recommending another one deep into the draft -
+# a roster nobody would ever build, since only one of them can start.
+#
+# RB/WR stay out because their free pool really is replacement level, and
+# the measurement agrees: streaming them returns less than their last
+# rostered starter, so it would be ignored even if they were listed.
+#
+# This is settings-sensitive without special-casing. build_streaming_replacement
+# only ever RAISES the bar, and it takes the rostered count as input - so a
+# TE-premium or 2-TE league rosters more tight ends, the free pool thins,
+# the measured value drops, and tight ends correctly regain their surplus.
+STREAMABLE_POSITIONS = ['QB', 'TE', 'K', 'DST']
 
 # Positions universally drafted in the last couple of rounds. See
 # demote_late_round_positions for why this is a fact about draft structure
@@ -1025,6 +1048,174 @@ def _stream_dst(scoring, seasons, n_rostered):
                 banked *= MODERN_SEASON_GAMES / 16.0
             per_season.append(banked)
     return float(np.mean(per_season)) if per_season else None
+
+
+# Bye week: one guaranteed absence per player per season, on top of injury.
+_BYE_WEEKS = 1.0
+
+# What share of a streamable position's bench value survives the fact that
+# you could just pick someone up instead. Not zero - a rostered backup is
+# occasionally the better option, and in a superflex league he's a genuine
+# asset - but small, because the free pool at those positions is deep all
+# season. See expected_start_share.
+_STREAMABLE_BENCH_COVERAGE = 0.2
+
+# Fallback absence rates (share of a 17-game season a draftable player at
+# each position misses) for when local history can't be read. Close to the
+# measured values so the model degrades quietly rather than changing shape.
+_DEFAULT_ABSENCE = {'QB': 0.26, 'RB': 0.21, 'WR': 0.20, 'TE': 0.22, 'K': 0.10, 'DST': 0.0}
+
+
+@st.cache_data(show_spinner=False)
+def measure_absence_rates(latest_season, n_seasons=CURVE_SEASONS):
+    """
+    What share of a season a player you'd actually DRAFT ends up missing,
+    per position.
+
+    Measured the only way that's draft-relevant: take the players who
+    finished near the top of a position in one season - the ones who'd be
+    drafted the following August - and count how many of the next season's
+    games they actually played. That folds in injury, benching, holdouts and
+    retirement, which is the real question ("will this roster spot produce"),
+    rather than the narrower one an injury feed answers.
+
+    The result is deliberately NOT used to mark players down. It feeds the
+    depth model below, where the question is how often a BACKUP gets pressed
+    into your starting lineup.
+    """
+    from data.loaders import load_weekly_stats_history
+    hist = load_weekly_stats_history()
+    if hist is None or hist.empty or 'season' not in hist.columns:
+        return dict(_DEFAULT_ABSENCE)
+    df = hist[pd.to_numeric(hist['week'], errors='coerce').fillna(0) > 0].copy()
+    if 'season_type' in df.columns:
+        df = df[df['season_type'].astype(str).str.upper().isin(['REG', 'REGULAR'])]
+    name_col = 'player_display_name' if 'player_display_name' in df.columns else 'player_name'
+    points_col = 'fantasy_points_ppr' if 'fantasy_points_ppr' in df.columns else None
+    if name_col not in df.columns or 'position' not in df.columns or not points_col:
+        return dict(_DEFAULT_ABSENCE)
+
+    seasons = sorted([s for s in df['season'].dropna().unique() if s <= latest_season])[-n_seasons:]
+    if len(seasons) < 2:
+        return dict(_DEFAULT_ABSENCE)
+
+    # How deep into each position a 12-team league's drafters actually go.
+    draftable_depth = {'QB': 24, 'RB': 48, 'WR': 60, 'TE': 24, 'K': 14, 'DST': 14}
+    out = dict(_DEFAULT_ABSENCE)
+    for pos, depth in draftable_depth.items():
+        rates = []
+        for season in seasons[1:]:
+            prior = df[(df['season'] == season - 1) &
+                       (df['position'].astype(str).str.upper() == pos)]
+            current = df[(df['season'] == season) &
+                         (df['position'].astype(str).str.upper() == pos)]
+            if prior.empty or current.empty:
+                continue
+            drafted = prior.groupby(name_col)[points_col].sum().nlargest(depth).index
+            played = current[current[name_col].isin(drafted)].groupby(name_col).size()
+            # A drafted player who never appears played zero games, and
+            # dropping him would measure only the players who stayed healthy.
+            games = np.array([int(played.get(p, 0)) for p in drafted], dtype=float)
+            if len(games):
+                rates.append(1.0 - games.mean() / MODERN_SEASON_GAMES)
+        if rates:
+            out[pos] = float(np.clip(np.mean(rates), 0.0, 0.6))
+    return out
+
+
+def lineup_slots_per_team(board, settings):
+    """
+    How many starting slots ONE roster devotes to each position, flex
+    included and allocated by where flex points actually go.
+
+    Just compute_starter_demand divided by the league size, which is what
+    makes the flex share empirical rather than assumed: in PPR it lands
+    mostly on receivers, in superflex almost entirely on quarterbacks.
+    Fractional on purpose - "receivers occupy 2.9 slots" is a more honest
+    input to the depth model than rounding to 3.
+    """
+    n_teams = max(int(settings['num_teams']), 1)
+    started = compute_starter_demand(board, settings)
+    return {pos: started.get(pos, 0) / n_teams for pos in DRAFTABLE_POSITIONS}
+
+
+def expected_start_share(pos, depth, slots, absence):
+    """
+    The share of the season the `depth`-th best player you own at `pos`
+    spends in your STARTING lineup (depth is 1-indexed: 1 is your best).
+
+    THIS IS THE NUMBER THAT ANSWERS "should I take another one of these",
+    and it is why a second tight end and a third receiver are not
+    remotely the same pick even when the board rates them alike.
+
+    Within the starting slots a position occupies, a player starts whenever
+    he's available. Past them he is a contingency asset: he only enters the
+    lineup in a week where enough of the players above him are out, which is
+    a binomial tail on the measured absence rate. The number of slots is
+    therefore doing all the work, and it differs enormously by position:
+
+        TE, 1 slot   depth 1 = 1.00   depth 2 = 0.22   depth 3 = 0.00
+        WR, ~2.9     depth 1 = 1.00   depth 2 = 1.00   depth 3 = 0.90
+        RB, ~2.4     depth 1 = 1.00   depth 2 = 1.00   depth 3 = 0.40
+
+    A third receiver still fills a flex slot nearly every week. A second
+    tight end plays about three weeks a year, and a third plays never -
+    which is exactly why nobody drafts one, and why a board that priced
+    them off league-wide surplus alone kept recommending them.
+
+    Returned relative to a full starter (depth 1 = 1.0), so it composes as a
+    plain multiplier on a player's marginal value without double-counting
+    the games a starter misses - those are already in his projection.
+    """
+    slot_count = float(slots.get(pos, 1.0) or 0.0)
+    rate = float(absence.get(pos, 0.2) or 0.0)
+    # Bye weeks are an absence the injury measurement can't see: it counts
+    # games played out of 17, and a bye isn't a missed game.
+    rate = float(np.clip(rate + _BYE_WEEKS / MODERN_SEASON_GAMES, 0.0, 0.95))
+    depth = int(max(1, depth))
+    if slot_count <= 0:
+        return 0.0
+    if depth <= slot_count:
+        # Whole slot, or the fractional tail of one (a 2.9-slot position
+        # gives its third player 90% of a starting job).
+        return float(min(1.0, slot_count - depth + 1))
+
+    # Bench. He needs at least `needed` of the `n` starters above him out.
+    needed = int(np.ceil(depth - slot_count))
+    n = max(1, int(round(slot_count)))
+    if needed > n:
+        return 0.0
+    tail = sum(math.comb(n, i) * rate ** i * (1 - rate) ** (n - i)
+               for i in range(needed, n + 1))
+
+    # At a streamable position you don't need to have ROSTERED the cover: the
+    # week your quarterback is out there are twenty free ones and you start
+    # the best matchup among them. So the handful of weeks a backup would
+    # nominally be needed are mostly weeks the waiver wire already covers,
+    # and holding him costs a roster spot for nothing.
+    #
+    # Without this the panel kept naming the same backup quarterback round
+    # after round in a 1QB league - the one recommendation no real drafter
+    # would ever act on. It applies only to bench depth; a position's
+    # STARTER is unaffected, which is why elite quarterbacks keep their
+    # value here.
+    if pos in STREAMABLE_POSITIONS:
+        tail *= _STREAMABLE_BENCH_COVERAGE
+    return float(np.clip(tail, 0.0, 1.0))
+
+
+def depth_multiplier(pos, my_roster, slots, absence):
+    """
+    Multiplier on what one more player at `pos` is worth to THIS roster,
+    given how many you already hold.
+
+    Thin wrapper over expected_start_share that works out the depth for you.
+    Kept separate so callers never have to get the off-by-one right: the
+    player being considered would be the (n+1)th at his position.
+    """
+    held = sum(1 for p in (my_roster or [])
+               if str(p.get('Pos', '')).upper() == str(pos).upper())
+    return expected_start_share(str(pos).upper(), held + 1, slots, absence)
 
 
 def add_value_over_replacement(board, settings):
@@ -1628,14 +1819,24 @@ def roster_needs(my_roster, settings):
     return needs
 
 
-def _need_multiplier(pos, needs, settings):
+def _need_multiplier(pos, needs, settings, depth_share=None):
     """
     How much to weight a position by what your roster still needs.
 
-    Deliberately gentle (a 25% nudge, not a hard filter). Positional need is
-    real but drafting purely for need is how people end up reaching two
-    rounds early for a kicker in round 9 - the value model should still be
-    driving, with need breaking ties between comparable players.
+    Deliberately gentle while a slot is still open (a 25% nudge, not a hard
+    filter). Positional need is real but drafting purely for need is how
+    people end up reaching two rounds early for a kicker in round 9 - the
+    value model should still be driving, with need breaking ties between
+    comparable players.
+
+    ONCE THE SLOT IS FULL the gentleness stops, because a flat 0.92 there
+    was wrong in a way that showed: with a starting quarterback already
+    rostered, the second-best QB on the board kept out-scoring every real
+    option and the panel recommended the same backup quarterback in eight
+    consecutive rounds. Past the starting lineup the question isn't "how
+    good is he" but "how often would he be in my lineup", and
+    expected_start_share answers that - roughly a third for a QB2, a
+    quarter for a TE2, nothing at all for a third tight end.
     """
     direct = needs.get(pos, 0)
     flexable = needs.get('FLEX', 0) if pos in FLEX_ELIGIBLE else 0
@@ -1644,9 +1845,12 @@ def _need_multiplier(pos, needs, settings):
         return 1.25
     if flexable > 0 or superflexable > 0:
         return 1.10
-    # Position already fully covered in the starting lineup - still worth
-    # drafting for depth/upside, just not ahead of an empty slot.
-    return 0.92
+    if depth_share is None:
+        return 0.92
+    # Floored just above zero rather than at it, so a position that can
+    # never start again still sorts by value among its own kind instead of
+    # collapsing into an arbitrary tie.
+    return float(max(0.02, min(0.92, depth_share)))
 
 
 def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_col='VONA',
@@ -1693,16 +1897,48 @@ def recommend_picks(board, my_roster, settings, next_pick=None, top_n=6, value_c
         if avail.empty:
             return pd.DataFrame()
 
+    # How much of a season one more player at each position would actually
+    # spend in this roster's starting lineup. Computed once for the whole
+    # loop rather than per row, since it depends only on what you hold.
+    slots = lineup_slots_per_team(board, settings)
+    absence = measure_absence_rates(settings.get('baseline_season', 2025))
+    depth_shares = {p: depth_multiplier(p, my_roster, slots, absence)
+                    for p in DRAFTABLE_POSITIONS}
+
+    # Positions you effectively cannot play another of are dropped outright,
+    # not merely scaled down. Scaling alone wasn't enough: VONA measures what
+    # you lose by WAITING, and for the last decent quarterback on the board
+    # that number is large - nobody comparable is coming back - so a heavily
+    # discounted QB2 still out-scored every real option and the panel named a
+    # backup quarterback in six straight rounds of a 1QB league.
+    #
+    # The premise VONA rests on is false there: you lose nothing by waiting
+    # on a player who would never enter your lineup. Any position with a real
+    # starting need is exempt, the filter is skipped when it would empty the
+    # panel, and asking for a position explicitly (the QB/TE buttons) still
+    # shows you its best available.
+    if not allow_late_round:
+        playable = avail[avail['Pos'].astype(str).str.upper().map(
+            lambda p: needs.get(p, 0) > 0 or depth_shares.get(p, 1.0) >= 0.1)]
+        if not playable.empty:
+            avail = playable
+
     rows = []
     for _, r in avail.nlargest(min(60, len(avail)), base_col).iterrows():
         pos = str(r['Pos']).upper()
         base = float(r[base_col])
         reasons = []
 
-        mult = _need_multiplier(pos, needs, settings)
-        score = base * mult
+        mult = _need_multiplier(pos, needs, settings, depth_shares.get(pos))
+        # Scaling a NEGATIVE value by a fraction makes it bigger, which would
+        # promote exactly the players the multiplier is meant to bury. Applied
+        # around zero instead, so shrinking always moves a score toward zero
+        # whichever side of it the player sits on.
+        score = base * mult if base >= 0 else base / max(mult, 0.02)
         if mult > 1.0:
             reasons.append(f"fills an open {pos} slot" if needs.get(pos, 0) > 0 else "flex-eligible need")
+        elif mult < 0.5:
+            reasons.append(f"{pos} full — a backup starts ~{depth_shares.get(pos, 0):.0%} of weeks")
         elif mult < 1.0:
             reasons.append(f"{pos} already covered")
 

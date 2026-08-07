@@ -372,7 +372,72 @@ def build_age_lookup(season):
     for key, age in zip(keys, ages):
         if key and 18 <= age <= 50:
             lookup.setdefault(key, float(age))
+
+    # NICKNAME TIER. The two keys above normalize punctuation and suffixes,
+    # which is not the failure that actually happens here: the crosswalk
+    # carries legal names and the consensus feed carries the name on the
+    # jersey, so "Kenneth Gainwell" and "Kenny Gainwell" never meet. He was
+    # one of the missing ages, and missing means NO aging markdown at all -
+    # a 27-year-old back silently priced as though age were unknown.
+    #
+    # Keyed on last name + the first THREE letters of the first name +
+    # position. Every part is load-bearing, and the first-initial version
+    # this replaced proves it: on real data it recovered the four genuine
+    # nicknames (Kenneth/Kenny, Andres/Andy, Chigoziem/Chig,
+    # Mitchell/Mitch) and also four complete strangers - Devonte Boyd
+    # matched a retired kicker named Danny Boyd and came back 48 years old.
+    # A shared first initial is not evidence. Three letters separates every
+    # real nickname here from every false one, because nicknames are
+    # overwhelmingly truncations, and position stops a receiver from
+    # inheriting a linebacker's birthday.
+    #
+    # Ambiguous keys are dropped rather than guessed: a wrong age quietly
+    # scales a projection, which is exactly the kind of error nobody would
+    # ever go looking for. Stored under a '~' prefix so it can only be
+    # consulted after both exact tiers have missed.
+    positions = ids['position'].astype(str).str.upper() if 'position' in ids.columns else None
+    seen, ambiguous = {}, set()
+    for i, (name, age) in enumerate(zip(ids['name'].astype(str), ages)):
+        pos = positions.iloc[i] if positions is not None else ''
+        nickname_key = _nickname_key(name, pos)
+        # 40 rather than 50: this tier exists to find ACTIVE players, and
+        # the crosswalk is full of retirees whose only claim is a surname.
+        if not nickname_key or not (18 <= age <= 40):
+            continue
+        if nickname_key in seen and abs(seen[nickname_key] - float(age)) > 0.05:
+            ambiguous.add(nickname_key)
+        seen.setdefault(nickname_key, float(age))
+    for key, age in seen.items():
+        if key not in ambiguous:
+            lookup[f'~{key}'] = age
     return lookup
+
+
+# The crosswalk spells kickers PK; the board says K. Nothing else differs
+# across the positions this board drafts.
+_CROSSWALK_POSITION_ALIASES = {'PK': 'K'}
+
+
+def _nickname_key(name, position=''):
+    """
+    ("Kenneth Gainwell", "RB") -> "gainwell|ken|RB".
+
+    Last name, the first three letters of the first name, and position -
+    the parts of a name that survive a nickname without also matching a
+    stranger. Suffixes are dropped so "Odell Beckham Jr." keys on beckham,
+    and anything that isn't at least two words returns None, since a
+    single-token name has no last name to key on and would collide with
+    everything.
+    """
+    import re
+    parts = [p for p in re.sub(r'[^a-z ]', '', str(name).lower()).split() if p]
+    while len(parts) > 2 and parts[-1] in ('jr', 'sr', 'ii', 'iii', 'iv', 'v'):
+        parts.pop()
+    if len(parts) < 2 or len(parts[0]) < 3:
+        return None
+    pos = str(position or '').upper()
+    pos = _CROSSWALK_POSITION_ALIASES.get(pos, pos)
+    return f"{parts[-1]}|{parts[0][:3]}|{pos}"
 
 
 def age_adjustment(position, age):
@@ -453,7 +518,14 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
         return record
 
     ages = ages if ages is not None else build_age_lookup(int(latest_season) + 1)
-    board_ages = [ages.get(k) for k in board_loose]
+    # A team defense has no age, and "Kansas City Chiefs" happens to collide
+    # with a real person in the crosswalk - which was putting a 47-year-old
+    # DST on the board.
+    board_ages = [None if str(pos).upper() == 'DST' else
+                  (ages.get(k) if ages.get(k) is not None
+                   else ages.get(f'~{_nickname_key(name, pos)}'))
+                  for k, name, pos in zip(board_loose, out['Player'].astype(str),
+                                          out['Pos'].astype(str))]
 
     for stat in PROJECTED_STATS:
         out[stat] = 0.0

@@ -364,7 +364,88 @@ def _projected_full_lineup(available, my_roster, settings):
     return max(float(filled) + replacement_total, 1.0)
 
 
-def positional_value_add(board, my_roster, settings, next_pick, drafted_names=None):
+def _replacement_context(available, settings):
+    """
+    The three things contingency value needs: how many lineup slots each
+    position occupies on one roster, how often a player at it is absent, and
+    what a waiver pickup at it is worth.
+    """
+    from data.draft_board import (
+        lineup_slots_per_team, measure_absence_rates, compute_starter_demand,
+        DRAFTABLE_POSITIONS as _POSITIONS,
+    )
+    slots = lineup_slots_per_team(available, settings)
+    absence = measure_absence_rates(settings.get('baseline_season', 2025))
+    started = compute_starter_demand(available, settings)
+
+    # What you'd get off waivers at each position: the best player past the
+    # point where the league's rosters run out. Measured off this board so it
+    # moves with scoring settings rather than being a constant.
+    waiver = {}
+    for pos in _POSITIONS:
+        pts = (available.loc[available['Pos'].astype(str).str.upper() == pos, 'Proj Pts']
+               .dropna().sort_values(ascending=False).to_numpy())
+        if not len(pts):
+            continue
+        idx = min(int(started.get(pos, 0)), len(pts) - 1)
+        waiver[pos] = float(pts[idx])
+    return {'slots': slots, 'absence': absence, 'waiver': waiver}
+
+
+def _contingency_value(player, pos, my_roster, settings, replacement):
+    """
+    What a player who does NOT crack your starting lineup is worth: an
+    OPTION on him beating what you could have picked up free, in the weeks
+    he'd actually be startable.
+
+    Two things make this the right shape for a late pick, and both are
+    missing from a plain points-above-replacement read:
+
+    An option is valued on its upside, not its mean. You are not stuck with
+    a late-round pick who busts - you drop him and stream the position, so
+    the downside is bounded at roughly zero while the upside is a starter
+    you didn't pay for. That is why late running backs are worth more than
+    their projections suggest (one injury ahead of them and they inherit a
+    workload) and why a safe, low-variance backup is worth less than it
+    looks. Computed as E[max(X - waiver, 0)] with X normal around the
+    projection, its spread taken from the board's own Ceiling.
+
+    And the option only pays in weeks he'd be in your lineup, which is
+    where expected_start_share comes in - the whole answer to "should I
+    take another tight end". A third receiver walks into a flex slot nearly
+    every week; a second tight end plays about three weeks a year and a
+    third plays none, because only one can ever start. Pricing both off
+    league-wide surplus says they're comparable. They are not.
+    """
+    from data.draft_board import depth_multiplier
+
+    points = player.get('Proj Pts')
+    if points is None or pd.isna(points):
+        return 0.0
+    share = depth_multiplier(pos, my_roster, replacement['slots'], replacement['absence'])
+    if share <= 0:
+        return 0.0
+
+    mean = float(points)
+    waiver = float(replacement['waiver'].get(pos, 0.0))
+    ceiling = player.get('Ceiling')
+    # Ceiling is the 85th percentile outcome, which is 1.036 standard
+    # deviations up. Falling back to a quarter of the projection keeps this
+    # working on a board with no outcome range attached.
+    if ceiling is not None and pd.notna(ceiling) and float(ceiling) > mean:
+        sigma = max(1.0, (float(ceiling) - mean) / 1.036)
+    else:
+        sigma = max(1.0, 0.25 * abs(mean))
+
+    z = (waiver - mean) / sigma
+    density = float(np.exp(-0.5 * z * z) / np.sqrt(2 * np.pi))
+    from data.draft_sources import normal_sf
+    expected_excess = sigma * density + (mean - waiver) * normal_sf(z)
+    return max(0.0, share * expected_excess)
+
+
+def positional_value_add(board, my_roster, settings, next_pick, drafted_names=None,
+                         picks_left=None):
     """
     What spending THIS pick on each position does to your projected starting
     lineup, in points and as a percentage.
@@ -408,6 +489,25 @@ def positional_value_add(board, my_roster, settings, next_pick, drafted_names=No
     if available.empty or 'Proj Pts' not in available.columns:
         return []
 
+    replacement = _replacement_context(available, settings)
+
+    # "The cost of waiting" presumes you can wait, and in the last rounds you
+    # can't - every remaining pick is a roster spot you will never get back.
+    # With one pick left there is no next turn at all, so the whole value of
+    # spending it here is the LEVEL, not the drop-off. This discounts the
+    # wait-one-turn term by how likely you are to still have a spot for the
+    # position later, which is what makes the panel keep saying something
+    # useful late instead of collapsing to six zeros.
+    #
+    # At ten picks left it's 0.9 and early-round behaviour is unchanged,
+    # which matters because the drop-off read is the right one there and the
+    # user should not see it move.
+    if picks_left is None:
+        wait_weight = 1.0
+    else:
+        remaining = max(1, int(picks_left))
+        wait_weight = float(np.clip((remaining - 1) / remaining, 0.0, 1.0))
+
     # Percentages are against a COMPLETE projected lineup, not the partial
     # one you happen to hold right now. Dividing by the current roster makes
     # the first pick of a draft read "+10,060% to your team", which is not
@@ -424,9 +524,23 @@ def positional_value_add(board, my_roster, settings, next_pick, drafted_names=No
             continue
 
         best = pool.iloc[0]
-        gain_now = marginal_lineup_gain(
-            my_roster or [], {'Pos': pos, 'Proj Pts': best['Proj Pts'], 'VORP': best.get('VORP')},
-            settings)
+        # Once every starting slot is full, marginal_lineup_gain is exactly
+        # zero for every position - the lineup can't improve, so all six
+        # cards read 0% and the panel stops saying anything for the whole
+        # back half of the draft. That's a real modelling gap, not just a
+        # display one: a bench receiver and a third tight end are worth
+        # visibly different amounts, because one of them will be in your
+        # lineup some weeks and the other never will.
+        #
+        # max() of the two, because they're the same quantity measured two
+        # ways - points this player adds to your season, as a starter or as
+        # depth - and whichever is larger is the role he'd actually fill.
+        gain_now = max(
+            marginal_lineup_gain(
+                my_roster or [],
+                {'Pos': pos, 'Proj Pts': best['Proj Pts'], 'VORP': best.get('VORP')},
+                settings),
+            _contingency_value(best, pos, my_roster, settings, replacement))
 
         # Expected best still on the board at your next pick: walk the
         # position in value order, weighting each player by the chance he is
@@ -445,10 +559,23 @@ def positional_value_add(board, my_roster, settings, next_pick, drafted_names=No
                 # gets you replacement level, not the next name down.
                 expected_points = float(points[-1])
 
-        gain_later = marginal_lineup_gain(
-            my_roster or [], {'Pos': pos, 'Proj Pts': expected_points, 'VORP': None}, settings)
+        # Same treatment for the wait-one-turn side, so the subtraction below
+        # stays a difference of two like quantities rather than a starter
+        # value minus a depth value.
+        expected_ceiling = None
+        if 'Ceiling' in pool.columns and pd.notna(best.get('Ceiling')) and best['Proj Pts']:
+            # Scale the best player's ceiling-to-projection ratio onto the
+            # weaker player you'd expect to be left.
+            ratio = float(best['Ceiling']) / float(best['Proj Pts'])
+            expected_ceiling = expected_points * ratio
+        gain_later = max(
+            marginal_lineup_gain(
+                my_roster or [], {'Pos': pos, 'Proj Pts': expected_points, 'VORP': None},
+                settings),
+            _contingency_value({'Proj Pts': expected_points, 'Ceiling': expected_ceiling},
+                               pos, my_roster, settings, replacement))
 
-        value_add = gain_now - gain_later
+        value_add = gain_now - wait_weight * gain_later
         rows.append({
             'Pos': pos,
             'Best available': best['Player'],

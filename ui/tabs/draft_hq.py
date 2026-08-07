@@ -41,7 +41,7 @@ from data.draft_sim import (
 from data.draft_projections import build_projected_board
 from data.draft_sos import build_team_sos, attach_sos_to_board, adp_quartiles, WEEK_PRESETS
 from data.draft_intel import (
-    classify_strategy, pick_intel, outcome_distribution, roster_percentile,
+    pick_intel, outcome_distribution, roster_percentile,
     positional_run_pressure, positional_value_add,
 )
 from data.ffa_import import load_ffa_import, save_ffa_import, merge_ffa_into_board
@@ -966,30 +966,6 @@ def _render_positional_scarcity(available, settings):
 
 
 
-def _render_strategy_panel(settings, roster=None):
-    """
-    The archetype your picks have actually committed you to.
-
-    Descriptive, not prescriptive, on purpose - "you are two picks into Zero
-    RB" is a fact you can act on, where an abstract recommendation mid-draft
-    is just noise competing with the board. It also makes the pick odds
-    below readable, since what counts as a good next pick depends entirely
-    on which shape you're already building.
-    """
-    mine = _my_roster() if roster is None else roster
-    strategy = classify_strategy(mine, settings)
-    if not strategy['primary']:
-        st.caption("Not classified yet — make a pick or two.")
-        return
-    confidence = strategy['confidence']
-    st.markdown(f"### {strategy['primary']}")
-    st.caption(strategy['label'])
-    st.progress(min(1.0, confidence), text=f"confidence {confidence:.0%}")
-    alternates = [c for c in strategy['candidates'][1:] if c['weight'] > 0.08]
-    if alternates:
-        st.caption("Or pivot to: " + ", ".join(f"{c['id']} ({c['weight']:.0%})" for c in alternates))
-
-
 def _render_pick_odds(board, settings, ctx, dc=None):
     """
     What positions actually get taken at your upcoming picks - overall, and
@@ -1297,6 +1273,18 @@ POSITION_FILTERS = [
 POS_FILTER_KEY = 'dhq_pos_filter'
 
 
+def _current_position_filter():
+    """
+    The active filter as (positions, label), without drawing anything.
+
+    Split from the buttons because the recommendation banner is scoped to
+    this filter but renders ABOVE it, so the state has to be readable before
+    the controls exist.
+    """
+    current = st.session_state.get(POS_FILTER_KEY, 'All')
+    return dict(POSITION_FILTERS).get(current), current
+
+
 def _render_position_filter():
     """
     A row of buttons rather than a dropdown.
@@ -1370,8 +1358,15 @@ def _render_recent_picks_strip(picks, num_teams, current_pick, round_no=None,
 
     if round_no is None:
         round_no = (int(current_pick) - 1) // max(int(num_teams), 1) + 1
+    # "In N picks" rather than only the pick number: on the clock you're
+    # deciding whether a player comes back to you, and the answer is about
+    # the GAP, not the absolute pick number. Working it out by subtracting
+    # two three-digit numbers is exactly the arithmetic a draft clock
+    # shouldn't make you do.
+    away = max(0, int(next_pick) - int(current_pick)) if next_pick else None
     stats = [('PICK', str(int(current_pick))), ('ROUND', str(int(round_no))),
-             ('YOU’RE UP', str(int(next_pick)) if next_pick else '—')]
+             ('YOU’RE UP', str(int(next_pick)) if next_pick else '—'),
+             ('IN', 'NOW' if away == 0 else (f"{away}" if away is not None else '—'))]
     status = "".join(
         f"<div class='rp-stat'><span class='rp-stat-k'>{k}</span>"
         f"<span class='rp-stat-v'>{v}</span></div>" for k, v in stats)
@@ -1483,6 +1478,7 @@ def _draft_context(board, settings, ctx, mode):
             'available': refresh_pick_context(avail, avail_pick, state['pick_no']),
             'current_pick': state['pick_no'],
             'next_pick': state['pick_no'], 'avail_pick': avail_pick,
+            'picks_left': max(0, state['rounds'] - len(my_roster)),
             'num_teams': state['num_teams'], 'my_slot': state['my_slot'],
             'complete': state['complete'],
             'on_clock_me': team_on_clock(state) == state['my_slot'],
@@ -1503,6 +1499,7 @@ def _draft_context(board, settings, ctx, mode):
         'available': refresh_pick_context(available, avail_pick, current),
         'current_pick': current,
         'next_pick': ctx['next_pick'], 'avail_pick': avail_pick,
+        'picks_left': max(0, ctx['rounds'] - len(_my_roster())),
         'num_teams': settings['num_teams'], 'my_slot': settings['my_slot'],
         'complete': False, 'on_clock_me': True,
     }
@@ -1571,7 +1568,8 @@ def _render_positional_value_add(board, settings, dc):
     # `board` here is already the available pool for whichever draft is
     # running, so nothing further needs excluding.
     rows = positional_value_add(board, dc['my_roster'], settings, dc['avail_pick'],
-                                drafted_names=set())
+                                drafted_names=set(),
+                                picks_left=dc.get('picks_left'))
     if not rows:
         return
     from config import get_position_color, get_position_chip_bg
@@ -1658,19 +1656,41 @@ def _render_draft_room(board, settings, ctx):
                      hide_index=True, height=df_auto_height(len(grades)))
 
     round_no = (dc['current_pick'] - 1) // max(dc['num_teams'], 1) + 1
-    _render_recent_picks_strip(dc['picks'], dc['num_teams'], dc['current_pick'],
-                               round_no=round_no, next_pick=dc['next_pick'])
+    # The board lives beside the strip rather than in an expander at the
+    # bottom of the page: it's a glance-at-it-mid-pick view ("who's hoarding
+    # backs", "is the turn about to strip receivers"), and a view you have
+    # to scroll past the whole draft table to reach may as well not exist
+    # while a clock is running. A popover keeps it one click away and costs
+    # no vertical space when closed.
+    strip_col, board_col = st.columns([9, 1.5], vertical_alignment="center")
+    with strip_col:
+        _render_recent_picks_strip(dc['picks'], dc['num_teams'], dc['current_pick'],
+                                   round_no=round_no, next_pick=dc['next_pick'])
+    with board_col:
+        with st.popover("🗂 Draft board", width="stretch"):
+            _render_draft_board_grid(dc['picks'], dc['num_teams'], dc['my_slot'],
+                                     settings['draft_type'])
     if mode == "Live draft":
         _render_run_pressure(settings)
 
     _render_positional_value_add(dc['available'], settings, dc)
-    positions, label = _render_position_filter()
+    # Recommendation directly under the positional cards, filter buttons
+    # below it: the cards say which position to spend the pick on and the
+    # banner names the player, so they read as one thought. The filter is a
+    # control, and controls belong next to the thing they filter - which is
+    # the board underneath, not the answer above.
+    #
+    # The filter still has to be READ first, since the banner is scoped to
+    # it, so its state comes out of session_state here and the buttons that
+    # set it are drawn afterwards.
+    positions, label = _current_position_filter()
     # Scoped to what's actually left in THIS draft, not to the full board.
     # Reading the live tracker here was the bug that had a mock ten rounds
     # deep still recommending the consensus 1.01: in a mock, the live
     # tracker is empty, so "available" was the entire preseason board.
     recommended = _render_single_recommendation(dc['available'], settings, dc['my_roster'],
                                                 dc['avail_pick'], positions, label)
+    _render_position_filter()
 
     action = st.columns([1.3, 1.3, 4.4])
     if mode == "Mock draft":
@@ -1705,12 +1725,7 @@ def _render_draft_room(board, settings, ctx):
         # to be read alongside.
         st.markdown("<div style='height:52px'></div>", unsafe_allow_html=True)
         _render_roster_slots(settings, roster=dc['my_roster'])
-        st.markdown("---")
-        _render_strategy_panel(settings, roster=dc['my_roster'])
 
-    with st.expander("🗂 Full draft board", expanded=False):
-        _render_draft_board_grid(dc['picks'], dc['num_teams'], dc['my_slot'],
-                                 settings['draft_type'])
     with st.expander("📊 Pick odds & positional scarcity", expanded=False):
         _render_pick_odds(board, settings, ctx, dc)
         _render_positional_scarcity(dc['available'], settings)

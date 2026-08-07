@@ -328,11 +328,40 @@ surplus in a vacuum; VOLS is closer to how drafts actually behave, since
 drafters fill their own dedicated slots before they think about flex. High
 VOLS with low VORP means the room will draft him earlier than he's worth.
 
-**Streaming baseline.** At QB/K/DST the replacement bar is raised to what
-streaming the waiver wire actually returns, measured from history — but only
-ever *raised*. If the measured streaming value comes out below the last
+**Streaming baseline.** At QB/**TE**/K/DST the replacement bar is raised to
+what streaming the waiver wire actually returns, measured from history — but
+only ever *raised*. If the measured streaming value comes out below the last
 rostered player (which happens in superflex, where the free pool really is
 barren), the standard baseline is already the harder test and is kept.
+
+**Tight end was added to that list and it mattered.** The original reasoning
+for excluding it — "leagues roster 60+ of them, so the free pool really is
+replacement level" — is true of running backs and receivers and simply false
+of tight ends. A 12-team league starting one TE rosters roughly fifteen,
+against 32 NFL starters, so ~17 startable tight ends sit free all season.
+That is quarterback's structure, not a receiver's.
+
+Measured, streaming a tight end returns **167** points against a standard
+TE13 baseline of **156**. The eleven points in between were the whole
+problem: every tight end from about TE8 to TE14 carried positive VORP,
+floated 30–40 picks above his ADP, and the board went on recommending
+another one deep into the draft.
+
+Median `Value vs ADP` by round, before and after (positive = the board
+thinks he's a bargain; a healthy board is near zero across positions):
+
+| ADP band | QB | RB | WR | TE **before** | TE **after** |
+|---|---|---|---|---|---|
+| R1–2 | — | −2 | 0 | +3 | −1 |
+| R3–5 | +16 | −1 | −5 | +6 | +2 |
+| R6–8 | +14 | −17 | −10 | **+16** | +10 |
+| R9–12 | −21 | −48 | −30 | **+18** | **+1** |
+| R13+ | −75 | −80 | −41 | −12 | −19 |
+
+Settings-sensitive without special-casing, because the measurement takes the
+rostered count as input: with a 0.5 TE premium the bar moves to **201**, and
+in a 2-TE league more get rostered, the free pool thins, and tight ends
+correctly regain their surplus.
 
 One bug worth recording: the first version defined "rostered" by *final*
 season totals, so the free pool was systematically the worst players — a
@@ -475,11 +504,79 @@ fantasy-playoffs (weeks 15–17) SOS are different questions.
 For each position:
 
 ```
-value_add(pos) = marginal_lineup_gain(best available now)
-               − marginal_lineup_gain(expected best at your next pick)
+slot_value(p) = max( marginal_lineup_gain(p),          # as a starter
+                     contingency_value(p) )            # as depth
 
-Team %       = value_add / projected_full_lineup_points × 100
+value_add(pos) = slot_value(best available now)
+               − wait_weight × slot_value(expected best at your next pick)
+
+Team %        = value_add / projected_full_lineup_points × 100
 ```
+
+**Depth is priced, not ignored.** `marginal_lineup_gain` is exactly zero once
+every starting slot is full, so the panel used to read 0% for all six
+positions through the entire back half of a draft. That is a modelling gap,
+not a display one — a bench receiver and a third tight end are worth
+visibly different amounts.
+
+`contingency_value` fills it, and is built as an **option**, because that is
+what a late pick is. You are not stuck with a bust: you drop him and stream
+the position, so the downside is bounded near zero while the upside is a
+starter you didn't pay for. It is `E[max(X − waiver, 0)]` with X normal
+around the projection, spread taken from the board's own Ceiling — which is
+why high-variance late running backs price above safe low-variance backups.
+
+That option only pays in weeks he'd actually be in your lineup, which is
+`expected_start_share` (§3.2b). It is the whole answer to *should I take
+another tight end*.
+
+**The wait weight.** "The cost of waiting" presumes you can wait. With one
+pick left there is no next turn, so the value of spending it is the *level*,
+not the drop-off. `wait_weight = (picks_left − 1) / picks_left` — 0.9 at ten
+picks out, so early-round behaviour is unchanged, and 0 on your last pick,
+which is what makes the panel keep saying something useful late instead of
+collapsing to six zeros. Worked example, 12-team, from a real mock:
+
+| | R1 | R5 | R9 | R12 | R14 |
+|---|---|---|---|---|---|
+| top card | RB 8.7% | RB 2.3% | K 1.3% | K 2.3% | K 4.1% |
+| TE | 1.8% | 1.0% | 0.0% | 0.1% | 0.1% |
+
+TE goes to zero and stays there the moment a second one is rostered.
+
+### 3.2b Roster depth — `expected_start_share`
+
+How much of the season the *n*-th player you own at a position spends in
+your starting lineup. Within the slots a position occupies he starts
+whenever he's available; past them he is contingency, entering only when
+enough players above him are out — a binomial tail on a measured absence
+rate (share of a season a *draftable* player misses: QB 26%, RB 21%, WR 20%,
+TE 22%, plus a bye).
+
+The absence rates are near-identical across positions, so **slot count does
+all the work** — and it is the whole reason a second tight end and a third
+receiver are not the same pick:
+
+| | you own 1 | 2 | 3 | 4 |
+|---|---|---|---|---|
+| **TE** (1.0 slots) | 1.00 | 0.27 | 0.00 | 0.00 |
+| **RB** (2.0) | 1.00 | 1.00 | 0.47 | 0.07 |
+| **WR** (3.0) | 1.00 | 1.00 | 1.00 | 0.60 |
+
+A third receiver walks into a flex slot nearly every week. A second tight
+end plays about three weeks a year and a third plays none.
+
+Bench depth at a **streamable** position is further cut to 20%: the week
+your quarterback is out there are twenty free ones, so you never needed to
+roster the cover. Without that, the recommendation panel named the same
+backup QB in six straight rounds of a 1QB league.
+
+Feeds `positional_value_add` and `recommend_picks`. In the latter, a
+position you effectively cannot play another of is dropped from suggestions
+outright rather than merely scaled — VONA measures what you lose by
+*waiting*, and you lose nothing by waiting on a player who would never enter
+your lineup. Positions with a real starting need are exempt, and asking for
+one explicitly via the position buttons still shows its best available.
 
 **Why a difference and not a level.** The best receiver available is always
 worth a lot in absolute terms, so ranking positions by "how good is the best

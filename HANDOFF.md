@@ -227,14 +227,22 @@ the same filenames. Weekly rankings are uploaded per-session via the Weekly Rank
   - `db_playerids.csv` → the cross-platform ID crosswalk AND **birthdates**, which is
     where the aging curve's ages come from (92% board coverage).
   - `values-players.csv` → dynasty trade values.
-- **ADP has a preference chain** (`fetch_adp`): uploaded CSV → FFA import → Fantasy
-  Football Calculator → ECR-as-estimate. FFC is LAST deliberately — its ADP comes from
-  mock drafts run on its own free public site and skews casual (TEs and QBs slide later
-  there than in real drafts). The user tested it and called it "way off"; that was
-  correct. **Sleeper ADP was removed entirely** — its `search_rank` is a popularity
-  ordering, not ADP, and it put a QB at overall #2. When nothing answers, ECR stands in
-  so availability still works, and `ADP_SOURCE_NOTES` tells the user what the active
-  source actually measures.
+- **ADP has a preference chain** (`fetch_adp`): uploaded CSV → FFA import → FantasyPros
+  consensus ADP (live) → FantasyPros export (local) → ECR-as-estimate.
+  - **Fantasy Football Calculator is NOT in the automatic chain** — it's selectable by
+    hand and nothing else. Its ADP comes from free mock drafts on its own site and drifts
+    hard from real drafts (TEs and QBs slide a full round or more). The user tested it and
+    called it "way off"; that was correct, and everything downstream (`Value vs ADP`,
+    `Avail Next %`, `VONA`, the opponent model) inherits the error while still looking
+    authoritative.
+  - **The local FantasyPros path is the draft-night floor.** The ranking CSVs already in
+    `rankings/` carry an `ECR VS. ADP` column, which is exactly (ADP − consensus rank), so
+    ADP is recoverable offline as `RK + that difference`. Draft night is the worst
+    possible moment to find a site unreachable.
+  - **Sleeper ADP was removed entirely** — its `search_rank` is a popularity ordering, not
+    ADP, and it put a QB at overall #2.
+  - When nothing answers, ECR stands in so availability still works, and
+    `ADP_SOURCE_NOTES` tells the user what the active source actually measures.
 - **nflverse injuries** — short TTL (a Saturday IR move should invalidate a board within
   the hour). Falls back a season at a time: asking for the season you're DRAFTING raises
   "Season must be between 2009 and 2025" every single time during draft season, because
@@ -449,7 +457,11 @@ deliberately independent, takes a scoring dict, and is the only one the draft st
   indexed by a consensus that already priced age, so adjusting both halves charges a
   33-year-old twice. The symmetric young-player boost was tested and does literally
   nothing (rank agreement identical to three decimals); don't re-add it without new
-  evidence.
+  evidence. **Age matching needs a nickname tier**: the ID crosswalk carries LEGAL names
+  and the consensus feed carries JERSEY names (Kenneth/Kenny Gainwell, Andres/Andy,
+  Chigoziem/Chig), and no age means no aging markdown at all. Keyed on last name + first
+  three letters + position — a first-INITIAL version recovered four real nicknames and
+  four strangers, which is not a trade worth making for a silent multiplier.
 - **Yardage bonuses** (100/150/200/250 rush+rec, 300/400/500/600 pass, cumulative or
   highest-only) need per-GAME yardage from a season total, so each player's weekly yardage
   is modelled as a **gamma distribution** with a position-typical CV (rushing 0.62,
@@ -466,6 +478,21 @@ deliberately independent, takes a scoring dict, and is the only one the draft st
   margin, which is exactly what changes with settings). `VORP` vs the first unstarted
   player; `VOLS` vs the last dedicated-slot starter; `VONA` vs the EXPECTED best player
   still there at your next pick. VONA is the one that resolves draft-room paralysis.
+- **`STREAMABLE_POSITIONS` includes TE**, which is not obvious and was a real fix. The
+  reasoning that excluded it ("leagues roster 60+ of them") is true of RB/WR and false of
+  TE: a 12-team league starting one rosters ~15 against 32 NFL starters, so ~17 startable
+  TEs sit free all year. That's quarterback's structure, not receiver's. Streaming returns
+  167 against a TE13 baseline of 156, and those 11 points were the whole TE distortion —
+  every TE from ~TE8 to TE14 carried positive VORP and floated 30-40 picks above ADP.
+  Settings-sensitive without special-casing (a 0.5 TE premium moves the bar to 201).
+- **Roster depth is priced** — `expected_start_share(pos, depth, slots, absence)`: how
+  much of a season the nth player you own at a position actually spends in your lineup.
+  Absence rates are near-identical across positions (QB 26%, RB 21%, WR 20%, TE 22%), so
+  SLOT COUNT does all the work: a 3rd WR fills a flex nearly every week (1.00), a 2nd TE
+  plays ~3 weeks (0.27), a 3rd plays none (0.00). Recommendations DROP a position you
+  can't play another of rather than scaling it down — VONA measures what you lose by
+  waiting, and you lose nothing waiting on a player who'd never enter your lineup.
+  (Symptom before the fix: the same backup QB recommended six rounds running.)
 - **`Avail Next %`** — normal survival function over ADP. This is the column that changes
   how you draft, and the user reported it broken twice before it was actually fixed
   (gotcha #22).
@@ -485,7 +512,12 @@ deliberately independent, takes a scoring dict, and is the only one the draft st
   model. `marginal_lineup_gain(best available now) − marginal_lineup_gain(expected best at
   next pick)`, over `_projected_full_lineup`. It is a DIFFERENCE, not a level, and that's
   the whole point: ranking by "how good is the best one available" just re-sorts by raw
-  scoring and says take a QB every time.
+  scoring and says take a QB every time. Two corrections keep it from reading 0% once your
+  lineup fills: bench depth carries an OPTION value (`E[max(X − waiver, 0)]` off the
+  board's own Ceiling — a late pick is an option, you drop a bust and stream), and the
+  wait-one-turn term is discounted by `(picks_left − 1) / picks_left`, because "the cost of
+  waiting" presumes you CAN wait and on your last pick you can't. Early rounds are
+  unchanged by construction (0.9 at ten picks out).
 - **Mock simulator** (`draft_sim.py`) — bots draft off **Board Rank** with softmax
   exploration, NOT off marginal lineup gain (gotcha #26). `_legal_positions` enforces
   starters-before-backups and counts **dedicated slots only** for the backup ladder

@@ -40,7 +40,6 @@ from data.draft_sim import (
 )
 from data.draft_projections import build_projected_board
 from data.draft_sos import build_team_sos, attach_sos_to_board, adp_quartiles, WEEK_PRESETS
-from data.draft_weekly import attach_consistency
 from data.draft_season_sim import grade_roster_wins, simulate_seasons
 from data.draft_intel import (
     pick_intel, outcome_distribution, roster_percentile,
@@ -76,7 +75,7 @@ BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'FP Tier', 'Auction $',
     'Proj Pts', 'VORP', 'VONA',
     'FFA Rank', 'ADP', 'ECR', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
-    'Risk', 'Start %', 'Boom %', 'Health', 'SOS', 'Bye',
+    'Risk', 'Health', 'SOS', 'Bye',
 ]
 
 
@@ -547,9 +546,6 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _settings, cache_key):
                          scoring_ppr=float(scoring.get('rec', 1.0)))
     board = attach_sos_to_board(board, sos)
     board = adp_quartiles(board)
-    # How his points ARRIVE, which nothing else on the board describes: every
-    # other spread here is a season-total percentile.
-    board = attach_consistency(board, _settings)
 
     # FFA's ranking sits beside VORP and VONA as just another column, rather
     # than in a tab of its own. Two independent rankings are most useful read

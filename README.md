@@ -10,9 +10,9 @@ Fantasy football analytics and matchup intelligence, built with [Streamlit](http
 - **Risers / Waiver Wire** — biggest week-over-week percentile jumps.
 - **Rookie Watch** — rookie performance leaderboard.
 - **Weekly Rankings** — upload your own FantasyPros export and compare against this app's own recent-form ranking.
-- **VORP Draft Sheet** — value-over-replacement draft board with a configurable scoring/roster model, plus a live draft tracker (Sleeper sync or pasted picks).
 - **Live Odds** — game lines and player props via [The Odds API](https://the-odds-api.com/).
 - **Player Compare** — two players, one overlaid percentile radar/bar chart, each in their own team color.
+- **Draft HQ** — a full draft board built on its own projection model (rank curves blended with each player's own usage rates, aged and injury-adjusted), valued by VORP/VONA against a league-settings replacement level, blended with market ADP/ECR. Runs live or mock drafts with a draft tracker (Sleeper sync or pasted picks) and simulates the resulting roster to a win total.
 
 ## Running locally
 

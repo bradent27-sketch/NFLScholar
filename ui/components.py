@@ -72,13 +72,14 @@ def skeleton_loader(kind='table', **kwargs):
 
 def get_drafted_players_clean_keys():
     """
-    Clean-name keys (see data.utils.clean_name_exact) for the VORP Draft
-    Sheet's Live Draft Tracker set (st.session_state['drafted_players'],
-    populated by Sleeper sync / pasted picks / manual marking), so Player
-    Search and Rookie Watch can filter drafted players out without needing
-    an exact string match against whatever name format each tab's own data
-    happens to use - the tracker stores names in the VORP sheet's own
-    format, which isn't guaranteed identical to every other tab's.
+    Clean-name keys (see data.utils.clean_name_exact) for the app-wide
+    drafted set (st.session_state['drafted_players'], kept in step by
+    Draft HQ from its own draft state - Sleeper sync, pasted picks, manual
+    marking, or a mock), so Player Search and Rookie Watch can filter
+    drafted players out without needing an exact string match against
+    whatever name format each tab's own data happens to use - the set
+    stores names in the draft board's format, which isn't guaranteed
+    identical to every other tab's.
     """
     from data.utils import clean_name_exact
     drafted = st.session_state.get('drafted_players', set())
@@ -762,12 +763,12 @@ POSITION_FILTER_OPTIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'FLEX (RB/WR/TE)']
 
 def position_filter_multiselect(df, key, pos_col='Pos', label="Filter by position"):
     """
-    Fixed QB/RB/WR/TE/K + FLEX shortcut position filter, shared by Rankings
-    and the VORP Draft Sheet - previously each built its own multiselect off
-    whatever position codes happened to appear in that particular table's
-    data, which meant no dedicated way to pull up "flex-eligible" players
-    (RB/WR/TE together) in one click without hand-picking three positions
-    every time. Returns the filtered df (unfiltered if nothing is selected).
+    Fixed QB/RB/WR/TE/K + FLEX shortcut position filter - the alternative
+    is building the multiselect off whatever position codes happen to
+    appear in a particular table's data, which leaves no dedicated way to
+    pull up "flex-eligible" players (RB/WR/TE together) in one click
+    without hand-picking three positions every time. Returns the filtered
+    df (unfiltered if nothing is selected).
     """
     selected = st.multiselect(label, POSITION_FILTER_OPTIONS, default=[], key=key)
     if not selected:

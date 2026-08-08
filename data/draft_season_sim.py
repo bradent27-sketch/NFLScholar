@@ -293,7 +293,7 @@ def simulate_seasons(rosters, board, settings, n_sims=200, seed=17,
 
     rng = np.random.default_rng(seed)
     lookup = _board_lookup(board)
-    pools, _ = build_weekly_pools(settings['scoring'], settings.get('baseline_season', 2025))
+    pools = build_weekly_pools(settings['scoring'], settings.get('baseline_season', 2025))
     absence = measure_absence_rates(settings.get('baseline_season', 2025))
     roster_cfg = settings['roster']
 

@@ -906,24 +906,6 @@ def _build_master_pff_grades(d):
 
 
 @st.cache_data
-def load_ngs_rushing(year):
-    """
-    NGS Rush Yards Over Expected - the season-total row (week == 0 is
-    nflverse's convention for a season aggregate row in this export, not a
-    real week 0) for every RB with a qualifying rush-attempt volume. Used to
-    add a scheme-independent efficiency signal to RB tables (Risers, Rookie
-    Watch, VORP sheet) alongside the existing volume-based stats.
-    """
-    try:
-        df = nflreadpy.load_nextgen_stats([year], stat_type='rushing').to_pandas()
-        df = df[df['week'] == 0].copy()
-        df['clean_merge_name'] = clean_name_for_merge(df['player_display_name'])
-        return df.drop_duplicates(subset=['clean_merge_name'])
-    except Exception:
-        return pd.DataFrame()
-
-
-@st.cache_data
 def load_pfr_pass_block(year):
     """
     PFR advanced passing stats (season level) - times_pressured/pressure_pct

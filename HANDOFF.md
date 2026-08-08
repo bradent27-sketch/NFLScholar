@@ -6,8 +6,9 @@ named `gridiron-hub`). Last major work pass: July 2026 "pro polish" pass (perf f
 UI elevation toward a pro sports-site look - stat tile grid, hero stat band, team
 banners, and the react-aria CSS-selector migration in gotcha #15, which had silently
 killed the previous pass's tab/input styling). All 9 tabs at the time verified working
-end-to-end (AppTest per-tab sweep + live browser click-through, zero exceptions). There
-are 10 now — Draft HQ was added in the August 2026 pass below.
+end-to-end (AppTest per-tab sweep + live browser click-through, zero exceptions). Still 9
+now — the August 2026 pass below added Draft HQ and deleted the VORP Draft Sheet it
+superseded.
 
 Second July 2026 pass (same week): Player Search's fantasy-points chart converted from a
 bar strip to an SVG line chart and moved to the very top of the player profile; the WR
@@ -15,7 +16,8 @@ percentile-bar chart's value labels no longer crowd/overlap near the 100th perce
 the skill radar grid's spoke labels/titles got more breathing room; the Career Totals
 table is now centered in a narrower column instead of stretched full-bleed; Defensive
 Yield's coverage-radar title is a real styled/centered component
-(`ui.components.render_matchup_title`); VORP Draft Sheet moved to the last tab; Player
+(`ui.components.render_matchup_title`); VORP Draft Sheet moved to the last tab (and was
+deleted outright in the August pass); Player
 Compare now overlays both players on ONE radar/bar chart in their own team colors instead
 of two separate side-by-side charts (`render_percentile_radar_grid_compare` /
 `render_percentile_bars_figure_compare` in `ui/player_snapshot.py`); and the snap-count
@@ -120,14 +122,22 @@ docs/
   draft_hq_methodology.md   Full derivation reference for Draft HQ.
 ```
 
-**Tabs** (order = `config.TAB_LABELS`): Player Search, **Draft HQ**, NFL Depth Charts,
+**Tabs** (order = `config.TAB_LABELS`): Player Search, NFL Depth Charts,
 Defensive Yield Schemes, Risers/Waiver Wire, Rookie Watch, Weekly Rankings, Live Odds,
-Player Compare, VORP Draft Sheet.
+Player Compare, **Draft HQ**.
 
-Draft HQ sits at index 1, right after Player Search, because it's the tab the user
-actually opens in August. The old **VORP Draft Sheet is still present and unchanged** at
-the end - it is a different, much simpler thing (last season's pace × 17, explicitly
-labeled a volume stand-in) and was deliberately not deleted or merged.
+Nine tabs, not ten. **VORP Draft Sheet was deleted** (August 2026) once Draft HQ made it
+redundant - it computed replacement-level VORP off last season's per-game pace × 17,
+which is a strict subset of what Draft HQ does. Deleted with it: `build_vorp_draft_sheet`,
+`build_efficiency_volume_data` + `render_efficiency_volume_quadrants` (the EPA
+efficiency-vs-volume quadrant chart, which lived only on that tab), `load_fantasypros_rankings`,
+`_merge_ryoe` and `load_ngs_rushing`. Recover any of it from git history if wanted.
+
+Draft HQ sits LAST despite being the most capable tab: it answers a question that's only
+live for a week or two a year, and every other tab is used all season. `drafted_players`
+in session state - which Player Search and Rookie Watch filter on via
+`ui.components.get_drafted_players_clean_keys` - is now maintained by Draft HQ (it used
+to be written by the VORP tab's Live Draft Tracker too).
 
 **Tab wiring** (app.py): `st.tabs(TAB_LABELS, key="active_tab", on_change="rerun")` —
 Streamlit ≥1.59 syntax. Each tab's body only runs when `tabN.open` is True (lazy
@@ -283,11 +293,10 @@ automates a login** — `save_ffa_import` reads a file the user hands over, once
   makes under 40 / 40-49 / 50+ yards via the `fg_made_X_Y` distance-bucket columns, 1 pt
   per PAT) - nflverse's own `fantasy_points`/`fantasy_points_ppr` columns are offense-only
   and never include kicking, so kickers scored a flat 0 every week app-wide before this,
-  identical in kind to the IDP gap noted below. `build_vorp_draft_sheet` has its OWN
-  separate from-scratch scoring formula (does not reuse this column) and needed the same
-  fix independently - see below. `score_projected_stats` is a third dict-of-scalars twin
-  used by the projection model — **all three are kept in sync manually**; change one,
-  check the others.
+  identical in kind to the IDP gap noted below. `score_projected_stats` is a second
+  dict-of-scalars twin used by the projection model — **the two are kept in sync
+  manually**; change one, check the other. (A third copy lived in
+  `build_vorp_draft_sheet` until that tab was deleted.)
 - **Projection model** (Player Search → "Next Game Projection") —
   `build_player_projection`: per-raw-stat blend of last-4-games form (60%) + season
   average (40%), × opponent-allowed multiplier (`build_stat_allowed_matrix`, clipped
@@ -306,14 +315,9 @@ automates a login** — `save_ffa_import` reads a file the user hands over, once
   RZ target share / carry share / TDs, joined by gsis_id then mapped back to the
   caller's name column. `_merge_redzone_share` attaches it to boards
   (WR/TE → Tgt share, RB → Rush share; replaced RYOE on Rookie Watch).
-- **VORP** — `build_vorp_draft_sheet`: last season's per-game pace × 17, replacement
-  level by league settings, 4-game minimum sample. Explicitly labeled a volume stand-in,
-  not a projection. Rankings comparison (FantasyPros draft / custom upload) is merged
-  into the same table on the VORP Draft Sheet tab. Includes K (League Settings has a "K
-  starters" input, default 1) with the same hardcoded distance-tiered scoring as
-  apply_scoring_and_percentiles above - this function builds `proj_points` from its own
-  raw stat sums rather than reusing the shared `fantasy_points` column, so it needed the
-  fix applied separately; every kicker projected to exactly 0 and sat at VORP 0 before.
+- **VORP** — now lives entirely in Draft HQ (`data/draft_board.py`), off real projections
+  rather than last season's pace. The old `build_vorp_draft_sheet` was deleted with its
+  tab.
 - **Recent form** — `build_recent_form_rank` (last N games avg FPTS, min 2 games) — the
   Weekly Rankings tab's internal baseline. Draft value and weekly form are deliberately
   separate comparisons on separate tabs.

@@ -188,19 +188,22 @@ TAB_DEFENSIVE_YIELD = "DEFENSIVE YIELD SCHEMES"
 TAB_RISERS = "RISERS / WAIVER WIRE"
 TAB_ROOKIE_WATCH = "ROOKIE WATCH"
 TAB_RANKINGS = "WEEKLY RANKINGS"
-TAB_VORP_DRAFT = "VORP DRAFT SHEET"
 TAB_LIVE_ODDS = "LIVE ODDS"
 TAB_PLAYER_COMPARE = "PLAYER COMPARE"
 TAB_DRAFT_HQ = "DRAFT HQ"
-# Draft HQ sits second, directly after Player Search, because during draft
-# season it's the tab that gets opened first and stays open - unlike the
-# analysis tabs, it's used under time pressure with a pick clock running.
-# The older VORP Draft Sheet stays at the end rather than being deleted:
-# it's fully offline (local CSVs only) where Draft HQ is live-fetched, so
-# it remains the fallback when there's no network.
+# Draft HQ sits LAST, deliberately. It's the most capable tab in the app,
+# but it answers a question that's only live for a week or two a year -
+# every other tab is used all season. Ordering by how good a tab is rather
+# than how often it's opened would push the nine in-season tabs one click
+# further away for eleven months to save a click during one draft.
+#
+# It also absorbed the old VORP Draft Sheet, which is why there are nine
+# labels here and not ten: that tab computed replacement-level VORP off
+# last season's per-game pace, which is a strict subset of what Draft HQ
+# does (real projections, market blend, injury and aging adjustments).
 TAB_LABELS = [
-    TAB_PLAYER_SEARCH, TAB_DRAFT_HQ, TAB_DEPTH_CHARTS, TAB_DEFENSIVE_YIELD, TAB_RISERS,
-    TAB_ROOKIE_WATCH, TAB_RANKINGS, TAB_LIVE_ODDS, TAB_PLAYER_COMPARE, TAB_VORP_DRAFT,
+    TAB_PLAYER_SEARCH, TAB_DEPTH_CHARTS, TAB_DEFENSIVE_YIELD, TAB_RISERS,
+    TAB_ROOKIE_WATCH, TAB_RANKINGS, TAB_LIVE_ODDS, TAB_PLAYER_COMPARE, TAB_DRAFT_HQ,
 ]
 
 # Decimal places per stat, approved list: whole numbers for counting stats

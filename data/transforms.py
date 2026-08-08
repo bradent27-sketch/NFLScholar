@@ -10,34 +10,7 @@ import numpy as np
 import streamlit as st
 
 from data.utils import calculate_percentile, calculate_percentile_qualified, clean_name_exact, clean_name_for_merge
-from data.loaders import load_ngs_rushing, load_pfr_pass_block, load_pfr_def_pressure, load_team_pass_attempts_faced, load_schedule, load_pbp
-
-
-def _merge_ryoe(df, year, name_col='Player', pos_col='Pos'):
-    """
-    Left-merges NGS Rush Yards Over Expected onto a per-player table,
-    RB rows only (blank for every other position, even if the loose name
-    match happens to hit a non-RB row) - loose name match since this is a
-    supplementary efficiency column, not identity-critical data like the
-    two-tier snap-count match in load_year_data.
-    """
-    ngs = load_ngs_rushing(year)
-    if ngs.empty or name_col not in df.columns:
-        df['RYOE'] = np.nan
-        df['RYOE/Att'] = np.nan
-        return df
-    df = df.copy()
-    df['_merge_key'] = clean_name_for_merge(df[name_col])
-    ngs_slim = ngs[['clean_merge_name', 'rush_yards_over_expected', 'rush_yards_over_expected_per_att']].rename(
-        columns={'rush_yards_over_expected': 'RYOE', 'rush_yards_over_expected_per_att': 'RYOE/Att'})
-    df = pd.merge(df, ngs_slim, left_on='_merge_key', right_on='clean_merge_name', how='left')
-    df = df.drop(columns=['_merge_key', 'clean_merge_name'])
-    if pos_col in df.columns:
-        not_rb = df[pos_col] != 'RB'
-        df.loc[not_rb, ['RYOE', 'RYOE/Att']] = np.nan
-    df['RYOE'] = df['RYOE'].round(1)
-    df['RYOE/Att'] = df['RYOE/Att'].round(2)
-    return df
+from data.loaders import load_pfr_pass_block, load_pfr_def_pressure, load_team_pass_attempts_faced, load_schedule, load_pbp
 
 
 def build_redzone_usage(_stats_df, name_col, year):
@@ -105,7 +78,7 @@ def build_redzone_usage(_stats_df, name_col, year):
 
 # Volume floors for the EPA/success-rate stats below - a per-PLAY efficiency
 # metric (unlike this app's existing game-count-based floors, e.g.
-# build_vorp_draft_sheet's MIN_GAMES_FOR_PROJECTION) needs an attempt-count
+# build_recent_form_rank's 2-game minimum) needs an attempt-count
 # floor instead: a QB's EPA/dropback over 8 plays is nearly meaningless
 # noise, and letting a tiny sample land near the top of a percentile ranking
 # would be exactly the kind of small-sample distortion this app already
@@ -246,8 +219,8 @@ def _merge_redzone_share(df, _stats_df, stats_name_col, year, out_name_col='Play
     onto a per-player table - the replacement for RYOE (see build_rookie_watch)
     on boards that mix positions, since RYOE is RB-only and reads as an
     always-blank column for the WRs/TEs that dominate a typical rookie
-    board. Both share columns are position-conditional (blank outside their
-    relevant position), same pattern as _merge_ryoe.
+    board. Both share columns are position-conditional - blank outside
+    their relevant position.
 
     Two separate name-column params on purpose: `stats_name_col` is the
     name column as it exists in `_stats_df` (e.g. 'player_display_name',
@@ -801,69 +774,6 @@ def precompute_league_percentiles(_df, name_field, year):
     return summary
 
 
-@st.cache_data
-def build_efficiency_volume_data(_stats_df, name_col, team_col, year):
-    """
-    Per-player Efficiency (EPA-based) vs. Volume table feeding the VORP
-    sheet's quadrant chart - NFL Savant's own "Efficiency vs. Volume"
-    convention. "Efficiency" and "Volume" mean a position-appropriate stat
-    pair, not the same two columns for everyone: a QB's volume is pass
-    attempts, a receiver's is targets, a runner's is carries - plotting
-    every position against one shared pair of columns would either leave
-    most positions blank or compare unlike things on the same axis.
-
-    Reuses precompute_league_percentiles' already-cached EPA/games_played
-    columns rather than re-deriving EPA from play-by-play a second time.
-    Pass-attempt volume is the one metric not already surfaced as a
-    per-game rate anywhere upstream, so it's aggregated fresh here from
-    the same raw `_stats_df` every other per-game rate in this app derives
-    from.
-
-    Only QB/RB/WR/TE - the only positions build_epa_efficiency attributes
-    a real EPA number to at all (K/OL/DEF have no offensive play-by-play
-    EPA to assign them).
-
-    `_stats_df` underscore-prefixed (not hashed) - see
-    apply_scoring_and_percentiles for why; `year` is the real cache key
-    alongside name_col/team_col (already cheap to hash).
-    """
-    summary = precompute_league_percentiles(_stats_df, name_col, year)
-    if summary.empty or 'position' not in summary.columns:
-        return pd.DataFrame()
-
-    team_map = _stats_df.groupby(name_col, observed=True)[team_col].first() if team_col in _stats_df.columns else pd.Series(dtype=object)
-    att_sum = _stats_df.groupby(name_col, observed=True)['passing_attempts'].sum() if 'passing_attempts' in _stats_df.columns else pd.Series(dtype=float)
-
-    # (efficiency column, existing per-game volume column or None, axis label)
-    pos_metrics = {
-        'QB': ('epa_per_dropback', None, 'Pass Att/G'),
-        'RB': ('epa_per_rush', 'rush_att_per_g', 'Rush Att/G'),
-        'WR': ('epa_per_target', 'targets_per_g', 'Targets/G'),
-        'TE': ('epa_per_target', 'targets_per_g', 'Targets/G'),
-    }
-    MIN_GAMES = 4
-    frames = []
-    for pos, (eff_col, vol_col, vol_label) in pos_metrics.items():
-        if eff_col not in summary.columns:
-            continue
-        keep_cols = [name_col, 'games_played', eff_col] + ([vol_col] if vol_col and vol_col in summary.columns else [])
-        sub = summary[summary['position'] == pos][keep_cols].copy()
-        sub = sub[sub['games_played'] >= MIN_GAMES].dropna(subset=[eff_col])
-        if sub.empty:
-            continue
-        sub['Volume'] = sub[vol_col] if vol_col and vol_col in sub.columns else sub[name_col].map(att_sum) / sub['games_played']
-        sub = sub.dropna(subset=['Volume'])
-        if sub.empty:
-            continue
-        sub = sub.rename(columns={name_col: 'Player', eff_col: 'Efficiency'})
-        sub['Pos'] = pos
-        sub['Vol Label'] = vol_label
-        sub['Team'] = sub['Player'].map(team_map)
-        frames.append(sub[['Player', 'Team', 'Pos', 'Efficiency', 'Volume', 'Vol Label']])
-
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
 def build_recent_trend(_stats_df, name_col, metric='fantasy_points', n_weeks=5):
     """
     Per-player list of their last n_weeks games' `metric` value, oldest to
@@ -893,19 +803,18 @@ def build_recent_form_rank(_stats_df, name_col, team_col, n_weeks=4):
     """
     Recent-form fantasy output per player - average fantasy points over
     just their last n_weeks games played, not a season-long or
-    17-game-extrapolated number like build_vorp_draft_sheet's "Proj Pts".
-    This is the internal baseline the Weekly Rankings tab compares an
-    uploaded weekly ranking against, since a WEEKLY ranking answers "who's
-    producing right now" - a season-long draft-value projection (VORP, on
-    the VORP Draft Sheet tab instead) answers a different question and
-    would be the wrong yardstick for a week-to-week comparison.
+    17-game-extrapolated number. This is the internal baseline the Weekly
+    Rankings tab compares an uploaded weekly ranking against, since a
+    WEEKLY ranking answers "who's producing right now" - a season-long
+    draft-value projection (Draft HQ's board) answers a different question
+    and would be the wrong yardstick for a week-to-week comparison.
 
-    Offense + kickers only, same as build_vorp_draft_sheet/build_rookie_watch
-    - a standard non-IDP league doesn't roster defenders or O-linemen.
-    Requires at least 2 games played, a lighter bar than VORP's 4 (see that
-    function's MIN_GAMES_FOR_PROJECTION comment for the same idea at a
-    higher bar) - this isn't extrapolating a rate to a full season, so a
-    2-game recent sample is a real, if noisy, signal rather than the kind
+    Offense + kickers only, same as build_rookie_watch - a standard non-IDP
+    league doesn't roster defenders or O-linemen.
+    Requires at least 2 games played, a lighter bar than the 4 a
+    season-long projection needs - this isn't extrapolating a rate to a
+    full season, so a 2-game recent sample is a real, if noisy, signal
+    rather than the kind
     of wild single-game outlier VORP's stricter guard exists to avoid.
 
     Not cache_data-decorated - see build_recent_trend's docstring for why
@@ -1014,15 +923,13 @@ def build_risers_report(_stats_df, name_col, team_col, year, min_weeks=2, top_n=
     # as a safety net since any duplicate here is always a bug, never valid
     # data - drop_duplicates keeps the first (already sorted by Pct Jump).
     out = out.drop_duplicates(subset=['Player'])
-    # RYOE (_merge_ryoe) deliberately NOT merged in here - confirmed live
-    # (real 2025 data, real RB rows in this exact report) that it renders
-    # blank for every player: load_ngs_rushing has no local-file fallback
-    # (unlike almost every other source in this app) and its live
-    # nflreadpy.load_nextgen_stats() pull is failing, silently swallowed by
-    # that loader's bare except/empty-DataFrame return. Rather than show a
-    # column that's currently always empty, it's left off this board -
-    # still used by the VORP Draft Sheet (build_vorp_draft_sheet), which
-    # has the identical gap.
+    # NGS Rush Yards Over Expected deliberately NOT merged in here -
+    # confirmed live (real 2025 data, real RB rows in this exact report)
+    # that it rendered blank for every player: unlike almost every other
+    # source in this app it had no local-file fallback, and its live
+    # nflreadpy.load_nextgen_stats() pull is failing. Red-zone carry share
+    # (_merge_redzone_share, off play-by-play) covers the same "is he
+    # actually valuable per touch" question from a source that works.
     return out
 
 
@@ -1109,128 +1016,6 @@ def build_rookie_watch(_stats_df, name_col, team_col, global_rookie_names, year)
         lead_cols = [c for c in ['Player', 'Pos', 'Team', 'Draft Pick', 'Avg FPTS'] if c in summary.columns]
         summary = summary[lead_cols + [c for c in summary.columns if c not in lead_cols]]
     return summary
-
-
-@st.cache_data
-def build_vorp_draft_sheet(_stats_df, name_col, team_col, num_teams, starters, scoring, year):
-    """
-    VORP (Value Over Replacement Player) draft sheet from custom league
-    settings.
-
-    IMPORTANT CAVEAT: "Proj Pts" here is last season's per-game pace
-    extrapolated to a 17-game season - a transparent, simple stand-in for a
-    real projection, not an actual one. A genuine projection system would
-    need injury risk, role/scheme changes, aging curves, etc. Treat this as
-    a volume-based starting point for draft prep, not a finished forecast.
-
-    Players with fewer than 4 games played last season are excluded
-    entirely (see MIN_GAMES_FOR_PROJECTION below) rather than extrapolated -
-    see that constant's comment for why.
-
-    Replacement level per position accounts for FLEX/SUPERFLEX by splitting
-    those slots evenly across their eligible positions (RB/WR/TE for FLEX;
-    QB/RB/WR/TE for SUPERFLEX) - an approximation, not a perfect model of
-    real draft-day positional scarcity, but a reasonable starting point.
-
-    `_stats_df` underscore-prefixed (not hashed) - see
-    apply_scoring_and_percentiles for why; `year` is part of the real cache
-    key alongside num_teams/starters/scoring (already cheap to hash).
-    """
-    if _stats_df.empty or 'week' not in _stats_df.columns:
-        return pd.DataFrame()
-
-    df = _stats_df[pd.to_numeric(_stats_df['week'], errors='coerce').fillna(0) > 0].copy()
-    # Offense + kickers only - a standard redraft board doesn't include
-    # individual defensive players (that's an IDP-league concept this app
-    # doesn't otherwise support), but without this filter every LB/CB/DT/etc.
-    # with 4+ games played showed up in the board and CSV export at VORP 0,
-    # since the replacement-level loop below only ever touches QB/RB/WR/TE.
-    from config import OFFENSE_SKILL_POSITIONS
-    if 'position' in df.columns:
-        df = df[df['position'].isin(OFFENSE_SKILL_POSITIONS)]
-    if df.empty:
-        return pd.DataFrame()
-
-    raw_cols = ['passing_yards', 'passing_tds', 'passing_interceptions', 'rushing_attempts',
-                'rushing_yards', 'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds',
-                'fg_made_0_19', 'fg_made_20_29', 'fg_made_30_39', 'fg_made_40_49', 'fg_made_50_59', 'fg_made_60_',
-                'pat_made']
-    agg_spec = {c: 'sum' for c in raw_cols if c in df.columns}
-    agg_spec['position'] = 'first'
-    agg_spec[team_col] = 'first'
-    agg_spec['week'] = 'nunique'
-
-    season = df.groupby(name_col, observed=True).agg(agg_spec).reset_index()
-    season = season.rename(columns={'week': 'games_played'})
-    # Require a real sample before extrapolating to a 17-game pace - a
-    # player with only 1-2 games has a wildly noisy per-game rate (one huge
-    # or empty game dominates the average), and since replacement level
-    # below is picked by SORTING every eligible player's proj_points, a
-    # single small-sample outlier landing near the cutoff rank would
-    # distort VORP for every full-season player at that position, not just
-    # its own row. 4 games (~1/4 of a season) is a low bar that still keeps
-    # midseason call-ups/trades who got a real run, while dropping
-    # single-game flukes that would otherwise occasionally project as a
-    # top-of-the-board "player" on the strength of one huge game.
-    MIN_GAMES_FOR_PROJECTION = 4
-    season = season[season['games_played'] >= MIN_GAMES_FOR_PROJECTION]
-    if season.empty:
-        return pd.DataFrame()
-
-    pace = 17 / season['games_played']
-    for c in raw_cols:
-        if c in season.columns:
-            season[f'{c}_proj'] = season[c] * pace
-
-    def gp(col):
-        return season[f'{col}_proj'] if f'{col}_proj' in season.columns else 0
-
-    # Kicker scoring - same standard distance-tiered values (3/4/5 pts under
-    # 40 / 40-49 / 50+, 1 pt per PAT) as apply_scoring_and_percentiles'
-    # fantasy_points, not exposed as its own League Settings inputs (same
-    # tradeoff already accepted for IDP scoring elsewhere in this app -
-    # hardcoded, not per-league-configurable). Without this, every kicker
-    # projected to exactly 0 points and sat at VORP 0 regardless of real
-    # production, since neither the raw_cols aggregation nor this formula
-    # had ever included FG/PAT stats at all.
-    fg_short_proj = gp('fg_made_0_19') + gp('fg_made_20_29') + gp('fg_made_30_39')
-    fg_mid_proj = gp('fg_made_40_49')
-    fg_long_proj = gp('fg_made_50_59') + gp('fg_made_60_')
-
-    season['proj_points'] = (
-        gp('passing_yards') * scoring['pass_yd'] + gp('passing_tds') * scoring['pass_td'] +
-        gp('passing_interceptions') * scoring['pass_int'] +
-        gp('rushing_attempts') * scoring['rush_att_bonus'] + gp('rushing_yards') * scoring['rush_yd'] +
-        gp('rushing_tds') * scoring['rush_td'] +
-        gp('receptions') * scoring['rec'] + gp('receiving_yards') * scoring['rec_yd'] +
-        gp('receiving_tds') * scoring['rec_td'] +
-        fg_short_proj * 3 + fg_mid_proj * 4 + fg_long_proj * 5 + gp('pat_made') * 1.0
-    ).round(1)
-
-    flex_positions = ['RB', 'WR', 'TE']
-    superflex_positions = ['QB', 'RB', 'WR', 'TE']
-    flex_share = starters.get('FLEX', 0) / len(flex_positions) if starters.get('FLEX', 0) else 0
-    superflex_share = starters.get('SUPERFLEX', 0) / len(superflex_positions) if starters.get('SUPERFLEX', 0) else 0
-
-    season['VORP'] = 0.0
-    for pos in ['QB', 'RB', 'WR', 'TE', 'K']:
-        rank = max(1, round(num_teams * (starters.get(pos, 0) + (flex_share if pos in flex_positions else 0) + (superflex_share if pos in superflex_positions else 0))))
-        pos_players = season[season['position'] == pos].sort_values('proj_points', ascending=False)
-        if pos_players.empty:
-            continue
-        replacement_value = pos_players.iloc[min(rank, len(pos_players)) - 1]['proj_points']
-        season.loc[season['position'] == pos, 'VORP'] = (season.loc[season['position'] == pos, 'proj_points'] - replacement_value).round(1)
-
-    out = season[[name_col, team_col, 'position', 'games_played', 'proj_points', 'VORP']].copy()
-    out = out.rename(columns={name_col: 'Player', team_col: 'Team', 'position': 'Pos', 'games_played': 'GP (last season)', 'proj_points': 'Proj Pts (17-gm pace)'})
-    out['Player'] = out['Player'].astype(str)
-    out['Team'] = out['Team'].astype(str)
-    out['Pos'] = out['Pos'].astype(str)
-    out = out[out['Player'].str.strip().ne('') & out['Player'].ne('0')]
-    out = out.drop_duplicates(subset=['Player'])
-    out = _merge_ryoe(out, year)
-    out = out.sort_values('VORP', ascending=False)
-    return out
 
 
 def parse_pasted_draft_picks(raw_text):

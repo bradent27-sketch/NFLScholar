@@ -33,7 +33,7 @@ from ui.components import (  # noqa: E402
     render_data_health_sidebar, ensure_pff_imports_dir, render_intro_and_glossary,
 )
 from ui.tabs import (  # noqa: E402
-    player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, vorp_draft, live_odds, player_compare,
+    player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare,
     draft_hq,
 )
 
@@ -73,7 +73,7 @@ render_intro_and_glossary()
 # player row on Risers). It also makes each tab's .open property real
 # (True only for the active tab) instead of always None - every tab below
 # is now skipped entirely unless it's the one currently showing, instead
-# of all 8 tabs' full data-load-and-render pipeline running on every single
+# of every tab's full data-load-and-render pipeline running on every single
 # widget interaction anywhere in the app, which was the actual root cause
 # behind Rookie Watch (and everything else) feeling sluggish.
 #
@@ -84,7 +84,7 @@ render_intro_and_glossary()
 # than pointing at the tab that was actually added.
 _tabs = st.tabs(TAB_LABELS, key="active_tab", on_change="rerun")
 
-_tab_modules = [player_search, draft_hq, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare, vorp_draft]
+_tab_modules = [player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare, draft_hq]
 assert len(_tab_modules) == len(TAB_LABELS), "TAB_LABELS and _tab_modules must stay in sync"
 for _tab, _module, _label in zip(_tabs, _tab_modules, TAB_LABELS):
     if _tab.open:

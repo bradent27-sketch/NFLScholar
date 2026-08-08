@@ -119,9 +119,9 @@ FANTASYPROS_ADP_PAGES = {
 
 # The user's own periodic FantasyPros draft-rankings exports, which carry an
 # "ECR VS. ADP" column - i.e. FantasyPros' consensus ADP, already in the
-# repo. Same three files data/rankings.py reads; duplicated as a mapping
-# here rather than imported so this module stays free of that dependency
-# and a renamed file fails loudly in one place.
+# repo. data/rankings.py parses this same export schema (for the weekly
+# rankings the user uploads), but only this module knows where the
+# season-long files live, so a renamed file fails loudly in one place.
 FANTASYPROS_LOCAL_FILES = {
     'Full PPR': 'rankings/fantasypros_2026_draft_rankings_ppr.csv',
     'Half-PPR': 'rankings/fantasypros_2026_draft_rankings_half_ppr.csv',

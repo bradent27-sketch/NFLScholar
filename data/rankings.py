@@ -1,25 +1,15 @@
 """
-Fantasy Rankings ingestion: FantasyPros draft-rankings CSVs (PPR/Half/Standard,
-refreshed periodically by the user in the same schema) plus arbitrary custom
-ranking uploads, both aligned against this app's own VORP sheet via the
-existing two-tier name matcher so minor naming differences across three
-independent sources don't produce spurious "no match" rows.
+Fantasy Rankings ingestion: uploaded FantasyPros weekly-rankings CSVs plus
+arbitrary custom ranking uploads, aligned against this app's own recent-form
+ranking via the existing two-tier name matcher so minor naming differences
+across independent sources don't produce spurious "no match" rows.
+
+Season-long DRAFT rankings are read straight off disk by data.draft_sources
+for Draft HQ, not here - this module is the weekly/upload side only.
 """
-import os
 import pandas as pd
-import streamlit as st
 
 from data.utils import clean_name_for_merge, clean_name_exact
-
-# Keyed on scoring format, not a hardcoded filename - the user said they'll
-# periodically refresh these with new FantasyPros exports in the same
-# schema, so a drop-in replacement (same 3 filenames) works with no code
-# changes.
-FANTASYPROS_FILES = {
-    'Full PPR': 'rankings/fantasypros_2026_draft_rankings_ppr.csv',
-    'Half-PPR': 'rankings/fantasypros_2026_draft_rankings_half_ppr.csv',
-    'Standard': 'rankings/fantasypros_2026_draft_rankings_standard.csv',
-}
 
 
 def _parse_fantasypros_dataframe(raw_df):
@@ -30,9 +20,10 @@ def _parse_fantasypros_dataframe(raw_df):
     stripped here since the app's own Pos columns elsewhere are bare
     position codes. FantasyPros publishes both season-long DRAFT rankings
     and WEEKLY rankings in this identical shape (a different export, not a
-    different schema) - shared so both load_fantasypros_rankings (fixed
-    local draft-rankings path) and parse_fantasypros_upload (weekly, via
-    file_uploader since that file changes every week) stay in sync.
+    different schema), so this stays a shared helper rather than living
+    inside parse_fantasypros_upload: data.draft_sources reads the same
+    season-long export off disk for Draft HQ's ECR column, and only the
+    weekly side comes in through the uploader.
     """
     raw_df = raw_df.copy()
     raw_df.columns = [c.strip() for c in raw_df.columns]
@@ -50,22 +41,10 @@ def _parse_fantasypros_dataframe(raw_df):
     return out.sort_values('Rank').reset_index(drop=True)
 
 
-@st.cache_data
-def load_fantasypros_rankings(scoring_format):
-    path = FANTASYPROS_FILES.get(scoring_format)
-    if not path or not os.path.exists(path):
-        return pd.DataFrame()
-    try:
-        df = pd.read_csv(path)
-    except Exception:
-        return pd.DataFrame()
-    return _parse_fantasypros_dataframe(df)
-
-
 def parse_fantasypros_upload(uploaded_file):
     """
-    Same FantasyPros column schema as load_fantasypros_rankings, but read
-    from an uploaded file instead of a fixed local path - for weekly
+    Same FantasyPros column schema as _parse_fantasypros_dataframe expects,
+    but read from an uploaded file instead of a fixed local path - for weekly
     rankings, which change every week, a file_uploader is a better fit than
     a filename the user has to rename each time (unlike the season-long
     draft rankings, which only need refreshing a few times a year).

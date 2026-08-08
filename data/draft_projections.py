@@ -631,6 +631,74 @@ INJURY_ADJUSTED_POSITIONS = {'RB', 'TE'}
 # own carry and target rates are the stickiest inputs it has.
 
 
+# FREE AGENCY. A player with no NFL team is not a discounted version of a
+# starter - he is a bet that someone signs him, and then a second bet about
+# what role he gets. The board had neither bet priced: it read his last
+# season's usage rates off local history exactly as it would for a starter,
+# and Tyreek Hill came out at board rank 151 against an ADP of 224 and an
+# ECR of 244. Every unsigned player on the board sat 60-120 picks ahead of
+# where the market had him, in the same direction, which is a model gap
+# rather than an edge.
+#
+# MEASURED on 1,682 pairs: players who were real contributors in season N-1
+# (6+ games, 4+ ppg), split by whether they were on an active week-1 roster
+# in season N.
+#
+#                              n     played at all   games   per-game kept
+#   on an active roster      1361        99.9%        12.5       0.926
+#   NOT on one               321         53.6%         3.6       0.364
+#   ...of those, if he played              -           6.7       0.679
+#
+# Both halves of the user's intuition are in that table and both are large.
+# Nearly half never play a down. Those who do play about half a season, and
+# at roughly three-quarters of their old per-game rate - a committee back or
+# a fourth receiver, which is what a team signing you in September has open.
+#
+# THE RATES BELOW ARE DELIBERATELY MILDER THAN THE MEASUREMENT (0.62/0.55
+# against a measured 0.39/0.29), for a reason that is about reference class
+# rather than timidity. The measurement's cutoff is week 1; this board is
+# built in August. A player unsigned on the eve of the season has been
+# passed over by all 32 teams with the deadline in sight, which is a much
+# worse signal than being unsigned in early August with a month of camp
+# injuries still to come. Applying a week-1 number to an August free agent
+# would price a certainty that hasn't happened yet.
+FREE_AGENT_RATE_MULT = 0.62
+FREE_AGENT_GAMES_MULT = 0.55
+
+# What the Team column says when a player has no team. The board's Team
+# field comes from the same FantasyPros export as the ranks, so this needs
+# no name matching to work.
+#
+# A CROSS-CHECK AGAINST THE 2026 ROSTER FILE WAS BUILT AND REJECTED. Marking
+# anyone absent from roster_weekly_2026.csv as a free agent looks more
+# authoritative - it's real NFL roster data rather than one vendor's string -
+# but it flagged 109 players against FantasyPros' 34, and the extras were
+# Patrick Mahomes, James Cook and Travis Etienne. The cause is name
+# suffixes: the crosswalk carries "Patrick Mahomes II" and the roster file
+# carries "Patrick Mahomes", so clean_name_exact produces two different
+# keys. A free-agent penalty that occasionally lands on the best quarterback
+# in football is far worse than one that misses a fringe tight end, so the
+# signal that needs no matching wins.
+FREE_AGENT_TEAM_CODES = {'FA', 'FA*', '', 'NAN', 'NONE', '-', '--', 'N/A'}
+
+
+def is_free_agent(team):
+    """True when this player has no NFL team."""
+    return str(team).strip().upper() in FREE_AGENT_TEAM_CODES
+
+
+def free_agent_adjustment(team):
+    """
+    (per-game multiplier, games multiplier) for having no team.
+
+    Same two-part shape as injury_adjustment, because the failure is the
+    same shape: fewer games, and a smaller role in the games he does play.
+    """
+    if not is_free_agent(team):
+        return 1.0, 1.0
+    return FREE_AGENT_RATE_MULT, FREE_AGENT_GAMES_MULT
+
+
 def injury_adjustment(games_last_season, position=None):
     """
     (per-game multiplier, games multiplier) for how much of last season a
@@ -717,6 +785,7 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
     out['age_factor'] = 1.0
     out['injury_factor'] = 1.0
     out['games_last_season'] = np.nan
+    out['free_agent'] = False
 
     for position, (idx, row) in enumerate(out.iterrows()):
         pos = str(row['Pos']).upper()
@@ -784,6 +853,17 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
         if history and history.get('games_last_season') is not None:
             out.at[idx, 'games_last_season'] = history.get('games_last_season')
 
+        # Having no team at all, folded in the same way and for the same
+        # reason: it is the own-history side that assumes last season's role
+        # carries forward, and that assumption is exactly what free agency
+        # breaks. The curve side is left alone because a free agent's
+        # consensus rank has already been marked down by the market - taking
+        # it off both sides would charge his unemployment twice.
+        fa_rate_mult, fa_games_mult = free_agent_adjustment(row.get('Team'))
+        out.at[idx, 'free_agent'] = fa_rate_mult < 1.0
+        injury_rate_mult *= fa_rate_mult
+        injury_games_mult *= fa_games_mult
+
         # The games this line is spread across, which the milestone-bonus
         # model needs to turn a season total back into a weekly mean. It has
         # to follow the blend: the own-history side carries a full season,
@@ -809,10 +889,14 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
     # A readable form of last season's availability. A veteran whose
     # projection came down should be able to say why on the row itself -
     # "11/17" beside a lower number explains itself in a way a hidden
-    # multiplier never does.
+    # multiplier never does. Free agency rides in the same column for the
+    # same reason: it is the single biggest thing suppressing an unsigned
+    # player's number, and the Team column alone doesn't connect the two.
     played = pd.to_numeric(out['games_last_season'], errors='coerce')
-    out['Health'] = np.where(played.notna(),
-                             played.fillna(0).astype(int).astype(str) + '/17', '—')
+    health = np.where(played.notna(),
+                      played.fillna(0).astype(int).astype(str) + '/17', '—')
+    free = out['free_agent'].fillna(False).astype(bool).to_numpy()
+    out['Health'] = np.where(free, np.where(played.notna(), health + ' · FA', 'FA'), health)
     return out
 
 

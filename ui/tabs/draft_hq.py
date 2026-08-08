@@ -879,15 +879,19 @@ BOARD_ACTIONS = {
     'Live draft': [
         ('✅', 'mine', 'Draft this player to YOUR team'),
         ('❌', 'gone', 'Mark this player taken by another team'),
+        ('📝', 'notes', 'Read the analyst write-up on this player'),
         ('🔍', 'profile', 'Open this player in Player Search'),
     ],
     'Mock draft': [
         ('✅', 'draft', 'Draft this player'),
+        ('📝', 'notes', 'Read the analyst write-up on this player'),
         ('🔍', 'profile', 'Open this player in Player Search'),
     ],
 }
 BOARD_NONCE_KEY = 'dhq_board_nonce'
 BOARD_OPEN_KEY = 'dhq_board_open'
+# Whose write-up the modal is currently showing, or absent when it's closed.
+NOTES_PLAYER_KEY = 'dhq_notes_player'
 
 
 BOARD_ROWS_KEY = 'dhq_board_rows'
@@ -1010,9 +1014,11 @@ def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None
     if 'Health' in display.columns:
         column_config['Health'] = st.column_config.TextColumn(
             "Health",
-            help="Games played last season. A back or tight end who lost much of a year is "
-                 "marked down twice over — likelier to miss time again, and worse per game "
-                 "when he plays.")
+            help="Games played last season, and whether he has a team. A back or tight end "
+                 "who lost much of a year is marked down twice over — likelier to miss time "
+                 "again, and worse per game when he plays. 'FA' means no NFL team: about "
+                 "half of unsigned contributors never play a down, and those who do play "
+                 "roughly half a season at three-quarters of their old rate.")
     if 'Auction $' in display.columns:
         column_config['Auction $'] = st.column_config.NumberColumn(
             "Auction $", format="$%d",
@@ -1212,31 +1218,117 @@ def _render_run_pressure(settings):
             for r in hot[:2]))
 
 
-def _render_player_detail(board, selected):
-    """Notes and the projected stat line for whoever is selected."""
-    if not selected:
-        return
-    row = board[board['Player'] == selected]
-    if row.empty:
-        return
-    row = row.iloc[0]
-    notes = row.get('Notes')
-    stat_bits = []
+def _board_row(board, player):
+    """The board row for a player name, or None."""
+    if not player or board is None or board.empty or 'Player' not in board.columns:
+        return None
+    match = board[board['Player'] == player]
+    return None if match.empty else match.iloc[0]
+
+
+def _projected_stat_line(row):
+    """"212 carries · 48 targets · ..." for a board row, or '' if it has none."""
+    bits = []
     for label, column in (('carries', 'carries'), ('targets', 'targets'),
                           ('rush yds', 'rushing_yards'), ('rec', 'receptions'),
                           ('rec yds', 'receiving_yards'), ('pass yds', 'passing_yards')):
         value = row.get(column)
         if pd.notna(value) and float(value) > 0:
-            stat_bits.append(f"{float(value):.0f} {label}")
-    if stat_bits:
-        st.caption("Projected: " + " · ".join(stat_bits) +
-                   f"  ({row.get('proj_basis', 'projection')})")
-    # Two independent sets of analyst notes where both exist. Shown side by
-    # side rather than merged: they're written by different people at
-    # different times, and where they disagree that IS the read.
-    written = [(source, text) for source, text in
-               (('FFA', notes), ('FantasyPros', row.get('FP Note')))
-               if isinstance(text, str) and text.strip()]
+            bits.append(f"{float(value):.0f} {label}")
+    return " · ".join(bits)
+
+
+def _analyst_notes(row):
+    """
+    [(source, text)] for whichever write-ups this player has.
+
+    Two independent sets where both exist, kept side by side rather than
+    merged: they're written by different people at different times, and
+    where they disagree that IS the read.
+    """
+    return [(source, text) for source, text in
+            (('FFA', row.get('Notes')), ('FantasyPros', row.get('FP Note')))
+            if isinstance(text, str) and text.strip()]
+
+
+def _close_notes_dialog():
+    """Dismissal callback for the write-up modal.
+
+    Without this the modal is a trap: the X closes it, Streamlit reruns, the
+    session key is still set, and the dialog immediately reopens.
+    """
+    st.session_state.pop(NOTES_PLAYER_KEY, None)
+
+
+def _render_notes_dialog_body(row, player):
+    """Contents of the per-player write-up modal."""
+    header = " · ".join(str(row.get(c)) for c in ('Pos', 'Team')
+                        if pd.notna(row.get(c)) and str(row.get(c)).strip())
+    facts = []
+    for label, column, fmt in (('Age', 'Age', '{:.0f}'), ('Proj', 'Proj Pts', '{:.0f} pts'),
+                               ('VORP', 'VORP', '{:+.0f}'), ('ADP', 'ADP', '{:.0f}'),
+                               ('ECR', 'ECR', '{:.0f}'), ('Bye', 'Bye', '{:.0f}')):
+        value = pd.to_numeric(row.get(column), errors='coerce')
+        if pd.notna(value):
+            facts.append(f"{label} {fmt.format(float(value))}")
+    if isinstance(row.get('Health'), str) and row['Health'] not in ('', '—'):
+        facts.append(f"Played {row['Health']}")
+    if header or facts:
+        st.caption(" · ".join([b for b in (header, " · ".join(facts)) if b]))
+
+    stat_line = _projected_stat_line(row)
+    if stat_line:
+        st.caption(f"Projected: {stat_line}  ({row.get('proj_basis', 'projection')})")
+
+    written = _analyst_notes(row)
+    if not written:
+        st.info(
+            f"No analyst write-up on file for {player}. The notes come from the FFA and "
+            "FantasyPros imports, which only cover the players their analysts wrote up — "
+            "typically the top few hundred."
+        )
+        return
+    for index, (source, text) in enumerate(written):
+        if index:
+            st.divider()
+        st.markdown(f"**{source}**")
+        st.write(text)
+
+
+def _open_notes_dialog(board, player):
+    """
+    Show a player's write-up in a dismissable modal.
+
+    The decorator is applied here rather than at module level so the modal's
+    TITLE can be the player's name - st.dialog takes its title at decoration
+    time, and a fixed one ("Player notes") would make every modal look
+    identical in a tab where you open a dozen of them in a row.
+    """
+    row = _board_row(board, player)
+    if row is None:
+        _close_notes_dialog()
+        return
+    dialog = st.dialog(player, width="medium", on_dismiss=_close_notes_dialog)(
+        _render_notes_dialog_body)
+    dialog(row, player)
+
+
+def _render_player_detail(board, selected):
+    """
+    Notes and the projected stat line for whoever is selected.
+
+    This is the inline version, under the recommendation. The same write-up
+    is reachable for ANY player through the 📝 row button, which opens it as
+    a modal instead - reading up on someone you're considering shouldn't
+    require the model to have recommended him first.
+    """
+    row = _board_row(board, selected)
+    if row is None:
+        return
+    stat_line = _projected_stat_line(row)
+    if stat_line:
+        st.caption(f"Projected: {stat_line}  ({row.get('proj_basis', 'projection')})")
+    written = _analyst_notes(row)
     if written:
         label = " / ".join(source for source, _ in written)
         with st.expander(f"Analyst notes — {selected} ({label})", expanded=False):
@@ -1734,6 +1826,14 @@ def _handle_board_action(action, player, dc, settings, reach):
         _commit_pick(dc, settings, player, mine=True, reach=reach)
     elif action == 'gone':
         _commit_pick(dc, settings, player, mine=False, reach=reach)
+    elif action == 'notes':
+        # Recorded rather than opened here: the tick that requested it is
+        # still sitting in the grid's widget state, so the board needs its
+        # nonce rotated and a rerun before the modal goes up, or dismissing
+        # it would land back on a still-ticked row and reopen immediately.
+        st.session_state[NOTES_PLAYER_KEY] = player
+        _bump_board_nonce()
+        st.rerun()
 
 
 
@@ -1920,8 +2020,10 @@ def _render_draft_room(board, settings, ctx):
                 _undo_last()
                 st.rerun()
     with action[2]:
-        st.caption("Draft straight from the board — the ✅ / ❌ / 🔍 boxes on each row take "
-                   "the player, mark him gone, or open his full profile.")
+        boxes = "✅ / ❌ / 📝 / 🔍" if mode == "Live draft" else "✅ / 📝 / 🔍"
+        taken = "take the player, mark him gone," if mode == "Live draft" else "take the player,"
+        st.caption(f"Draft straight from the board — the {boxes} boxes on each row {taken} "
+                   "read his analyst write-up, or open his full profile.")
 
     left, right = st.columns([3, 1])
     with left:
@@ -1949,6 +2051,12 @@ def _render_draft_room(board, settings, ctx):
     else:
         with st.expander("🔁 Run many mocks / compare slots", expanded=False):
             _render_mock_tools(board, settings, ctx)
+
+    # Last, and off the FULL board rather than the available pool - a player
+    # you just watched go off the board is exactly the one you want to read
+    # about, and he isn't in `available` any more.
+    if st.session_state.get(NOTES_PLAYER_KEY):
+        _open_notes_dialog(board, st.session_state[NOTES_PLAYER_KEY])
 
 
 # ---------------------------------------------------------------------------

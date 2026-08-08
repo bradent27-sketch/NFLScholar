@@ -351,6 +351,79 @@ this model. Two genuine residuals remain: **Kelce** (36.9, we project 147.6
 vs FFA's 109.0) and **Tyreek Hill** (32.5, 121.7 vs 69.9), both cases where
 the market has priced information no statistical model can see.
 
+Hill's half of that residual was explained and fixed in the next pass — see
+2.5f. He is a free agent, and the board wasn't pricing it.
+
+### 2.5f Free agency — `free_agent_adjustment`
+
+A player with no NFL team is not a discounted starter. He is a bet that
+someone signs him, and then a second bet about what role he gets. The board
+priced neither: it read last season's usage rates off local history exactly
+as it would for a starter. Every unsigned player sat well ahead of the
+market, in the same direction — a model gap, not an edge.
+
+| player | board rank (before) | ADP | ECR |
+|---|---|---|---|
+| Tyreek Hill | 151 | 224 | 244 |
+| Joe Mixon | 211 | 327 | 303 |
+| Zach Ertz | 234 | 313 | 337 |
+| Austin Ekeler | 257 | 350 | 347 |
+| Kareem Hunt | 287 | 383 | 311 |
+
+**Measured** on 1,682 pairs — players who were real contributors in season
+N−1 (6+ games, 4+ ppg), split by whether they were on an active week-1
+roster in season N:
+
+| | n | played at all | games | per-game kept |
+|---|---|---|---|---|
+| on an active roster | 1,361 | 99.9% | 12.5 | 0.926 |
+| **not on one** | 321 | **53.6%** | **3.6** | **0.364** |
+| …of those, if he played | — | — | 6.7 | 0.679 |
+
+Both failure modes are real and large. Nearly half never play a down; those
+who do play about half a season at roughly three-quarters of their old rate.
+So it takes the same two-part shape as the injury markdown — a games
+multiplier and a per-game multiplier — and like that one it is applied only
+to the own-history side of the blend, since a free agent's consensus rank
+has already been marked down by the market.
+
+**The shipped rates (0.62 per-game, 0.55 games) are deliberately milder than
+the measurement (0.39 / 0.29)**, on reference class rather than timidity: the
+measurement's cutoff is week 1, and this board is built in August. A player
+still unsigned on the eve of the season has been passed over by all 32 teams
+with the deadline in sight — a much worse signal than being unsigned in early
+August with a month of camp injuries still to come.
+
+Swept against both market reads (the overall metrics barely move either way,
+because 34 of 733 players sit mostly outside the top 120):
+
+| variant | proj MAE | proj bias | FA vs ADP | FA vs ECR |
+|---|---|---|---|---|
+| off (1.00/1.00) | 19.8 | +0.3 | −46.4 | −72.1 |
+| mild (0.80/0.75) | 19.6 | −0.1 | −11.2 | −39.3 |
+| **shipped (0.62/0.55)** | **19.6** | **−0.4** | **+26.6** | **−9.1** |
+| hard (0.50/0.40) | 19.7 | −0.5 | +50.8 | +12.1 |
+| measured (0.39/0.29) | 19.7 | −0.6 | +66.8 | +26.0 |
+
+The shipped setting sits closest to zero on the average of the two market
+reads and ties for best projection MAE. Hill lands at board rank 219 against
+an ADP of 224. ECR rank-correlation (0.962) and FFA rank-correlation (0.944)
+are unchanged to three decimals in every variant, which is the point: this
+fixes 34 players without touching the other 699.
+
+**Detection.** `Team == 'FA'`, straight off the same FantasyPros export the
+ranks come from, so no name matching is involved. A cross-check against
+`roster_weekly_2026.csv` was built and **rejected**: marking anyone absent
+from the real NFL roster file as a free agent looks more authoritative, but
+it flagged 109 players against FantasyPros' 34 and the extras were Patrick
+Mahomes, James Cook and Travis Etienne. The crosswalk carries "Patrick
+Mahomes II" and the roster file carries "Patrick Mahomes", so
+`clean_name_exact` produces two different keys. A free-agent penalty that
+occasionally lands on the best quarterback in football is far worse than one
+that misses a fringe tight end.
+
+Surfaced in the **Health** column as `4/17 · FA`.
+
 ### 2.6 Scoring the line — `score_projected_lines` / `score_stats`
 
 Every stat is pulled by explicit name, never by a prefix filter. That's

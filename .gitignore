@@ -35,3 +35,7 @@ __pycache__/
 # OS cruft
 .DS_Store
 Thumbs.db
+
+# Underdog season-long payload the user saves from their browser. Their data,
+# not ours to redistribute.
+external_data/underdog_over_under_lines.json

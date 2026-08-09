@@ -40,20 +40,36 @@ import pandas as pd
 from data.draft_board import score_stats
 from data.draft_projections import PROJECTED_STATS
 
-# Stats that carry most of a season projection, per position. Used to measure
-# COVERAGE - what share of the player's fantasy value the market lines
-# actually span - so a player priced on receptions alone isn't compared
-# against our full projection as though the two were the same quantity.
+# Stats that carry most of a season projection, per position, with a typical
+# per-season quantity for each. The quantities turn coverage into a
+# POINTS-WEIGHTED measure rather than a count, which matters more than it
+# sounds - see below.
 KEY_STATS = {
-    'QB': ('passing_yards', 'passing_tds', 'passing_interceptions', 'rushing_yards'),
-    'RB': ('rushing_yards', 'rushing_tds', 'receptions', 'receiving_yards'),
-    'WR': ('receiving_yards', 'receptions', 'receiving_tds'),
-    'TE': ('receiving_yards', 'receptions', 'receiving_tds'),
+    'QB': {'passing_yards': 4000, 'passing_tds': 26, 'passing_interceptions': 11,
+           'rushing_yards': 250, 'rushing_tds': 2},
+    'RB': {'rushing_yards': 900, 'rushing_tds': 7, 'receptions': 45,
+           'receiving_yards': 350, 'receiving_tds': 2},
+    'WR': {'receptions': 70, 'receiving_yards': 950, 'receiving_tds': 6},
+    'TE': {'receptions': 55, 'receiving_yards': 600, 'receiving_tds': 4},
 }
 
-# Below this share of a position's key stats, a market projection is too
-# partial to compare. Two of a receiver's three, or three of a back's four.
-MIN_COVERAGE = 0.6
+# COVERAGE IS WEIGHTED BY FANTASY POINTS, NOT BY HOW MANY STATS ARE PRESENT,
+# and the reason is a trap the first version walked straight into.
+#
+# Underdog's real season-long NFL board posts receiving yards and receiving
+# TDs for a receiver but NOT receptions. Counted as stats that is 2 of 3 -
+# 0.67 coverage, comfortably past any sane threshold - so the player would be
+# compared against our full projection. But in a PPR league receptions are
+# roughly 40% of a receiver's points, so his market total comes out ~40% low
+# and he shows a huge "edge" that is pure arithmetic. Every receiver on the
+# board, all in the same direction, which is exactly what a real edge is
+# supposed to look like.
+#
+# Weighting by each stat's share of fantasy points under THIS league's
+# scoring fixes it at the root and is league-aware for free: in a standard
+# league a missing receptions line barely dents coverage, and in full PPR it
+# halves it. The same rule handles a QB priced without his rushing line.
+MIN_COVERAGE = 0.7
 
 # A market line is a MEDIAN (the point where the book wants equal money on
 # both sides), while a fantasy projection is a MEAN. For right-skewed counting
@@ -133,16 +149,50 @@ def score_market_lines(market_rows, scoring, positions=None):
     out['Market Pts'] = score_stats(scored.fillna(0.0), scoring,
                                     position_col='position').round(1)
 
-    coverage = []
-    for _, row in out.iterrows():
-        keys = KEY_STATS.get(str(row['position']).upper())
-        if not keys:
-            coverage.append(np.nan)
-            continue
-        have = sum(1 for stat in keys if pd.notna(row.get(stat)))
-        coverage.append(round(have / len(keys), 2))
-    out['Coverage'] = coverage
+    out['Coverage'] = _points_weighted_coverage(out, scoring)
     return out
+
+
+def _stat_point_weights(position, scoring):
+    """
+    {stat: share of a typical season's fantasy points} for a position.
+
+    Built by scoring a typical season line one stat at a time under THIS
+    league's settings, so the weights follow the rules rather than a
+    hardcoded guess - full PPR makes receptions a third of a receiver's
+    value, standard makes them nothing, and coverage should say so.
+    """
+    typical = KEY_STATS.get(str(position).upper())
+    if not typical:
+        return {}
+    contributions = {}
+    for stat, quantity in typical.items():
+        row = pd.DataFrame([{**{s: 0.0 for s in typical}, stat: quantity,
+                             'position': str(position).upper()}])
+        contributions[stat] = abs(float(score_stats(row, scoring,
+                                                    position_col='position').iloc[0]))
+    total = sum(contributions.values())
+    if total <= 0:
+        return {stat: 1.0 / len(typical) for stat in typical}
+    return {stat: value / total for stat, value in contributions.items()}
+
+
+def _points_weighted_coverage(rows, scoring):
+    """Share of a position's typical fantasy points the market actually priced."""
+    weights_by_pos = {}
+    values = []
+    for _, row in rows.iterrows():
+        position = str(row.get('position') or '').upper()
+        if position not in KEY_STATS:
+            values.append(np.nan)
+            continue
+        if position not in weights_by_pos:
+            weights_by_pos[position] = _stat_point_weights(position, scoring)
+        weights = weights_by_pos[position]
+        covered = sum(weight for stat, weight in weights.items()
+                      if pd.notna(row.get(stat)))
+        values.append(round(covered, 2))
+    return values
 
 
 def attach_board_player(market_scored, board):
@@ -192,7 +242,7 @@ def attach_board_player(market_scored, board):
     return out
 
 
-def compare_to_board(board, market_scored, min_coverage=MIN_COVERAGE):
+def compare_to_board(board, market_scored, scoring, min_coverage=MIN_COVERAGE):
     """
     Join market projections onto the board and rank the disagreements.
 
@@ -216,8 +266,10 @@ def compare_to_board(board, market_scored, min_coverage=MIN_COVERAGE):
     resolved = attach_board_player(market_scored, board)
     cols = [c for c in ('Player', 'Pos', 'Team', 'Proj Pts', 'ADP', 'ECR',
                         'Board Rank', 'Health') if c in board.columns]
+    stat_cols = [c for c in PROJECTED_STATS if c in board.columns]
     merged = resolved.dropna(subset=['board_player']).merge(
-        board[cols], left_on='board_player', right_on='Player', how='inner')
+        board[cols + stat_cols], left_on='board_player', right_on='Player',
+        how='inner', suffixes=('', '_ours'))
     meta['unmatched'] = int(len(market_scored) - len(merged))
     if merged.empty:
         return pd.DataFrame(), meta
@@ -229,15 +281,65 @@ def compare_to_board(board, market_scored, min_coverage=MIN_COVERAGE):
     if merged.empty:
         return pd.DataFrame(), meta
 
-    ours = pd.to_numeric(merged['Proj Pts'], errors='coerce')
+    # LIKE FOR LIKE, and this is the whole correctness of the comparison.
+    #
+    # A market total only spans the stats that book actually posted a line
+    # for. Underdog's real season-long NFL board carries receiving yards and
+    # receiving TDs but NO receptions, so a receiver's market total is
+    # missing roughly a fifth of his half-PPR value and a third of his full-
+    # PPR value - through no error, that market simply doesn't exist.
+    #
+    # Compared against our FULL projection, every receiver then showed a +40%
+    # to +60% "edge", all in the same direction. That is not an edge, it is a
+    # units mismatch, and it is the most dangerous possible failure here
+    # because a uniform positive bias is exactly what a genuine market
+    # inefficiency would look like.
+    #
+    # So our side is re-scored across only the stats the market priced for
+    # THAT player. Both numbers then describe the same quantity and the
+    # difference means something.
+    # Needs the board's raw stat columns to re-score against. Without them
+    # every matched-scope total would come out 0 and every edge would read
+    # hugely negative - so fall back to the whole-projection comparison and
+    # SAY SO in meta, rather than reporting a silently broken number.
+    if stat_cols:
+        merged['Ours (matched)'] = _score_matched_scope(merged, scoring)
+        meta['scope'] = 'matched'
+    else:
+        merged['Ours (matched)'] = pd.to_numeric(merged['Proj Pts'], errors='coerce')
+        meta['scope'] = 'full projection (board carried no stat columns)'
+    ours = pd.to_numeric(merged['Ours (matched)'], errors='coerce')
     theirs = pd.to_numeric(merged['Market Pts'], errors='coerce')
     merged['Edge'] = (ours - theirs).round(1)
     merged['Edge %'] = np.where(theirs > 0, (ours - theirs) / theirs * 100, np.nan).round(1)
 
     merged = merged.sort_values('Edge %', key=lambda s: s.abs(), ascending=False)
-    keep = ['Player', 'Pos', 'Team', 'Proj Pts', 'Market Pts', 'Edge', 'Edge %',
-            'Coverage', 'ADP', 'ECR', 'Board Rank', 'providers', 'n_lines']
+    keep = ['Player', 'Pos', 'Team', 'Proj Pts', 'Ours (matched)', 'Market Pts',
+            'Edge', 'Edge %', 'Coverage', 'ADP', 'ECR', 'Board Rank',
+            'providers', 'n_lines']
     return merged[[c for c in keep if c in merged.columns]].reset_index(drop=True), meta
+
+
+def _score_matched_scope(merged, scoring):
+    """
+    Our projection re-scored over only the stats the market priced per player.
+
+    The market frame and the board frame both carry the same stat column
+    names, so the merge suffixed the board's copies with `_ours`. A stat is
+    "priced" when the MARKET side is non-null; our value for it is then taken
+    from the board side and everything else is zeroed.
+    """
+    values = []
+    for _, row in merged.iterrows():
+        line = {'position': str(row.get('Pos') or '').upper()}
+        for stat in PROJECTED_STATS:
+            ours_col = f'{stat}_ours' if f'{stat}_ours' in merged.columns else stat
+            priced = stat in merged.columns and pd.notna(row.get(stat))
+            our_value = pd.to_numeric(row.get(ours_col), errors='coerce')
+            line[stat] = float(our_value) if (priced and pd.notna(our_value)) else 0.0
+        values.append(round(float(score_stats(pd.DataFrame([line]), scoring,
+                                              position_col='position').iloc[0]), 1))
+    return values
 
 
 def blend_market_into_projection(board, market_scored, weight=0.0,

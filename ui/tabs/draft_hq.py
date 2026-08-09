@@ -445,6 +445,24 @@ def _render_settings_panel(cfg):
                 key="dhq_market_lines_on",
                 help="One request per half hour. Season-long lines are posted through the "
                      "preseason and pulled once the season starts.")
+            st.caption(
+                "No network access to Underdog? Open "
+                "`api.underdogfantasy.com/beta/v5/over_under_lines` in a browser, save the "
+                "JSON, and drop it here. An uploaded payload wins over the live fetch — it "
+                "is also the reliable path if they change or block the endpoint."
+            )
+            market_upload = st.file_uploader("Underdog over_under_lines JSON",
+                                             type=["json"], key="dhq_market_upload")
+            if market_upload is not None:
+                from data.odds_sources import save_underdog_payload
+                saved, save_err = save_underdog_payload(market_upload.getvalue())
+                if save_err and saved is None:
+                    st.error(save_err)
+                elif save_err:
+                    st.warning(save_err)
+                else:
+                    st.success(f"Saved {len(saved.get('over_under_lines') or [])} lines — "
+                               "it'll load automatically from now on.")
             cfg['market_lines_weight'] = st.slider(
                 "Blend market lines into projections", 0, 100,
                 int(cfg['market_lines_weight']), 5, key="dhq_market_lines_weight",
@@ -550,20 +568,35 @@ def _load_market_lines(settings, ecr_board):
     on with the sources that did load, exactly as ADP and ECR already do.
     """
     empty = pd.DataFrame()
-    if not settings.get('market_lines_on'):
-        return empty, {'enabled': False}
-
-    from data.odds_sources import fetch_underdog_lines, fetch_prizepicks_lines, combine_props
+    from data.odds_sources import (fetch_underdog_lines, fetch_prizepicks_lines,
+                                   parse_underdog_payload, load_saved_underdog_payload,
+                                   combine_props)
     from data.odds_projections import market_stat_lines, score_market_lines
+
+    saved = load_saved_underdog_payload()
+    if not settings.get('market_lines_on') and saved is None:
+        return empty, {'enabled': False}
 
     status = {'enabled': True, 'providers': {}}
     frames = []
-    for label, fetch in (('Underdog', fetch_underdog_lines),
-                         ('PrizePicks', fetch_prizepicks_lines)):
-        props, err = fetch()
-        status['providers'][label] = {'rows': int(len(props)), 'error': err}
+
+    # A saved payload wins outright. It is a deliberate act by someone who
+    # has just looked at the board, and it is the path that keeps working
+    # when the endpoint moves or refuses - the same reasoning as the ECR
+    # upload override.
+    if saved is not None:
+        props, err = parse_underdog_payload(saved)
+        status['providers']['Underdog (your saved payload)'] = {
+            'rows': int(len(props)), 'error': err}
         if not props.empty:
             frames.append(props)
+    elif settings.get('market_lines_on'):
+        for label, fetch in (('Underdog', fetch_underdog_lines),
+                             ('PrizePicks', fetch_prizepicks_lines)):
+            props, err = fetch()
+            status['providers'][label] = {'rows': int(len(props)), 'error': err}
+            if not props.empty:
+                frames.append(props)
     combined = combine_props(*frames)
     status['total_lines'] = int(len(combined))
     if combined.empty:
@@ -1000,6 +1033,9 @@ BOARD_NONCE_KEY = 'dhq_board_nonce'
 BOARD_OPEN_KEY = 'dhq_board_open'
 # Whose write-up the modal is currently showing, or absent when it's closed.
 NOTES_PLAYER_KEY = 'dhq_notes_player'
+# A saved Underdog payload, held as raw bytes so it survives reruns after the
+# uploader widget itself has been consumed.
+MARKET_UPLOAD_KEY = 'dhq_market_payload'
 
 
 BOARD_ROWS_KEY = 'dhq_board_rows'
@@ -1510,7 +1546,7 @@ def _render_market_comparison(board, settings, meta, status):
             )
         return
 
-    comparison, cmp_meta = compare_to_board(board, scored)
+    comparison, cmp_meta = compare_to_board(board, scored, settings['scoring'])
     if comparison.empty:
         st.info("No player had enough season-long lines to compare against a full projection.")
         return
@@ -1522,10 +1558,19 @@ def _render_market_comparison(board, settings, meta, status):
     )
     st.caption(
         "**Market Pts** is the book's own stat lines scored under YOUR league settings — a "
-        "projection built without reference to this app's model. **Edge** is ours minus "
-        "theirs. A big gap is not a bet: most often it means the market knows something a "
-        "statistical model can't see, which is exactly why this board already blends toward "
-        "consensus. Read it as a list of players worth a second look, not a slate."
+        "projection built without reference to this app's model. **Ours (matched)** is this "
+        "board's projection re-scored over *only the stats that book actually priced*, "
+        "which is what makes the two comparable: Underdog posts receiving yards and TDs but "
+        "no receptions, so comparing their total against our full one made every receiver "
+        "look 40–60% underpriced. **Edge** is the like-for-like difference."
+    )
+    st.caption(
+        "Two things to read it against. **A big gap is not a bet** — most often it means the "
+        "market knows something a statistical model can't see, which is why this board "
+        "already blends toward consensus. And season-long lines embed the chance a player "
+        "MISSES GAMES, while this projection is closer to a full slate, which shows up as a "
+        "steady few percent of positive edge across every position. Treat roughly +4% as the "
+        "zero point, not as free money."
     )
     show = comparison.head(40).set_index('Player')
     st.dataframe(

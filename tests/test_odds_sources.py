@@ -83,42 +83,72 @@ def test_stat_normalization():
 
 
 def test_underdog_parses_and_joins():
+    """Structure verified against a real 12.6MB payload in Aug 2026."""
     props, err = _underdog()
     assert err is None, err
     assert list(props.columns) == PROP_COLUMNS
-    # 11 lines in, minus: 1 suspended, 1 orphan appearance_id, 1 appearance
-    # whose player is missing. 8 survive.
+    # 13 lines in. Dropped: 1 suspended, 1 orphan appearance_id, 1 appearance
+    # whose player is missing, 1 MLB line (the payload carries every sport at
+    # once and this adapter is asked for NFL). 8 survive.
     assert len(props) == 8, props[['player', 'market_raw', 'period']].to_string()
+    assert 'Some Shortstop' not in set(props['player']), "MLB must be filtered out"
 
     jj = props[props['player'] == 'Justin Jefferson']
     season = jj[jj['period'] == 'season']
     assert len(season) == 3, "three season-long lines for the receiver"
     assert set(season['market']) == {'receiving_yards', 'receptions', 'receiving_tds'}
     assert float(season[season['market'] == 'receiving_yards']['line'].iloc[0]) == 1275.5
-    # The two-hop join is the thing most likely to break: line -> appearance
-    # -> player. A name here proves both hops ran.
     assert (season['player_key'] == 'justinjefferson').all()
-
     # A single-game line must not be mistaken for a season-long one.
-    assert (jj['period'] == 'game').sum() == 1
+    assert (jj['period'] == 'game').sum() == 2
 
 
-def test_underdog_team_and_payouts():
+def test_underdog_season_match_type_is_series():
+    """
+    THE BUG THIS LOCKS IN. Underdog's match_type values are 'Game', 'Series'
+    and 'SoloGame' - season-long is 'Series', and nothing about the word says
+    so. The original code looked for the substring "season", matched none of
+    them, and labelled all 356 season-long NFL lines as single-game, so the
+    season projection silently had nothing to work with.
+    """
+    props, _ = _underdog()
+    season = props[props['period'] == 'season']
+    assert len(season) > 0, "match_type 'Series' must read as season-long"
+    assert set(season['market_raw']) >= {'season_receiving_yards', 'season_pass_yards'}
+
+
+def test_underdog_team_ids_are_uuids_resolved_via_games():
+    """
+    THE OTHER BUG. A player's team_id is a UUID and the abbreviation exists
+    only on the games array, in abbreviated_title ("NE @ SEA") beside
+    home_team_id / away_team_id. Passing the UUID straight to
+    standardize_team resolved 0 of 5,314 real lines.
+    """
     props, _ = _underdog()
     assert props[props['player'] == 'Justin Jefferson']['team'].iloc[0] == 'MIN'
-    # Written as a full name on the player object, and it still resolves.
-    assert props[props['player'] == 'Patrick Mahomes']['team'].iloc[0] == 'KC'
-    # 'JAC' in the payload, 'JAX' in this app.
+    assert props[props['player'] == 'Patrick Mahomes']['team'].iloc[0] == 'SEA'
+    # 'JAC' in Underdog's title, 'JAX' in this app.
     assert props[props['player'] == 'Travis Etienne']['team'].iloc[0] == 'JAX'
+    assert (props['team'] != '').all(), "every NFL line should resolve a team"
+    # Position comes from position_name, not the UUID position_id.
+    assert props[props['player'] == 'Patrick Mahomes']['position'].iloc[0] == 'QB'
 
+
+def test_underdog_payouts_and_partial_game_markets():
+    props, _ = _underdog()
     recs = props[(props['player'] == 'Justin Jefferson') & (props['market'] == 'receptions')]
     assert float(recs['over_payout'].iloc[0]) == 0.95
     assert float(recs['under_payout'].iloc[0]) == 1.05
+    # Quarter/half markets are real and must never reach the scoring path.
+    partial = props[props['market_raw'] == 'period_1_receiving_yds']
+    assert len(partial) == 1 and bool(partial['scorable'].iloc[0]) is False
 
 
 def test_underdog_combo_market_not_scorable():
+    """"Rush + Rec TDs" is Underdog's highest-volume NFL market and it is a
+    SUM - mapping it onto rushing_tds would inflate every back on the board."""
     props, _ = _underdog()
-    combo = props[props['market_raw'] == 'rushing_receiving_yards']
+    combo = props[props['market_raw'] == 'rush_rec_tds']
     assert len(combo) == 1
     assert bool(combo['scorable'].iloc[0]) is False
 
@@ -200,7 +230,16 @@ def test_market_projection_scores_and_measures_coverage():
     assert 0 < float(mahomes['Coverage']) < 1.0
 
 
-def test_compare_to_board_ranks_and_drops_thin_rows():
+def test_compare_to_board_scores_like_for_like():
+    """
+    THE MOST DANGEROUS BUG THIS MODULE HAD. Underdog's real season-long board
+    posts receiving yards and receiving TDs but NO receptions, so a market
+    total is missing a fifth of a receiver's half-PPR value through no error.
+    Compared against our FULL projection, every receiver showed a +40% to
+    +60% edge, all in the same direction - which is exactly what a genuine
+    market inefficiency looks like. Our side is now re-scored over only the
+    stats that market priced.
+    """
     ud, _ = _underdog()
     rows = market_stat_lines(combine_props(ud), season_only=True)
     scored = score_market_lines(rows, SCORING)
@@ -210,19 +249,46 @@ def test_compare_to_board_ranks_and_drops_thin_rows():
         'Team': ['MIN', 'KC', 'DAL'],
         'Proj Pts': [300.0, 320.0, 200.0],
         'Board Rank': [3, 20, 40],
+        'receiving_yards': [1300.0, 0.0, 400.0],
+        'receptions': [95.0, 0.0, 40.0],
+        'receiving_tds': [9.0, 0.0, 2.0],
+        'passing_yards': [0.0, 4400.0, 0.0],
+        'passing_tds': [0.0, 33.0, 0.0],
+        'rushing_yards': [0.0, 300.0, 900.0],
     })
-    comparison, meta = compare_to_board(board, scored)
-    assert meta['matched'] >= 1
-    # The receiver has full coverage and must survive; anyone the market
-    # never priced must not appear at all.
+    comparison, meta = compare_to_board(board, scored, SCORING)
+    assert meta['scope'] == 'matched'
     assert 'Justin Jefferson' in set(comparison['Player'])
     assert 'Somebody Else' not in set(comparison['Player'])
 
+    # The receiver was priced on all three of his stats here, so matched
+    # scope equals the sum of those three under this scoring.
     jj = comparison[comparison['Player'] == 'Justin Jefferson'].iloc[0]
-    assert abs(float(jj['Edge']) - (300.0 - float(jj['Market Pts']))) < 0.05
-    # Sorted by the absolute gap, so both directions surface.
+    expected = 1300.0 * 0.1 + 95.0 * 1.0 + 9.0 * 6
+    assert abs(float(jj['Ours (matched)']) - expected) < 0.05, jj['Ours (matched)']
+    assert abs(float(jj['Edge']) - (expected - float(jj['Market Pts']))) < 0.05
+
+    # The QB was priced on passing only, so his RUSHING yards must be
+    # excluded from our side - that is the whole point of matched scope.
+    qb = comparison[comparison['Player'] == 'Patrick Mahomes'].iloc[0]
+    passing_only = 4400.0 * 0.04 + 33.0 * 4
+    assert abs(float(qb['Ours (matched)']) - passing_only) < 0.05, qb['Ours (matched)']
+
     edges = comparison['Edge %'].abs().tolist()
     assert edges == sorted(edges, reverse=True)
+
+
+def test_compare_falls_back_when_board_has_no_stat_columns():
+    """A board with no raw stats would score every matched total as 0 and
+    report enormous negative edges. It falls back and flags itself instead."""
+    ud, _ = _underdog()
+    scored = score_market_lines(market_stat_lines(combine_props(ud)), SCORING)
+    board = pd.DataFrame({'Player': ['Justin Jefferson'], 'Pos': ['WR'],
+                          'Proj Pts': [300.0]})
+    comparison, meta = compare_to_board(board, scored, SCORING)
+    assert 'full projection' in meta['scope']
+    if not comparison.empty:
+        assert float(comparison.iloc[0]['Ours (matched)']) == 300.0
 
 
 def test_blend_is_off_by_default_and_only_moves_covered_players():
@@ -263,7 +329,7 @@ def test_two_tier_name_match_handles_suffixes():
     jefferson = resolved[resolved['player_key'] == 'justinjefferson'].iloc[0]
     assert jefferson['board_player'] == 'Justin Jefferson', "exact match still wins"
 
-    comparison, meta = compare_to_board(board, scored)
+    comparison, meta = compare_to_board(board, scored, SCORING)
     assert 'Patrick Mahomes II' in set(comparison['Player'])
     assert meta['unmatched'] == 0
 
@@ -348,7 +414,7 @@ def test_empty_inputs_are_safe():
     assert combine_props().empty
     assert market_stat_lines(pd.DataFrame()).empty
     assert score_market_lines(pd.DataFrame(), SCORING).empty
-    comparison, meta = compare_to_board(pd.DataFrame(), pd.DataFrame())
+    comparison, meta = compare_to_board(pd.DataFrame(), pd.DataFrame(), SCORING)
     assert comparison.empty and meta['matched'] == 0
 
 

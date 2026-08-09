@@ -1,136 +1,151 @@
 {
-  "_comment": "Recorded-SHAPE fixture for api.underdogfantasy.com/beta/v5/over_under_lines. Field names and nesting mirror the live payload; the players and numbers are stand-ins so this file carries no scraped content. Deliberately includes the awkward cases: a suspended line, a line whose appearance_id resolves to nothing, an appearance whose player is missing, a single-game line alongside the season-long ones, and a combination market that must not be scored.",
+  "_comment": "STRUCTURALLY FAITHFUL fixture for api.underdogfantasy.com/beta/vN/over_under_lines, rebuilt in Aug 2026 after checking a real 12.6MB payload. Every field name, nesting level, stat code and match_type value here is what Underdog actually sends; the players and numbers are invented so this file doesn't redistribute their odds. The first version of this fixture was guessed and hid four real bugs: team_id is a UUID (not an abbreviation), season-long lines carry match_type 'Series' (not 'season'), season markets are prefixed season_ with yds/rec spellings, and the payload contains every sport at once. All four are represented below.",
+  "games": [
+    {
+      "id": 178892,
+      "abbreviated_title": "NE @ SEA",
+      "full_team_names_title": "New England Patriots @ Seattle Seahawks",
+      "away_team_id": "ef876de9-81ac-5e60-af6e-0ca1700f3a51",
+      "home_team_id": "31631011-5902-52f6-ba01-c4c8d8eb3fd9",
+      "sport_id": "NFL",
+      "season_type": "regular"
+    },
+    {
+      "id": 178893,
+      "abbreviated_title": "MIN @ JAC",
+      "full_team_names_title": "Minnesota Vikings @ Jacksonville Jaguars",
+      "away_team_id": "aaaa1111-0000-0000-0000-000000000001",
+      "home_team_id": "bbbb2222-0000-0000-0000-000000000002",
+      "sport_id": "NFL",
+      "season_type": "regular"
+    }
+  ],
+  "solo_games": [],
+  "opened_lines_count": 9,
   "players": [
     {
       "id": "p-0001",
       "first_name": "Justin",
       "last_name": "Jefferson",
-      "position_id": "WR",
-      "team_id": "MIN",
-      "sport_id": "NFL"
+      "sport_id": "NFL",
+      "team_id": "aaaa1111-0000-0000-0000-000000000001",
+      "position_id": "30f5b4f6-5306-5722-997c-a2255f44225b",
+      "position_name": "WR",
+      "position_display_name": "Wide Receiver"
     },
     {
       "id": "p-0002",
       "first_name": "Patrick",
       "last_name": "Mahomes",
-      "position_id": "QB",
-      "team_id": "Kansas City Chiefs",
-      "sport_id": "NFL"
+      "sport_id": "NFL",
+      "team_id": "31631011-5902-52f6-ba01-c4c8d8eb3fd9",
+      "position_id": "40f5b4f6-5306-5722-997c-a2255f44225c",
+      "position_name": "QB",
+      "position_display_name": "Quarterback"
     },
     {
       "id": "p-0003",
       "first_name": "Travis",
       "last_name": "Etienne",
-      "position_id": "RB",
-      "team_id": "JAC",
-      "sport_id": "NFL"
+      "sport_id": "NFL",
+      "team_id": "bbbb2222-0000-0000-0000-000000000002",
+      "position_name": "RB",
+      "position_display_name": "Running Back"
     },
     {
       "id": "p-0004",
       "first_name": "Nobody",
       "last_name": "Suspended",
-      "position_id": "TE",
-      "team_id": "WSH",
-      "sport_id": "NFL"
+      "sport_id": "NFL",
+      "team_id": "ef876de9-81ac-5e60-af6e-0ca1700f3a51",
+      "position_name": "TE",
+      "position_display_name": "Tight End"
+    },
+    {
+      "id": "p-9001",
+      "first_name": "Some",
+      "last_name": "Shortstop",
+      "sport_id": "MLB",
+      "team_id": "cccc3333-0000-0000-0000-000000000003",
+      "position_name": "SS",
+      "position_display_name": "Shortstop"
     }
   ],
   "appearances": [
-    {"id": "a-0001", "player_id": "p-0001", "position_id": "WR", "team_id": "MIN", "match_id": "m-season", "match_type": "season"},
-    {"id": "a-0002", "player_id": "p-0002", "position_id": "QB", "team_id": "KC", "match_id": "m-season", "match_type": "season"},
-    {"id": "a-0003", "player_id": "p-0003", "position_id": "RB", "team_id": "JAC", "match_id": "m-season", "match_type": "season"},
-    {"id": "a-0004", "player_id": "p-0004", "position_id": "TE", "team_id": "WSH", "match_id": "m-season", "match_type": "season"},
-    {"id": "a-0005", "player_id": "p-0001", "position_id": "WR", "team_id": "MIN", "match_id": "m-week1", "match_type": "single_game"},
-    {"id": "a-0099", "player_id": "p-missing", "position_id": "WR", "team_id": "SEA", "match_id": "m-season", "match_type": "season"}
+    {"id": "a-0001", "player_id": "p-0001", "match_id": 500, "match_type": "Series", "team_id": "aaaa1111-0000-0000-0000-000000000001", "type": "Player"},
+    {"id": "a-0002", "player_id": "p-0002", "match_id": 500, "match_type": "Series", "team_id": "31631011-5902-52f6-ba01-c4c8d8eb3fd9", "type": "Player"},
+    {"id": "a-0003", "player_id": "p-0003", "match_id": 500, "match_type": "Series", "team_id": "bbbb2222-0000-0000-0000-000000000002", "type": "Player"},
+    {"id": "a-0004", "player_id": "p-0004", "match_id": 500, "match_type": "Series", "team_id": "ef876de9-81ac-5e60-af6e-0ca1700f3a51", "type": "Player"},
+    {"id": "a-0005", "player_id": "p-0001", "match_id": 178893, "match_type": "Game", "team_id": "aaaa1111-0000-0000-0000-000000000001", "type": "Player"},
+    {"id": "a-0006", "player_id": "p-9001", "match_id": 600, "match_type": "Series", "team_id": "cccc3333-0000-0000-0000-000000000003", "type": "Player"},
+    {"id": "a-0099", "player_id": "p-missing", "match_id": 500, "match_type": "Series", "team_id": "aaaa1111-0000-0000-0000-000000000001", "type": "Player"}
   ],
   "over_under_lines": [
     {
-      "id": "l-0001",
-      "status": "active",
-      "stat_value": 1275.5,
+      "id": "l-0001", "status": "active", "stat_value": 1275.5, "line_type": "balanced",
       "options": [
-        {"choice": "higher", "payout_multiplier": 1.0},
-        {"choice": "lower", "payout_multiplier": 1.0}
+        {"choice": "higher", "payout_multiplier": "1.0", "american_price": "-110", "decimal_price": "1.91"},
+        {"choice": "lower", "payout_multiplier": "1.0", "american_price": "-110", "decimal_price": "1.91"}
       ],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "receiving_yards"}}
+      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "season_receiving_yards", "display_stat": "Season Receiving Yards"}}
     },
     {
-      "id": "l-0002",
-      "status": "active",
-      "stat_value": 92.5,
+      "id": "l-0002", "status": "active", "stat_value": 92.5, "line_type": "balanced",
       "options": [
-        {"choice": "higher", "payout_multiplier": 0.95},
-        {"choice": "lower", "payout_multiplier": 1.05}
+        {"choice": "higher", "payout_multiplier": "0.95", "american_price": "-122"},
+        {"choice": "lower", "payout_multiplier": "1.05", "american_price": "+100"}
       ],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "receptions"}}
+      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "season_receptions", "display_stat": "Season Receptions"}}
     },
     {
-      "id": "l-0003",
-      "status": "active",
-      "stat_value": 8.5,
-      "options": [
-        {"choice": "higher", "payout_multiplier": 1.0},
-        {"choice": "lower", "payout_multiplier": 1.0}
-      ],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "receiving_tds"}}
+      "id": "l-0003", "status": "active", "stat_value": 8.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}, {"choice": "lower", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "season_rec_tds", "display_stat": "Season Receiving TDs"}}
     },
     {
-      "id": "l-0004",
-      "status": "active",
-      "stat_value": 4225.5,
-      "options": [
-        {"choice": "higher", "payout_multiplier": 1.0},
-        {"choice": "lower", "payout_multiplier": 1.0}
-      ],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "passing_yards"}}
+      "id": "l-0004", "status": "active", "stat_value": 4225.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "season_pass_yards", "display_stat": "Season Pass Yards"}}
     },
     {
-      "id": "l-0005",
-      "status": "active",
-      "stat_value": 30.5,
-      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "passing_tds"}}
+      "id": "l-0005", "status": "active", "stat_value": 30.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "season_pass_tds", "display_stat": "Season Pass TDs"}}
     },
     {
-      "id": "l-0006",
-      "status": "active",
-      "stat_value": 11.5,
-      "options": [{"choice": "lower", "payout_multiplier": 1.0}],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "interceptions"}}
+      "id": "l-0007", "status": "active", "stat_value": 14.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0003", "stat": "rush_rec_tds", "display_stat": "Rush + Rec TDs"}}
     },
     {
-      "id": "l-0007",
-      "status": "active",
-      "stat_value": 1450.5,
-      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0003", "stat": "rushing_receiving_yards"}}
+      "id": "l-0008", "status": "suspended", "stat_value": 700.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0004", "stat": "season_receiving_yards", "display_stat": "Season Receiving Yards"}}
     },
     {
-      "id": "l-0008",
-      "status": "suspended",
-      "stat_value": 700.5,
-      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0004", "stat": "receiving_yards"}}
+      "id": "l-0009", "status": "active", "stat_value": 88.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0005", "stat": "receiving_yds", "display_stat": "Receiving Yards"}}
     },
     {
-      "id": "l-0009",
-      "status": "active",
-      "stat_value": 88.5,
-      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0005", "stat": "receiving_yards"}}
+      "id": "l-0010", "status": "active", "stat_value": 55.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-does-not-exist", "stat": "season_receiving_yards"}}
     },
     {
-      "id": "l-0010",
-      "status": "active",
-      "stat_value": 55.5,
-      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
-      "over_under": {"appearance_stat": {"appearance_id": "a-does-not-exist", "stat": "receiving_yards"}}
+      "id": "l-0011", "status": "active", "stat_value": 60.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0099", "stat": "season_receiving_yards"}}
     },
     {
-      "id": "l-0011",
-      "status": "active",
-      "stat_value": 60.5,
-      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
-      "over_under": {"appearance_stat": {"appearance_id": "a-0099", "stat": "receiving_yards"}}
+      "id": "l-0012", "status": "active", "stat_value": 24.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0006", "stat": "home_runs", "display_stat": "Home Runs"}}
+    },
+    {
+      "id": "l-0013", "status": "active", "stat_value": 45.5, "line_type": "balanced",
+      "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0005", "stat": "period_1_receiving_yds", "display_stat": "1Q Rec Yards"}}
     }
   ]
 }

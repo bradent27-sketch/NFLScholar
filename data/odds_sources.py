@@ -49,6 +49,7 @@ else's endpoint for data that changes twice a week is both rude and
 pointless.
 """
 import json
+import os
 import re
 
 import pandas as pd
@@ -188,18 +189,34 @@ def standardize_team(value):
 #
 # Keyed on a squashed lowercase form so "Passing Yards", "passing_yards" and
 # "pass_yds" all land on the same entry without three dictionary rows each.
+# Every key below was READ OFF A REAL PAYLOAD, not guessed. The first version
+# of this table was guessed and it mapped 8 of 5,314 lines, because Underdog's
+# season-long markets are prefixed `season_` and use `yds`/`rec` rather than
+# the spelled-out forms convention suggested.
 STAT_ALIASES = {
+    # Season-long markets - the ones a draft board actually wants. These are
+    # Underdog's real `stat` values as of the 2026 preseason.
+    'seasonpassyards': 'passing_yards', 'seasonpasstds': 'passing_tds',
+    'seasonrushyards': 'rushing_yards', 'seasonrushtds': 'rushing_tds',
+    'seasonreceivingyards': 'receiving_yards', 'seasonrectds': 'receiving_tds',
+    'seasonreceptions': 'receptions', 'seasonrecs': 'receptions',
+    'seasonpassints': 'passing_interceptions', 'seasoninterceptions': 'passing_interceptions',
+    'seasonrushattempts': 'carries', 'seasoncarries': 'carries',
+    'seasontargets': 'targets',
+
     'passingyards': 'passing_yards', 'passyds': 'passing_yards', 'passyards': 'passing_yards',
     'passingtds': 'passing_tds', 'passingtouchdowns': 'passing_tds', 'passtds': 'passing_tds',
     'passingattempts': 'attempts', 'passattempts': 'attempts',
     'interceptions': 'passing_interceptions', 'passinginterceptions': 'passing_interceptions',
-    'intsthrown': 'passing_interceptions',
+    'intsthrown': 'passing_interceptions', 'passingints': 'passing_interceptions',
 
     'rushingyards': 'rushing_yards', 'rushyds': 'rushing_yards', 'rushyards': 'rushing_yards',
+    'rushingyds': 'rushing_yards',
     'rushingtds': 'rushing_tds', 'rushingtouchdowns': 'rushing_tds', 'rushtds': 'rushing_tds',
     'rushingattempts': 'carries', 'carries': 'carries', 'rushattempts': 'carries',
 
     'receivingyards': 'receiving_yards', 'recyds': 'receiving_yards', 'recyards': 'receiving_yards',
+    'receivingyds': 'receiving_yards',
     'receivingtds': 'receiving_tds', 'receivingtouchdowns': 'receiving_tds', 'rectds': 'receiving_tds',
     'receptions': 'receptions', 'recs': 'receptions', 'catches': 'receptions',
     'targets': 'targets',
@@ -217,7 +234,25 @@ COMBO_STATS = {
     'fantasypoints': 'fantasy_points',
     'fantasyscore': 'fantasy_points',
     'pointsplusreboundsplusassists': None,
+    # Real Underdog NFL markets that must never reach the scoring path.
+    # "Rush + Rec TDs" is their single most common NFL market by volume (349
+    # lines in the payload this was built from) and it is a SUM - mapping it
+    # onto rushing_tds would inflate every back on the board.
+    'rushrectds': 'rush_rec_tds',
+    'seasonrushrectds': 'rush_rec_tds',
+    'periodfirsttouchdownscored': 'first_td',
+    # Defensive markets. Real, and irrelevant to an offensive fantasy board -
+    # named here so they're classified rather than reported as "unmapped"
+    # noise every time the check script runs.
+    'sacks': 'sacks', 'seasonsacks': 'sacks',
+    'regularseasongamesstarted': 'games_started',
 }
+
+# Markets scoped to part of a game (a quarter, a half). Underdog posts a lot
+# of these and they are meaningless for a season projection, so they are
+# dropped by prefix rather than enumerated - `period_1_receiving_yds`,
+# `period_1_2_rush_rec_tds` and every future sibling.
+PARTIAL_GAME_PREFIXES = ('period_', 'first_half_', 'second_half_', '1h_', '1q_')
 
 
 def _stat_key(value):
@@ -228,16 +263,54 @@ def normalize_stat(label):
     """
     Provider stat label -> (our column name, is_scorable).
 
-    is_scorable is False for combination markets and anything unrecognized,
-    which is what keeps an unknown market out of the fantasy-point math
-    instead of quietly landing on the wrong column.
+    is_scorable is False for combination markets, part-of-game markets and
+    anything unrecognized, which is what keeps an unknown market out of the
+    fantasy-point math instead of quietly landing on the wrong column.
     """
+    raw = str(label).lower().strip()
+    if raw.startswith(PARTIAL_GAME_PREFIXES):
+        return raw, False
     key = _stat_key(label)
     if key in STAT_ALIASES:
         return STAT_ALIASES[key], True
     if key in COMBO_STATS:
         return COMBO_STATS[key], False
     return None, False
+
+
+# Underdog labels a player's position in words. Mapped to this app's codes so
+# coverage can be judged per position; their `position_name` field already
+# carries the short form, and this is the fallback when it doesn't.
+UNDERDOG_POSITIONS = {
+    'quarterback': 'QB', 'running back': 'RB', 'full back': 'FB',
+    'wide receiver': 'WR', 'tight end': 'TE', 'kicker': 'K',
+}
+
+
+def _underdog_team_map(payload):
+    """
+    Team UUID -> abbreviation, decoded from the games array.
+
+    UNDERDOG IDENTIFIES TEAMS BY UUID, NOWHERE SPELLED OUT. A player carries
+    `team_id: "5ce78c37-b02c-..."` and nothing else, so the first version of
+    this adapter resolved zero teams out of 5,314 lines - it passed a UUID to
+    standardize_team, which correctly said it had never heard of it.
+
+    The abbreviation only exists on the GAMES, in `abbreviated_title` ("NE @
+    SEA") alongside `home_team_id` and `away_team_id`. Splitting that title
+    is the only place the two representations meet.
+    """
+    mapping = {}
+    for game in payload.get('games') or []:
+        title = str(game.get('abbreviated_title') or '')
+        if '@' not in title:
+            continue
+        away, _, home = title.partition('@')
+        if game.get('away_team_id'):
+            mapping[str(game['away_team_id'])] = away.strip()
+        if game.get('home_team_id'):
+            mapping[str(game['home_team_id'])] = home.strip()
+    return mapping
 
 
 # ---------------------------------------------------------------------------
@@ -317,25 +390,30 @@ def _get_json(url, params=None, headers=None):
 # Underdog
 # ---------------------------------------------------------------------------
 
-def parse_underdog_payload(payload):
+def parse_underdog_payload(payload, sport='NFL'):
     """
     Underdog's over/under payload -> normalized props.
 
-    Their response is RELATIONAL, not a flat list, and the join is the part
-    worth getting right:
+    Their response is RELATIONAL, not a flat list, and the joins are where
+    every real bug lives. Verified against a live 12.6 MB payload (5,314
+    lines, 1,436 players, 88 games):
 
-        players[]           id, first_name, last_name, position_id, team_id
+        players[]           id, first_name, last_name, sport_id, team_id (UUID),
+                            position_name, position_display_name
         appearances[]       id, player_id, match_id, match_type
-        over_under_lines[]  stat_value (the line), options[], and
+        games[]             home_team_id, away_team_id, abbreviated_title
+        over_under_lines[]  stat_value (the line), options[], status, and
                             over_under.appearance_stat.{appearance_id, stat}
 
-    So a line names an APPEARANCE, an appearance names a PLAYER, and only the
-    player carries the name. Two hops, and the middle one is easy to miss
-    because the line object superficially looks self-contained.
+    A line names an APPEARANCE, an appearance names a PLAYER, and only the
+    game knows what a team UUID is called. Three lookups, and the first
+    version of this function got two of them wrong.
 
-    Pure function on purpose: this is where every realistic bug lives (a
-    renamed key, a missing nesting level), and keeping the HTTP call out of
-    it means it can be tested against a recorded fixture without a network.
+    THE PAYLOAD IS EVERY SPORT AT ONCE - NFL, MLB, CS, LOL, tennis, golf,
+    racing. `sport` filters it; pass None to keep everything.
+
+    Pure function on purpose, so it can be tested against a recorded payload
+    with no network.
     """
     if not isinstance(payload, dict):
         return _empty_props(), "Underdog returned an unexpected payload shape."
@@ -346,20 +424,22 @@ def parse_underdog_payload(payload):
     if not players or not lines:
         return _empty_props(), "Underdog returned no player lines."
 
-    # match_id -> match_type, so a season-long line can be told apart from a
-    # single-game one. Season-long is the whole point for a draft board.
+    teams = _underdog_team_map(payload)
+    wanted = str(sport).upper() if sport else None
+
     rows = []
     for line in lines:
         if str(line.get('status', '')).lower() == 'suspended':
             continue
         over_under = line.get('over_under') or {}
         stat_ref = over_under.get('appearance_stat') or {}
-        appearance_id = str(stat_ref.get('appearance_id') or '')
-        appearance = appearances.get(appearance_id)
+        appearance = appearances.get(str(stat_ref.get('appearance_id') or ''))
         if not appearance:
             continue
         player = players.get(str(appearance.get('player_id') or ''))
         if not player:
+            continue
+        if wanted and str(player.get('sport_id') or '').upper() != wanted:
             continue
 
         market, scorable = normalize_stat(stat_ref.get('stat'))
@@ -369,13 +449,19 @@ def parse_underdog_payload(payload):
             side = {'higher': 'over', 'lower': 'under'}.get(choice, choice)
             payouts[side] = pd.to_numeric(option.get('payout_multiplier'), errors='coerce')
 
+        team_uuid = str(player.get('team_id') or appearance.get('team_id') or '')
+        position = str(player.get('position_name') or '').upper()
+        if not position:
+            position = UNDERDOG_POSITIONS.get(
+                str(player.get('position_display_name') or '').lower(), '')
+
         name = ' '.join(str(player.get(k) or '').strip()
                         for k in ('first_name', 'last_name')).strip()
         rows.append({
             'provider': 'Underdog',
             'player': name,
-            'team': standardize_team(player.get('team_id') or appearance.get('team_id')),
-            'position': str(player.get('position_id') or '').upper(),
+            'team': standardize_team(teams.get(team_uuid, '')),
+            'position': position,
             'market': market or str(stat_ref.get('stat') or ''),
             'market_raw': str(stat_ref.get('stat') or ''),
             'scorable': bool(scorable),
@@ -387,20 +473,28 @@ def parse_underdog_payload(payload):
         })
     props = _finalize(rows)
     if props.empty:
-        return props, "Underdog returned lines but none could be joined to a player."
+        return props, (f"Underdog returned lines but none were {wanted}."
+                       if wanted else "Underdog lines couldn't be joined to a player.")
     return props, None
 
 
-def _underdog_period(appearance):
-    """
-    'season' for a season-long line, 'game' for a single-game one.
+# Underdog's `match_type` values on a real payload: 'Game' (a single game),
+# 'Series' (SEASON-LONG - their season-long pick'em product), 'SoloGame' (a
+# head-to-head event like tennis or golf).
+#
+# 'Series' IS THE ONE THAT MATTERS and nothing about the word says so. The
+# first version of this looked for the substring "season" in match_type,
+# which matched none of the three, so every season-long line on the board was
+# labelled 'game' and the season projection silently had nothing to work
+# with. Matched exactly rather than by substring now, because guessing at
+# this field is precisely what went wrong.
+UNDERDOG_SEASON_MATCH_TYPES = {'series', 'season', 'seasonlong', 'season_long'}
 
-    Underdog labels this on the appearance's match_type. The exact string has
-    changed before, so this matches on a substring rather than an equality
-    test - a new label like 'season_long_v2' should still read as a season.
-    """
-    match_type = str(appearance.get('match_type') or '').lower()
-    return 'season' if 'season' in match_type else 'game'
+
+def _underdog_period(appearance):
+    """'season' for a season-long line, 'game' for a single-game one."""
+    match_type = str(appearance.get('match_type') or '').lower().replace(' ', '')
+    return 'season' if match_type in UNDERDOG_SEASON_MATCH_TYPES else 'game'
 
 
 def fetch_underdog_payload(endpoints=None):
@@ -631,3 +725,42 @@ def load_props_fixture(path):
     """Read a recorded payload off disk - the offline path for tests."""
     with open(path, 'r', encoding='utf-8') as handle:
         return json.load(handle)
+
+
+UNDERDOG_SAVED_PATH = os.path.join('external_data', 'underdog_over_under_lines.json')
+
+
+def save_underdog_payload(raw_bytes, path=UNDERDOG_SAVED_PATH):
+    """
+    Persist an uploaded Underdog payload so it survives a restart.
+
+    Written to disk rather than kept in session state for the same reason
+    save_ffa_import is: re-uploading a 12 MB file before every session is
+    exactly the friction that gets a feature abandoned two days before a
+    draft. Gitignored - it is someone else's data, not ours to redistribute.
+    """
+    try:
+        payload = json.loads(raw_bytes)
+    except Exception as exc:
+        return None, f"Couldn't read that file as JSON: {exc}"
+    if not isinstance(payload, dict) or 'over_under_lines' not in payload:
+        return None, ("That file doesn't look like an Underdog over_under_lines "
+                      "response - expected a JSON object with an 'over_under_lines' key.")
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as handle:
+            json.dump(payload, handle)
+    except Exception as exc:
+        return payload, f"Parsed it, but couldn't save it for next time: {exc}"
+    return payload, None
+
+
+def load_saved_underdog_payload(path=UNDERDOG_SAVED_PATH):
+    """The last saved payload, or None. Never raises."""
+    try:
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as handle:
+                return json.load(handle)
+    except Exception:
+        pass
+    return None

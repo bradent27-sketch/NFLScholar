@@ -154,16 +154,30 @@ PACE_GAMES = 16.0
 # of injury, which is not how anyone should pick. The rounded-up mean lands
 # between the two and is the number used.
 #
-# QUARTERBACK IS SET BY HAND AT 16, NOT BY THE MEASUREMENT, and the data
-# argues against it: role-holding QBs came out at 12.99, LOWER than backs and
-# receivers, not higher. The measurement is still contaminated for QBs in a
-# way the usage filter cannot fix - a quarterback benched in week 9 after a
-# bad run keeps 20+ attempts per game in the games he started, so he reads as
-# an available starter who missed eight games. 16 means "assume he plays",
-# which is the deliberate choice. It does leave quarterbacks valued slightly
-# high relative to skill positions; change this one number to 14 to remove
-# that.
-EXPECTED_GAMES = {'QB': 16.0, 'RB': 14.0, 'WR': 14.0, 'TE': 14.0}
+# QUARTERBACK IS 14 RATHER THAN ITS OWN ROUNDED-UP 13, which is the one
+# number here not taken straight from the table. Two reasons, and they pull
+# the same way:
+#
+#   The QB measurement is contaminated downward in a way the usage filter
+#   cannot fix. A quarterback benched in week 9 after a bad run still shows
+#   20+ attempts per game in the games he started, so he reads as an
+#   available starter who missed eight. That is a lost job, not a lost
+#   season, and it is why QBs measured LOWER (12.99) than backs and
+#   receivers despite being the more durable position.
+#
+#   Holding all four positions to one number keeps the games assumption from
+#   becoming a positional thumb on the scale. Any per-position difference
+#   here shifts value between positions, and that difference should be
+#   earned by a measurement worth trusting - which this one isn't.
+#
+# An earlier version shipped 16 here, on the argument that a starting QB
+# should simply be assumed to play. It was measured and dropped: it inflated
+# QB surplus about 8% and moved quarterbacks 0-3 board slots, while pushing
+# projected passing yards to 1.29x the actual league total against ~1.04 for
+# every skill stat. Most of that inflation cancelled in VORP - replacement is
+# computed from the same inflated pool - which is exactly why the aggregate
+# number looked far worse than the draft-value effect actually was.
+EXPECTED_GAMES = {'QB': 14.0, 'RB': 14.0, 'WR': 14.0, 'TE': 14.0}
 # Kickers and defenses are not injury-priced here: a kicker is replaced by
 # another kicker and a DST is the whole unit, so neither carries the
 # individual availability risk this table is about.

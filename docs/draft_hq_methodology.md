@@ -1084,7 +1084,7 @@ the job."
 
 | pos | n | mean | 95% CI | median | shipped |
 |---|---|---|---|---|---|
-| QB | 85 | 12.99 | [12.24, 13.75] | 15.0 | **16** *(set by hand)* |
+| QB | 85 | 12.99 | [12.24, 13.75] | 15.0 | **14** *(see below)* |
 | RB | 87 | 13.85 | [13.20, 14.47] | 15.0 | **14** |
 | WR | 95 | 13.56 | [12.94, 14.16] | 15.0 | **14** |
 | TE | 74 | 13.51 | [12.88, 14.11] | 14.0 | **14** |
@@ -1094,14 +1094,27 @@ game; a minority who lose half a season drag the average. Drafting off the
 mean would be drafting out of fear of injury. The rounded-up mean sits
 between the two.
 
-**Quarterback is set by hand at 16 and the data argues against it** —
-role-holding QBs measured 12.99, *lower* than backs and receivers. The
-measurement stays contaminated for QBs in a way the usage filter cannot fix:
-a QB benched in week 9 still shows 20+ attempts per game in the games he
-started, so he reads as an available starter who missed eight. 16 means
-"assume he plays." It leaves QBs slightly rich against skill positions —
-visible as passing yards still summing to 1.29× the league total while every
-skill stat sits at ~1.04. One constant to change.
+**Quarterback is 14, not its own rounded-up 13** — the one number not taken
+straight from the table. The QB measurement is contaminated downward in a way
+the usage filter can't fix: a QB benched in week 9 still shows 20+ attempts in
+the games he started, so he reads as an available starter who missed eight.
+That's a lost job, not a lost season, and it's why QBs measured *lower* than
+backs and receivers despite being the more durable position. Holding all four
+to one number also keeps the games assumption from becoming a positional thumb
+on the scale.
+
+**An earlier version shipped 16 here, and the market evidence preferred it.**
+At 16 the QB gap to the books was **+0.5%** [−7.7, +2.8] — indistinguishable
+from zero. At 14 it is **−6.2%** [−13.9, −2.3], now significantly *below* the
+books, and QB bias against the FFA analyst projections widened from −16.9 to
+−30.7. Against that, 16 pushed projected passing yards to 1.29× the actual
+league total (14 gives 1.19×) while every skill stat sits at ~1.04.
+
+Shipped at 14 for cross-position consistency, with the trade recorded rather
+than buried: **the QB-specific evidence favours 16, the internal-consistency
+argument favours 14.** Both are one constant. Draft impact either way is 0–3
+board slots — the top QB is rank 18 under both — because replacement level is
+computed from the same pool and absorbs most of the difference.
 
 ### What it did
 

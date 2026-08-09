@@ -898,6 +898,102 @@ replacement level.
 
 ---
 
+## 5b. The betting market — what it's worth, measured
+
+Three market sources feed this app, and they answer different questions.
+
+| source | cost | granularity | key needed |
+|---|---|---|---|
+| The Odds API | paid, 1,000 req/month | per-game props | yes |
+| Underdog / PrizePicks | free | **season-long** player props | no |
+| **nflverse game lines** | **free, uncapped** | per-game spread + total | **no** |
+
+The third is the one this section is about, because it is the only one that
+is free, uncapped, needs no key, and is reachable from a locked-down network:
+nflverse mirrors the closing spread and total for every NFL game into a CSV
+on GitHub, back to 1999.
+
+### The implied-points identity
+
+nflverse's `spread_line` is positive when the HOME team is favored, so:
+
+```
+home implied = total/2 + spread/2      away implied = total/2 - spread/2
+```
+
+Verified on a live row — NE at SEA, total 44.5, spread 3.5, Seattle the home
+favorite at −192: SEA 24.0, NE 20.5. Two checks have to pass (the pair sums
+to the total, and the favorite is higher) and only the correct sign
+convention passes the second.
+
+### Scaling projections by implied team scoring — measured and REJECTED
+
+The obvious use is to scale a player's projection by his offense's implied
+scoring. It is a reasonable idea and it does not survive a backtest. Project
+season N from season N−1 per-game production, with and without multiplying by
+`(team implied points / league average) ** alpha`; 748 player-seasons across
+2023–25, players with 8+ games in both years:
+
+| alpha | MAE (weeks 1–3 lines) | r | MAE (full-season lines) | r |
+|---|---|---|---|---|
+| **0.00 (off)** | **2.830** | 0.7850 | **2.830** | 0.7850 |
+| 0.25 | 2.839 | 0.7874 | 2.819 | 0.7915 |
+| 0.50 | 2.870 | 0.7874 | 2.826 | 0.7955 |
+| 1.00 | 3.010 | 0.7807 | 2.925 | 0.7967 |
+
+The preseason-available signal — weeks 1–3, the only lines posted in August —
+makes the projection **worse at every strength**. Full-season lines need
+hindsight and buy 0.011 points per game, which is nothing.
+
+By position at alpha 0.5 on the preseason signal, only running backs improved
+(MAE 3.290 → 3.220, n=187); QB went 3.202 → 3.326, TE 2.051 → 2.109, WR 2.900
+→ 2.976. One position in four on a modest sample is what noise looks like.
+
+**Why it fails, most likely:** a player's output is his SHARE of an offense
+times that offense's output, and share moves far more between seasons than
+the team total does. Scaling by team while holding share fixed corrects the
+smaller term and adds variance to the larger one — and it double-counts,
+since a player's own usage history already encodes the offense he plays in.
+
+So the implied total is surfaced as a **Vegas PPG** column and nothing in the
+projection path multiplies by it.
+
+### What the market's early read is worth on its own
+
+Preseason lines are a real but modest signal about team scoring:
+
+| | r | MAE |
+|---|---|---|
+| weeks 1–3 implied vs the market's own full-season implied | 0.75–0.85 | 1.2–1.5 pts/g |
+| weeks 1–3 implied vs ACTUAL season points per game | 0.50–0.59 | 2.9–3.3 |
+| full-season implied vs ACTUAL | 0.86–0.88 | 1.8–2.1 |
+
+The market's *complete* read is an excellent predictor of scoring (r ≈ 0.87).
+Its *August* read explains about a quarter of the variance. Worth showing,
+not worth multiplying by.
+
+### Cross-check: does this board agree with the market about offenses?
+
+Summing every board player on a team is confounded — a team with more ranked
+players sums higher regardless of quality — so the fair test is a fixed
+top-N:
+
+| basis | r vs Vegas implied PPG |
+|---|---|
+| sum of ALL a team's players | +0.525 *(confounded)* |
+| sum of top 5 | **+0.723** |
+| sum of top 8 | +0.727 |
+
+Against the FFA analyst projections the board sits at r = 0.932, MAE 19.6,
+bias −0.4 on 322 shared players. Both this model and FFA correlate with the
+market's team view at about the same strength (0.44 vs 0.41 on the all-player
+basis), which is the reassuring answer: three independent methods that agree
+about offenses without agreeing by construction.
+
+Largest team-level disagreements, top-5 basis, as a z-score gap:
+market higher on GB (+1.21), SEA (+1.11), CAR (+0.89); this board higher on
+ARI (−1.90), ATL (−1.58), CIN (−1.57).
+
 ## 6. What was changed by this audit
 
 1. **Games basis** — own-history rates now project across a full season

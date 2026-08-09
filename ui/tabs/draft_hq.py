@@ -75,7 +75,7 @@ BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'FP Tier', 'Auction $',
     'Proj Pts', 'VORP', 'VONA',
     'FFA Rank', 'ADP', 'ECR', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
-    'Risk', 'Health', 'SOS', 'Bye',
+    'Risk', 'Health', 'Vegas PPG', 'SOS', 'Bye',
 ]
 
 
@@ -714,6 +714,17 @@ def _load_board(settings, next_pick):
     if not sheet.empty:
         board, sheet_meta = merge_cheatsheet_into_board(board, sheet)
         status['cheatsheet'].update(sheet_meta)
+
+    # Vegas implied team scoring. Also merged after the cached build, and for
+    # the same reason as the cheat sheet: it is annotation. Nothing in the
+    # projection multiplies by it - that was measured and it made projections
+    # worse (see data/odds_market.py).
+    from data.odds_market import team_scoring_environment, attach_team_environment
+    environment, env_meta = team_scoring_environment(settings['adp_year'])
+    status['vegas'] = env_meta
+    if not environment.empty:
+        board = attach_team_environment(board, environment)
+        meta['vegas_environment'] = environment
     return board, meta, adp_df, adp_meta, status
 
 
@@ -1116,6 +1127,13 @@ def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None
                  "again, and worse per game when he plays. 'FA' means no NFL team: about "
                  "half of unsigned contributors never play a down, and those who do play "
                  "roughly half a season at three-quarters of their old rate.")
+    if 'Vegas PPG' in display.columns:
+        column_config['Vegas PPG'] = st.column_config.NumberColumn(
+            "Vegas PPG", format="%.1f",
+            help="Points per game the betting market implies for this player's OFFENSE, from "
+                 "the posted spread and total. League average is about 22.8. Shown as "
+                 "context, not folded into the projection — scaling projections by it was "
+                 "measured and made them worse.")
     if 'Auction $' in display.columns:
         column_config['Auction $'] = st.column_config.NumberColumn(
             "Auction $", format="$%d",
@@ -1446,6 +1464,29 @@ def _render_market_comparison(board, settings, meta, status):
     """
     from data.odds_projections import compare_to_board
 
+    # Vegas team scoring first, because unlike the prop feeds it is always
+    # available - free, uncapped, no key - so this panel is never empty.
+    vegas = (status or {}).get('vegas') or {}
+    environment = (meta or {}).get('vegas_environment')
+    if environment is not None and not environment.empty:
+        posted = vegas.get('posted', 0)
+        total = vegas.get('games', 0)
+        st.markdown("**How the market prices each offense**")
+        st.caption(
+            f"From {posted} of {total} games with a posted spread and total "
+            f"(weeks {', '.join(str(w) for w in vegas.get('weeks_posted', []))}). "
+            f"League average {vegas.get('league_avg_ppg')} points a game. Books post the "
+            "first few weeks as lookahead lines and fill the rest in as the season runs, so "
+            "an offense's number here is an average over a handful of games and carries the "
+            "bias of who it happened to draw. **Context, not a projection input** — scaling "
+            "projections by it was backtested on 748 player-seasons and made them worse."
+        )
+        st.dataframe(environment.head(32), width="stretch", hide_index=True,
+                     height=df_auto_height(10))
+    elif vegas.get('error'):
+        st.caption(f"Vegas game lines: {vegas['error']}")
+
+    st.markdown("**Season-long player props**")
     market_status = (status or {}).get('market') or {}
     if not market_status.get('enabled'):
         st.caption("Turn on **Fetch season-long lines** in League Settings → Data sources to "

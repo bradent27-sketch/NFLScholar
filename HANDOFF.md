@@ -318,6 +318,16 @@ automates a login** — `save_ffa_import` reads a file the user hands over, once
 - **VORP** — now lives entirely in Draft HQ (`data/draft_board.py`), off real projections
   rather than last season's pace. The old `build_vorp_draft_sheet` was deleted with its
   tab.
+- **Vegas game lines** — `data/odds_market.py`. **Free, uncapped, no API key**, from
+  nflverse's games CSV on raw.githubusercontent.com (the nflverse-data *release assets*
+  live on github.com proper, which some networks block — raw is the fallback that works,
+  and it's the same data). Gives spread + total per game → implied points per team. In
+  early August 2026 that was 52 of 272 games posted (weeks 1–4), ~3 per team, so
+  `games_posted` travels with every row. Surfaced as the **Vegas PPG** column.
+  **Deliberately NOT multiplied into any projection** — backtested on 748 player-seasons
+  and it made projections worse at every strength (§5b of the methodology doc). The sign
+  convention is the one thing that can silently invert everything: `spread_line` is
+  positive when the HOME team is favored.
 - **Sportsbook lines** — `data/odds_sources.py` (adapters) + `data/odds_projections.py`
   (scoring and comparison). Underdog's SEASON-LONG player over/unders, re-scored under the
   user's league settings into a market projection built with no reference to this app's

@@ -1049,12 +1049,34 @@ def load_team_pace(year):
 
 @st.cache_data
 def load_schedule(year):
-    """Full season schedule (nflreadpy), REG season only - used to build remaining-schedule strength-of-schedule tables."""
+    """
+    Full season schedule, REG season only - feeds the strength-of-schedule
+    tables in data/draft_sos.py.
+
+    TWO SOURCES FOR ONE FILE, and the fallback is not theoretical. nflreadpy
+    fetches nflverse's release ASSETS, which live on github.com proper; the
+    identical data is also mirrored as a plain CSV on
+    raw.githubusercontent.com. Networks that block one commonly allow the
+    other, and when the primary failed here it did so SILENTLY - the bare
+    except returned an empty frame, build_team_sos saw it and returned an
+    empty frame too, and the board's SOS column rendered blank for every
+    player with no error anywhere. A column that is quietly always empty is
+    worse than one that is missing, because nothing about the screen says so.
+    """
     try:
         df = nflreadpy.load_schedules([year]).to_pandas()
-        return df[df['game_type'] == 'REG'].copy()
+        if df is not None and not df.empty:
+            return df[df['game_type'] == 'REG'].copy()
     except Exception:
-        return pd.DataFrame()
+        pass
+    try:
+        from data.odds_market import fetch_game_lines
+        games, meta = fetch_game_lines(year)
+        if not meta.get('error') and games is not None and not games.empty:
+            return games.copy()
+    except Exception:
+        pass
+    return pd.DataFrame()
 
 
 _ODDS_API_KEY_FILE = os.path.join('.streamlit', 'odds_api_key.txt')

@@ -167,18 +167,29 @@ def attach_sos_to_board(board, sos_df):
     One column, not three. A receiver's rushing schedule is noise on his row,
     and showing all three invites reading the wrong one - which is worse than
     not showing it, because it looks authoritative either way.
+
+    BOTH SIDES GO THROUGH standardize_team, which is not decoration. The
+    consensus rankings write the Rams as "LAR" and the NFL schedule writes
+    them as "LA", so an uppercase string comparison silently dropped every
+    Rams player - Puka Nacua's row had a blank SOS while everyone around him
+    had a number, which reads as missing data rather than as a join bug. The
+    same mismatch exists for JAX/JAC and WAS/WSH.
     """
+    from data.odds_sources import standardize_team
+
     if board.empty or sos_df is None or sos_df.empty:
         out = board.copy()
         out['SOS'] = np.nan
         return out
 
     out = board.copy()
+    sos_teams = sos_df['Team'].map(standardize_team)
     ranks = {}
     for label in ('rushing', 'passing', 'overall'):
         column = f'{label} rank'
         if column in sos_df.columns:
-            ranks[label] = dict(zip(sos_df['Team'], sos_df[column]))
+            ranks[label] = {team: value for team, value
+                            in zip(sos_teams, sos_df[column]) if team}
 
     values = []
     for team, pos in zip(out.get('Team', pd.Series(dtype=str)),
@@ -187,7 +198,7 @@ def attach_sos_to_board(board, sos_df):
         if group is None or group not in ranks:
             values.append(np.nan)
             continue
-        values.append(ranks[group].get(str(team).upper(), np.nan))
+        values.append(ranks[group].get(standardize_team(team), np.nan))
     out['SOS'] = pd.to_numeric(pd.Series(values, index=out.index), errors='coerce')
     return out
 

@@ -160,6 +160,11 @@ SETTING_DEFAULTS = {
     'adp_source': 'Auto', 'sos_window': None, 'market_weight': 40,
     'uncertainty': 1.0, 'tiers': 8, 'curve_season': AVAILABLE_SEASONS_WITH_UPCOMING[1],
     'ffa_weight': 0,
+    # Season-long sportsbook lines. Off by default and deliberately so - see
+    # data.odds_projections.blend_market_into_projection for why blending
+    # book lines into the projection double-counts the market blend the board
+    # already applies through ADP and ECR.
+    'market_lines_on': False, 'market_lines_weight': 0,
     # Simulated-opponent ranking blend, as percentages. See
     # data.draft_sim.build_opponent_ranking.
     'bot_adp': 50, 'bot_ecr': 50, 'bot_ffa': 0,
@@ -427,6 +432,27 @@ def _render_settings_panel(cfg):
                 help="100 = use their projections outright, 0 = keep this app's own and take "
                      "only their notes and value score.")
 
+            st.markdown("**Season-long sportsbook lines** (optional)")
+            st.caption(
+                "Pulls Underdog's season-long player over/unders — 1,275.5 receiving yards for "
+                "the whole year — and re-scores them under your league settings into a market "
+                "projection built with no reference to this app's model. That makes it a real "
+                "second opinion rather than another view of the same numbers. The gap between "
+                "the two shows up under 'Market lines vs this board' below the draft room."
+            )
+            cfg['market_lines_on'] = st.checkbox(
+                "Fetch season-long lines", value=bool(cfg['market_lines_on']),
+                key="dhq_market_lines_on",
+                help="One request per half hour. Season-long lines are posted through the "
+                     "preseason and pulled once the season starts.")
+            cfg['market_lines_weight'] = st.slider(
+                "Blend market lines into projections", 0, 100,
+                int(cfg['market_lines_weight']), 5, key="dhq_market_lines_weight",
+                help="Leave at 0 unless you know what you're doing. The board ALREADY blends "
+                     "toward the market once, through ADP and ECR — moving projections toward "
+                     "book lines as well prices the same opinion in twice, and the second dose "
+                     "is invisible because it lands inside the projection.")
+
     return ffa_upload
 
 
@@ -461,6 +487,8 @@ def _settings_from_cfg(cfg, ffa_upload=None):
         'market_weight': float(cfg['market_weight']) / 100.0,
         'sos_window': cfg['sos_window'], 'ffa_upload': ffa_upload,
         'ffa_weight': float(cfg['ffa_weight']) / 100.0,
+        'market_lines_on': bool(cfg['market_lines_on']),
+        'market_lines_weight': float(cfg['market_lines_weight']) / 100.0,
         'bot_weights': {'ADP': float(cfg['bot_adp']), 'ECR': float(cfg['bot_ecr']),
                         'FFA': float(cfg['bot_ffa'])},
         # Part of the board cache key, so swapping the consensus source
@@ -500,6 +528,10 @@ def _board_cache_key(settings, next_pick, adp_meta):
         settings['baseline_season'], settings['market_weight'],
         settings['sos_window'], settings['ffa_weight'], settings.get('ffa_rows', 0),
         settings.get('adp_source', 'Auto'), settings.get('ecr_signature'),
+        # Both, not just the weight: at weight 0 the market frame doesn't
+        # change the board, but turning the blend up with a different set of
+        # lines loaded has to rebuild rather than serve the old one.
+        settings.get('market_lines_weight', 0.0), settings.get('market_rows', 0),
         # str() rather than float() - scoring now carries 'bonus_mode',
         # which is a string, and float()-ing every value would raise the
         # moment the settings panel is opened.
@@ -509,8 +541,53 @@ def _board_cache_key(settings, next_pick, adp_meta):
     )
 
 
+def _load_market_lines(settings, ecr_board):
+    """
+    Fetch season-long sportsbook lines and score them under this league.
+
+    Returns (scored frame, status dict). Never raises and never blocks the
+    board: every provider failure is reported and the rest of the app carries
+    on with the sources that did load, exactly as ADP and ECR already do.
+    """
+    empty = pd.DataFrame()
+    if not settings.get('market_lines_on'):
+        return empty, {'enabled': False}
+
+    from data.odds_sources import fetch_underdog_lines, fetch_prizepicks_lines, combine_props
+    from data.odds_projections import market_stat_lines, score_market_lines
+
+    status = {'enabled': True, 'providers': {}}
+    frames = []
+    for label, fetch in (('Underdog', fetch_underdog_lines),
+                         ('PrizePicks', fetch_prizepicks_lines)):
+        props, err = fetch()
+        status['providers'][label] = {'rows': int(len(props)), 'error': err}
+        if not props.empty:
+            frames.append(props)
+    combined = combine_props(*frames)
+    status['total_lines'] = int(len(combined))
+    if combined.empty:
+        return empty, status
+
+    rows = market_stat_lines(combined, season_only=True)
+    status['season_players'] = int(len(rows))
+    if rows.empty:
+        return empty, status
+
+    # Position off the consensus board where the book didn't publish one -
+    # coverage can't be judged without knowing which stats should be there.
+    positions = {}
+    if ecr_board is not None and not ecr_board.empty and 'Pos' in ecr_board.columns:
+        from data.utils import clean_name_exact
+        positions = dict(zip(clean_name_exact(ecr_board['Player']),
+                             ecr_board['Pos'].astype(str)))
+    scored = score_market_lines(rows, settings['scoring'], positions=positions)
+    status['scored'] = int(len(scored))
+    return scored, status
+
+
 @st.cache_data(show_spinner=False)
-def _cached_board(_ecr_board, _adp_df, _ffa_df, _settings, cache_key):
+def _cached_board(_ecr_board, _adp_df, _ffa_df, _market_scored, _settings, cache_key):
     """
     Cache the assembled board on the SETTINGS, not on the DataFrames.
 
@@ -535,6 +612,16 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _settings, cache_key):
         projected, ffa_meta = merge_ffa_into_board(
             projected, _ffa_df, stat_line_weight=_settings['ffa_weight'], scoring=scoring)
 
+    # Market blend goes in BEFORE build_draft_board, not after it. Moving
+    # Proj Pts afterwards would leave VORP, VONA, the tiers and the outcome
+    # range all computed off the old number - a board that quietly disagrees
+    # with its own projection column is worse than no blend at all.
+    market_blended = 0
+    if _settings.get('market_lines_weight') and _market_scored is not None and not _market_scored.empty:
+        from data.odds_projections import blend_market_into_projection
+        projected, market_blended = blend_market_into_projection(
+            projected, _market_scored, weight=_settings['market_lines_weight'])
+
     board, meta = build_draft_board(
         projected, _settings, adp_df=_adp_df, next_pick=cache_key[3],
         tiers_per_position=_settings['tiers'], rank_sd_scale=_settings['uncertainty'],
@@ -557,6 +644,7 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _settings, cache_key):
 
     meta['projection'] = proj_meta
     meta['ffa'] = ffa_meta
+    meta['market_blended'] = market_blended
     meta['sos_window'] = (week_start, week_end)
     return board, meta
 
@@ -605,8 +693,17 @@ def _load_board(settings, next_pick):
     adp_meta['rows'] = int(len(adp_df))
     status['adp'] = adp_meta
 
-    board, meta = _cached_board(ecr_board, adp_df, ffa_df, settings,
+    # Season-long book lines, scored into a market projection. Fetched here
+    # rather than inside the cached build because the fetch has its own
+    # half-hour cache and a network call has no business running behind a
+    # @st.cache_data whose key doesn't mention the network.
+    market_scored, market_status = _load_market_lines(settings, ecr_board)
+    status['market'] = market_status
+    settings = {**settings, 'market_rows': int(len(market_scored))}
+
+    board, meta = _cached_board(ecr_board, adp_df, ffa_df, market_scored, settings,
                                 _board_cache_key(settings, next_pick, adp_meta))
+    meta['market_scored'] = market_scored
 
     # Merged after the cached build rather than inside it: this is pure
     # annotation - auction values, their analysts' tiers, their notes - and
@@ -1338,6 +1435,70 @@ def _render_player_detail(board, selected):
 
 
 
+def _render_market_comparison(board, settings, meta, status):
+    """
+    Season-long book lines re-scored under this league, against our own
+    projection, ranked by disagreement.
+
+    The interesting rows are at BOTH ends - players this model likes far more
+    than the money does, and far less - so the table is sorted by the
+    absolute gap rather than by a signed one.
+    """
+    from data.odds_projections import compare_to_board
+
+    market_status = (status or {}).get('market') or {}
+    if not market_status.get('enabled'):
+        st.caption("Turn on **Fetch season-long lines** in League Settings → Data sources to "
+                   "compare this board against sportsbook season-long over/unders.")
+        return
+
+    for label, info in (market_status.get('providers') or {}).items():
+        if info.get('error'):
+            st.caption(f"{label}: {info['error']}")
+        else:
+            st.caption(f"{label}: {info['rows']} lines")
+
+    scored = meta.get('market_scored')
+    if scored is None or scored.empty:
+        if market_status.get('total_lines'):
+            st.info(
+                "Lines loaded, but none of them are season-long. Season-long player "
+                "over/unders are posted through the preseason and pulled once the season "
+                "starts — in-season, the per-game props in the Live Odds tab are the live "
+                "market read."
+            )
+        return
+
+    comparison, cmp_meta = compare_to_board(board, scored)
+    if comparison.empty:
+        st.info("No player had enough season-long lines to compare against a full projection.")
+        return
+
+    st.caption(
+        f"{cmp_meta['matched']} players priced with enough coverage to compare"
+        + (f" · {cmp_meta['thin']} dropped for thin coverage" if cmp_meta['thin'] else "")
+        + (f" · {cmp_meta['unmatched']} didn't match a board row" if cmp_meta['unmatched'] else "")
+    )
+    st.caption(
+        "**Market Pts** is the book's own stat lines scored under YOUR league settings — a "
+        "projection built without reference to this app's model. **Edge** is ours minus "
+        "theirs. A big gap is not a bet: most often it means the market knows something a "
+        "statistical model can't see, which is exactly why this board already blends toward "
+        "consensus. Read it as a list of players worth a second look, not a slate."
+    )
+    show = comparison.head(40).set_index('Player')
+    st.dataframe(
+        style_plain_dataframe(show, diverging_cols={'Edge %': float(
+            comparison['Edge %'].abs().max() or 1.0)}),
+        width="stretch", height=df_auto_height(min(len(show), 18)),
+        column_config=build_column_help_config(show, pinned_cols=['Pos', 'Team']),
+    )
+    if meta.get('market_blended'):
+        st.caption(f"⚠️ Market lines are blended into Proj Pts for "
+                   f"{meta['market_blended']} players, so the Edge column is damped by "
+                   f"construction — the two sides have already been moved together.")
+
+
 def _roster_slot_plan(settings):
     """The starting lineup as an ordered list of slot labels, from settings."""
     roster = settings['roster']
@@ -1889,7 +2050,7 @@ def _render_positional_value_add(board, settings, dc):
         f"<div class='pv-wrap'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 
-def _render_draft_room(board, settings, ctx):
+def _render_draft_room(board, settings, ctx, meta=None, status=None):
     """
     The single draft surface, live or simulated.
 
@@ -2046,6 +2207,8 @@ def _render_draft_room(board, settings, ctx):
     with st.expander("📊 Pick odds & positional scarcity", expanded=False):
         _render_pick_odds(board, settings, ctx, dc)
         _render_positional_scarcity(dc['available'], settings)
+    with st.expander("💵 Market lines vs this board", expanded=False):
+        _render_market_comparison(board, settings, meta or {}, status or {})
     if mode == "Live draft":
         _render_live_sync(board)
     else:
@@ -2238,9 +2401,9 @@ def render():
     if board.empty:
         st.error(
             "Couldn't build a draft board — the consensus rankings source was unreachable. "
-            "Everything here is live-fetched, so this usually means no network access rather "
-            "than anything wrong with the app. The VORP Draft Sheet tab still works fully "
-            "offline from local data."
+            "The board's ranks are live-fetched, so this usually means no network access "
+            "rather than anything wrong with the app. Uploading a FantasyPros export in "
+            "League Settings builds the board without the network."
         )
         return
 
@@ -2254,6 +2417,6 @@ def render():
     # draft room, where you're already looking.
     room, news = st.tabs(["🎯 Draft Room", "📰 News & Injuries"])
     with room:
-        _render_draft_room(board, settings, ctx)
+        _render_draft_room(board, settings, ctx, meta, status)
     with news:
         _render_news(board, settings)

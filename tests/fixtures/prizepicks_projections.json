@@ -1,0 +1,106 @@
+{
+  "_comment": "Recorded-SHAPE fixture for api.prizepicks.com/projections, which serves JSON:API. The point of this file is the split: `data` holds lines that carry only relationship POINTERS, and `included` holds the player objects they point at. Names and numbers are stand-ins. Includes a line whose player pointer resolves to nothing, and a line with no line_score, both of which must be dropped rather than crash.",
+  "data": [
+    {
+      "type": "projection",
+      "id": "pp-1",
+      "attributes": {
+        "stat_type": "Receiving Yards",
+        "line_score": 1240.5,
+        "odds_type": "season_long",
+        "description": "Season Long"
+      },
+      "relationships": {
+        "new_player": {"data": {"type": "new_player", "id": "np-1"}}
+      }
+    },
+    {
+      "type": "projection",
+      "id": "pp-2",
+      "attributes": {
+        "stat_type": "Receptions",
+        "line_score": 90.5,
+        "odds_type": "season_long",
+        "description": "Season Long"
+      },
+      "relationships": {
+        "new_player": {"data": {"type": "new_player", "id": "np-1"}}
+      }
+    },
+    {
+      "type": "projection",
+      "id": "pp-3",
+      "attributes": {
+        "stat_type": "Receiving TDs",
+        "line_score": 9.5,
+        "odds_type": "season_long",
+        "description": "Season Long"
+      },
+      "relationships": {
+        "new_player": {"data": {"type": "new_player", "id": "np-1"}}
+      }
+    },
+    {
+      "type": "projection",
+      "id": "pp-4",
+      "attributes": {
+        "stat_type": "Pass Yards",
+        "line_score": 74.5,
+        "odds_type": "standard",
+        "description": "Week 1"
+      },
+      "relationships": {
+        "new_player": {"data": {"type": "new_player", "id": "np-2"}}
+      }
+    },
+    {
+      "type": "projection",
+      "id": "pp-5",
+      "attributes": {
+        "stat_type": "Receiving Yards",
+        "line_score": 800.5,
+        "odds_type": "season_long"
+      },
+      "relationships": {
+        "new_player": {"data": {"type": "new_player", "id": "np-missing"}}
+      }
+    },
+    {
+      "type": "projection",
+      "id": "pp-6",
+      "attributes": {
+        "stat_type": "Receiving Yards",
+        "line_score": null,
+        "odds_type": "season_long"
+      },
+      "relationships": {
+        "new_player": {"data": {"type": "new_player", "id": "np-1"}}
+      }
+    }
+  ],
+  "included": [
+    {
+      "type": "new_player",
+      "id": "np-1",
+      "attributes": {
+        "display_name": "Justin Jefferson",
+        "team": "MIN",
+        "position": "WR"
+      }
+    },
+    {
+      "type": "new_player",
+      "id": "np-2",
+      "attributes": {
+        "display_name": "Patrick Mahomes",
+        "team": "KC",
+        "position": "QB"
+      }
+    },
+    {
+      "type": "league",
+      "id": "9",
+      "attributes": {"name": "NFL"}
+    }
+  ]
+}

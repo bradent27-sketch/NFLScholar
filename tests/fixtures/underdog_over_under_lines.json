@@ -1,0 +1,136 @@
+{
+  "_comment": "Recorded-SHAPE fixture for api.underdogfantasy.com/beta/v5/over_under_lines. Field names and nesting mirror the live payload; the players and numbers are stand-ins so this file carries no scraped content. Deliberately includes the awkward cases: a suspended line, a line whose appearance_id resolves to nothing, an appearance whose player is missing, a single-game line alongside the season-long ones, and a combination market that must not be scored.",
+  "players": [
+    {
+      "id": "p-0001",
+      "first_name": "Justin",
+      "last_name": "Jefferson",
+      "position_id": "WR",
+      "team_id": "MIN",
+      "sport_id": "NFL"
+    },
+    {
+      "id": "p-0002",
+      "first_name": "Patrick",
+      "last_name": "Mahomes",
+      "position_id": "QB",
+      "team_id": "Kansas City Chiefs",
+      "sport_id": "NFL"
+    },
+    {
+      "id": "p-0003",
+      "first_name": "Travis",
+      "last_name": "Etienne",
+      "position_id": "RB",
+      "team_id": "JAC",
+      "sport_id": "NFL"
+    },
+    {
+      "id": "p-0004",
+      "first_name": "Nobody",
+      "last_name": "Suspended",
+      "position_id": "TE",
+      "team_id": "WSH",
+      "sport_id": "NFL"
+    }
+  ],
+  "appearances": [
+    {"id": "a-0001", "player_id": "p-0001", "position_id": "WR", "team_id": "MIN", "match_id": "m-season", "match_type": "season"},
+    {"id": "a-0002", "player_id": "p-0002", "position_id": "QB", "team_id": "KC", "match_id": "m-season", "match_type": "season"},
+    {"id": "a-0003", "player_id": "p-0003", "position_id": "RB", "team_id": "JAC", "match_id": "m-season", "match_type": "season"},
+    {"id": "a-0004", "player_id": "p-0004", "position_id": "TE", "team_id": "WSH", "match_id": "m-season", "match_type": "season"},
+    {"id": "a-0005", "player_id": "p-0001", "position_id": "WR", "team_id": "MIN", "match_id": "m-week1", "match_type": "single_game"},
+    {"id": "a-0099", "player_id": "p-missing", "position_id": "WR", "team_id": "SEA", "match_id": "m-season", "match_type": "season"}
+  ],
+  "over_under_lines": [
+    {
+      "id": "l-0001",
+      "status": "active",
+      "stat_value": 1275.5,
+      "options": [
+        {"choice": "higher", "payout_multiplier": 1.0},
+        {"choice": "lower", "payout_multiplier": 1.0}
+      ],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "receiving_yards"}}
+    },
+    {
+      "id": "l-0002",
+      "status": "active",
+      "stat_value": 92.5,
+      "options": [
+        {"choice": "higher", "payout_multiplier": 0.95},
+        {"choice": "lower", "payout_multiplier": 1.05}
+      ],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "receptions"}}
+    },
+    {
+      "id": "l-0003",
+      "status": "active",
+      "stat_value": 8.5,
+      "options": [
+        {"choice": "higher", "payout_multiplier": 1.0},
+        {"choice": "lower", "payout_multiplier": 1.0}
+      ],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "receiving_tds"}}
+    },
+    {
+      "id": "l-0004",
+      "status": "active",
+      "stat_value": 4225.5,
+      "options": [
+        {"choice": "higher", "payout_multiplier": 1.0},
+        {"choice": "lower", "payout_multiplier": 1.0}
+      ],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "passing_yards"}}
+    },
+    {
+      "id": "l-0005",
+      "status": "active",
+      "stat_value": 30.5,
+      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "passing_tds"}}
+    },
+    {
+      "id": "l-0006",
+      "status": "active",
+      "stat_value": 11.5,
+      "options": [{"choice": "lower", "payout_multiplier": 1.0}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "interceptions"}}
+    },
+    {
+      "id": "l-0007",
+      "status": "active",
+      "stat_value": 1450.5,
+      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0003", "stat": "rushing_receiving_yards"}}
+    },
+    {
+      "id": "l-0008",
+      "status": "suspended",
+      "stat_value": 700.5,
+      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0004", "stat": "receiving_yards"}}
+    },
+    {
+      "id": "l-0009",
+      "status": "active",
+      "stat_value": 88.5,
+      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0005", "stat": "receiving_yards"}}
+    },
+    {
+      "id": "l-0010",
+      "status": "active",
+      "stat_value": 55.5,
+      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-does-not-exist", "stat": "receiving_yards"}}
+    },
+    {
+      "id": "l-0011",
+      "status": "active",
+      "stat_value": 60.5,
+      "options": [{"choice": "higher", "payout_multiplier": 1.0}],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0099", "stat": "receiving_yards"}}
+    }
+  ]
+}

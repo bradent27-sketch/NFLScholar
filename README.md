@@ -10,9 +10,13 @@ Fantasy football analytics and matchup intelligence, built with [Streamlit](http
 - **Risers / Waiver Wire** — biggest week-over-week percentile jumps.
 - **Rookie Watch** — rookie performance leaderboard.
 - **Weekly Rankings** — upload your own FantasyPros export and compare against this app's own recent-form ranking.
-- **Live Odds** — game lines and player props via [The Odds API](https://the-odds-api.com/).
+- **Live Odds** — game lines and player props via [The Odds API](https://the-odds-api.com/), plus a readout of exactly which sportsbooks your key returns.
 - **Player Compare** — two players, one overlaid percentile radar/bar chart, each in their own team color.
-- **Draft HQ** — a full draft board built on its own projection model (rank curves blended with each player's own usage rates, aged and injury-adjusted), valued by VORP/VONA against a league-settings replacement level, blended with market ADP/ECR. Runs live or mock drafts with a draft tracker (Sleeper sync or pasted picks) and simulates the resulting roster to a win total.
+- **Draft HQ** — a full draft board built on its own projection model (rank curves blended with each player's own usage rates, aged and injury-adjusted), valued by VORP/VONA against a league-settings replacement level, blended with market ADP/ECR. Runs live or mock drafts with a draft tracker (Sleeper sync or pasted picks) and simulates the resulting roster to a win total. Optionally pulls season-long sportsbook over/unders, re-scores them under your league settings, and ranks where the board disagrees with the money.
+
+### On the odds adapters
+
+`data/odds_sources.py` makes ordinary HTTPS requests and identifies itself honestly. There is no bot-detection evasion in this project — no patched headless browser, no fingerprint spoofing, no proxy rotation. Where a source declines automated access, the adapter reports it and stops. FanDuel and DraftKings aren't scraped at all; The Odds API already carries them under licence.
 
 ## Running locally
 

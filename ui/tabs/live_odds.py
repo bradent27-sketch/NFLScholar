@@ -143,6 +143,32 @@ def render():
     if requests_left:
         st.caption(f"API requests remaining this period: {requests_left}")
 
+    # Which books this key ACTUALLY returns, read off the response rather
+    # than off a docs page. Coverage varies by plan tier, by region and by
+    # how close a game is, so the published list and what a given key sees at
+    # a given moment are not the same list - and "which books am I paying
+    # for" is otherwise a surprisingly hard question to answer.
+    with st.expander("📚 Which sportsbooks does this key cover?", expanded=False):
+        from data.odds_sources import odds_api_bookmakers
+        books = odds_api_bookmakers(odds_data)
+        if books.empty:
+            st.info("No bookmakers in the current response.")
+        else:
+            st.caption(
+                f"{len(books)} books across {len(odds_data)} upcoming games. "
+                "'events' is how many of those games each book has posted, which is the "
+                "honest measure of coverage — a book that appears once is not a book you "
+                "can shop against."
+            )
+            st.dataframe(books, width="stretch", hide_index=True)
+            st.caption(
+                "**On the DFS books:** PrizePicks and Underdog are pick'em operators rather "
+                "than sportsbooks and generally are NOT in this feed. Underdog's season-long "
+                "player lines are pulled directly instead — see Draft HQ → Market lines vs "
+                "this board. FanDuel and DraftKings ARE here under licence, which is why "
+                "neither is scraped anywhere in this app."
+            )
+
     game_labels = {}
     for g in odds_data:
         label = f"{g.get('away_team','?')} @ {g.get('home_team','?')} — {_fmt_kickoff(g.get('commence_time',''))}"

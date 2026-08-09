@@ -318,6 +318,22 @@ automates a login** — `save_ffa_import` reads a file the user hands over, once
 - **VORP** — now lives entirely in Draft HQ (`data/draft_board.py`), off real projections
   rather than last season's pace. The old `build_vorp_draft_sheet` was deleted with its
   tab.
+- **Sportsbook lines** — `data/odds_sources.py` (adapters) + `data/odds_projections.py`
+  (scoring and comparison). Underdog's SEASON-LONG player over/unders, re-scored under the
+  user's league settings into a market projection built with no reference to this app's
+  model, then compared to it (Draft HQ → "Market lines vs this board"). Which source
+  answers which question is the whole design: The Odds API is per-EVENT and is right for
+  in-season/per-game work; Underdog posts season-long lines and is right for a draft board.
+  **No bot-detection evasion anywhere** — no undetected_chromedriver, no stealth browser,
+  no proxy rotation. PrizePicks is attempted with a plain request and a block is accepted
+  as a "no"; FanDuel is not scraped at all because The Odds API carries it under licence.
+  Adds no dependencies (requests/pandas/streamlit only). Parsing is tested offline against
+  recorded-shape fixtures — `python tests/test_odds_sources.py`, 14 tests, no network;
+  `python scripts/check_odds_sources.py` checks the LIVE shape on a normal network.
+  Gotcha worth keeping: the market→board join is **two-tier** (`attach_board_player`) for
+  the same reason `load_year_data` is — books write "Patrick Mahomes", the board says
+  "Patrick Mahomes II", and the loose fallback is refused when the stripped key is
+  ambiguous.
 - **Recent form** — `build_recent_form_rank` (last N games avg FPTS, min 2 games) — the
   Weekly Rankings tab's internal baseline. Draft value and weekly form are deliberately
   separate comparisons on separate tabs.

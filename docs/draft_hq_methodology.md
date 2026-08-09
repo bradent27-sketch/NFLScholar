@@ -994,6 +994,88 @@ Largest team-level disagreements, top-5 basis, as a z-score gap:
 market higher on GB (+1.21), SEA (+1.11), CAR (+0.89); this board higher on
 ARI (−1.90), ATL (−1.58), CIN (−1.57).
 
+## 5c. The games basis — measured against the betting market
+
+The board sat systematically above two independent sportsbooks. Chasing that
+found two defects, one structural and one empirical.
+
+### PACE_GAMES was structurally impossible
+
+This app scores **weeks 1–17**, and since 2021 a team plays 17 games across
+**eighteen** weeks. So weeks 1–17 hold at most **sixteen** games for a normal
+player. Confirmed against every season in local history — the most any player
+recorded inside weeks 1–17 is 16 in 2021–24; the 17s in 2019 and 2025 are
+mid-season trades collecting two teams' bye weeks. The basis was 17.0, which
+inflated every stat line ~6% for nobody's benefit. **Now 16.0.**
+
+(The season lengthened in **2021**, not later: 2019–20 max out at week 17,
+2021+ at week 18. Every measurement below uses 2022–25 only so the two eras
+are never averaged together.)
+
+### Starters miss more games than the model assumed
+
+`proj_games` averaged **16.81 of 17** for the top 60 — 98.9% availability.
+
+Cohort: last season's top-24 at a position, kept only if they held a starting
+role the following season, judged by per-game usage in the games they played
+(QB 20+ attempts, RB 10+ touches, WR 5+ targets, TE 3.5+ targets). That
+filter is the whole point — an injured starter keeps starter usage in the
+games he *did* play, a demoted one doesn't, so it separates "hurt" from "lost
+the job."
+
+| pos | n | mean | 95% CI | median | shipped |
+|---|---|---|---|---|---|
+| QB | 85 | 12.99 | [12.24, 13.75] | 15.0 | **16** *(set by hand)* |
+| RB | 87 | 13.85 | [13.20, 14.47] | 15.0 | **14** |
+| WR | 95 | 13.56 | [12.94, 14.16] | 15.0 | **14** |
+| TE | 74 | 13.51 | [12.88, 14.11] | 14.0 | **14** |
+
+**The median is 15 and the mean is 13.5.** The typical starter misses one
+game; a minority who lose half a season drag the average. Drafting off the
+mean would be drafting out of fear of injury. The rounded-up mean sits
+between the two.
+
+**Quarterback is set by hand at 16 and the data argues against it** —
+role-holding QBs measured 12.99, *lower* than backs and receivers. The
+measurement stays contaminated for QBs in a way the usage filter cannot fix:
+a QB benched in week 9 still shows 20+ attempts per game in the games he
+started, so he reads as an available starter who missed eight. 16 means
+"assume he plays." It leaves QBs slightly rich against skill positions —
+visible as passing yards still summing to 1.29× the league total while every
+skill stat sits at ~1.04. One constant to change.
+
+### What it did
+
+| | before | after |
+|---|---|---|
+| gap vs the books | **+5.4%** [+3.8, +7.0] | **−2.5%** [−3.9, −1.0] |
+| …TE specifically | **+10.7%** | **+0.2%** [−2.0, +0.9] |
+| board ÷ actual NFL receiving yards | 1.144 | **1.041** |
+| board ÷ actual NFL receptions | 1.165 | **1.045** |
+| ECR rank-corr | 0.962 | 0.960 |
+| FFA rank-corr | 0.944 | **0.950** |
+| FFA projection bias | +0.3 | **−8.4** |
+
+Rank correlation is unchanged, so **draft order is preserved** — only the
+point levels moved. TE's outlier gap closed entirely, which says TE was never
+a TE-specific problem; it was the games assumption.
+
+The board now sits **below** the FFA analyst projections by 8.4 points. That
+is expected rather than alarming: analyst projections are near-"if healthy"
+numbers carrying the same full-season assumption just removed here, while the
+books price actual expected outcomes. Moving away from one and toward the
+other is the intended result, and the two cannot both be matched.
+
+### The tail is inflated and it does not matter
+
+Beyond a position's rank ~96, projections run 1.5–6.5× what those ranks
+actually produce, driven by the own-history side giving backups a starter's
+games. It was measured for decision impact and has none: replacement level
+sits at QB12 / RB30 / WR45 / TE6, all far inside that band. **Deleting the
+entire tail changes VORP by 0.00 for every top-200 player** (max rank move 6,
+and only because one player leaves the pool). Left alone deliberately —
+changing it is risk without benefit.
+
 ## 6. What was changed by this audit
 
 1. **Games basis** — own-history rates now project across a full season

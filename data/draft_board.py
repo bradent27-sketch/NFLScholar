@@ -120,10 +120,59 @@ MODERN_SEASON_GAMES = 17
 # The games basis every projected stat line is expressed on. Lives here
 # rather than in data.draft_projections because draft_projections already
 # imports from this module, and both the projection side and the valuation
-# side need the same number to agree. See the long note beside it in
-# data/draft_projections.py for why projections are a full-season pace and
-# the games discount is applied to surplus over replacement instead.
-PACE_GAMES = 17.0
+# side need the same number to agree.
+#
+# 17.0 WAS STRUCTURALLY IMPOSSIBLE, before injuries entered the argument.
+# This app scores weeks 1-17, and since 2021 a team plays 17 games across
+# EIGHTEEN weeks - so weeks 1-17 hold at most SIXTEEN of them for a normal
+# player. Checked against every season in local history: the most games any
+# player recorded inside weeks 1-17 is 16 in 2021-24, and the 17s in 2019 and
+# 2025 are mid-season trades collecting two teams' bye weeks. Projecting on a
+# 17-game basis inflated every stat line by ~6% for nobody's benefit.
+PACE_GAMES = 16.0
+
+# Expected games from a player who holds a starting role, per position,
+# MEASURED and then rounded UP.
+#
+# Cohort: last season's top-24 at the position - the players actually being
+# drafted as starters - kept only if they held a starting role the following
+# season, judged by per-game usage in the games they played (QB 20+ pass
+# attempts, RB 10+ touches, WR 5+ targets, TE 3.5+ targets). That filter is
+# the point: an injured starter keeps starter usage in the games he DID play,
+# while a demoted one doesn't, so this separates "hurt" from "lost the job".
+# Measured over 2022-25 only, since 2019-20 were 16-game seasons.
+#
+#         n    mean    95% CI          median   rounded up
+#   QB   85   12.99   [12.24, 13.75]    15.0        13
+#   RB   87   13.85   [13.20, 14.47]    15.0        14
+#   WR   95   13.56   [12.94, 14.16]    15.0        14
+#   TE   74   13.51   [12.88, 14.11]    14.0        14
+#
+# THE MEDIAN IS 15 AND THE MEAN IS 13.5, which is the whole shape of this:
+# the typical starter misses one game, and a minority who lose half a season
+# drag the average down. Drafting off the mean would be drafting out of fear
+# of injury, which is not how anyone should pick. The rounded-up mean lands
+# between the two and is the number used.
+#
+# QUARTERBACK IS SET BY HAND AT 16, NOT BY THE MEASUREMENT, and the data
+# argues against it: role-holding QBs came out at 12.99, LOWER than backs and
+# receivers, not higher. The measurement is still contaminated for QBs in a
+# way the usage filter cannot fix - a quarterback benched in week 9 after a
+# bad run keeps 20+ attempts per game in the games he started, so he reads as
+# an available starter who missed eight games. 16 means "assume he plays",
+# which is the deliberate choice. It does leave quarterbacks valued slightly
+# high relative to skill positions; change this one number to 14 to remove
+# that.
+EXPECTED_GAMES = {'QB': 16.0, 'RB': 14.0, 'WR': 14.0, 'TE': 14.0}
+# Kickers and defenses are not injury-priced here: a kicker is replaced by
+# another kicker and a DST is the whole unit, so neither carries the
+# individual availability risk this table is about.
+DEFAULT_EXPECTED_GAMES = 16.0
+
+
+def expected_games(position):
+    """Games a starter at this position is projected to play, weeks 1-17."""
+    return EXPECTED_GAMES.get(str(position).upper(), DEFAULT_EXPECTED_GAMES)
 
 
 # The raw local weekly exports and the canonical names data.loaders renames

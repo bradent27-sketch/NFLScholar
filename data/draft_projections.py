@@ -45,6 +45,7 @@ import streamlit as st
 
 from data.draft_board import (
     DRAFTABLE_POSITIONS, CURVE_SEASONS, MODERN_SEASON_GAMES, PACE_GAMES, score_stats,
+    expected_games,
 )
 
 # The stat line produced for every player. These are exactly the fields
@@ -105,7 +106,11 @@ ROLE_CHANGE_RATIO = 0.6
 #
 #   * The player's own side is a pure per-game rate with no games
 #     information in it, so it has to be multiplied by something. That
-#     something is PACE_GAMES - a full season.
+#     something is the position's EXPECTED STARTER GAMES (see EXPECTED_GAMES
+#     in data.draft_board) - not a full season, which was the old answer and
+#     was wrong twice over. Weeks 1-17 cannot hold 17 games for a normal
+#     player since the schedule went to 18 weeks, and a measured starter
+#     plays 13.5-13.9 of the 16 that are available.
 #
 # Two other candidates were built and measured, and both were worse:
 #
@@ -128,12 +133,16 @@ ROLE_CHANGE_RATIO = 0.6
 #   positional bias 9.0 -> 11.0) by marking down exactly the players
 #   analysts had already cleared, Malik Nabers and Rashee Rice among them.
 #
-# A full season for the own-history side is also what every published
-# projection assumes, which keeps these point totals on the same scale as
-# every number the user can compare them to.
+# What separates the measured EXPECTED_GAMES from that rejected third option
+# is WHOSE record is used. Projecting a player on his own games history
+# measures his role changes and rookie seasons; projecting him on the
+# positional average for players who held a starting role measures
+# availability, which is the thing actually being estimated. One is a
+# player-specific durability claim this data cannot support, the other is a
+# base rate that it can.
 #
-# PACE_GAMES itself lives in data.draft_board, because the valuation side
-# needs the same constant.
+# PACE_GAMES and EXPECTED_GAMES both live in data.draft_board, because the
+# valuation side needs the same constants.
 
 # Season recency weights when averaging a player's own per-game rates. Last
 # season dominates - a 2022 usage rate says little about a 2026 role - but
@@ -870,15 +879,23 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
         # the curve side carries whatever the players at that rank actually
         # played, so the line as a whole sits between them in proportion to
         # how much of it came from each. Exact at both ends - a pure rookie
-        # gets the curve's games, a fully-established player gets 17.
+        # gets the curve's games, a fully-established player gets the
+        # position's expected starter total.
+        #
+        # THAT EXPECTATION IS NOW POSITION-SPECIFIC AND MEASURED (see
+        # EXPECTED_GAMES in data/draft_board.py) rather than a flat full
+        # season. The old basis was 17 games, which weeks 1-17 cannot even
+        # contain, and it left the top 60 players projected for 16.81 games
+        # against a measured 13.5-13.9 for players who held a starting role.
+        pace = expected_games(pos)
         games_mult = 1.0 - evidence * (1.0 - injury_games_mult)
         out.at[idx, 'proj_games'] = round(
-            (evidence * PACE_GAMES + (1 - evidence) * curve_games) * games_mult, 1)
+            (evidence * pace + (1 - evidence) * curve_games) * games_mult, 1)
 
         for stat in PROJECTED_STATS:
             curve_total = float(pos_curves[stat][rank_idx]) if stat in pos_curves else 0.0
             if history and evidence > 0:
-                own_total = (float(history.get(f'rate_{stat}', 0.0)) * PACE_GAMES
+                own_total = (float(history.get(f'rate_{stat}', 0.0)) * pace
                              * age_factor * injury_rate_mult * games_mult)
                 weight = STAT_SELF_WEIGHT.get(stat, DEFAULT_SELF_WEIGHT) * evidence
                 value = weight * own_total + (1 - weight) * curve_total

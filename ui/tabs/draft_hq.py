@@ -610,7 +610,9 @@ def _load_market_lines(settings, ecr_board):
     if combined.empty:
         return empty, status
 
-    rows = market_stat_lines(combined, season_only=True)
+    # The consensus board is passed in so two books spelling one player
+    # differently resolve to one row before any averaging happens.
+    rows = market_stat_lines(combined, season_only=True, board=ecr_board)
     status['season_players'] = int(len(rows))
     if rows.empty:
         return empty, status

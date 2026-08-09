@@ -31,7 +31,7 @@ from data.odds_sources import (  # noqa: E402
 from data.odds_projections import (  # noqa: E402
     market_stat_lines, score_market_lines, compare_to_board,
     blend_market_into_projection, attach_board_player, build_book_projection,
-    attach_book_projection,
+    attach_book_projection, canonicalize_props, resolve_names_to_board,
 )
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures')
@@ -699,6 +699,97 @@ def test_league_discovery_and_implausible_period_warning():
     })
     odd = implausible_period_rows(props)
     assert len(odd) == 1 and odd['player'].iloc[0] == 'A'
+
+
+def test_two_books_spelling_one_player_differently_become_one_row():
+    """
+    THE BUG. PrizePicks writes "James Cook III", Underdog writes "James
+    Cook". Left alone that is two market rows, so the books never average
+    against each other, Books reads 1 for a player both priced, AND the loose
+    board match refuses both because two unresolved rows share one stripped
+    key. Kyle Pitts and Omar Cooper failed identically.
+    """
+    board = pd.DataFrame({
+        'Player': ['James Cook III', 'Byron Murphy', 'Byron Murphy II'],
+        'Pos': ['RB', 'WR', 'DT'], 'Proj Pts': [250.0, 100.0, 10.0],
+    })
+    props = pd.DataFrame([
+        {'provider': 'Underdog', 'player': 'James Cook', 'player_key': 'jamescook',
+         'team': 'BUF', 'position': 'RB', 'market': 'rushing_yards',
+         'market_raw': 'season_rush_yards', 'scorable': True, 'line': 1000.5,
+         'over_payout': None, 'under_payout': None, 'period': 'season', 'source_id': 'u1'},
+        {'provider': 'PrizePicks', 'player': 'James Cook III', 'player_key': 'jamescookiii',
+         'team': 'BUF', 'position': 'RB', 'market': 'rushing_yards',
+         'market_raw': 'Rush Yards', 'scorable': True, 'line': 1100.5,
+         'over_payout': None, 'under_payout': None, 'period': 'season', 'source_id': 'p1'},
+    ])
+    rows = market_stat_lines(props, season_only=True, board=board)
+    assert len(rows) == 1, "the two spellings must collapse to one player"
+    row = rows.iloc[0]
+    assert row['player'] == 'James Cook III', "canonicalised to the board's spelling"
+    assert int(row['Books']) == 2
+    assert float(row['rushing_yards']) == (1000.5 + 1100.5) / 2, "and they average"
+
+
+def test_canonicalisation_still_refuses_two_genuinely_different_players():
+    """The guard that must survive: "Byron Murphy" and "Byron Murphy II" are
+    two real people and neither may absorb the other."""
+    board = pd.DataFrame({
+        'Player': ['Byron Murphy', 'Byron Murphy II'],
+        'Pos': ['CB', 'DT'], 'Proj Pts': [10.0, 8.0],
+    })
+    # Neither book name matches a board row exactly, and both strip to the
+    # same key - so both must stay unresolved.
+    names = pd.Series(['Byron Murphy Jr.', 'Byron Murphy Sr.'])
+    resolved = resolve_names_to_board(names, board)
+    assert resolved.isna().all(), resolved.tolist()
+
+    # An exact match is never disturbed by a suffixed sibling.
+    exact = resolve_names_to_board(pd.Series(['Byron Murphy II']), board)
+    assert exact.tolist() == ['Byron Murphy II']
+
+
+def test_canonicalize_keeps_names_the_board_does_not_know():
+    board = pd.DataFrame({'Player': ['James Cook III'], 'Pos': ['RB'], 'Proj Pts': [250.0]})
+    props = pd.DataFrame([
+        {'provider': 'PrizePicks', 'player': 'Jack Fox', 'player_key': 'jackfox',
+         'team': 'DET', 'position': 'P', 'market': 'punts_inside_20',
+         'market_raw': 'Punts Inside 20', 'scorable': False, 'line': 24.5,
+         'over_payout': None, 'under_payout': None, 'period': 'season', 'source_id': 'x'},
+    ])
+    out = canonicalize_props(props, board)
+    assert out['player'].tolist() == ['Jack Fox'], "a punter we don't rank stays visible"
+
+
+def test_int_is_defensive_unless_the_player_is_a_quarterback():
+    """
+    On PrizePicks' season board "INT" is DEFENSIVE interceptions - the lines
+    belong to corners, safeties and linebackers - while a quarterback's
+    thrown picks are a separate "Pass INTs" market. Mapping the bare label to
+    passing_interceptions gave a cornerback a -3 point penalty for throwing
+    them, and dropped the real QB stat entirely.
+    """
+    def payload(stat, position):
+        return {
+            'data': [{'type': 'projection', 'id': '1',
+                      'attributes': {'stat_type': stat, 'line_score': 1.5,
+                                     'odds_type': 'standard'},
+                      'relationships': {'new_player': {'data': {'type': 'new_player',
+                                                                'id': 'p'}}}}],
+            'included': [{'type': 'new_player', 'id': 'p',
+                          'attributes': {'name': 'Somebody', 'team': 'MIN',
+                                         'position': position}}],
+        }
+    db, _ = parse_prizepicks_payload(payload('INT', 'CB'))
+    assert bool(db['scorable'].iloc[0]) is False, "a corner's picks are not a QB stat"
+
+    qb, _ = parse_prizepicks_payload(payload('INT', 'QB'))
+    assert qb['market'].iloc[0] == 'passing_interceptions'
+    assert bool(qb['scorable'].iloc[0]) is True
+
+    thrown, _ = parse_prizepicks_payload(payload('Pass INTs', 'QB'))
+    assert thrown['market'].iloc[0] == 'passing_interceptions'
+    assert bool(thrown['scorable'].iloc[0]) is True
 
 
 def main():

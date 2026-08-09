@@ -227,8 +227,8 @@ STAT_ALIASES = {
 
     # PrizePicks' NFL spellings, read off a real payload: "Rush Yards",
     # "Pass Yards", "Rec Yards", "INT", "Pass TDs".
-    'rushyds': 'rushing_yards', 'int': 'passing_interceptions',
-    'ints': 'passing_interceptions',
+    'rushyds': 'rushing_yards',
+    'passints': 'passing_interceptions',
 
     'receivingyards': 'receiving_yards', 'recyds': 'receiving_yards', 'recyards': 'receiving_yards',
     'receivingyds': 'receiving_yards',
@@ -262,6 +262,33 @@ COMBO_STATS = {
     # noise every time the check script runs.
     'sacks': 'sacks', 'seasonsacks': 'sacks',
     'regularseasongamesstarted': 'games_started',
+    'tacklesast': 'tackles', 'tackles': 'tackles',
+    'puntsinside': 'punts_inside_20', 'puntsinside20': 'punts_inside_20',
+    # Milestone COUNTS ("how many 100-yard games"), not totals. Real markets,
+    # and meaningless to a projection that works in season sums.
+    'recyardgames': 'milestone_games', 'rushyardgames': 'milestone_games',
+    'passyardgames': 'milestone_games',
+    # Kicking. FG Made is a single total, but this app scores field goals in
+    # DISTANCE BUCKETS (fg_made_0_19 ... fg_made_60_), so a lump sum cannot be
+    # placed without inventing a distribution across them.
+    'fgmade': 'fg_made_total', 'yardfgmade': 'fg_made_long',
+    'rushrecyds': 'rush_rec_yards', 'passrushtds': 'pass_rush_tds',
+    'passrushyds': 'pass_rush_yards',
+}
+
+# Markets whose meaning depends on WHO the line is about, mapped to the
+# position that makes them the stat named. Everyone else gets nothing.
+#
+# "INT" IS THE ONE THAT MATTERS AND IT POINTED THE WRONG WAY. On PrizePicks'
+# season board it is DEFENSIVE interceptions - the 27 lines belong to DBs,
+# linebackers and safeties - while the quarterback's thrown interceptions are
+# a separate market called "Pass INTs". Mapping the bare label to
+# passing_interceptions gave a cornerback with 1.5 picks a -3 point penalty
+# for throwing them, and dropped the real QB stat entirely.
+POSITION_SPECIFIC_STATS = {
+    'int': ({'QB'}, 'passing_interceptions'),
+    'ints': ({'QB'}, 'passing_interceptions'),
+    'interceptions': ({'QB'}, 'passing_interceptions'),
 }
 
 # Markets scoped to part of a game (a quarter, a half). Underdog posts a lot
@@ -273,6 +300,20 @@ PARTIAL_GAME_PREFIXES = ('period_', 'first_half_', 'second_half_', '1h_', '1q_')
 
 def _stat_key(value):
     return re.sub(r'[^a-z]', '', str(value).lower())
+
+
+def normalize_stat_for(label, position):
+    """
+    normalize_stat, but able to resolve labels whose meaning depends on the
+    player's position. Falls back to the position-blind mapping otherwise.
+    """
+    key = _stat_key(label)
+    if key in POSITION_SPECIFIC_STATS:
+        positions, stat = POSITION_SPECIFIC_STATS[key]
+        if str(position or '').upper() in positions:
+            return stat, True
+        return f'{label} (not a {"/".join(sorted(positions))} stat here)', False
+    return normalize_stat(label)
 
 
 def normalize_stat(label):
@@ -354,6 +395,22 @@ PROP_COLUMNS = [
 
 def _empty_props():
     return pd.DataFrame({c: pd.Series(dtype='object') for c in PROP_COLUMNS})
+
+
+def unmapped_markets(props):
+    """
+    Markets this app has no stat column for - the ones worth adding aliases
+    for.
+
+    Deliberately NOT "everything unscorable". A demon or goblin line has a
+    perfectly good market behind it and is excluded for a different reason
+    (deliberate shading), and lumping the two together made the diagnostic
+    report 121 'Rec TDs' as unmapped when every one of them was mapped fine.
+    """
+    if props is None or props.empty:
+        return props
+    from data.draft_projections import PROJECTED_STATS
+    return props[~props['market'].isin(PROJECTED_STATS)]
 
 
 def _finalize(rows):
@@ -458,7 +515,11 @@ def parse_underdog_payload(payload, sport='NFL'):
         if wanted and str(player.get('sport_id') or '').upper() != wanted:
             continue
 
-        market, scorable = normalize_stat(stat_ref.get('stat'))
+        position = str(player.get('position_name') or '').upper()
+        if not position:
+            position = UNDERDOG_POSITIONS.get(
+                str(player.get('position_display_name') or '').lower(), '')
+        market, scorable = normalize_stat_for(stat_ref.get('stat'), position)
         payouts = {}
         for option in line.get('options') or []:
             choice = str(option.get('choice', '')).lower()
@@ -466,10 +527,6 @@ def parse_underdog_payload(payload, sport='NFL'):
             payouts[side] = pd.to_numeric(option.get('payout_multiplier'), errors='coerce')
 
         team_uuid = str(player.get('team_id') or appearance.get('team_id') or '')
-        position = str(player.get('position_name') or '').upper()
-        if not position:
-            position = UNDERDOG_POSITIONS.get(
-                str(player.get('position_display_name') or '').lower(), '')
 
         name = ' '.join(str(player.get(k) or '').strip()
                         for k in ('first_name', 'last_name')).strip()
@@ -640,7 +697,8 @@ def parse_prizepicks_payload(payload):
         # design. Kept in the frame - a drafter may want to see them - but
         # marked unscorable and labelled in the provider name.
         odds_type = str(attrs.get('odds_type') or 'standard').lower()
-        market, scorable = normalize_stat(attrs.get('stat_type'))
+        position = str(player.get('position') or '').upper()
+        market, scorable = normalize_stat_for(attrs.get('stat_type'), position)
         if odds_type not in ('standard', ''):
             scorable = False
 
@@ -659,7 +717,7 @@ def parse_prizepicks_payload(payload):
             'provider': 'PrizePicks' + ('' if odds_type == 'standard' else f' ({odds_type})'),
             'player': name,
             'team': standardize_team(player.get('team') or attrs.get('team')),
-            'position': str(player.get('position') or '').upper(),
+            'position': position,
             'market': market or str(attrs.get('stat_type') or ''),
             'market_raw': str(attrs.get('stat_type') or ''),
             'scorable': bool(scorable),

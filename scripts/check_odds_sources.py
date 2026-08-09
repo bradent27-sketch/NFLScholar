@@ -27,7 +27,7 @@ import pandas as pd  # noqa: E402
 pd.options.mode.string_storage = "python"
 
 from data.odds_sources import (  # noqa: E402
-    PRIZEPICKS_PROJECTIONS_URL, PRIZEPICKS_NFL_LEAGUE_ID, PRIZEPICKS_LEAGUES_URL,
+    unmapped_markets, PRIZEPICKS_PROJECTIONS_URL, PRIZEPICKS_NFL_LEAGUE_ID, PRIZEPICKS_LEAGUES_URL,
     _get_json, fetch_underdog_payload, parse_underdog_payload,
     parse_prizepicks_payload, odds_api_bookmakers, prizepicks_leagues,
     discover_prizepicks_league, implausible_period_rows,
@@ -54,7 +54,11 @@ def _report(label, props, err):
         print("           claim - the season flag is probably being missed. Sample:")
         for _, r in odd.head(4).iterrows():
             print(f"      {r['player']} {r['market_raw']} = {r['line']}")
-    unmapped = props[~props['scorable'].astype(bool)]['market_raw'].value_counts()
+    shaded = int(props['provider'].str.contains(r'\(', regex=True).sum())
+    if shaded:
+        print(f"  {shaded} altered lines (demon/goblin) kept but not scored - they are")
+        print("     deliberately shaded off the true median.")
+    unmapped = unmapped_markets(props)['market_raw'].value_counts()
     if len(unmapped):
         print(f"  markets not mapped to a stat column ({len(unmapped)} kinds):")
         for market, count in unmapped.head(12).items():

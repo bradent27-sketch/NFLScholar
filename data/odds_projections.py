@@ -86,7 +86,7 @@ MEDIAN_TO_MEAN = {
 }
 
 
-def market_stat_lines(props, season_only=True):
+def market_stat_lines(props, season_only=True, board=None):
     """
     Normalized props -> one row per player carrying his scorable stats.
 
@@ -96,7 +96,9 @@ def market_stat_lines(props, season_only=True):
     """
     if props is None or props.empty:
         return pd.DataFrame()
-    df = props.copy()
+    # Identity is settled BEFORE grouping, so two books spelling one player
+    # differently become one row that averages across both.
+    df = canonicalize_props(props, board) if board is not None else props.copy()
     if season_only:
         df = df[df['period'] == 'season']
     df = df[df['scorable'].fillna(False).astype(bool)]
@@ -320,6 +322,80 @@ def attach_book_projection(board, book_projection):
         if column in book_projection.columns:
             out[column] = out['Player'].map(
                 dict(zip(book_projection['board_player'], book_projection[column])))
+    return out
+
+
+def resolve_names_to_board(names, board):
+    """
+    Map any series of book-written player names onto the board's own spelling.
+
+    Two tiers, same as load_year_data: exact key first, then a suffix-stripped
+    key, and the loose pass only where that key is UNIQUE ON BOTH SIDES so
+    "Byron Murphy" and "Byron Murphy II" never collapse into each other.
+    Unresolvable names map to None rather than to a guess.
+    """
+    from data.utils import clean_name_exact, clean_name_for_merge
+
+    names = pd.Series(list(names), dtype=object)
+    if board is None or board.empty or names.empty:
+        return pd.Series([None] * len(names), index=names.index, dtype=object)
+
+    exact = dict(zip(clean_name_exact(board['Player']), board['Player']))
+    resolved = clean_name_exact(names).map(exact)
+
+    missing = resolved.isna()
+    if missing.any():
+        board_loose = clean_name_for_merge(board['Player'])
+        board_counts = board_loose.value_counts()
+        loose_map = {key: name for key, name in zip(board_loose, board['Player'])
+                     if board_counts.get(key, 0) == 1}
+        our_loose = clean_name_for_merge(names)
+
+        # AMBIGUITY IS COUNTED ONLY AMONG NAMES STILL UNRESOLVED, which is
+        # the whole subtlety. Counting across every name made the two books'
+        # spellings of one player veto each other: PrizePicks writes "James
+        # Cook III" and Underdog writes "James Cook", both strip to
+        # "jamescook", so the key looked ambiguous and BOTH were refused -
+        # even though the suffixed one had already matched the board exactly
+        # and was therefore not in question at all.
+        #
+        # A name that already found its board row is not a competing
+        # candidate. What still has to be refused is two UNRESOLVED names
+        # sharing a stripped key, which is the real "Byron Murphy" vs "Byron
+        # Murphy II" case.
+        unresolved_counts = our_loose[missing].value_counts()
+        fallback = pd.Series(
+            [loose_map.get(key) if unresolved_counts.get(key, 0) == 1 else None
+             for key in our_loose], index=names.index, dtype=object)
+        resolved = resolved.where(~missing, fallback)
+    return resolved
+
+
+def canonicalize_props(props, board):
+    """
+    Rewrite each prop's player name to the board's spelling, so the same
+    player written two ways by two books becomes ONE player.
+
+    THIS HAS TO HAPPEN BEFORE ANY GROUPING. PrizePicks writes "James Cook
+    III" and Underdog writes "James Cook"; left alone that is two rows, which
+    means the books never average against each other, the Books count reads 1
+    for a player both of them priced, and the loose board match then refuses
+    BOTH of them as ambiguous because two market rows share one stripped key.
+    Kyle Pitts and Omar Cooper failed the same way.
+
+    Names the board doesn't know keep their original spelling - a punter the
+    book prices and we don't rank should stay visible, not vanish.
+    """
+    if props is None or props.empty or board is None or board.empty:
+        return props
+    from data.utils import clean_name_exact
+
+    out = props.copy()
+    unique = pd.Series(sorted(set(out['player'].astype(str))), dtype=object)
+    mapping = dict(zip(unique, resolve_names_to_board(unique, board)))
+    canonical = out['player'].astype(str).map(mapping)
+    out['player'] = canonical.where(canonical.notna(), out['player'])
+    out['player_key'] = clean_name_exact(out['player'])
     return out
 
 

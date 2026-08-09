@@ -852,6 +852,46 @@ def compute_starter_demand(board, settings):
     return started
 
 
+# How a league's BENCH gets spent, as relative shares per position. Starters
+# are counted separately (compute_starter_demand); this is only the backups.
+#
+# WHY THIS EXISTS: the streaming measurement needs to know how many players
+# at a position are ROSTERED, because that is what decides how deep the free
+# pool is. It was being handed the STARTER count instead - so a 12-team
+# league was modelled as rostering twelve tight ends, when it really rosters
+# about twenty-two. The free pool looked twice as deep as it is, and the
+# measured value of streaming was correspondingly too high.
+#
+# That single wrong input was the whole reason tight end replacement sat at
+# TE6. Fed the real rostered depth, streaming a TE returns 136.1 against
+# TE12's 142.1 - it no longer clears the bar, and TE replacement returns to
+# TE12 where it belongs.
+#
+# The ratios are how real rosters are built rather than an even split: a
+# manager carries one backup quarterback and one backup tight end at most,
+# often none, and spends everything else on running backs and receivers
+# because those are the positions with startable depth and injury churn.
+# Kickers and defenses get no backup at all.
+BENCH_SHARE = {'QB': 1.0, 'RB': 2.5, 'WR': 2.5, 'TE': 1.0, 'K': 0.0, 'DST': 0.0}
+
+
+def rostered_depth(started, settings):
+    """
+    {pos: players rostered league-wide} = starters + a share of the bench.
+
+    Settings-sensitive for free, which is the point of scaling to the REAL
+    bench rather than hardcoding a depth: a deeper bench thins the waiver
+    wire, which lowers what streaming returns, which correctly raises the
+    surplus of the players who are actually scarce.
+    """
+    n_teams = int(settings['num_teams'])
+    bench_spots = n_teams * int(settings['roster'].get('BENCH', 0))
+    total_share = sum(BENCH_SHARE.values()) or 1.0
+    return {pos: int(round(started.get(pos, 0)
+                           + bench_spots * (share / total_share)))
+            for pos, share in BENCH_SHARE.items()}
+
+
 # Positions where the waiver wire stays genuinely deep all season, because
 # all 32 NFL teams field one and a 12-team league rosters far fewer. These
 # are the positions where "replacement" is not the last rostered player -
@@ -871,9 +911,27 @@ def compute_starter_demand(board, settings):
 # ADP, and the board went on recommending another one deep into the draft -
 # a roster nobody would ever build, since only one of them can start.
 #
-# RB/WR stay out because their free pool really is replacement level, and
-# the measurement agrees: streaming them returns less than their last
-# rostered starter, so it would be ignored even if they were listed.
+# RB AND WR STAY OUT, AND THE ORIGINAL REASON GIVEN HERE WAS WRONG. It used
+# to say streaming them measures below their last rostered starter, so
+# listing them would change nothing. That was only true while the free pool
+# was being computed from starter counts. Fed the real rostered depth,
+# streaming measures 207.8 at RB against RB24's 171.7 - it would bind, and it
+# would put running back replacement at RB13.
+#
+# That number is not believable, and the simulation below says why: a player
+# who is free in week 1 stays free ALL SEASON, because the rostered tier is
+# fixed by last year's finish. So a breakout rookie back is on the wire in
+# week 1, gets picked up in week 3, and is started every week after. That is
+# not streaming - it is being handed the season's best waiver add with nobody
+# competing for him. Quarterback and tight end tolerate the assumption
+# because breakouts there are rarer and shallower; running back is exactly
+# where it breaks, since that is where mid-season starters are created and
+# where the wire is cleared within hours.
+#
+# So the exclusion is right and the justification is different: RB/WR are out
+# until the simulation models waiver competition (remove a player from the
+# pool once he is picked up, or cap how long he can be held). Do that and one
+# rule can safely cover every position.
 #
 # This is settings-sensitive without special-casing. build_streaming_replacement
 # only ever RAISES the bar, and it takes the rostered count as input - so a
@@ -1426,9 +1484,15 @@ def add_value_over_replacement(board, settings):
     # and is kept.
     streaming_used = {}
     if settings.get('use_streaming_baseline', True):
+        # ROSTERED depth, not starter count. What decides how deep the waiver
+        # wire is, is how many players a league holds - starters plus the
+        # bench spent on that position - and passing the starter count made
+        # every free pool look about twice as deep as it is.
+        depth = rostered_depth(started, settings)
         streaming = build_streaming_replacement(
             settings['scoring'], settings.get('baseline_season', 2025),
-            tuple(sorted((p, int(started.get(p, 0))) for p in STREAMABLE_POSITIONS)),
+            tuple(sorted((p, int(depth.get(p, started.get(p, 0))))
+                         for p in STREAMABLE_POSITIONS)),
         )
         for pos, value in (streaming or {}).items():
             if pos in replacement and value > replacement[pos]:

@@ -994,6 +994,65 @@ Largest team-level disagreements, top-5 basis, as a z-score gap:
 market higher on GB (+1.21), SEA (+1.11), CAR (+0.89); this board higher on
 ARI (−1.90), ATL (−1.58), CIN (−1.57).
 
+### 3.2c Rostered depth — how deep the waiver wire actually is
+
+The streaming baseline needs to know how many players at a position are
+**rostered**, because that decides how deep the free pool is. It was being
+handed the **starter** count — so a 12-team league was modelled as rostering
+**twelve** tight ends when it really rosters about twenty-two. The free pool
+looked twice as deep as it is, and streaming measured correspondingly high.
+
+Bench spots are now distributed by how rosters are actually built, scaled to
+the real bench rather than hardcoded, so a deeper bench correctly thins the
+wire:
+
+| pos | starters | + bench share | rostered | previously assumed |
+|---|---|---|---|---|
+| QB | 12 | 10.3 | **22** | 12 |
+| RB | 24 | 25.7 | **50** | — |
+| WR | 36 | 25.7 | **62** | — |
+| TE | 12 | 10.3 | **22** | 12 |
+| K / DST | 12 | 0 | 12 | 12 |
+
+Ratio `QB 1 : RB 2.5 : WR 2.5 : TE 1`, none for K/DST — a manager carries at
+most one backup QB and one backup TE, often neither, and spends the rest on
+the positions with startable depth and injury churn.
+
+**This was the entire reason TE replacement sat at TE6.** Fed the real depth,
+streaming a tight end returns **136.1** against TE12's **142.1** — it no
+longer clears the bar, and TE replacement returns to **TE12**.
+
+| pos | streaming (wrong pool) | streaming (real pool) | last starter | binds |
+|---|---|---|---|---|
+| QB | 245.2 | 244.5 | 280.3 | demand |
+| TE | 166.7 → *bound* | **136.1** | 142.1 | **demand** |
+
+Verified the old symptom does not return: across three mocks the board takes
+**two** tight ends, in rounds 4–7 — a starter and a backup — not the round
+12–15 tight ends the streaming baseline was originally added to stop.
+
+**Why RB and WR are still excluded, on a corrected justification.** The old
+reason given was that streaming them measures below their last rostered
+starter. That was only true with the wrong pool. Fed real depth, streaming
+measures **207.8** at RB against RB24's **171.7** — it *would* bind, and it
+would put running back replacement at **RB13**.
+
+That is not believable, and the simulation says why: a player free in week 1
+stays free **all season**, because the rostered tier is fixed by last year's
+finish. A breakout rookie back is on the wire in week 1, picked up in week 3,
+and started every week after — not streaming, but being handed the season's
+best waiver add uncontested. QB and TE tolerate that assumption because
+breakouts there are rarer and shallower; **running back is exactly where it
+breaks.** RB/WR stay out until the simulation models waiver competition
+(remove a player once picked up, or cap how long he is held); do that and one
+rule covers every position.
+
+Replacement after the fix: **QB12 · RB30 · WR45 · TE12 · K12**. RB and WR
+remain above their starter counts because of the separate man-games layer
+(§3.2) — a season *consumes* more backs than it *starts*. The two adjustments
+are not double-counted: `manpower_demand` excludes streamable positions, so
+TE is set by demand alone.
+
 ## 5c. The games basis — measured against the betting market
 
 The board sat systematically above two independent sportsbooks. Chasing that

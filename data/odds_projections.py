@@ -195,6 +195,126 @@ def _points_weighted_coverage(rows, scoring):
     return values
 
 
+def build_book_projection(board, market_scored, scoring):
+    """
+    A COMPLETE projection: the book's number for every stat it priced, ours
+    for everything it didn't.
+
+    This is the one you can actually draft off. The other two market numbers
+    in this module are deliberately partial and answer a narrower question:
+
+        Market Pts       only the stats the book priced, nothing else. An
+                         independent second opinion, and NOT comparable to a
+                         full projection.
+        Ours (matched)   our numbers over that same narrow set, so the two
+                         can be differenced honestly.
+        Book Proj        THIS. Book where the book spoke, us where it didn't,
+                         so the total covers a whole player and sits on the
+                         same scale as Proj Pts.
+
+    WHERE THE BOOK SPOKE, IT WINS OUTRIGHT - no averaging with our number.
+    A posted line is a price someone will take money on; splitting the
+    difference with a model would throw away the thing that makes it worth
+    having. Everything else falls back to our projection untouched, which is
+    what makes the result complete: Underdog posts no receptions market at
+    all, so a receiver keeps our reception estimate and his total stays a
+    real full-PPR number instead of collapsing by a third.
+
+    THE TWO BASES ARE NOT IDENTICAL, and it's worth knowing which way it
+    leans. A season-long line embeds the chance the player misses games,
+    while our projection assumes closer to a full slate - measured at about
+    4% across every position. So a Book Proj runs slightly conservative in
+    proportion to how much of the player the book actually priced.
+
+    Returns a frame with player_key / board_player / Book Proj / Book Stats
+    (how many stats came from the book) / Book Share (their share of the
+    projected points).
+    """
+    if board is None or board.empty or market_scored is None or market_scored.empty:
+        return pd.DataFrame()
+
+    stat_cols = [c for c in PROJECTED_STATS if c in board.columns]
+    if not stat_cols:
+        return pd.DataFrame()
+
+    resolved = attach_board_player(market_scored, board).dropna(subset=['board_player'])
+    if resolved.empty:
+        return pd.DataFrame()
+
+    cols = ['Player', 'Pos', 'Proj Pts'] + stat_cols
+    merged = resolved.merge(board[[c for c in cols if c in board.columns]],
+                            left_on='board_player', right_on='Player', how='inner',
+                            suffixes=('', '_ours'))
+    if merged.empty:
+        return pd.DataFrame()
+
+    rows, book_counts, book_only = [], [], []
+    for _, row in merged.iterrows():
+        line = {'position': str(row.get('Pos') or '').upper()}
+        used = 0
+        priced_line = dict(line)
+        for stat in PROJECTED_STATS:
+            ours_col = f'{stat}_ours' if f'{stat}_ours' in merged.columns else stat
+            our_value = pd.to_numeric(row.get(ours_col), errors='coerce')
+            our_value = float(our_value) if pd.notna(our_value) else 0.0
+            book_value = pd.to_numeric(row.get(stat), errors='coerce') if stat in merged.columns else np.nan
+
+            if pd.notna(book_value):
+                # A line is a MEDIAN; a projection is a MEAN. For the skewed
+                # counting stats the mean sits above, and touchdowns are the
+                # worst of them - see MEDIAN_TO_MEAN.
+                value = float(book_value) * MEDIAN_TO_MEAN.get(stat, 1.0)
+                used += 1
+                priced_line[stat] = value
+            else:
+                value = our_value
+                priced_line[stat] = 0.0
+            line[stat] = value
+        rows.append(line)
+        book_counts.append(used)
+        book_only.append(priced_line)
+
+    frame = pd.DataFrame(rows)
+    out = pd.DataFrame({
+        'player_key': merged['player_key'].to_numpy(),
+        'board_player': merged['board_player'].to_numpy(),
+        'Pos': merged['Pos'].to_numpy(),
+        'Proj Pts': pd.to_numeric(merged['Proj Pts'], errors='coerce').to_numpy(),
+        'Book Proj': score_stats(frame, scoring, position_col='position').round(1).to_numpy(),
+        'Book Stats': book_counts,
+    })
+    # How much of the projected total the book is actually responsible for -
+    # the honest read on whether a Book Proj is a market number with a little
+    # of ours in it, or ours with a little of the market in it.
+    #
+    # Clamped at 1.0. The raw ratio can exceed it legitimately: if the stats
+    # we fill in are net NEGATIVE - interceptions and fumbles, which no book
+    # posts a season-long line for - the book's contribution is larger than
+    # the total it sits inside. Real arithmetic, but "103%" reads as a bug to
+    # anyone glancing at the column, and everything above 1.0 means the same
+    # thing anyway: essentially all of this number came from the market.
+    from_book = score_stats(pd.DataFrame(book_only), scoring,
+                            position_col='position').to_numpy()
+    total = pd.to_numeric(out['Book Proj'], errors='coerce').to_numpy()
+    with np.errstate(divide='ignore', invalid='ignore'):
+        share = np.where(total > 0, from_book / total, np.nan)
+    out['Book Share'] = np.round(np.clip(share, 0.0, 1.0), 2)
+    out['Book Δ'] = (out['Book Proj'] - out['Proj Pts']).round(1)
+    return out
+
+
+def attach_book_projection(board, book_projection):
+    """Put Book Proj and Book Δ on the board, blank where the book was silent."""
+    if board is None or board.empty or book_projection is None or book_projection.empty:
+        return board
+    out = board.copy()
+    for column in ('Book Proj', 'Book Δ', 'Book Share'):
+        if column in book_projection.columns:
+            out[column] = out['Player'].map(
+                dict(zip(book_projection['board_player'], book_projection[column])))
+    return out
+
+
 def attach_board_player(market_scored, board):
     """
     Add a `board_player` column naming the board row each market line belongs
@@ -313,10 +433,18 @@ def compare_to_board(board, market_scored, scoring, min_coverage=MIN_COVERAGE):
     merged['Edge'] = (ours - theirs).round(1)
     merged['Edge %'] = np.where(theirs > 0, (ours - theirs) / theirs * 100, np.nan).round(1)
 
+    # The complete hybrid rides along, so one table carries both the honest
+    # like-for-like difference AND the number you'd actually draft off.
+    book = build_book_projection(board, market_scored, scoring)
+    if not book.empty:
+        for column in ('Book Proj', 'Book Δ', 'Book Share'):
+            merged[column] = merged['board_player'].map(
+                dict(zip(book['board_player'], book[column])))
+
     merged = merged.sort_values('Edge %', key=lambda s: s.abs(), ascending=False)
-    keep = ['Player', 'Pos', 'Team', 'Proj Pts', 'Ours (matched)', 'Market Pts',
-            'Edge', 'Edge %', 'Coverage', 'ADP', 'ECR', 'Board Rank',
-            'providers', 'n_lines']
+    keep = ['Player', 'Pos', 'Team', 'Proj Pts', 'Book Proj', 'Book Δ', 'Book Share',
+            'Ours (matched)', 'Market Pts', 'Edge', 'Edge %', 'Coverage',
+            'ADP', 'ECR', 'Board Rank', 'providers', 'n_lines']
     return merged[[c for c in keep if c in merged.columns]].reset_index(drop=True), meta
 
 
@@ -343,9 +471,17 @@ def _score_matched_scope(merged, scoring):
 
 
 def blend_market_into_projection(board, market_scored, weight=0.0,
-                                 min_coverage=MIN_COVERAGE):
+                                 min_coverage=MIN_COVERAGE, scoring=None):
     """
-    Move Proj Pts a chosen fraction of the way toward the market's number.
+    Move Proj Pts a chosen fraction of the way toward the BOOK PROJECTION.
+
+    Toward Book Proj, not toward Market Pts, and the difference is not a
+    detail. Market Pts covers only the stats the book priced, so blending
+    toward it dragged every receiver down by roughly his whole receptions
+    total - it was moving the board toward a number that was never a
+    projection of a whole player. Book Proj is complete (book where the book
+    spoke, ours elsewhere), so it sits on the same scale as Proj Pts and a
+    50% blend means what it looks like.
 
     DEFAULTS TO OFF (weight 0.0), and that is a considered default rather
     than caution. The board ALREADY blends toward the market once, through
@@ -355,29 +491,25 @@ def blend_market_into_projection(board, market_scored, weight=0.0,
     valuation, where nothing downstream can tell it apart from the model's
     own output.
 
-    It is exposed because a market projection built from real stat lines is
-    genuinely better evidence than a consensus RANK, and someone who
-    understands the double-count may reasonably want some of it. Only players
-    with enough coverage move; everyone else keeps our number, so turning
-    this up never silently marks down a player the market simply didn't post
-    lines for.
+    Only players the book actually priced move; everyone else keeps our
+    number, so turning this up never marks down a player the book was simply
+    silent about.
     """
     if not weight or board is None or board.empty or market_scored is None or market_scored.empty:
+        return board, 0
+    if scoring is None:
         return board, 0
 
     usable = market_scored[market_scored['Coverage'].fillna(0) >= min_coverage]
     if usable.empty:
         return board, 0
 
-    # Same two-tier match the comparison uses, so the blend moves exactly the
-    # players the comparison says it can see - if these two disagreed, the
-    # Edge column would be damped for players the table claims are untouched.
-    usable = attach_board_player(usable, board).dropna(subset=['board_player'])
-    if usable.empty:
+    book = build_book_projection(board, usable, scoring)
+    if book.empty:
         return board, 0
 
-    lookup = dict(zip(usable['board_player'], pd.to_numeric(usable['Market Pts'],
-                                                            errors='coerce')))
+    lookup = dict(zip(book['board_player'], pd.to_numeric(book['Book Proj'],
+                                                          errors='coerce')))
     out = board.copy()
     market = out['Player'].map(lookup)
     ours = pd.to_numeric(out['Proj Pts'], errors='coerce')

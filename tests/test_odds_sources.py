@@ -29,7 +29,8 @@ from data.odds_sources import (  # noqa: E402
 )
 from data.odds_projections import (  # noqa: E402
     market_stat_lines, score_market_lines, compare_to_board,
-    blend_market_into_projection, attach_board_player,
+    blend_market_into_projection, attach_board_player, build_book_projection,
+    attach_book_projection,
 )
 
 FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fixtures')
@@ -291,22 +292,19 @@ def test_compare_falls_back_when_board_has_no_stat_columns():
         assert float(comparison.iloc[0]['Ours (matched)']) == 300.0
 
 
-def test_blend_is_off_by_default_and_only_moves_covered_players():
+def test_blend_is_off_by_default():
+    """
+    Off is the shipped default and a considered one: the board already blends
+    toward the market through ADP and ECR, so a second dose inside the
+    projection double-counts the same opinion invisibly.
+    """
     ud, _ = _underdog()
     scored = score_market_lines(market_stat_lines(combine_props(ud)), SCORING)
-    board = pd.DataFrame({
-        'Player': ['Justin Jefferson', 'Somebody Else'],
-        'Pos': ['WR', 'RB'],
-        'Proj Pts': [300.0, 200.0],
-    })
-    same, moved = blend_market_into_projection(board, scored, weight=0.0)
-    assert moved == 0 and same['Proj Pts'].tolist() == [300.0, 200.0]
-
-    blended, moved = blend_market_into_projection(board, scored, weight=0.5)
-    assert moved == 1, "only the player the market actually priced should move"
-    assert blended.loc[1, 'Proj Pts'] == 200.0, "unpriced player must be untouched"
-    market_pts = float(scored[scored['player_key'] == 'justinjefferson']['Market Pts'].iloc[0])
-    assert abs(blended.loc[0, 'Proj Pts'] - (0.5 * 300.0 + 0.5 * market_pts)) < 0.05
+    board = _board_with_stats()
+    same, moved = blend_market_into_projection(board, scored, weight=0.0,
+                                               scoring=SCORING)
+    assert moved == 0
+    assert same['Proj Pts'].tolist() == board['Proj Pts'].tolist()
 
 
 def test_two_tier_name_match_handles_suffixes():
@@ -416,6 +414,122 @@ def test_empty_inputs_are_safe():
     assert score_market_lines(pd.DataFrame(), SCORING).empty
     comparison, meta = compare_to_board(pd.DataFrame(), pd.DataFrame(), SCORING)
     assert comparison.empty and meta['matched'] == 0
+
+
+def _board_with_stats():
+    """A board carrying raw stat columns, as the real one does."""
+    return pd.DataFrame({
+        'Player': ['Justin Jefferson', 'Patrick Mahomes', 'Somebody Else'],
+        'Pos': ['WR', 'QB', 'RB'],
+        'Team': ['MIN', 'SEA', 'DAL'],
+        'Proj Pts': [300.0, 320.0, 200.0],
+        'receiving_yards': [1300.0, 0.0, 400.0],
+        'receptions': [95.0, 0.0, 40.0],
+        'receiving_tds': [9.0, 0.0, 2.0],
+        'passing_yards': [0.0, 4400.0, 0.0],
+        'passing_tds': [0.0, 33.0, 0.0],
+        'rushing_yards': [0.0, 300.0, 900.0],
+        'rushing_tds': [0.0, 2.0, 8.0],
+    })
+
+
+def test_book_projection_uses_book_where_priced_and_us_where_not():
+    """
+    The hybrid: book number for every stat it priced, ours for the rest, so
+    the total covers a WHOLE player and sits on the same scale as Proj Pts.
+    """
+    ud, _ = _underdog()
+    scored = score_market_lines(market_stat_lines(combine_props(ud)), SCORING)
+    board = _board_with_stats()
+    book = build_book_projection(board, scored, SCORING)
+    assert not book.empty
+
+    jj = book[book['board_player'] == 'Justin Jefferson'].iloc[0]
+    # Underdog priced yards (1275.5), receptions (92.5) and TDs (8.5) for him
+    # in this fixture, so all three come from the book; the TD line gets the
+    # median-to-mean bump.
+    expected = 1275.5 * 0.1 + 92.5 * 1.0 + 8.5 * 1.05 * 6
+    assert abs(float(jj['Book Proj']) - expected) < 0.2, jj['Book Proj']
+    assert int(jj['Book Stats']) == 3
+
+
+def test_book_projection_falls_back_to_our_receptions():
+    """
+    THE WHOLE POINT. Underdog's real board posts receiving yards and TDs but
+    NO receptions, so a hybrid that treated the gap as zero would collapse
+    every receiver by a third in full PPR. Our reception estimate has to
+    survive into the total.
+    """
+    ud, _ = _underdog()
+    props = ud[~((ud['market'] == 'receptions') & (ud['period'] == 'season'))]
+    scored = score_market_lines(market_stat_lines(combine_props(props)), SCORING)
+    board = _board_with_stats()
+    book = build_book_projection(board, scored, SCORING)
+
+    jj = book[book['board_player'] == 'Justin Jefferson'].iloc[0]
+    # Book yards + book TDs + OUR 95 receptions, not zero receptions.
+    expected = 1275.5 * 0.1 + 9.0 * 1.05 * 0 + 8.5 * 1.05 * 6 + 95.0 * 1.0
+    assert abs(float(jj['Book Proj']) - expected) < 0.2, jj['Book Proj']
+    assert int(jj['Book Stats']) == 2, "only two stats came from the book"
+    # And the book is now responsible for less of the total.
+    assert float(jj['Book Share']) < 1.0
+
+
+def test_book_share_reports_how_much_is_actually_the_market():
+    ud, _ = _underdog()
+    scored = score_market_lines(market_stat_lines(combine_props(ud)), SCORING)
+    book = build_book_projection(_board_with_stats(), scored, SCORING)
+    shares = book['Book Share'].dropna()
+    assert len(shares) and (shares.between(0, 1.01)).all(), shares.tolist()
+
+
+def test_attach_book_projection_leaves_unpriced_players_blank():
+    ud, _ = _underdog()
+    scored = score_market_lines(market_stat_lines(combine_props(ud)), SCORING)
+    board = _board_with_stats()
+    out = attach_book_projection(board, build_book_projection(board, scored, SCORING))
+    assert 'Book Proj' in out.columns
+    somebody = out[out['Player'] == 'Somebody Else'].iloc[0]
+    assert pd.isna(somebody['Book Proj']), "the book never priced him"
+    assert out[out['Player'] == 'Justin Jefferson']['Book Proj'].notna().all()
+    # The board's own projection must be untouched by attaching a column.
+    assert out['Proj Pts'].tolist() == board['Proj Pts'].tolist()
+
+
+def test_blend_moves_toward_the_complete_hybrid_not_the_partial_total():
+    """
+    Blending toward Market Pts dragged every receiver down by his whole
+    receptions total, because that number was never a projection of a whole
+    player. The blend targets Book Proj now.
+    """
+    ud, _ = _underdog()
+    scored = score_market_lines(market_stat_lines(combine_props(ud)), SCORING)
+    board = _board_with_stats()
+    book = build_book_projection(board, scored, SCORING)
+    target = float(book[book['board_player'] == 'Justin Jefferson']['Book Proj'].iloc[0])
+
+    blended, moved = blend_market_into_projection(board, scored, weight=0.5,
+                                                  scoring=SCORING)
+    assert moved >= 1
+    jj = blended[blended['Player'] == 'Justin Jefferson'].iloc[0]
+    assert abs(float(jj['Proj Pts']) - (0.5 * 300.0 + 0.5 * target)) < 0.2
+    # Nobody the book was silent about should move.
+    assert float(blended[blended['Player'] == 'Somebody Else']['Proj Pts'].iloc[0]) == 200.0
+
+    # Without scoring there is no way to build the hybrid, so it must no-op
+    # rather than fall back to the partial number it used to use.
+    same, moved = blend_market_into_projection(board, scored, weight=0.5)
+    assert moved == 0 and same['Proj Pts'].tolist() == board['Proj Pts'].tolist()
+
+
+def test_book_projection_needs_board_stat_columns():
+    ud, _ = _underdog()
+    scored = score_market_lines(market_stat_lines(combine_props(ud)), SCORING)
+    bare = pd.DataFrame({'Player': ['Justin Jefferson'], 'Pos': ['WR'],
+                         'Proj Pts': [300.0]})
+    assert build_book_projection(bare, scored, SCORING).empty
+    assert build_book_projection(pd.DataFrame(), scored, SCORING).empty
+    assert build_book_projection(_board_with_stats(), pd.DataFrame(), SCORING).empty
 
 
 def main():

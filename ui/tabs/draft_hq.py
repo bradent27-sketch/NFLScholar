@@ -73,7 +73,7 @@ SIM_KEY = 'dhq_sim_state'
 # horizontal scroll and a memory of the first number.
 BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'FP Tier', 'Auction $',
-    'Proj Pts', 'VORP', 'VONA',
+    'Proj Pts', 'Book Proj', 'Book Δ', 'VORP', 'VONA',
     'FFA Rank', 'ADP', 'ECR', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
     'Risk', 'Health', 'Vegas PPG', 'SOS', 'Bye',
 ]
@@ -650,10 +650,18 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _market_scored, _settings, cache
     # range all computed off the old number - a board that quietly disagrees
     # with its own projection column is worse than no blend at all.
     market_blended = 0
-    if _settings.get('market_lines_weight') and _market_scored is not None and not _market_scored.empty:
-        from data.odds_projections import blend_market_into_projection
-        projected, market_blended = blend_market_into_projection(
-            projected, _market_scored, weight=_settings['market_lines_weight'])
+    book_projection = pd.DataFrame()
+    if _market_scored is not None and not _market_scored.empty:
+        from data.odds_projections import (blend_market_into_projection,
+                                           build_book_projection)
+        if _settings.get('market_lines_weight'):
+            projected, market_blended = blend_market_into_projection(
+                projected, _market_scored, weight=_settings['market_lines_weight'],
+                scoring=scoring)
+        # Built AFTER any blend so Book Δ is measured against whatever Proj
+        # Pts actually ended up being - otherwise turning the blend up would
+        # leave a delta that disagrees with the column beside it.
+        book_projection = build_book_projection(projected, _market_scored, scoring)
 
     board, meta = build_draft_board(
         projected, _settings, adp_df=_adp_df, next_pick=cache_key[3],
@@ -666,6 +674,10 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _market_scored, _settings, cache
                          scoring_ppr=float(scoring.get('rec', 1.0)))
     board = attach_sos_to_board(board, sos)
     board = adp_quartiles(board)
+
+    if not book_projection.empty:
+        from data.odds_projections import attach_book_projection
+        board = attach_book_projection(board, book_projection)
 
     # FFA's ranking sits beside VORP and VONA as just another column, rather
     # than in a tab of its own. Two independent rankings are most useful read
@@ -1163,6 +1175,20 @@ def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None
                  "again, and worse per game when he plays. 'FA' means no NFL team: about "
                  "half of unsigned contributors never play a down, and those who do play "
                  "roughly half a season at three-quarters of their old rate.")
+    if 'Book Proj' in display.columns:
+        column_config['Book Proj'] = st.column_config.NumberColumn(
+            "Book Proj", format="%.1f",
+            help="This player's projection rebuilt from Underdog's season-long lines: the "
+                 "book's number for every stat it priced, ours for the rest. A complete "
+                 "projection on the same scale as Proj Pts — receptions and anything else "
+                 "the book doesn't post fall back to our model rather than counting as zero. "
+                 "Blank where no season-long lines exist.")
+    if 'Book Δ' in display.columns:
+        column_config['Book Δ'] = st.column_config.NumberColumn(
+            "Book Δ", format="%+.1f",
+            help="Book Proj minus Proj Pts. Negative means the market's own numbers make him "
+                 "worse than this model does. Expect a mild negative lean overall — a "
+                 "season-long line prices in the chance he misses games, worth about 4%.")
     if 'Vegas PPG' in display.columns:
         column_config['Vegas PPG'] = st.column_config.NumberColumn(
             "Vegas PPG", format="%.1f",
@@ -1557,12 +1583,19 @@ def _render_market_comparison(board, settings, meta, status):
         + (f" · {cmp_meta['unmatched']} didn't match a board row" if cmp_meta['unmatched'] else "")
     )
     st.caption(
-        "**Market Pts** is the book's own stat lines scored under YOUR league settings — a "
-        "projection built without reference to this app's model. **Ours (matched)** is this "
-        "board's projection re-scored over *only the stats that book actually priced*, "
-        "which is what makes the two comparable: Underdog posts receiving yards and TDs but "
-        "no receptions, so comparing their total against our full one made every receiver "
-        "look 40–60% underpriced. **Edge** is the like-for-like difference."
+        "**Book Proj** is the number to draft off: this player's projection rebuilt from the "
+        "book's season-long lines, using their figure for every stat they priced and ours "
+        "for the rest. Complete, and on the same scale as Proj Pts — Underdog posts no "
+        "receptions market at all, so those fall back to our model instead of counting as "
+        "zero. **Book Δ** is how far that moves him. **Book Share** is how much of the total "
+        "the book is actually responsible for."
+    )
+    st.caption(
+        "The three columns after it answer a narrower question — whether the model and the "
+        "market disagree. **Market Pts** covers *only* the stats the book priced, so "
+        "**Ours (matched)** re-scores our side over that same narrow set and **Edge** is the "
+        "like-for-like difference. Comparing the book's partial total against our full one "
+        "was making every receiver look 40–60% underpriced, which is why those two exist."
     )
     st.caption(
         "Two things to read it against. **A big gap is not a bet** — most often it means the "

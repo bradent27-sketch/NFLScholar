@@ -446,23 +446,27 @@ def _render_settings_panel(cfg):
                 help="One request per half hour. Season-long lines are posted through the "
                      "preseason and pulled once the season starts.")
             st.caption(
-                "No network access to Underdog? Open "
-                "`api.underdogfantasy.com/beta/v5/over_under_lines` in a browser, save the "
-                "JSON, and drop it here. An uploaded payload wins over the live fetch — it "
-                "is also the reliable path if they change or block the endpoint."
+                "No network access to these endpoints? Open one in a browser, save the "
+                "JSON, and drop it here. A saved payload wins over the live fetch and "
+                "loads automatically from then on — it is the reliable path when a book "
+                "changes or blocks its endpoint, which both of these do.\n\n"
+                "• Underdog — `api.underdogfantasy.com/beta/v5/over_under_lines`\n\n"
+                "• PrizePicks — `api.prizepicks.com/projections?league_id=9&per_page=1000`"
             )
-            market_upload = st.file_uploader("Underdog over_under_lines JSON",
-                                             type=["json"], key="dhq_market_upload")
-            if market_upload is not None:
-                from data.odds_sources import save_underdog_payload
-                saved, save_err = save_underdog_payload(market_upload.getvalue())
-                if save_err and saved is None:
-                    st.error(save_err)
-                elif save_err:
-                    st.warning(save_err)
-                else:
-                    st.success(f"Saved {len(saved.get('over_under_lines') or [])} lines — "
-                               "it'll load automatically from now on.")
+            from data.odds_sources import save_book_payload, SAVED_PAYLOADS
+            for _provider, _label in (('Underdog', 'Underdog over_under_lines JSON'),
+                                      ('PrizePicks', 'PrizePicks projections JSON')):
+                _upload = st.file_uploader(_label, type=["json"],
+                                           key=f"dhq_market_upload_{_provider.lower()}")
+                if _upload is not None:
+                    _saved, _err = save_book_payload(_upload.getvalue(), _provider)
+                    if _err and _saved is None:
+                        st.error(_err)
+                    elif _err:
+                        st.warning(_err)
+                    else:
+                        _key = SAVED_PAYLOADS[_provider][1]
+                        st.success(f"Saved {len(_saved.get(_key) or [])} {_provider} lines.")
             cfg['market_lines_weight'] = st.slider(
                 "Blend market lines into projections", 0, 100,
                 int(cfg['market_lines_weight']), 5, key="dhq_market_lines_weight",
@@ -569,34 +573,38 @@ def _load_market_lines(settings, ecr_board):
     """
     empty = pd.DataFrame()
     from data.odds_sources import (fetch_underdog_lines, fetch_prizepicks_lines,
-                                   parse_underdog_payload, load_saved_underdog_payload,
-                                   combine_props)
+                                   parse_underdog_payload, parse_prizepicks_payload,
+                                   load_saved_book_payload, combine_props)
     from data.odds_projections import market_stat_lines, score_market_lines
 
-    saved = load_saved_underdog_payload()
-    if not settings.get('market_lines_on') and saved is None:
+    # Saved payloads win outright, per book. Each is a deliberate act by
+    # someone who has just looked at that board, and it is the path that
+    # keeps working when an endpoint moves or refuses - the same reasoning
+    # as the ECR upload override.
+    saved = {name: load_saved_book_payload(name) for name in ('Underdog', 'PrizePicks')}
+    parsers = {'Underdog': parse_underdog_payload, 'PrizePicks': parse_prizepicks_payload}
+    fetchers = {'Underdog': fetch_underdog_lines, 'PrizePicks': fetch_prizepicks_lines}
+
+    if not settings.get('market_lines_on') and not any(v is not None for v in saved.values()):
         return empty, {'enabled': False}
 
     status = {'enabled': True, 'providers': {}}
     frames = []
-
-    # A saved payload wins outright. It is a deliberate act by someone who
-    # has just looked at the board, and it is the path that keeps working
-    # when the endpoint moves or refuses - the same reasoning as the ECR
-    # upload override.
-    if saved is not None:
-        props, err = parse_underdog_payload(saved)
-        status['providers']['Underdog (your saved payload)'] = {
-            'rows': int(len(props)), 'error': err}
+    for name in ('Underdog', 'PrizePicks'):
+        if saved[name] is not None:
+            props, err = parsers[name](saved[name])
+            label = f'{name} (your saved payload)'
+        elif settings.get('market_lines_on'):
+            props, err = fetchers[name]()
+            label = name
+        else:
+            continue
+        seasons = int((props['period'] == 'season').sum()) if not props.empty else 0
+        status['providers'][label] = {'rows': int(len(props)), 'season': seasons,
+                                      'error': err}
         if not props.empty:
             frames.append(props)
-    elif settings.get('market_lines_on'):
-        for label, fetch in (('Underdog', fetch_underdog_lines),
-                             ('PrizePicks', fetch_prizepicks_lines)):
-            props, err = fetch()
-            status['providers'][label] = {'rows': int(len(props)), 'error': err}
-            if not props.empty:
-                frames.append(props)
+
     combined = combine_props(*frames)
     status['total_lines'] = int(len(combined))
     if combined.empty:
@@ -1559,7 +1567,11 @@ def _render_market_comparison(board, settings, meta, status):
         if info.get('error'):
             st.caption(f"{label}: {info['error']}")
         else:
-            st.caption(f"{label}: {info['rows']} lines")
+            season = info.get('season', 0)
+            st.caption(f"{label}: {info['rows']} lines, {season} season-long"
+                       + ("" if season else
+                          " — this book's board is per-game right now, so it feeds nothing "
+                          "into the season projection yet"))
 
     scored = meta.get('market_scored')
     if scored is None or scored.empty:

@@ -215,6 +215,11 @@ STAT_ALIASES = {
     'rushingtds': 'rushing_tds', 'rushingtouchdowns': 'rushing_tds', 'rushtds': 'rushing_tds',
     'rushingattempts': 'carries', 'carries': 'carries', 'rushattempts': 'carries',
 
+    # PrizePicks' NFL spellings, read off a real payload: "Rush Yards",
+    # "Pass Yards", "Rec Yards", "INT", "Pass TDs".
+    'rushyds': 'rushing_yards', 'int': 'passing_interceptions',
+    'ints': 'passing_interceptions',
+
     'receivingyards': 'receiving_yards', 'recyds': 'receiving_yards', 'recyards': 'receiving_yards',
     'receivingyds': 'receiving_yards',
     'receivingtds': 'receiving_tds', 'receivingtouchdowns': 'receiving_tds', 'rectds': 'receiving_tds',
@@ -240,6 +245,7 @@ COMBO_STATS = {
     # onto rushing_tds would inflate every back on the board.
     'rushrectds': 'rush_rec_tds',
     'seasonrushrectds': 'rush_rec_tds',
+    'rushrecyds': 'rush_rec_yards',
     'periodfirsttouchdownscored': 'first_td',
     # Defensive markets. Real, and irrelevant to an offensive fantasy board -
     # named here so they're classified rather than reported as "unmapped"
@@ -562,6 +568,9 @@ def parse_prizepicks_payload(payload):
     for item in payload.get('included') or []:
         included[(str(item.get('type')), str(item.get('id')))] = item.get('attributes') or {}
 
+    durations = {key[1]: (value or {}).get('name')
+                 for key, value in included.items() if key[0] == 'duration'}
+
     rows = []
     for item in payload.get('data') or []:
         attrs = item.get('attributes') or {}
@@ -569,10 +578,31 @@ def parse_prizepicks_payload(payload):
         player_ref = ((rel.get('new_player') or rel.get('player') or {}).get('data')) or {}
         player = included.get((str(player_ref.get('type')), str(player_ref.get('id')))) or {}
 
+        # DEMON AND GOBLIN LINES ARE DELIBERATELY SHADED and must never reach
+        # a projection. They are PrizePicks' altered-line products: a demon
+        # sits ABOVE the true median and pays more, a goblin sits below and
+        # pays less. Only 'standard' is the book's honest read of the middle,
+        # and scoring a demon as though it were would bias a player upward by
+        # design. Kept in the frame - a drafter may want to see them - but
+        # marked unscorable and labelled in the provider name.
+        odds_type = str(attrs.get('odds_type') or 'standard').lower()
         market, scorable = normalize_stat(attrs.get('stat_type'))
+        if odds_type not in ('standard', ''):
+            scorable = False
+
+        # display_name comes back as an EMPTY STRING on real payloads, not
+        # absent. `or` handles it only because '' is falsy - do not "fix"
+        # this into a .get(key, default) chain.
         name = str(player.get('display_name') or player.get('name') or '').strip()
+
+        # Combined-player props ("Tristan Jarry + Cam Talbot") can never
+        # match a board row, and a name with two people in it is worse than
+        # no row at all.
+        if player.get('combo') or ' + ' in name:
+            continue
+
         rows.append({
-            'provider': 'PrizePicks',
+            'provider': 'PrizePicks' + ('' if odds_type == 'standard' else f' ({odds_type})'),
             'player': name,
             'team': standardize_team(player.get('team') or attrs.get('team')),
             'position': str(player.get('position') or '').upper(),
@@ -585,7 +615,7 @@ def parse_prizepicks_payload(payload):
             # filled with a fake 1.0, which would read as a real quote.
             'over_payout': None,
             'under_payout': None,
-            'period': _prizepicks_period(attrs),
+            'period': _prizepicks_period(attrs, rel, durations),
             'source_id': str(item.get('id') or ''),
         })
     props = _finalize(rows)
@@ -594,11 +624,29 @@ def parse_prizepicks_payload(payload):
     return props, None
 
 
-def _prizepicks_period(attrs):
-    """Season-long lines carry a season-ish flag on the projection itself."""
-    blob = ' '.join(str(attrs.get(k) or '') for k in
-                    ('odds_type', 'stat_type', 'description', 'period')).lower()
-    return 'season' if 'season' in blob else 'game'
+def _prizepicks_period(attrs, relationships=None, durations=None):
+    """
+    'season' for a season-long line, 'game' otherwise.
+
+    NOTHING IN A PRIZEPICKS PAYLOAD SAYS "SEASON" DIRECTLY, and the first
+    version of this guessed that odds_type would. It doesn't - odds_type is
+    'standard' / 'demon' / 'goblin', which describes how a line is SHADED,
+    not what it covers. Their NFL board as of the 2026 preseason is week-one
+    game props: Pass Yards median 229, Receiving Yards median 52.5, every
+    row kicking off 2026-09-09.
+
+    So this reads the two fields that could actually say it - the stat label
+    ("Season Pass Yards", the shape Underdog uses) and the duration
+    relationship, whose name is 'Full' for a whole game. Everything else is
+    a game line, which is the safe default: mistaking a per-game line for a
+    season one would put a 52-yard receiving projection on a draft board.
+    """
+    label = str(attrs.get('stat_type') or '').lower()
+    if 'season' in label:
+        return 'season'
+    duration_ref = ((relationships or {}).get('duration') or {}).get('data') or {}
+    duration = str((durations or {}).get(str(duration_ref.get('id')), '')).lower()
+    return 'season' if 'season' in duration else 'game'
 
 
 @st.cache_data(ttl=FETCH_TTL, show_spinner=False)
@@ -728,24 +776,38 @@ def load_props_fixture(path):
 
 
 UNDERDOG_SAVED_PATH = os.path.join('external_data', 'underdog_over_under_lines.json')
+PRIZEPICKS_SAVED_PATH = os.path.join('external_data', 'prizepicks_projections.json')
+
+# Saved payloads, as provider -> (path, a key that must be present, parser).
+# Both books go through the same save/load path because the reason is the
+# same for both: these endpoints are undocumented, sometimes blocked, and a
+# file the user saved from their own browser is the one input that keeps
+# working regardless.
+SAVED_PAYLOADS = {
+    'Underdog': (UNDERDOG_SAVED_PATH, 'over_under_lines'),
+    'PrizePicks': (PRIZEPICKS_SAVED_PATH, 'data'),
+}
 
 
-def save_underdog_payload(raw_bytes, path=UNDERDOG_SAVED_PATH):
+def save_book_payload(raw_bytes, provider):
     """
-    Persist an uploaded Underdog payload so it survives a restart.
+    Persist an uploaded payload so it survives a restart.
 
     Written to disk rather than kept in session state for the same reason
     save_ffa_import is: re-uploading a 12 MB file before every session is
     exactly the friction that gets a feature abandoned two days before a
     draft. Gitignored - it is someone else's data, not ours to redistribute.
     """
+    if provider not in SAVED_PAYLOADS:
+        return None, f"Unknown provider {provider!r}."
+    path, required = SAVED_PAYLOADS[provider]
     try:
         payload = json.loads(raw_bytes)
     except Exception as exc:
         return None, f"Couldn't read that file as JSON: {exc}"
-    if not isinstance(payload, dict) or 'over_under_lines' not in payload:
-        return None, ("That file doesn't look like an Underdog over_under_lines "
-                      "response - expected a JSON object with an 'over_under_lines' key.")
+    if not isinstance(payload, dict) or required not in payload:
+        return None, (f"That doesn't look like a {provider} response - expected a JSON "
+                      f"object with a {required!r} key.")
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as handle:
@@ -755,8 +817,11 @@ def save_underdog_payload(raw_bytes, path=UNDERDOG_SAVED_PATH):
     return payload, None
 
 
-def load_saved_underdog_payload(path=UNDERDOG_SAVED_PATH):
-    """The last saved payload, or None. Never raises."""
+def load_saved_book_payload(provider):
+    """The last saved payload for one provider, or None. Never raises."""
+    if provider not in SAVED_PAYLOADS:
+        return None
+    path, _ = SAVED_PAYLOADS[provider]
     try:
         if os.path.exists(path):
             with open(path, 'r', encoding='utf-8') as handle:
@@ -764,3 +829,12 @@ def load_saved_underdog_payload(path=UNDERDOG_SAVED_PATH):
     except Exception:
         pass
     return None
+
+
+def save_underdog_payload(raw_bytes, path=UNDERDOG_SAVED_PATH):
+    """Back-compat shim for the Underdog-only save."""
+    return save_book_payload(raw_bytes, 'Underdog')
+
+
+def load_saved_underdog_payload(path=UNDERDOG_SAVED_PATH):
+    return load_saved_book_payload('Underdog')

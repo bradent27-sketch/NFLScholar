@@ -104,12 +104,20 @@ def market_stat_lines(props, season_only=True):
     if df.empty:
         return pd.DataFrame()
 
+    # MEDIAN ACROSS PROVIDERS, PER STAT - which is where the multi-book
+    # averaging actually happens, and it happens at the STAT level rather
+    # than the projection level on purpose. If Underdog prices receiving
+    # yards and PrizePicks prices receptions, this keeps BOTH: the player
+    # ends up with more of his line coming from the market instead of from
+    # us. Averaging two finished projections would have thrown that away.
+    # With two books the median is the mean; with one, it is that book.
     wide = (df.groupby(['player_key', 'market'])['line'].median().unstack('market'))
     meta = (df.sort_values('provider')
               .groupby('player_key')
               .agg(player=('player', 'first'), team=('team', 'first'),
                    position=('position', 'first'),
                    providers=('provider', lambda s: ', '.join(sorted(set(s)))),
+                   Books=('provider', lambda s: len({p.split(' (')[0] for p in s})),
                    n_lines=('line', 'size')))
     out = meta.join(wide).reset_index()
     for stat in PROJECTED_STATS:
@@ -443,7 +451,7 @@ def compare_to_board(board, market_scored, scoring, min_coverage=MIN_COVERAGE):
 
     merged = merged.sort_values('Edge %', key=lambda s: s.abs(), ascending=False)
     keep = ['Player', 'Pos', 'Team', 'Proj Pts', 'Book Proj', 'Book Δ', 'Book Share',
-            'Ours (matched)', 'Market Pts', 'Edge', 'Edge %', 'Coverage',
+            'Books', 'Ours (matched)', 'Market Pts', 'Edge', 'Edge %', 'Coverage',
             'ADP', 'ECR', 'Board Rank', 'providers', 'n_lines']
     return merged[[c for c in keep if c in merged.columns]].reset_index(drop=True), meta
 

@@ -532,6 +532,123 @@ def test_book_projection_needs_board_stat_columns():
     assert build_book_projection(_board_with_stats(), pd.DataFrame(), SCORING).empty
 
 
+def test_prizepicks_demon_and_goblin_are_not_scorable():
+    """
+    Demon and goblin are PrizePicks' ALTERED lines - a demon sits above the
+    true median and pays more, a goblin below and pays less. Scoring one as
+    though it were the book's honest middle would bias a player by design.
+    """
+    payload = {
+        'data': [
+            {'type': 'projection', 'id': '1',
+             'attributes': {'stat_type': 'Receiving Yards', 'line_score': 60.5,
+                            'odds_type': 'standard'},
+             'relationships': {'new_player': {'data': {'type': 'new_player', 'id': 'p1'}}}},
+            {'type': 'projection', 'id': '2',
+             'attributes': {'stat_type': 'Receiving Yards', 'line_score': 85.5,
+                            'odds_type': 'demon'},
+             'relationships': {'new_player': {'data': {'type': 'new_player', 'id': 'p1'}}}},
+            {'type': 'projection', 'id': '3',
+             'attributes': {'stat_type': 'Receiving Yards', 'line_score': 40.5,
+                            'odds_type': 'goblin'},
+             'relationships': {'new_player': {'data': {'type': 'new_player', 'id': 'p1'}}}},
+        ],
+        'included': [{'type': 'new_player', 'id': 'p1',
+                      'attributes': {'display_name': '', 'name': 'Justin Jefferson',
+                                     'team': 'MIN', 'position': 'WR'}}],
+    }
+    props, err = parse_prizepicks_payload(payload)
+    assert err is None and len(props) == 3
+    # display_name is an empty STRING on real payloads, not absent.
+    assert set(props['player']) == {'Justin Jefferson'}
+    scorable = props[props['scorable']]
+    assert len(scorable) == 1 and float(scorable['line'].iloc[0]) == 60.5
+    assert set(props['provider']) == {'PrizePicks', 'PrizePicks (demon)',
+                                      'PrizePicks (goblin)'}
+
+
+def test_prizepicks_filters_combined_player_props():
+    """"Tristan Jarry + Cam Talbot" can never match a board row."""
+    payload = {
+        'data': [{'type': 'projection', 'id': '1',
+                  'attributes': {'stat_type': 'Receiving Yards', 'line_score': 60.5,
+                                 'odds_type': 'standard'},
+                  'relationships': {'new_player': {'data': {'type': 'new_player',
+                                                            'id': 'combo'}}}}],
+        'included': [{'type': 'new_player', 'id': 'combo',
+                      'attributes': {'name': 'Player One + Player Two', 'combo': True,
+                                     'team': 'MIN', 'position': 'WR'}}],
+    }
+    props, _ = parse_prizepicks_payload(payload)
+    assert props.empty
+
+
+def test_prizepicks_per_game_lines_are_not_read_as_season():
+    """
+    THE BUG THIS LOCKS IN. Nothing in a PrizePicks payload says "season" -
+    odds_type is standard/demon/goblin, which describes how a line is SHADED.
+    Their real NFL board is week-one game props (Pass Yards median 229), and
+    reading those as season-long would put a 52-yard receiving projection on
+    a draft board.
+    """
+    payload = {
+        'data': [{'type': 'projection', 'id': '1',
+                  'attributes': {'stat_type': 'Pass Yards', 'line_score': 229.5,
+                                 'odds_type': 'standard', 'description': 'SF'},
+                  'relationships': {'new_player': {'data': {'type': 'new_player', 'id': 'p1'}},
+                                    'duration': {'data': {'type': 'duration', 'id': 'd1'}}}}],
+        'included': [{'type': 'new_player', 'id': 'p1',
+                      'attributes': {'name': 'Brock Purdy', 'team': 'SF', 'position': 'QB'}},
+                     {'type': 'duration', 'id': 'd1', 'attributes': {'name': 'Full'}}],
+    }
+    props, _ = parse_prizepicks_payload(payload)
+    assert props['period'].tolist() == ['game']
+    # A genuinely season-long label must still be recognised.
+    payload['data'][0]['attributes']['stat_type'] = 'Season Pass Yards'
+    props, _ = parse_prizepicks_payload(payload)
+    assert props['period'].tolist() == ['season']
+
+
+def test_two_books_average_per_stat_not_per_projection():
+    """
+    Multi-book averaging happens at the STAT level. If one book prices yards
+    and the other prices receptions, the player keeps BOTH - more of his line
+    comes from the market instead of from us. Averaging finished projections
+    would have thrown that away.
+    """
+    ud, _ = _underdog()
+    pp = pd.DataFrame([
+        # Same stat as Underdog -> should average to the midpoint.
+        {'provider': 'PrizePicks', 'player': 'Justin Jefferson',
+         'player_key': 'justinjefferson', 'team': 'MIN', 'position': 'WR',
+         'market': 'receiving_yards', 'market_raw': 'Season Receiving Yards',
+         'scorable': True, 'line': 1375.5, 'over_payout': None, 'under_payout': None,
+         'period': 'season', 'source_id': 'pp1'},
+        # A stat Underdog never priced for the QB -> must be ADDED, not lost.
+        {'provider': 'PrizePicks', 'player': 'Patrick Mahomes',
+         'player_key': 'patrickmahomes', 'team': 'SEA', 'position': 'QB',
+         'market': 'rushing_yards', 'market_raw': 'Season Rush Yards',
+         'scorable': True, 'line': 300.5, 'over_payout': None, 'under_payout': None,
+         'period': 'season', 'source_id': 'pp2'},
+    ])
+    rows = market_stat_lines(combine_props(ud, pp), season_only=True)
+
+    jj = rows[rows['player_key'] == 'justinjefferson'].iloc[0]
+    assert float(jj['receiving_yards']) == (1275.5 + 1375.5) / 2, "two books -> midpoint"
+    assert int(jj['Books']) == 2
+    assert 'Underdog' in jj['providers'] and 'PrizePicks' in jj['providers']
+
+    qb = rows[rows['player_key'] == 'patrickmahomes'].iloc[0]
+    assert float(qb['rushing_yards']) == 300.5, "a stat only one book priced survives"
+    assert float(qb['passing_yards']) == 4225.5, "and the other book's stats are kept"
+    assert int(qb['Books']) == 2
+
+    # A player only one book priced uses that book, unchanged.
+    rb = rows[rows['player_key'] == 'travisetienne']
+    if not rb.empty:
+        assert int(rb.iloc[0]['Books']) == 1
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith('test_') and callable(fn)]

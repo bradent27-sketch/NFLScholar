@@ -27,9 +27,9 @@ import pandas as pd  # noqa: E402
 pd.options.mode.string_storage = "python"
 
 from data.odds_sources import (  # noqa: E402
-    UNDERDOG_LINES_URL, PRIZEPICKS_PROJECTIONS_URL, PRIZEPICKS_NFL_LEAGUE_ID,
-    _get_json, parse_underdog_payload, parse_prizepicks_payload,
-    odds_api_bookmakers,
+    PRIZEPICKS_PROJECTIONS_URL, PRIZEPICKS_NFL_LEAGUE_ID,
+    _get_json, fetch_underdog_payload, parse_underdog_payload,
+    parse_prizepicks_payload, odds_api_bookmakers,
 )
 
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -71,12 +71,13 @@ def main():
                     help="list which bookmakers your Odds API key actually returns")
     args = ap.parse_args()
 
-    payload, err = _get_json(UNDERDOG_LINES_URL)
+    payload, url, err = fetch_underdog_payload()
     if err:
         print(f"\n=== Underdog\n  no data: {err}")
     else:
         props, perr = parse_underdog_payload(payload)
         _report('Underdog', props, perr)
+        print(f"  endpoint that answered: {url}")
         if args.save_fixtures and not perr:
             path = os.path.join(FIXTURES, 'underdog_live.json')
             with open(path, 'w', encoding='utf-8') as fh:

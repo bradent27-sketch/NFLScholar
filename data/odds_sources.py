@@ -72,7 +72,26 @@ DEFAULT_HEADERS = {
     'Accept-Language': 'en-US,en;q=0.9',
 }
 
-UNDERDOG_LINES_URL = 'https://api.underdogfantasy.com/beta/v5/over_under_lines'
+# Underdog versions this endpoint, and the version moves. The one that was
+# current when this was written came from a reference implementation whose
+# last commit was September 2024, so treating any single version as correct
+# was going to break on a schedule nobody here controls.
+#
+# So it's a ladder rather than a constant: newest first, stopping at the
+# first version that answers. A wrong guess costs one 404, and a 404 is much
+# cheaper than an adapter that reports "no lines" forever because the number
+# in a URL went up by one. The payload SHAPE has been stable across versions
+# (the players/appearances/over_under_lines split), which is what makes this
+# safe - if a future version changes the shape, parse_underdog_payload
+# returns its "couldn't join" error rather than silently mis-parsing.
+UNDERDOG_LINE_ENDPOINTS = [
+    'https://api.underdogfantasy.com/beta/v7/over_under_lines',
+    'https://api.underdogfantasy.com/beta/v6/over_under_lines',
+    'https://api.underdogfantasy.com/beta/v5/over_under_lines',
+    'https://api.underdogfantasy.com/beta/v4/over_under_lines',
+    'https://api.underdogfantasy.com/beta/v3/over_under_lines',
+]
+UNDERDOG_LINES_URL = UNDERDOG_LINE_ENDPOINTS[2]
 PRIZEPICKS_PROJECTIONS_URL = 'https://api.prizepicks.com/projections'
 # PrizePicks' league id for the NFL. Their /leagues endpoint returns the
 # mapping; 9 is NFL and is passed as a query param to avoid pulling every
@@ -384,6 +403,32 @@ def _underdog_period(appearance):
     return 'season' if 'season' in match_type else 'game'
 
 
+def fetch_underdog_payload(endpoints=None):
+    """
+    Underdog's raw payload, trying each endpoint version until one answers.
+
+    Returns (payload, url, error). The url comes back so the caller can say
+    which version actually worked - useful when the ladder has moved on and
+    the constant in this file wants updating.
+    """
+    attempts = []
+    for url in (endpoints or UNDERDOG_LINE_ENDPOINTS):
+        payload, err = _get_json(url)
+        if err is None:
+            return payload, url, None
+        attempts.append(f"{url.rsplit('/', 2)[-2]}: {err}")
+        # A refusal or a rate limit is about the CLIENT, not the version -
+        # walking further down the ladder would just repeat it four more
+        # times against an endpoint that has already said no.
+        if 'refused the request' in err or 'rate-limited' in err:
+            return None, url, err
+    return None, None, (
+        "No Underdog endpoint version answered. They version this path and it "
+        "moves; if their web app is working, find the current version in your "
+        "browser's network tab and add it to UNDERDOG_LINE_ENDPOINTS in "
+        "data/odds_sources.py. Tried:\n  " + "\n  ".join(attempts))
+
+
 @st.cache_data(ttl=FETCH_TTL, show_spinner=False)
 def fetch_underdog_lines():
     """
@@ -396,7 +441,7 @@ def fetch_underdog_lines():
     tests/test_odds_sources.py). Run scripts/check_odds_sources.py on a
     normal network to confirm the live shape still matches.
     """
-    payload, err = _get_json(UNDERDOG_LINES_URL)
+    payload, _url, err = fetch_underdog_payload()
     if err:
         return _empty_props(), err
     return parse_underdog_payload(payload)

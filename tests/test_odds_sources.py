@@ -295,6 +295,55 @@ def test_loose_match_refuses_ambiguous_names():
     assert blended['Proj Pts'].tolist() == [180.0, 90.0]
 
 
+def test_underdog_endpoint_ladder():
+    """
+    Underdog versions this path and the version moves - the reference the
+    original URL came from was 22 months stale. The ladder tries newest
+    first and stops at the first version that answers.
+    """
+    import data.odds_sources as osrc
+
+    calls = []
+
+    def fake_get(url, params=None, headers=None):
+        calls.append(url)
+        # Pretend only v5 is live.
+        if '/v5/' in url:
+            return {'players': [], 'over_under_lines': []}, None
+        return None, f"{url} returned 404: not found"
+
+    original = osrc._get_json
+    try:
+        osrc._get_json = fake_get
+        payload, url, err = osrc.fetch_underdog_payload()
+        assert err is None and payload is not None
+        assert '/v5/' in url, url
+        # Newest first, and it stops rather than walking the whole ladder.
+        assert calls == [osrc.UNDERDOG_LINE_ENDPOINTS[0],
+                         osrc.UNDERDOG_LINE_ENDPOINTS[1],
+                         osrc.UNDERDOG_LINE_ENDPOINTS[2]]
+
+        # A refusal is about the client, not the version: walking on would
+        # just collect four more 403s from a host that already said no.
+        calls.clear()
+        osrc._get_json = lambda url, params=None, headers=None: (
+            calls.append(url) or (None, f"{url} refused the request (403)."))
+        payload, url, err = osrc.fetch_underdog_payload()
+        assert payload is None and 'refused' in err
+        assert len(calls) == 1, f"should stop on a refusal, tried {calls}"
+
+        # Every version dead: one actionable message naming what was tried.
+        calls.clear()
+        osrc._get_json = lambda url, params=None, headers=None: (
+            calls.append(url) or (None, f"{url} returned 404: not found"))
+        payload, url, err = osrc.fetch_underdog_payload()
+        assert payload is None
+        assert 'UNDERDOG_LINE_ENDPOINTS' in err, err
+        assert len(calls) == len(osrc.UNDERDOG_LINE_ENDPOINTS)
+    finally:
+        osrc._get_json = original
+
+
 def test_empty_inputs_are_safe():
     assert combine_props().empty
     assert market_stat_lines(pd.DataFrame()).empty

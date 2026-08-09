@@ -451,7 +451,7 @@ def _render_settings_panel(cfg):
                 "loads automatically from then on — it is the reliable path when a book "
                 "changes or blocks its endpoint, which both of these do.\n\n"
                 "• Underdog — `api.underdogfantasy.com/beta/v5/over_under_lines`\n\n"
-                "• PrizePicks — `api.prizepicks.com/projections?league_id=9&per_page=1000`"
+                "• PrizePicks **season-long (NFLSZN)** — their season product is a separate league, so league 9 returns weekly props. Find its id at `api.prizepicks.com/leagues`, then `api.prizepicks.com/projections?league_id=<NFLSZN id>&per_page=1000`"
             )
             from data.odds_sources import save_book_payload, SAVED_PAYLOADS
             for _provider, _label in (('Underdog', 'Underdog over_under_lines JSON'),

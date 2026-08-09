@@ -94,10 +94,20 @@ UNDERDOG_LINE_ENDPOINTS = [
 ]
 UNDERDOG_LINES_URL = UNDERDOG_LINE_ENDPOINTS[2]
 PRIZEPICKS_PROJECTIONS_URL = 'https://api.prizepicks.com/projections'
-# PrizePicks' league id for the NFL. Their /leagues endpoint returns the
-# mapping; 9 is NFL and is passed as a query param to avoid pulling every
-# sport's board when only football is wanted.
+PRIZEPICKS_LEAGUES_URL = 'https://api.prizepicks.com/leagues'
+# PrizePicks' league id for the weekly NFL board. Confirmed against a real
+# payload: league 9 is "NFL", and what it returns is week-by-week game props.
 PRIZEPICKS_NFL_LEAGUE_ID = 9
+
+# SEASON-LONG LIVES IN A DIFFERENT LEAGUE, NOT BEHIND A FILTER. PrizePicks
+# runs its season-long product as its own league - "NFLSZN" - so pulling
+# league 9 and hoping for season markets returns week-one game props forever.
+#
+# The id is NOT hardcoded, because it is undocumented and there is no reason
+# to think it is stable. discover_prizepicks_league() reads /leagues and
+# matches on NAME, which is the part users actually see and the part least
+# likely to change.
+PRIZEPICKS_SEASON_LEAGUE_NAMES = ('nflszn', 'nflseason', 'nflseasonlong')
 
 
 # ---------------------------------------------------------------------------
@@ -551,6 +561,48 @@ def fetch_underdog_lines():
 # PrizePicks
 # ---------------------------------------------------------------------------
 
+def _league_key(value):
+    return re.sub(r'[^a-z0-9]', '', str(value).lower())
+
+
+def prizepicks_leagues(payload):
+    """{league id: name} from a /leagues response or an embedded `included`."""
+    leagues = {}
+    items = payload.get('data') if isinstance(payload, dict) else None
+    for item in items or []:
+        if str(item.get('type')) in ('league', 'leagues'):
+            leagues[str(item.get('id'))] = str((item.get('attributes') or {}).get('name') or '')
+    for item in (payload.get('included') or []) if isinstance(payload, dict) else []:
+        if str(item.get('type')) == 'league':
+            leagues[str(item.get('id'))] = str((item.get('attributes') or {}).get('name') or '')
+    return leagues
+
+
+@st.cache_data(ttl=FETCH_TTL, show_spinner=False)
+def discover_prizepicks_league(names=PRIZEPICKS_SEASON_LEAGUE_NAMES):
+    """
+    Find a league id by NAME rather than hardcoding a number.
+
+    Returns (id, name, error). Used to locate NFLSZN - PrizePicks' season-long
+    product, which is a separate league rather than a filter on the weekly
+    one. Matching on the name means a changed id costs nothing; hardcoding
+    would fail silently by returning the weekly board instead.
+    """
+    payload, err = _get_json(PRIZEPICKS_LEAGUES_URL)
+    if err:
+        return None, None, err
+    leagues = prizepicks_leagues(payload)
+    if not leagues:
+        return None, None, "PrizePicks /leagues returned nothing recognizable."
+    wanted = {_league_key(n) for n in names}
+    for league_id, name in leagues.items():
+        if _league_key(name) in wanted:
+            return league_id, name, None
+    football = {i: n for i, n in leagues.items() if 'nfl' in _league_key(n)}
+    return None, None, ("No season-long league found. Football leagues visible: "
+                        + (', '.join(f'{n} (id {i})' for i, n in football.items()) or 'none'))
+
+
 def parse_prizepicks_payload(payload):
     """
     PrizePicks' projections payload -> normalized props.
@@ -570,6 +622,8 @@ def parse_prizepicks_payload(payload):
 
     durations = {key[1]: (value or {}).get('name')
                  for key, value in included.items() if key[0] == 'duration'}
+    leagues = {key[1]: (value or {}).get('name')
+               for key, value in included.items() if key[0] == 'league'}
 
     rows = []
     for item in payload.get('data') or []:
@@ -615,7 +669,8 @@ def parse_prizepicks_payload(payload):
             # filled with a fake 1.0, which would read as a real quote.
             'over_payout': None,
             'under_payout': None,
-            'period': _prizepicks_period(attrs, rel, durations),
+            'period': _prizepicks_period(attrs, rel, durations, leagues,
+                                         player.get('league')),
             'source_id': str(item.get('id') or ''),
         })
     props = _finalize(rows)
@@ -624,25 +679,70 @@ def parse_prizepicks_payload(payload):
     return props, None
 
 
-def _prizepicks_period(attrs, relationships=None, durations=None):
+# Roughly the largest a single-GAME line can plausibly be, per stat. Used
+# only as a cross-check on the period classification, never to set it.
+#
+# It earns its place: period detection on this payload has now been wrong
+# twice for two different reasons, and both times it failed silently. A
+# season receiving-yards line is 1,200 and a game line is 60 - two orders of
+# magnitude apart - so a misclassification is trivially detectable even
+# though it is not trivially preventable.
+GAME_LINE_CEILING = {
+    'passing_yards': 600, 'rushing_yards': 350, 'receiving_yards': 350,
+    'receptions': 25, 'passing_tds': 8, 'rushing_tds': 6, 'receiving_tds': 6,
+    'carries': 45, 'targets': 30, 'passing_interceptions': 6,
+}
+
+
+def implausible_period_rows(props):
+    """
+    Rows whose line is far too large for the period they claim.
+
+    Returns the offending subset. A 1,200-yard "game" line means the season
+    flag was missed; nothing here fixes it automatically, because guessing
+    twice is how this went wrong in the first place - it is surfaced so a
+    human can look.
+    """
+    if props is None or props.empty:
+        return props
+    ceilings = props['market'].map(GAME_LINE_CEILING)
+    lines = pd.to_numeric(props['line'], errors='coerce')
+    return props[(props['period'] == 'game') & ceilings.notna() & (lines > ceilings)]
+
+
+def _prizepicks_period(attrs, relationships=None, durations=None,
+                       leagues=None, player_league=None):
     """
     'season' for a season-long line, 'game' otherwise.
 
-    NOTHING IN A PRIZEPICKS PAYLOAD SAYS "SEASON" DIRECTLY, and the first
-    version of this guessed that odds_type would. It doesn't - odds_type is
-    'standard' / 'demon' / 'goblin', which describes how a line is SHADED,
-    not what it covers. Their NFL board as of the 2026 preseason is week-one
-    game props: Pass Yards median 229, Receiving Yards median 52.5, every
-    row kicking off 2026-09-09.
+    THE LEAGUE IS THE ANSWER, and it took two wrong guesses to find it.
+    PrizePicks runs season-long as a SEPARATE LEAGUE called NFLSZN, not as a
+    flag on a projection and not as a filter on the weekly board. So inside
+    an NFLSZN payload the stat labels read perfectly ordinary - "Receiving
+    Yards", not "Season Receiving Yards" - and every earlier heuristic
+    classified the whole thing as per-game.
 
-    So this reads the two fields that could actually say it - the stat label
-    ("Season Pass Yards", the shape Underdog uses) and the duration
-    relationship, whose name is 'Full' for a whole game. Everything else is
-    a game line, which is the safe default: mistaking a per-game line for a
-    season one would put a 52-yard receiving projection on a draft board.
+    The two dead ends, kept so they aren't retried:
+      - odds_type. It is 'standard' / 'demon' / 'goblin', which describes how
+        a line is SHADED, not what it covers.
+      - the stat label alone. Right for Underdog, blank for PrizePicks.
+
+    Checked in order of reliability: the league name, then the stat label
+    (for a book that does prefix it), then the duration relationship.
     """
-    label = str(attrs.get('stat_type') or '').lower()
-    if 'season' in label:
+    league_names = [str(player_league or '')]
+    league_ref = ((relationships or {}).get('league') or {}).get('data') or {}
+    league_names.append(str((leagues or {}).get(str(league_ref.get('id')), '')))
+    if leagues and len(leagues) == 1:
+        # A single-league payload - which is what /projections?league_id=N
+        # returns - names itself in `included` even when a projection carries
+        # no league relationship.
+        league_names.extend(str(n) for n in leagues.values())
+    for name in league_names:
+        if _league_key(name) in {_league_key(n) for n in PRIZEPICKS_SEASON_LEAGUE_NAMES}:
+            return 'season'
+
+    if 'season' in str(attrs.get('stat_type') or '').lower():
         return 'season'
     duration_ref = ((relationships or {}).get('duration') or {}).get('data') or {}
     duration = str((durations or {}).get(str(duration_ref.get('id')), '')).lower()
@@ -650,9 +750,15 @@ def _prizepicks_period(attrs, relationships=None, durations=None):
 
 
 @st.cache_data(ttl=FETCH_TTL, show_spinner=False)
-def fetch_prizepicks_lines(league_id=PRIZEPICKS_NFL_LEAGUE_ID):
+def fetch_prizepicks_lines(league_id=None, season_first=True):
     """
     PrizePicks' current projections, via one ordinary HTTPS request.
+
+    SEASON-LONG FIRST. Their season-long product (NFLSZN) is a separate
+    league, so the weekly NFL board is the wrong place to look for it. This
+    discovers the season league by name and asks for that; only if there is
+    no such league does it fall back to the weekly board, which is still
+    worth having for per-game work.
 
     THIS WILL SOMETIMES BE REFUSED, AND THAT IS THE DESIGN. PrizePicks sits
     behind Cloudflare. When the request comes back 403 the adapter reports it
@@ -660,16 +766,35 @@ def fetch_prizepicks_lines(league_id=PRIZEPICKS_NFL_LEAGUE_ID):
     browser fingerprint, or rotate IPs to get around the block. Those are
     techniques for defeating an access control the operator chose to put up,
     and "I want the data for my fantasy draft" is not a good enough reason to
-    defeat one.
-
-    If this source is blocked for you, Underdog carries the same kind of
-    season-long lines and serves them from an open endpoint.
+    defeat one. Save the JSON from your browser instead; that path is
+    supported and is the one that always works.
     """
-    payload, err = _get_json(PRIZEPICKS_PROJECTIONS_URL,
-                             params={'league_id': league_id, 'per_page': 1000})
+    tried = []
+    if league_id is None and season_first:
+        season_id, season_name, err = discover_prizepicks_league()
+        if season_id:
+            payload, fetch_err = _get_json(
+                PRIZEPICKS_PROJECTIONS_URL,
+                params={'league_id': season_id, 'per_page': 1000})
+            if fetch_err is None:
+                props, parse_err = parse_prizepicks_payload(payload)
+                if not props.empty:
+                    return props, parse_err
+                tried.append(f"{season_name} (id {season_id}): no usable lines")
+            else:
+                tried.append(f"{season_name} (id {season_id}): {fetch_err}")
+        elif err:
+            tried.append(err)
+
+    payload, err = _get_json(
+        PRIZEPICKS_PROJECTIONS_URL,
+        params={'league_id': league_id or PRIZEPICKS_NFL_LEAGUE_ID, 'per_page': 1000})
     if err:
-        return _empty_props(), err
-    return parse_prizepicks_payload(payload)
+        return _empty_props(), '; '.join(tried + [err])
+    props, parse_err = parse_prizepicks_payload(payload)
+    if tried and props.empty:
+        return props, '; '.join(tried + ([parse_err] if parse_err else []))
+    return props, parse_err
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,8 @@ pd.options.mode.string_storage = "python"
 from data.odds_sources import (  # noqa: E402
     parse_underdog_payload, parse_prizepicks_payload, parse_odds_api_props,
     standardize_team, normalize_stat, combine_props, load_props_fixture,
-    odds_api_bookmakers, PROP_COLUMNS,
+    odds_api_bookmakers, PROP_COLUMNS, prizepicks_leagues,
+    implausible_period_rows,
 )
 from data.odds_projections import (  # noqa: E402
     market_stat_lines, score_market_lines, compare_to_board,
@@ -647,6 +648,57 @@ def test_two_books_average_per_stat_not_per_projection():
     rb = rows[rows['player_key'] == 'travisetienne']
     if not rb.empty:
         assert int(rb.iloc[0]['Books']) == 1
+
+
+def test_nflszn_league_makes_plain_stat_labels_read_as_season():
+    """
+    THE TRAP. PrizePicks runs season-long as a SEPARATE LEAGUE (NFLSZN), not
+    a flag on a projection. So inside an NFLSZN payload the stat labels read
+    perfectly ordinary - "Receiving Yards", not "Season Receiving Yards" -
+    and every label-based heuristic classifies the whole board as per-game,
+    silently. The league name has to be what decides it.
+    """
+    def payload(league_name):
+        return {
+            'data': [{'type': 'projection', 'id': '1',
+                      'attributes': {'stat_type': 'Receiving Yards',
+                                     'line_score': 1240.5, 'odds_type': 'standard'},
+                      'relationships': {
+                          'new_player': {'data': {'type': 'new_player', 'id': 'p1'}},
+                          'league': {'data': {'type': 'league', 'id': 'L'}}}}],
+            'included': [
+                {'type': 'new_player', 'id': 'p1',
+                 'attributes': {'name': 'Justin Jefferson', 'team': 'MIN',
+                                'position': 'WR', 'league': league_name}},
+                {'type': 'league', 'id': 'L', 'attributes': {'name': league_name}},
+            ],
+        }
+
+    season, _ = parse_prizepicks_payload(payload('NFLSZN'))
+    assert season['period'].tolist() == ['season'], "NFLSZN must read as season-long"
+    assert float(season['line'].iloc[0]) == 1240.5
+
+    weekly, _ = parse_prizepicks_payload(payload('NFL'))
+    assert weekly['period'].tolist() == ['game'], "the weekly board must stay per-game"
+
+
+def test_league_discovery_and_implausible_period_warning():
+    leagues_payload = {'data': [
+        {'type': 'league', 'id': '9', 'attributes': {'name': 'NFL'}},
+        {'type': 'league', 'id': '241', 'attributes': {'name': 'NFLSZN'}},
+        {'type': 'league', 'id': '7', 'attributes': {'name': 'NBA'}},
+    ]}
+    found = prizepicks_leagues(leagues_payload)
+    assert found['241'] == 'NFLSZN' and found['9'] == 'NFL'
+
+    # The magnitude cross-check: a 1,240-yard "game" line is impossible, and
+    # period detection has been wrong twice, so it gets surfaced.
+    props = pd.DataFrame({
+        'player': ['A', 'B'], 'market': ['receiving_yards', 'receiving_yards'],
+        'line': [1240.5, 62.5], 'period': ['game', 'game'], 'market_raw': ['x', 'y'],
+    })
+    odd = implausible_period_rows(props)
+    assert len(odd) == 1 and odd['player'].iloc[0] == 'A'
 
 
 def main():

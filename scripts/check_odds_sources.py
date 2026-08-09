@@ -27,9 +27,10 @@ import pandas as pd  # noqa: E402
 pd.options.mode.string_storage = "python"
 
 from data.odds_sources import (  # noqa: E402
-    PRIZEPICKS_PROJECTIONS_URL, PRIZEPICKS_NFL_LEAGUE_ID,
+    PRIZEPICKS_PROJECTIONS_URL, PRIZEPICKS_NFL_LEAGUE_ID, PRIZEPICKS_LEAGUES_URL,
     _get_json, fetch_underdog_payload, parse_underdog_payload,
-    parse_prizepicks_payload, odds_api_bookmakers,
+    parse_prizepicks_payload, odds_api_bookmakers, prizepicks_leagues,
+    discover_prizepicks_league, implausible_period_rows,
 )
 
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -47,6 +48,12 @@ def _report(label, props, err):
     if seasons.empty:
         print("  NOTE: no season-long lines. These are posted in the preseason and")
         print("        pulled once the season starts, so this is expected in-season.")
+    odd = implausible_period_rows(props)
+    if odd is not None and len(odd):
+        print(f"  WARNING: {len(odd)} lines are far too large for the 'game' period they")
+        print("           claim - the season flag is probably being missed. Sample:")
+        for _, r in odd.head(4).iterrows():
+            print(f"      {r['player']} {r['market_raw']} = {r['line']}")
     unmapped = props[~props['scorable'].astype(bool)]['market_raw'].value_counts()
     if len(unmapped):
         print(f"  markets not mapped to a stat column ({len(unmapped)} kinds):")
@@ -84,8 +91,29 @@ def main():
                 json.dump(payload, fh, indent=2)
             print(f"  saved live payload -> {path}")
 
+    # Every league they run, so the season-long one can be found by NAME
+    # rather than by a hardcoded id. This is the single most useful thing
+    # this script prints: season-long lives in its own league (NFLSZN), and
+    # asking the weekly board for it returns week-one props forever.
+    print("\n=== PrizePicks leagues")
+    leagues_payload, leagues_err = _get_json(PRIZEPICKS_LEAGUES_URL)
+    league_id = PRIZEPICKS_NFL_LEAGUE_ID
+    if leagues_err:
+        print(f"  couldn't list leagues: {leagues_err}")
+    else:
+        found = prizepicks_leagues(leagues_payload)
+        football = {i: n for i, n in found.items() if 'nfl' in n.lower().replace(' ', '')}
+        print(f"  {len(found)} leagues; football ones: "
+              + (', '.join(f'{n} (id {i})' for i, n in football.items()) or 'none'))
+        season_id, season_name, derr = discover_prizepicks_league()
+        if season_id:
+            print(f"  SEASON-LONG league: {season_name} (id {season_id}) <- using this")
+            league_id = season_id
+        else:
+            print(f"  no season-long league matched: {derr}")
+
     payload, err = _get_json(PRIZEPICKS_PROJECTIONS_URL,
-                             params={'league_id': PRIZEPICKS_NFL_LEAGUE_ID, 'per_page': 1000})
+                             params={'league_id': league_id, 'per_page': 1000})
     if err:
         print(f"\n=== PrizePicks\n  no data: {err}")
         print("  PrizePicks sits behind Cloudflare and refuses automated requests")

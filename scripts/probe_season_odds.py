@@ -61,16 +61,40 @@ CANDIDATE_SEASON_MARKETS = [
 # One plain GET each. Where a book has moved its endpoint over time, the
 # candidates are ordered newest-first and we stop at the first that answers -
 # same ladder idea as the Underdog version list in data/odds_sources.py.
+#
+# WHAT A HAND CHECK FROM AN ORDINARY CONNECTION SHOWED (2026-08-09, iOS
+# Safari, so treat as directional not definitive):
+#
+#   Bovada          answered, but with an EMPTY body on the futures path.
+#                   That is the good failure - the host is reachable and did
+#                   not refuse us, we just asked for a path it does not
+#                   publish. Hence the nav endpoint below, which enumerates
+#                   the paths that DO exist instead of guessing more of them.
+#                   preMatchOnly=true is also dropped for futures: a season
+#                   prop has no kickoff, so that filter can legitimately
+#                   empty the result on its own.
+#   Caesars         403. A refusal. Left alone.
+#   DraftKings v5   blocked (the legacy host geo-gates and challenges).
+#   DraftKings nash /categories began transferring and then stalled.
+#
+# The stall is the interesting one - it is not a refusal, so it stays in the
+# ladder with a longer timeout rather than being written off.
 BOOK_PROBES = [
+    ('Bovada - nav tree (lists the valid NFL paths)', [
+        'https://www.bovada.lv/services/sports/event/v2/nav/A/description/football',
+        'https://www.bovada.lv/services/sports/event/v2/nav/A/description/football/nfl',
+    ]),
     ('Bovada - NFL game coupon', [
         'https://www.bovada.lv/services/sports/event/coupon/events/A/description/football/nfl'
         '?marketFilterId=def&preMatchOnly=true&lang=en',
     ]),
     ('Bovada - NFL futures/season props', [
+        # No preMatchOnly: a season-long prop is not attached to a kickoff and
+        # that filter alone can empty the response.
         'https://www.bovada.lv/services/sports/event/coupon/events/A/description/football/nfl/nfl-futures'
-        '?marketFilterId=def&preMatchOnly=true&lang=en',
+        '?marketFilterId=def&lang=en',
         'https://www.bovada.lv/services/sports/event/coupon/events/A/description/football/nfl'
-        '?marketFilterId=def&preMatchOnly=true&lang=en&eventsLimit=200',
+        '?marketFilterId=def&lang=en&eventsLimit=500',
     ]),
     ('DraftKings - NFL league feed', [
         'https://sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1/leagues/88808',

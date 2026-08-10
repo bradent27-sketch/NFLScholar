@@ -525,8 +525,19 @@ def _get_json(url, params=None, headers=None):
         payload, browser_err = _browser_retry(url, params)
         if payload is not None:
             return payload, None
+        hint = ''
+        if browser_err and 'to a browser too' in browser_err:
+            # A headless browser was refused. The next thing that legitimately
+            # changes the answer is a visible one - still the user's own
+            # browser, just not hidden. After that the honest options run out
+            # and the manual save is the path.
+            hint = (" A headless browser was refused as well. Try "
+                    "NFLSCHOLAR_BROWSER_HEADED=1 before launching, which runs a "
+                    "visible browser; if that is also refused, save the JSON "
+                    "from your own browser and upload it in Draft HQ → League "
+                    "settings → Market lines.")
         return None, (f"{url} refused the request ({resp.status_code}). "
-                      + (browser_err or "Nothing further is attempted."))
+                      + (browser_err or "Nothing further is attempted.") + hint)
     if resp.status_code == 429:
         return None, f"{url} rate-limited the request (429). Try again later."
     return None, f"{url} returned {resp.status_code}: {resp.text[:200]}"
@@ -1334,7 +1345,8 @@ def parse_draftkings_payload(payload):
 
     props = _finalize(rows)
     if props.empty:
-        return props, "DraftKings returned no season-long player lines."
+        return props, ("DraftKings returned no player over/under lines in that board - "
+                       "it is real, it just isn't a totals market.")
     return props, None
 
 
@@ -1379,11 +1391,18 @@ DK_WEEKLY_STAT_NAMES = (
 
 # Categories whose contents are season-long or otherwise not a weekly player
 # total, matched by name so a renamed id does not break the exclusion.
+#
+# "Player Matchups" is the one that has to be here and looks like it doesn't.
+# It carries subcategories named exactly "Receiving Yards" and "Receiving
+# TDs", so a name filter picks it up - but those are head-to-head markets
+# ("does X out-gain Y"), not over/unders. Discovery matched them, fetched
+# them, found no OU markets, and reported two confusing per-stat errors on a
+# board that simply had no weekly props yet.
 DK_NON_WEEKLY_CATEGORIES = (
     'player futures', 'stat leaders', 'milestones', 'season high totals',
     'rookie watch', 'awards', 'futures', 'fast futures', 'wins',
     'division specials', 'season specials', 'playoffs', 'team specials',
-    'next player to record',
+    'next player to record', 'player matchups',
 )
 
 
@@ -1462,7 +1481,15 @@ def fetch_draftkings_weekly_lines():
 
     combined = combine_props(*frames)
     if combined.empty:
-        return combined, '; '.join(errors) or "DraftKings returned no weekly lines."
+        # Every discovered board came back without a single over/under. That
+        # is what a preseason board looks like, and repeating a per-stat
+        # error for each one reads as several failures rather than one
+        # ordinary state of the world.
+        looked = ', '.join(name for _cat, name, _c, _s in subs) or 'nothing'
+        return combined, (
+            "DraftKings has no weekly player over/unders posted right now "
+            f"(looked at: {looked}). Weekly boards go up on Tuesday or "
+            "Wednesday in season.")
     return combined, ('; '.join(errors) if errors else None)
 
 

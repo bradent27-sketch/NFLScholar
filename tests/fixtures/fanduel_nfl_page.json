@@ -1,0 +1,430 @@
+{
+ "attachments": {
+  "markets": {
+   "739.169271017": {
+    "marketId": "739.169271017",
+    "marketName": "Aaron Rodgers Regular Season Passing Yards 2026-27",
+    "marketType": "REGULAR_SEASON_PROPS_-_QUARTERBACKS",
+    "eventId": 28297422,
+    "runners": [
+     {
+      "selectionId": 99952803,
+      "handicap": 0,
+      "runnerName": "Aaron Rodgers Over 3050.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -114,
+        "americanOddsInt": -114
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.87719298245614
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 114
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 99952802,
+      "handicap": 0,
+      "runnerName": "Aaron Rodgers Under 3050.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -114,
+        "americanOddsInt": -114
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.87719298245614
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 114
+        }
+       }
+      }
+     }
+    ]
+   },
+   "739.168960283": {
+    "marketId": "739.168960283",
+    "marketName": "Baker Mayfield Regular Season Passing TDs 2026-27",
+    "marketType": "REGULAR_SEASON_PROPS_-_QUARTERBACKS",
+    "eventId": 28297422,
+    "runners": [
+     {
+      "selectionId": 98497169,
+      "handicap": 0,
+      "runnerName": "Baker Mayfield Over 25.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -102,
+        "americanOddsInt": -102
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.980392156862745
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 102
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 98497170,
+      "handicap": 0,
+      "runnerName": "Baker Mayfield Under 25.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -130,
+        "americanOddsInt": -130
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.769230769230769
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 130
+        }
+       }
+      }
+     }
+    ]
+   },
+   "739.167802176": {
+    "marketId": "739.167802176",
+    "marketName": "Ashton Jeanty Regular Season Rushing Yards 2026-27",
+    "marketType": "REGULAR_SEASON_PROPS_-_RUNNING_BACKS",
+    "eventId": 28297422,
+    "runners": [
+     {
+      "selectionId": 98227873,
+      "handicap": 0,
+      "runnerName": "Ashton Jeanty Over 975.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -114,
+        "americanOddsInt": -114
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.87719298245614
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 114
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 98227874,
+      "handicap": 0,
+      "runnerName": "Ashton Jeanty Under 975.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -114,
+        "americanOddsInt": -114
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.87719298245614
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 114
+        }
+       }
+      }
+     }
+    ]
+   },
+   "739.170729992": {
+    "marketId": "739.170729992",
+    "marketName": "Ashton Jeanty Regular Season Rushing TDs 2026-27",
+    "marketType": "REGULAR_SEASON_PROPS_-_RUNNING_BACKS",
+    "eventId": 28297422,
+    "runners": [
+     {
+      "selectionId": 99007940,
+      "handicap": 0,
+      "runnerName": "Ashton Jeanty Over 7.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -108,
+        "americanOddsInt": -108
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.925925925925926
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 108
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 99007939,
+      "handicap": 0,
+      "runnerName": "Ashton Jeanty Under 7.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -122,
+        "americanOddsInt": -122
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.819672131147541
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 122
+        }
+       }
+      }
+     }
+    ]
+   },
+   "739.168819857": {
+    "marketId": "739.168819857",
+    "marketName": "Amon-Ra St. Brown Regular Season Receiving Yards 2026-27",
+    "marketType": "REGULAR_SEASON_PROPS_-_WIDE_RECEIVERS",
+    "eventId": 28297422,
+    "runners": [
+     {
+      "selectionId": 98467676,
+      "handicap": 0,
+      "runnerName": "Amon-Ra St. Brown Over 1225.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -114,
+        "americanOddsInt": -114
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.87719298245614
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 114
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 98467677,
+      "handicap": 0,
+      "runnerName": "Amon-Ra St. Brown Under 1225.5",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -114,
+        "americanOddsInt": -114
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.87719298245614
+        },
+        "fractionalOdds": {
+         "numerator": 100,
+         "denominator": 114
+        }
+       }
+      }
+     }
+    ]
+   },
+   "739.154428865": {
+    "marketId": "739.154428865",
+    "marketName": "AP NFL Regular Season MVP 2026-27",
+    "marketType": "REGULAR_SEASON_MVP",
+    "eventId": 28297422,
+    "runners": [
+     {
+      "selectionId": 12399650,
+      "handicap": 0,
+      "runnerName": "Josh Allen",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": 650,
+        "americanOddsInt": 650
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 7.5
+        },
+        "fractionalOdds": {
+         "numerator": 65,
+         "denominator": 10
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 11054746,
+      "handicap": 0,
+      "runnerName": "Lamar Jackson",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": 850,
+        "americanOddsInt": 850
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 9.5
+        },
+        "fractionalOdds": {
+         "numerator": 85,
+         "denominator": 10
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 22502304,
+      "handicap": 0,
+      "runnerName": "Joe Burrow",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": 900,
+        "americanOddsInt": 900
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 10
+        },
+        "fractionalOdds": {
+         "numerator": 90,
+         "denominator": 10
+        }
+       }
+      }
+     }
+    ]
+   },
+   "739.166814647": {
+    "marketId": "739.166814647",
+    "marketName": "Most Regular Season Rookie Receiving Yards 2026-27",
+    "marketType": "MOST_REGULAR_SEASON_YARDS",
+    "eventId": 28297422,
+    "runners": [
+     {
+      "selectionId": 48955500,
+      "handicap": 0,
+      "runnerName": "Jordyn Tyson",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": 230,
+        "americanOddsInt": 230
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 3.3
+        },
+        "fractionalOdds": {
+         "numerator": 23,
+         "denominator": 10
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 78488498,
+      "handicap": 0,
+      "runnerName": "Carnell Tate",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": 270,
+        "americanOddsInt": 270
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 3.7
+        },
+        "fractionalOdds": {
+         "numerator": 27,
+         "denominator": 10
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 82342249,
+      "handicap": 0,
+      "runnerName": "Makai Lemon",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": 650,
+        "americanOddsInt": 650
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 7.5
+        },
+        "fractionalOdds": {
+         "numerator": 65,
+         "denominator": 10
+        }
+       }
+      }
+     }
+    ]
+   },
+   "739.168993462": {
+    "marketId": "739.168993462",
+    "marketName": "Moneyline",
+    "marketType": "MONEY_LINE",
+    "eventId": 35610170,
+    "runners": [
+     {
+      "selectionId": 50188,
+      "handicap": 0,
+      "runnerName": "Arizona Cardinals",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": 450,
+        "americanOddsInt": 450
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 5.5
+        },
+        "fractionalOdds": {
+         "numerator": 45,
+         "denominator": 10
+        }
+       }
+      }
+     },
+     {
+      "selectionId": 12481798,
+      "handicap": 0,
+      "runnerName": "Los Angeles Chargers",
+      "winRunnerOdds": {
+       "americanDisplayOdds": {
+        "americanOdds": -600,
+        "americanOddsInt": -600
+       },
+       "trueOdds": {
+        "decimalOdds": {
+         "decimalOdds": 1.166666666666667
+        },
+        "fractionalOdds": {
+         "numerator": 10,
+         "denominator": 60
+        }
+       }
+      }
+     }
+    ]
+   }
+  }
+ }
+}

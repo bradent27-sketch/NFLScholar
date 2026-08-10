@@ -377,7 +377,7 @@ def _underdog_team_map(payload):
 # Every adapter returns a frame with exactly these columns, so downstream
 # code never branches on which book a line came from.
 PROP_COLUMNS = [
-    'provider',     # 'Underdog' / 'PrizePicks' / 'The Odds API'
+    'provider',     # 'Underdog' / 'PrizePicks' / 'FanDuel' / 'Pinnacle' / 'The Odds API'
     'player',       # display name as the provider wrote it
     'player_key',   # clean_name_exact form, for joining to the board
     'team',         # standardized abbreviation, or ''
@@ -388,6 +388,13 @@ PROP_COLUMNS = [
     'line',         # the over/under number
     'over_payout',  # payout multiplier / decimal odds where published
     'under_payout',
+    # Probability of the over with the book's margin divided out, or None
+    # where the source publishes no prices. 0.5 means the posted line IS the
+    # median; anything else means the book's real middle sits off it. Null
+    # for the pick'em books by nature - both sides pay the same there, which
+    # is the same statement as 0.5 but should not be asserted as a measured
+    # number.
+    'p_over',
     'period',       # 'season' or 'game'
     'source_id',
 ]
@@ -856,6 +863,270 @@ def fetch_prizepicks_lines(league_id=None, season_first=True):
 
 
 # ---------------------------------------------------------------------------
+# Two-way pricing
+# ---------------------------------------------------------------------------
+
+def american_to_probability(price):
+    """American odds -> the probability they IMPLY, vig included."""
+    try:
+        value = float(price)
+    except (TypeError, ValueError):
+        return None
+    if value == 0:
+        return None
+    return (-value) / (-value + 100.0) if value < 0 else 100.0 / (value + 100.0)
+
+
+def american_to_decimal(price):
+    """American odds -> decimal odds, the form over_payout/under_payout hold."""
+    try:
+        value = float(price)
+    except (TypeError, ValueError):
+        return None
+    if value == 0:
+        return None
+    return 1.0 + (100.0 / -value if value < 0 else value / 100.0)
+
+
+def devig_two_way(over_price, under_price):
+    """
+    The true probability of the over, with the book's margin divided out.
+
+    THIS IS THE STEP THAT MAKES A SPORTSBOOK LINE COMPARABLE TO A PICK'EM.
+    Underdog and PrizePicks are even-money products: both sides pay the same,
+    so the posted number IS their median estimate and can be read straight
+    off. A sportsbook takes a cut, and when it takes that cut UNEVENLY the
+    posted number stops being the middle. FanDuel's season props run about
+    -114/-114 most of the time, which is symmetric and harmless - but 42 of
+    146 in the first real payload were not, out to -148/+112. Read naively
+    that line is the median; devigged it is a number the book thinks the
+    player clears 56% of the time, which is a different claim.
+
+    Proportional (multiplicative) devig: both implied probabilities are
+    scaled so they sum to 1. It is the standard choice and the right default
+    for a roughly balanced two-way market. It does assume the margin is
+    spread proportionally across the two sides, which is known to understate
+    the favourite slightly on lopsided prices - not a concern at the near
+    50/50 prices season totals trade at.
+
+    Returns None when either side is missing, which is the honest answer for
+    Pinnacle's matchup feed - it carries lines but no prices at all.
+    """
+    p_over = american_to_probability(over_price)
+    p_under = american_to_probability(under_price)
+    if p_over is None or p_under is None:
+        return None
+    total = p_over + p_under
+    if total <= 0:
+        return None
+    return p_over / total
+
+
+# ---------------------------------------------------------------------------
+# FanDuel
+# ---------------------------------------------------------------------------
+
+# One URL carries the entire NFL page, season-long player props included -
+# no auth header, no per-market call, no category walk. That was a surprise;
+# FanDuel was predicted to be the hardest of the majors and turned out to be
+# the easiest, because the _ak in the query string is all the page itself
+# sends. The state subdomain is interchangeable for this content.
+FANDUEL_NFL_URL = ('https://sbapi.oh.sportsbook.fanduel.com/api/content-managed-page'
+                   '?page=CUSTOM&customPageId=nfl&_ak=FhMFpcPWXMeyZxOx'
+                   '&timezone=America%2FNew_York')
+
+# "<Player> Regular Season <Stat> 2026-27". The trailing season stamp is what
+# separates a season market from a game one, so it is required rather than
+# optional - a game prop is named differently and must not match.
+_FD_MARKET = re.compile(r'^(?P<player>.+?) Regular Season (?P<stat>.+?) 20\d\d-\d\d$')
+# "<Player> Over 3050.5". THE LINE LIVES IN THE RUNNER NAME, NOT IN THE
+# `handicap` FIELD - handicap is present and is 0.0 on every one of these
+# markets. Reading it would have produced a board full of zero-yard
+# projections that still looked structurally valid.
+_FD_RUNNER = re.compile(r'^(?P<player>.+?)\s+(?P<side>Over|Under)\s+(?P<line>-?[\d.]+)\s*$')
+
+
+def parse_fanduel_payload(payload):
+    """
+    FanDuel's NFL content page -> normalized props.
+
+    Markets hang off `attachments.markets`, keyed by market id, each with its
+    own `runners`. Season-long player props are the ones whose name carries
+    the "Regular Season ... 2026-27" stamp.
+
+    TWO MARKETS MATCH THAT NAME PATTERN AND ARE NOT OVER/UNDERS, and both
+    would have parsed into convincing nonsense:
+
+      "AP NFL Regular Season MVP 2026-27" splits into player "AP NFL" and
+      stat "MVP", with one runner per candidate quarterback.
+
+      "Most Regular Season Rookie Receiving Yards 2026-27" splits into player
+      "Most" and stat "Rookie Receiving Yards", with nineteen runners.
+
+    Both are winner markets wearing a totals market's name. The guard is
+    structural rather than a name blacklist: a real over/under has EXACTLY
+    two runners and BOTH must parse as a side plus a number. A leader market
+    fails on runner count, an award market fails on runner shape, and any
+    future market of either kind fails the same way without needing to be
+    listed here.
+    """
+    if not isinstance(payload, dict):
+        return _empty_props(), "FanDuel returned an unexpected payload shape."
+    markets = ((payload.get('attachments') or {}).get('markets')) or {}
+    if not markets:
+        return _empty_props(), ("FanDuel's payload has no attachments.markets - this is "
+                                "probably the wrong page, or one that didn't finish loading.")
+
+    rows = []
+    for market in markets.values():
+        if not isinstance(market, dict):
+            continue
+        named = _FD_MARKET.match(str(market.get('marketName') or ''))
+        if not named:
+            continue
+        runners = market.get('runners') or []
+        if len(runners) != 2:
+            continue
+        parsed = [_FD_RUNNER.match(str(r.get('runnerName') or '')) for r in runners]
+        if not all(parsed):
+            continue
+
+        sides = {}
+        for runner, hit in zip(runners, parsed):
+            odds = ((runner.get('winRunnerOdds') or {}).get('americanDisplayOdds') or {})
+            sides[hit.group('side').lower()] = {
+                'line': hit.group('line'),
+                'price': odds.get('americanOdds'),
+            }
+        if 'over' not in sides or 'under' not in sides:
+            continue
+
+        market_name, scorable = normalize_stat(named.group('stat'))
+        rows.append({
+            'provider': 'FanDuel',
+            'player': named.group('player').strip(),
+            # FanDuel's payload names no team for these markets, and
+            # marketType only groups them into QUARTERBACKS / RUNNING_BACKS /
+            # WIDE_RECEIVERS - a bucket, not a position. Tight ends sit in
+            # the receiver bucket, so filling `position` from it would assert
+            # something false about every TE. The board supplies the real
+            # position on the name join; blank is the honest value here.
+            'team': '',
+            'position': '',
+            'market': market_name or named.group('stat'),
+            'market_raw': named.group('stat'),
+            'scorable': bool(scorable),
+            'line': sides['over']['line'],
+            'over_payout': american_to_decimal(sides['over']['price']),
+            'under_payout': american_to_decimal(sides['under']['price']),
+            'p_over': devig_two_way(sides['over']['price'], sides['under']['price']),
+            'period': 'season',
+            'source_id': str(market.get('marketId') or ''),
+        })
+
+    props = _finalize(rows)
+    if props.empty:
+        return props, "FanDuel returned no season-long player lines."
+    return props, None
+
+
+def fetch_fanduel_lines():
+    """Live FanDuel season props. Returns (props, error)."""
+    payload, err = _get_json(FANDUEL_NFL_URL)
+    if err:
+        return _empty_props(), err
+    return parse_fanduel_payload(payload)
+
+
+# ---------------------------------------------------------------------------
+# Pinnacle
+# ---------------------------------------------------------------------------
+
+# Pinnacle splits its answer in two: /matchups describes WHAT is priced and
+# /markets carries the PRICES. The lines themselves are in the matchup
+# participant names, so the matchup feed alone is enough to read a median off
+# - which is most of what a draft board wants. Without the markets call there
+# are no prices, so nothing can be devigged; that is recorded as a null
+# p_over rather than guessed at.
+PINNACLE_NFL_LEAGUE_ID = 889
+PINNACLE_MATCHUPS_URL = f'https://guest.api.arcadia.pinnacle.com/0.1/leagues/{PINNACLE_NFL_LEAGUE_ID}/matchups'
+
+# "NFL 2026/2027 - Zay Flowers Regular Season Receiving Yards"
+_PIN_SPECIAL = re.compile(r'^NFL \d{4}/\d{4} - (?P<player>.+?) Regular Season (?P<stat>.+)$')
+# "Over 974.5 yards" - the unit word is optional and varies by stat.
+_PIN_SIDE = re.compile(r'^(?P<side>Over|Under)\s+(?P<line>-?[\d.]+)\s*\w*\s*$')
+
+
+def parse_pinnacle_payload(payload):
+    """
+    Pinnacle's guest matchup feed -> normalized props.
+
+    Season player props arrive as `type: "special"` matchups whose
+    special.description carries the player and stat, and whose two
+    participants carry the side and the number.
+
+    The team-facing specials in the same feed ("Pittsburgh Steelers Total
+    Regular Season Wins", "New York Giants To Make the Playoffs", "NFC North
+    Winner") do not match the description pattern, so they drop out without
+    needing to be enumerated.
+    """
+    if not isinstance(payload, list):
+        return _empty_props(), "Pinnacle returned an unexpected payload shape."
+
+    rows = []
+    for matchup in payload:
+        if not isinstance(matchup, dict) or matchup.get('type') != 'special':
+            continue
+        described = _PIN_SPECIAL.match(
+            str(((matchup.get('special') or {}).get('description')) or ''))
+        if not described:
+            continue
+        participants = matchup.get('participants') or []
+        if len(participants) != 2:
+            continue
+        sides = {}
+        for part in participants:
+            hit = _PIN_SIDE.match(str(part.get('name') or ''))
+            if hit:
+                sides[hit.group('side').lower()] = hit.group('line')
+        if 'over' not in sides:
+            continue
+
+        market_name, scorable = normalize_stat(described.group('stat'))
+        rows.append({
+            'provider': 'Pinnacle',
+            'player': described.group('player').strip(),
+            'team': '',
+            'position': '',
+            'market': market_name or described.group('stat'),
+            'market_raw': described.group('stat'),
+            'scorable': bool(scorable),
+            'line': sides['over'],
+            # No prices in the matchup feed. Blank rather than a placeholder,
+            # for the same reason PrizePicks leaves them blank: an invented
+            # 1.0 reads downstream as a real even-money quote.
+            'over_payout': None,
+            'under_payout': None,
+            'p_over': None,
+            'period': 'season',
+            'source_id': str(matchup.get('id') or ''),
+        })
+
+    props = _finalize(rows)
+    if props.empty:
+        return props, "Pinnacle returned no season-long player lines."
+    return props, None
+
+
+def fetch_pinnacle_lines():
+    """Live Pinnacle season props. Returns (props, error)."""
+    payload, err = _get_json(PINNACLE_MATCHUPS_URL)
+    if err:
+        return _empty_props(), err
+    return parse_pinnacle_payload(payload)
+
+
+# ---------------------------------------------------------------------------
 # The Odds API - what's actually in it
 # ---------------------------------------------------------------------------
 
@@ -960,6 +1231,8 @@ def load_props_fixture(path):
 
 UNDERDOG_SAVED_PATH = os.path.join('external_data', 'underdog_over_under_lines.json')
 PRIZEPICKS_SAVED_PATH = os.path.join('external_data', 'prizepicks_projections.json')
+FANDUEL_SAVED_PATH = os.path.join('external_data', 'fanduel_nfl_page.json')
+PINNACLE_SAVED_PATH = os.path.join('external_data', 'pinnacle_nfl_matchups.json')
 
 # Saved payloads, as provider -> (path, a key that must be present, parser).
 # Both books go through the same save/load path because the reason is the
@@ -969,7 +1242,19 @@ PRIZEPICKS_SAVED_PATH = os.path.join('external_data', 'prizepicks_projections.js
 SAVED_PAYLOADS = {
     'Underdog': (UNDERDOG_SAVED_PATH, 'over_under_lines'),
     'PrizePicks': (PRIZEPICKS_SAVED_PATH, 'data'),
+    'FanDuel': (FANDUEL_SAVED_PATH, 'attachments'),
+    # Pinnacle's matchup feed is a BARE LIST, not an object, so there is no
+    # key to require. None means "any JSON of the right outer shape"; the
+    # parser is what rejects a wrong file, and it does so by finding no
+    # season specials rather than by guessing from a key name.
+    'Pinnacle': (PINNACLE_SAVED_PATH, None),
 }
+
+# Every book the board reads, in the order it reads them. One list so a new
+# adapter reaches the loader, the uploader and the status panel together -
+# the previous shape repeated the pair ('Underdog', 'PrizePicks') in four
+# places, which is three chances to add a book that silently never loads.
+BOOKS = ('Underdog', 'PrizePicks', 'FanDuel', 'Pinnacle')
 
 
 def save_book_payload(raw_bytes, provider):
@@ -988,7 +1273,10 @@ def save_book_payload(raw_bytes, provider):
         payload = json.loads(raw_bytes)
     except Exception as exc:
         return None, f"Couldn't read that file as JSON: {exc}"
-    if not isinstance(payload, dict) or required not in payload:
+    if required is None:
+        if not isinstance(payload, (dict, list)):
+            return None, f"That doesn't look like a {provider} response - expected JSON."
+    elif not isinstance(payload, dict) or required not in payload:
         return None, (f"That doesn't look like a {provider} response - expected a JSON "
                       f"object with a {required!r} key.")
     try:

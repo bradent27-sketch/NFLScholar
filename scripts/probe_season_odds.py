@@ -134,6 +134,22 @@ CANDIDATE_SEASON_MARKETS = [
 #     /football/nfl                       20   (games - this one works)
 BOVADA_COUPON = 'https://www.bovada.lv/services/sports/event/coupon/events/A/description/'
 
+# DraftKings. The league feed answers and carries only game lines - but it
+# ships the whole category catalogue alongside them, which is how these IDs
+# were found after the /categories endpoint itself returned 404. Category
+# 1759 "Player Futures" is the season-long player board, and its subcategory
+# list is the widest of any book probed: DK is the only one of the four that
+# prices RECEPTIONS and RECEIVING TDs season-long, which are exactly the two
+# markets FanDuel and Pinnacle leave us guessing at.
+DK_NASH = 'https://sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1'
+DK_PLAYER_FUTURES = 1759
+DK_PLAYER_FUTURE_SUBCATEGORIES = [
+    ('Passing Yards', 17147), ('Passing TDs', 17148),
+    ('Rushing Yards', 17223), ('Rushing TDs', 17224),
+    ('Receiving Yards', 17314), ('Receiving TDs', 17315),
+    ('Receptions', 20168), ('Sacks', 17316),
+]
+
 # The coupon endpoint only serves LEAF paths. /football/nfl-season-player-props
 # is a branch, so asking it for a coupon returns an empty body - the same
 # blank-page symptom as a wrong path, which is why the nav tree has to be
@@ -188,6 +204,12 @@ BOOK_PROBES = [
         'https://sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1/leagues/88808/categories',
         'https://sportsbook.draftkings.com/sites/US-SB/api/v5/eventgroups/88808/categories?format=json',
     ]),
+] + [
+    (f'DraftKings - Player Futures: {name}', [
+        f'{DK_NASH}/leagues/88808/categories/{DK_PLAYER_FUTURES}/subcategories/{sub}',
+    ])
+    for name, sub in DK_PLAYER_FUTURE_SUBCATEGORIES
+] + [
     ('Caesars - NFL schedule', [
         'https://api.americanwagering.com/regions/us/locations/oh/brands/czr/sb/v3/sports/'
         'americanfootball/events/schedule?competitionId=007d7c61-07a7-4e18-bb40-15104b25eaf8',

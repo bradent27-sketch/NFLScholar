@@ -36,7 +36,12 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Underdog season-long payload the user saves from their browser. Their data,
-# not ours to redistribute.
+# Season-long book payloads the user saves from their own browser. Their
+# data, not ours to redistribute - and this repo is public, which makes that
+# a real distinction rather than a theoretical one. The trimmed fixtures
+# under tests/fixtures are a handful of markets kept deliberately small
+# enough to be a test case rather than a copy of anyone's board.
 external_data/underdog_over_under_lines.json
 external_data/prizepicks_projections.json
+external_data/fanduel_nfl_page.json
+external_data/pinnacle_nfl_matchups.json

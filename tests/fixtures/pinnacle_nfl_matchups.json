@@ -1,0 +1,304 @@
+[
+ {
+  "id": 1631987780,
+  "type": "special",
+  "units": "Regular",
+  "special": {
+   "category": "Season Long Player Props",
+   "description": "NFL 2026/2027 - Zay Flowers Regular Season Receiving Yards"
+  },
+  "participants": [
+   {
+    "alignment": "neutral",
+    "id": 1631987781,
+    "name": "Over 974.5 yards",
+    "order": 0,
+    "rotation": 12904
+   },
+   {
+    "alignment": "neutral",
+    "id": 1631987782,
+    "name": "Under 974.5 yards",
+    "order": 0,
+    "rotation": 12905
+   }
+  ],
+  "league": {
+   "ageLimit": 0,
+   "featureOrder": 0,
+   "group": "USA",
+   "id": 889,
+   "isFeatured": true,
+   "isHidden": false,
+   "isPromoted": false,
+   "isSticky": false,
+   "matchupCount": 174,
+   "matchupCountSE": 174,
+   "name": "NFL",
+   "sequence": 1,
+   "sport": {
+    "featureOrder": 8,
+    "id": 15,
+    "isFeatured": true,
+    "isHidden": false,
+    "isSticky": false,
+    "matchupCount": 389,
+    "matchupCountSE": 389,
+    "name": "Football",
+    "primaryMarketType": "spread"
+   }
+  }
+ },
+ {
+  "id": 1631988741,
+  "type": "special",
+  "units": "Regular",
+  "special": {
+   "category": "Season Long Player Props",
+   "description": "NFL 2026/2027 - De'Von Achane Regular Season Rushing Yards"
+  },
+  "participants": [
+   {
+    "alignment": "neutral",
+    "id": 1631988742,
+    "name": "Over 999.5 yards",
+    "order": 0,
+    "rotation": 12904
+   },
+   {
+    "alignment": "neutral",
+    "id": 1631988743,
+    "name": "Under 999.5 yards",
+    "order": 0,
+    "rotation": 12905
+   }
+  ],
+  "league": {
+   "ageLimit": 0,
+   "featureOrder": 0,
+   "group": "USA",
+   "id": 889,
+   "isFeatured": true,
+   "isHidden": false,
+   "isPromoted": false,
+   "isSticky": false,
+   "matchupCount": 174,
+   "matchupCountSE": 174,
+   "name": "NFL",
+   "sequence": 1,
+   "sport": {
+    "featureOrder": 8,
+    "id": 15,
+    "isFeatured": true,
+    "isHidden": false,
+    "isSticky": false,
+    "matchupCount": 389,
+    "matchupCountSE": 389,
+    "name": "Football",
+    "primaryMarketType": "spread"
+   }
+  }
+ },
+ {
+  "id": 1631991735,
+  "type": "special",
+  "units": "Regular",
+  "special": {
+   "category": "Season Long Player Props",
+   "description": "NFL 2026/2027 - Brock Purdy Regular Season Passing Yards"
+  },
+  "participants": [
+   {
+    "alignment": "neutral",
+    "id": 1631991736,
+    "name": "Over 3799.5 yards",
+    "order": 0,
+    "rotation": 12904
+   },
+   {
+    "alignment": "neutral",
+    "id": 1631991737,
+    "name": "Under 3799.5 yards",
+    "order": 0,
+    "rotation": 12905
+   }
+  ],
+  "league": {
+   "ageLimit": 0,
+   "featureOrder": 0,
+   "group": "USA",
+   "id": 889,
+   "isFeatured": true,
+   "isHidden": false,
+   "isPromoted": false,
+   "isSticky": false,
+   "matchupCount": 174,
+   "matchupCountSE": 174,
+   "name": "NFL",
+   "sequence": 1,
+   "sport": {
+    "featureOrder": 8,
+    "id": 15,
+    "isFeatured": true,
+    "isHidden": false,
+    "isSticky": false,
+    "matchupCount": 389,
+    "matchupCountSE": 389,
+    "name": "Football",
+    "primaryMarketType": "spread"
+   }
+  }
+ },
+ {
+  "id": 1625965621,
+  "type": "special",
+  "units": "Wins",
+  "special": {
+   "category": "Regular Season Wins",
+   "description": "Pittsburgh Steelers Total Regular Season Wins"
+  },
+  "participants": [
+   {
+    "alignment": "neutral",
+    "id": 1625965622,
+    "name": "Over",
+    "order": 0,
+    "rotation": 12978
+   },
+   {
+    "alignment": "neutral",
+    "id": 1625965623,
+    "name": "Under",
+    "order": 0,
+    "rotation": 12979
+   }
+  ],
+  "league": {
+   "ageLimit": 0,
+   "featureOrder": 0,
+   "group": "USA",
+   "id": 889,
+   "isFeatured": true,
+   "isHidden": false,
+   "isPromoted": false,
+   "isSticky": false,
+   "matchupCount": 174,
+   "matchupCountSE": 174,
+   "name": "NFL",
+   "sequence": 1,
+   "sport": {
+    "featureOrder": 8,
+    "id": 15,
+    "isFeatured": true,
+    "isHidden": false,
+    "isSticky": false,
+    "matchupCount": 389,
+    "matchupCountSE": 389,
+    "name": "Football",
+    "primaryMarketType": "spread"
+   }
+  }
+ },
+ {
+  "id": 1633099350,
+  "type": "special",
+  "units": "Playoffs",
+  "special": {
+   "category": "Team to Make Playoffs",
+   "description": "New York Giants To Make the Playoffs"
+  },
+  "participants": [
+   {
+    "alignment": "neutral",
+    "id": 1633099351,
+    "name": "Yes",
+    "order": 0,
+    "rotation": 12904
+   },
+   {
+    "alignment": "neutral",
+    "id": 1633099352,
+    "name": "No",
+    "order": 0,
+    "rotation": 12905
+   }
+  ],
+  "league": {
+   "ageLimit": 0,
+   "featureOrder": 0,
+   "group": "USA",
+   "id": 889,
+   "isFeatured": true,
+   "isHidden": false,
+   "isPromoted": false,
+   "isSticky": false,
+   "matchupCount": 174,
+   "matchupCountSE": 174,
+   "name": "NFL",
+   "sequence": 1,
+   "sport": {
+    "featureOrder": 8,
+    "id": 15,
+    "isFeatured": true,
+    "isHidden": false,
+    "isSticky": false,
+    "matchupCount": 389,
+    "matchupCountSE": 389,
+    "name": "Football",
+    "primaryMarketType": "spread"
+   }
+  }
+ },
+ {
+  "id": 1630889900,
+  "type": "matchup",
+  "units": "Regular",
+  "participants": [
+   {
+    "alignment": "home",
+    "name": "Las Vegas Raiders",
+    "order": 1,
+    "stats": [
+     {
+      "period": 0
+     }
+    ]
+   },
+   {
+    "alignment": "away",
+    "name": "Miami Dolphins",
+    "order": 0,
+    "stats": [
+     {
+      "period": 0
+     }
+    ]
+   }
+  ],
+  "league": {
+   "ageLimit": 0,
+   "featureOrder": 0,
+   "group": "USA",
+   "id": 889,
+   "isFeatured": true,
+   "isHidden": false,
+   "isPromoted": false,
+   "isSticky": false,
+   "matchupCount": 174,
+   "matchupCountSE": 174,
+   "name": "NFL",
+   "sequence": 1,
+   "sport": {
+    "featureOrder": 8,
+    "id": 15,
+    "isFeatured": true,
+    "isHidden": false,
+    "isSticky": false,
+    "matchupCount": 389,
+    "matchupCountSE": 389,
+    "name": "Football",
+    "primaryMarketType": "spread"
+   }
+  }
+ }
+]

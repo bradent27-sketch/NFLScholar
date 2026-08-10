@@ -58,6 +58,16 @@ from ui.components import skeleton_loader, switch_tab
 DRAFTED_KEY = 'dhq_drafted'          # ordered list of pick dicts (live draft tracker)
 SIM_KEY = 'dhq_sim_state'
 
+# Provider -> parser, for the upload panel's confirmation message. Imported
+# at module scope because the panel needs it before the settings expander has
+# done any of its own lazy imports.
+from data.odds_sources import (  # noqa: E402
+    parse_underdog_payload as _parse_ud, parse_prizepicks_payload as _parse_pp,
+    parse_fanduel_payload as _parse_fd, parse_pinnacle_payload as _parse_pin,
+)
+_MARKET_PARSERS = {'Underdog': _parse_ud, 'PrizePicks': _parse_pp,
+                   'FanDuel': _parse_fd, 'Pinnacle': _parse_pin}
+
 # Columns shown on the board by default, in the order a drafter reads them:
 # who, what, how good, how much better than replacement, what it costs, and
 # then - the actual decision inputs - where the market has him and whether
@@ -451,12 +461,17 @@ def _render_settings_panel(cfg):
                 "loads automatically from then on — it is the reliable path when a book "
                 "changes or blocks its endpoint, which both of these do.\n\n"
                 "• Underdog — `api.underdogfantasy.com/beta/v5/over_under_lines`\n\n"
-                "• PrizePicks **season-long (NFLSZN)** — their season product is a separate league, so league 9 returns weekly props. Find its id at `api.prizepicks.com/leagues`, then `api.prizepicks.com/projections?league_id=<NFLSZN id>&per_page=1000`"
+                "• PrizePicks **season-long (NFLSZN)** — their season product is a separate league, so league 9 returns weekly props. Find its id at `api.prizepicks.com/leagues`, then `api.prizepicks.com/projections?league_id=<NFLSZN id>&per_page=1000`\n\n"
+                "• FanDuel — `sbapi.oh.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId=nfl&_ak=FhMFpcPWXMeyZxOx`. One page carries every season-long player prop; no login, and the state in the subdomain doesn't matter for this content.\n\n"
+                "• Pinnacle — `guest.api.arcadia.pinnacle.com/0.1/leagues/889/matchups`. Sharpest lines here, but the matchup feed carries no prices, so nothing from it can be devigged."
             )
-            from data.odds_sources import save_book_payload, SAVED_PAYLOADS
-            for _provider, _label in (('Underdog', 'Underdog over_under_lines JSON'),
-                                      ('PrizePicks', 'PrizePicks projections JSON')):
-                _upload = st.file_uploader(_label, type=["json"],
+            from data.odds_sources import save_book_payload, SAVED_PAYLOADS, BOOKS
+            _labels = {'Underdog': 'Underdog over_under_lines JSON',
+                       'PrizePicks': 'PrizePicks projections JSON',
+                       'FanDuel': 'FanDuel NFL page JSON',
+                       'Pinnacle': 'Pinnacle matchups JSON'}
+            for _provider in BOOKS:
+                _upload = st.file_uploader(_labels[_provider], type=["json"],
                                            key=f"dhq_market_upload_{_provider.lower()}")
                 if _upload is not None:
                     _saved, _err = save_book_payload(_upload.getvalue(), _provider)
@@ -465,8 +480,18 @@ def _render_settings_panel(cfg):
                     elif _err:
                         st.warning(_err)
                     else:
-                        _key = SAVED_PAYLOADS[_provider][1]
-                        st.success(f"Saved {len(_saved.get(_key) or [])} {_provider} lines.")
+                        # Pinnacle's payload is a bare list and FanDuel's nests
+                        # its markets, so "count the required key" only works
+                        # for the two pick'em books. Parse instead of counting
+                        # a container - it is the number that matters anyway,
+                        # and it catches a right-shaped-but-wrong file here
+                        # rather than silently at draft time.
+                        _props, _perr = _MARKET_PARSERS[_provider](_saved)
+                        if _perr:
+                            st.warning(f"Saved it, but: {_perr}")
+                        else:
+                            st.success(f"Saved {len(_props)} {_provider} lines "
+                                       f"({int((_props['period'] == 'season').sum())} season-long).")
             cfg['market_lines_weight'] = st.slider(
                 "Blend market lines into projections", 0, 100,
                 int(cfg['market_lines_weight']), 5, key="dhq_market_lines_weight",
@@ -573,24 +598,28 @@ def _load_market_lines(settings, ecr_board):
     """
     empty = pd.DataFrame()
     from data.odds_sources import (fetch_underdog_lines, fetch_prizepicks_lines,
+                                   fetch_fanduel_lines, fetch_pinnacle_lines,
                                    parse_underdog_payload, parse_prizepicks_payload,
-                                   load_saved_book_payload, combine_props)
+                                   parse_fanduel_payload, parse_pinnacle_payload,
+                                   load_saved_book_payload, combine_props, BOOKS)
     from data.odds_projections import market_stat_lines, score_market_lines
 
     # Saved payloads win outright, per book. Each is a deliberate act by
     # someone who has just looked at that board, and it is the path that
     # keeps working when an endpoint moves or refuses - the same reasoning
     # as the ECR upload override.
-    saved = {name: load_saved_book_payload(name) for name in ('Underdog', 'PrizePicks')}
-    parsers = {'Underdog': parse_underdog_payload, 'PrizePicks': parse_prizepicks_payload}
-    fetchers = {'Underdog': fetch_underdog_lines, 'PrizePicks': fetch_prizepicks_lines}
+    saved = {name: load_saved_book_payload(name) for name in BOOKS}
+    parsers = {'Underdog': parse_underdog_payload, 'PrizePicks': parse_prizepicks_payload,
+               'FanDuel': parse_fanduel_payload, 'Pinnacle': parse_pinnacle_payload}
+    fetchers = {'Underdog': fetch_underdog_lines, 'PrizePicks': fetch_prizepicks_lines,
+                'FanDuel': fetch_fanduel_lines, 'Pinnacle': fetch_pinnacle_lines}
 
     if not settings.get('market_lines_on') and not any(v is not None for v in saved.values()):
         return empty, {'enabled': False}
 
     status = {'enabled': True, 'providers': {}}
     frames = []
-    for name in ('Underdog', 'PrizePicks'):
+    for name in BOOKS:
         if saved[name] is not None:
             props, err = parsers[name](saved[name])
             label = f'{name} (your saved payload)'

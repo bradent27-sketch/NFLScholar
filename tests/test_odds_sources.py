@@ -14,6 +14,7 @@ but the app's own dependencies, and `pytest tests/` works if pytest is
 installed. The project has no test framework, and requiring one to check a
 parser would mean these never get run.
 """
+import json
 import os
 import sys
 
@@ -26,7 +27,8 @@ from data.odds_sources import (  # noqa: E402
     parse_underdog_payload, parse_prizepicks_payload, parse_odds_api_props,
     standardize_team, normalize_stat, combine_props, load_props_fixture,
     odds_api_bookmakers, PROP_COLUMNS, prizepicks_leagues,
-    implausible_period_rows,
+    implausible_period_rows, parse_fanduel_payload, parse_pinnacle_payload,
+    devig_two_way, american_to_decimal,
 )
 from data.odds_projections import (  # noqa: E402
     market_stat_lines, score_market_lines, compare_to_board,
@@ -790,6 +792,126 @@ def test_int_is_defensive_unless_the_player_is_a_quarterback():
     thrown, _ = parse_prizepicks_payload(payload('Pass INTs', 'QB'))
     assert thrown['market'].iloc[0] == 'passing_interceptions'
     assert bool(thrown['scorable'].iloc[0]) is True
+
+
+def _fixture(name):
+    with open(os.path.join(FIXTURES, name), encoding='utf-8') as handle:
+        return json.load(handle)
+
+
+# --- FanDuel ---------------------------------------------------------------
+
+def test_fanduel_reads_season_player_props():
+    props, err = parse_fanduel_payload(_fixture('fanduel_nfl_page.json'))
+    assert err is None, err
+    assert list(props.columns) == PROP_COLUMNS
+    assert set(props['provider']) == {'FanDuel'}
+    assert set(props['period']) == {'season'}
+    assert bool(props['scorable'].all()), "every FanDuel season stat should map"
+    assert set(props['market']) == {'passing_yards', 'passing_tds', 'rushing_yards',
+                                    'rushing_tds', 'receiving_yards'}
+
+
+def test_fanduel_line_comes_from_the_runner_name_not_the_handicap_field():
+    # Every one of these markets carries handicap: 0.0 alongside a real line
+    # in the runner name. Reading the field would give a board of zeroes that
+    # still looked structurally fine.
+    props, _ = parse_fanduel_payload(_fixture('fanduel_nfl_page.json'))
+    rodgers = props[props['player'] == 'Aaron Rodgers'].iloc[0]
+    assert rodgers['market'] == 'passing_yards'
+    assert rodgers['line'] == 3050.5
+    assert bool((props['line'] > 0).all())
+
+
+def test_fanduel_rejects_award_and_leader_markets_that_match_the_name_pattern():
+    # "AP NFL Regular Season MVP 2026-27" -> player "AP NFL", stat "MVP".
+    # "Most Regular Season Rookie Receiving Yards 2026-27" -> player "Most".
+    # Both parse cleanly as names and are winner markets, not over/unders.
+    props, _ = parse_fanduel_payload(_fixture('fanduel_nfl_page.json'))
+    assert 'AP NFL' not in set(props['player'])
+    assert 'Most' not in set(props['player'])
+    assert 'MVP' not in set(props['market_raw'])
+
+
+def test_fanduel_ignores_game_markets():
+    props, _ = parse_fanduel_payload(_fixture('fanduel_nfl_page.json'))
+    assert 'Moneyline' not in set(props['market_raw'])
+    assert (props['period'] == 'season').all()
+
+
+def test_fanduel_devigs_asymmetric_prices():
+    props, _ = parse_fanduel_payload(_fixture('fanduel_nfl_page.json'))
+    even = props[props['over_payout'] == props['under_payout']]
+    assert not even.empty
+    assert all(abs(p - 0.5) < 1e-9 for p in even['p_over']), \
+        "equal prices both sides means the posted line IS the median"
+
+    skewed = props[props['over_payout'] != props['under_payout']]
+    assert not skewed.empty, "fixture should include an unbalanced market"
+    assert all(0.0 < p < 1.0 for p in skewed['p_over'])
+    assert any(abs(p - 0.5) > 0.01 for p in skewed['p_over']), \
+        "unbalanced prices should move the true median off the posted line"
+
+
+def test_devig_removes_the_margin():
+    # -110 both sides implies 0.5238 each, summing to 1.0476. Divided out,
+    # the over is exactly even money.
+    assert abs(devig_two_way(-110, -110) - 0.5) < 1e-12
+    assert devig_two_way(-148, 112) > 0.5, "the shorter price is the likelier side"
+    assert devig_two_way(-110, None) is None, "no price, no probability - not a guess"
+    assert abs(american_to_decimal(100) - 2.0) < 1e-12
+    assert abs(american_to_decimal(-200) - 1.5) < 1e-12
+
+
+# --- Pinnacle --------------------------------------------------------------
+
+def test_pinnacle_reads_season_player_props():
+    props, err = parse_pinnacle_payload(_fixture('pinnacle_nfl_matchups.json'))
+    assert err is None, err
+    assert list(props.columns) == PROP_COLUMNS
+    assert set(props['provider']) == {'Pinnacle'}
+    assert set(props['period']) == {'season'}
+    assert bool(props['scorable'].all())
+    assert set(props['market']) == {'receiving_yards', 'rushing_yards', 'passing_yards'}
+    flowers = props[props['player'] == 'Zay Flowers'].iloc[0]
+    assert flowers['line'] == 974.5, "line is inside the participant name"
+
+
+def test_pinnacle_ignores_team_specials_and_game_matchups():
+    # The same feed carries "Pittsburgh Steelers Total Regular Season Wins",
+    # "New York Giants To Make the Playoffs" and ordinary game matchups.
+    props, _ = parse_pinnacle_payload(_fixture('pinnacle_nfl_matchups.json'))
+    joined = ' '.join(props['player']) + ' ' + ' '.join(props['market_raw'])
+    assert 'Steelers' not in joined
+    assert 'Playoffs' not in joined
+    assert len(props) == 3
+
+
+def test_pinnacle_publishes_no_prices_so_claims_no_probability():
+    # The matchup feed carries lines but not odds; prices need a second call.
+    # A placeholder here would read downstream as a real even-money quote.
+    props, _ = parse_pinnacle_payload(_fixture('pinnacle_nfl_matchups.json'))
+    assert props['p_over'].isna().all()
+    assert props['over_payout'].isna().all()
+
+
+def test_new_books_combine_with_the_existing_ones():
+    fd, _ = parse_fanduel_payload(_fixture('fanduel_nfl_page.json'))
+    pin, _ = parse_pinnacle_payload(_fixture('pinnacle_nfl_matchups.json'))
+    ud, _ = parse_underdog_payload(_fixture('underdog_over_under_lines.json'))
+    both = combine_props(fd, pin, ud)
+    assert list(both.columns) == PROP_COLUMNS
+    assert {'FanDuel', 'Pinnacle'} <= set(both['provider'])
+    assert len(both) == len(fd) + len(pin) + len(ud)
+
+
+def test_bad_payload_shapes_are_reported_not_raised():
+    for bad in ({}, {'attachments': {}}, [], 'nonsense', None):
+        props, err = parse_fanduel_payload(bad)
+        assert props.empty and err, f"FanDuel accepted {bad!r}"
+    for bad in ({}, [], 'nonsense', None, [{'type': 'matchup'}]):
+        props, err = parse_pinnacle_payload(bad)
+        assert props.empty and err, f"Pinnacle accepted {bad!r}"
 
 
 def main():

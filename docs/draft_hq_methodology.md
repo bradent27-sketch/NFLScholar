@@ -904,9 +904,87 @@ Three market sources feed this app, and they answer different questions.
 
 | source | cost | granularity | key needed |
 |---|---|---|---|
-| The Odds API | paid, 1,000 req/month | per-game props | yes |
+| The Odds API | paid, **500** req/month | per-game props only | yes |
 | Underdog / PrizePicks | free | **season-long** player props | no |
+| FanDuel / Pinnacle | free | **season-long** player props | no |
 | **nflverse game lines** | **free, uncapped** | per-game spread + total | **no** |
+
+### The Odds API cannot supply season-long player lines
+
+Settled against a live key rather than a docs page. It exposes exactly three
+NFL sport keys, of which one is a futures key — `..._super_bowl_winner` — and
+that key returned **224 outcomes, none of which carries a numeric `point`**.
+Outrights are winner-style markets; there is structurally nowhere to put
+"O/U 3,950.5." Nine plausible spellings of a season market key
+(`player_pass_yds_season` and friends) all came back `INVALID_MARKET`.
+
+Two corrections to what was previously assumed here. The plan is **500
+requests a month, not 1,000**. And **billing follows markets RETURNED, not
+markets requested** — a call naming all 20 documented prop markets, of which
+2 were posted, cost 2 credits. A 16-game in-season slate is therefore about
+190 credits rather than the 320 a naive `markets × regions` reading gives.
+
+### The four season-long books, and why there are four
+
+Underdog and PrizePicks are pick'em products: both sides pay the same, so
+the posted number **is** the book's median and can be read straight off.
+FanDuel and Pinnacle are sportsbooks, added because breadth and independence
+both matter — but they price with vig, which has to be divided out before
+their numbers mean the same thing (§5d).
+
+Reachability was measured, not assumed, and the ranking that came out is not
+the one that went in. **Bovada answered every request and returned an empty
+array for every season-prop path** — its nav tree advertises 21 events under
+`nfl-season-player-props` and the coupon endpoint serves none of them.
+**Caesars 403s. BetMGM needs an access id.** DraftKings' league feed answers
+and carries only game lines, though it ships the category catalogue that
+locates its season board (category 1759, "Player Futures").
+
+FanDuel, predicted to be the hardest, is the easiest: one URL, no auth,
+147 season-long player markets across 94 players. Pinnacle, predicted not to
+carry season player props at all, carries 76 — but its matchup feed has
+**lines without prices**, so nothing from it can be devigged.
+
+### Do they agree? (the check that validates the parsers)
+
+Same player, same stat, across every pair of books:
+
+| pair | n | median diff | mean abs diff |
+|---|---|---|---|
+| FanDuel vs Pinnacle | 65 | −1.60% | 2.84% |
+| FanDuel vs PrizePicks | 138 | 0.00% | 1.95% |
+| FanDuel vs Underdog | 128 | −0.41% | 2.65% |
+| Pinnacle vs PrizePicks | 70 | 0.00% | 1.56% |
+| Pinnacle vs Underdog | 67 | 0.00% | 1.55% |
+| PrizePicks vs Underdog | 290 | 0.00% | 2.13% |
+
+This is the test that matters for a new adapter, and it is a stronger one
+than it looks. A mis-parsed line — wrong field, wrong scale, wrong player —
+shows up as a 10× or 100× disagreement, not a 2% one. Every pair agreeing to
+within 3% means all four parsers are reading the same quantity. The largest
+disagreements are all on touchdown markets (5.5 vs 6.5), which is line
+granularity on a small integer, not error.
+
+The corollary is that **adding two books barely moved the projections**: 34
+of 158 shared players changed at all, mean absolute change 0.37 fantasy
+points, six players gained coverage they did not have. That is the correct
+outcome and not a disappointing one — the value bought is a four-source
+consensus that no single book's bad line can drag, plus independent
+confirmation that the two we already trusted were right.
+
+### 5d. Vig, and why a sportsbook line is not a pick'em line
+
+A pick'em posts one number and pays both sides equally. A sportsbook posts a
+number and two prices, and when those prices are uneven the number stops
+being the middle. FanDuel's season props are −114/−114 most of the time,
+which is symmetric and harmless — but **42 of 146 were not**, out to
+−148/+112. Read naively that is a median; devigged it is a line the book
+thinks clears 56% of the time, which is a different claim.
+
+`devig_two_way` divides the margin out proportionally and records `p_over`
+on every row. It is null for the pick'em books by nature, and null for
+Pinnacle because that feed publishes no prices — an invented 0.5 there would
+read downstream as a measured even-money quote rather than an absence.
 
 The third is the one this section is about, because it is the only one that
 is free, uncapped, needs no key, and is reachable from a locked-down network:

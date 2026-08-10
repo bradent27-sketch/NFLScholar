@@ -761,6 +761,26 @@ def render_sticky_game_log(log_df_view, avg_source_df, log_cols, header_map, scr
 POSITION_FILTER_OPTIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'FLEX (RB/WR/TE)']
 
 
+def import_hint(*keys, expanded=None):
+    """
+    Render "where do I get this" beside an uploader: linked source, then what
+    to do there.
+
+    One helper rather than prose at each call site so every uploader in the
+    app answers the same question the same way - see data/import_sources for
+    why that was worth centralising.
+
+    Pass `expanded` to wrap several sources in an expander instead of a
+    caption, which is what the multi-book panels want.
+    """
+    from data.import_sources import markdown, markdown_list
+    if expanded is None:
+        st.caption(markdown(keys[0]) if len(keys) == 1 else markdown_list(*keys))
+        return
+    with st.expander("📥 Where to get these", expanded=bool(expanded)):
+        st.markdown(markdown_list(*keys))
+
+
 def position_filter_multiselect(df, key, pos_col='Pos', label="Filter by position"):
     """
     Fixed QB/RB/WR/TE/K + FLEX shortcut position filter - the alternative

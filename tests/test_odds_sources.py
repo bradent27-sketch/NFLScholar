@@ -1224,6 +1224,52 @@ def test_browser_module_makes_no_evasion_claims_it_breaks():
         assert banned not in source, banned
 
 
+def test_every_import_source_renders_a_link_and_an_instruction():
+    """
+    The registry is what every uploader in the app points at, so a broken
+    entry is a broken instruction on a real panel. Checks the shape rather
+    than the wording: a title, something to do, and either a real https URL
+    or a deliberate absence.
+    """
+    from data.import_sources import IMPORT_SOURCES, markdown, markdown_list
+
+    assert len(IMPORT_SOURCES) >= 12
+    for key, source in IMPORT_SOURCES.items():
+        assert source.title and source.how, key
+        assert len(source.how) < 400, f"{key}: keep it brief"
+        if source.url is not None:
+            assert source.url.startswith('https://'), key
+        line = markdown(key)
+        assert source.title in line
+        # Linked when there is a URL, bolded when there deliberately isn't -
+        # never a bare title that looks like a dead link.
+        assert ('](' in line) if source.url else ('**' in line)
+
+    # The one source with no public URL is a subscription export, and that
+    # is a decision rather than an oversight: a fabricated link would send
+    # someone somewhere wrong with confidence.
+    assert [k for k, v in IMPORT_SOURCES.items() if v.url is None] == ['ffa']
+
+    combined = markdown_list('underdog', 'pinnacle')
+    assert combined.count('•') == 2
+
+
+def test_every_uploader_in_the_app_names_its_source():
+    """
+    Whatever else changes, an uploader without a source hint is the failure
+    mode this registry exists to stop - "where do I get this again" with no
+    answer on the panel.
+    """
+    import re
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for rel in ('ui/tabs/draft_hq.py', 'ui/tabs/live_odds.py', 'ui/tabs/rankings.py'):
+        with open(os.path.join(root, rel), encoding='utf-8') as handle:
+            text = handle.read()
+        uploaders = len(re.findall(r'st\.file_uploader\(', text))
+        hints = len(re.findall(r'import_hint\(|markdown_list\(', text))
+        assert hints >= 1, f"{rel} has {uploaders} uploaders and no source hints"
+
+
 def test_bad_payload_shapes_are_reported_not_raised():
     for bad in ({}, {'attachments': {}}, [], 'nonsense', None):
         props, err = parse_fanduel_payload(bad)

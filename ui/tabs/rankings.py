@@ -18,7 +18,7 @@ from config import AVAILABLE_SEASONS
 from data.transforms import load_and_merge_data, build_recent_form_rank
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import position_filter_multiselect, skeleton_loader
+from ui.components import position_filter_multiselect, skeleton_loader, import_hint
 
 
 def render():
@@ -41,6 +41,7 @@ def render():
         return
 
     st.markdown("**Upload this week's rankings** (FantasyPros weekly export, or any CSV with a player-name column)")
+    import_hint('fantasypros_weekly')
     weekly_upload = st.file_uploader("Weekly rankings CSV", type=["csv"], key="weekly_rank_upload")
     weekly_df = None
     if weekly_upload is not None:

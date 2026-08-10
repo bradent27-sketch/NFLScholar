@@ -53,7 +53,7 @@ from data.loaders import fetch_sleeper_draft_picks
 from data.transforms import parse_pasted_draft_picks, match_names_to_board
 from data.utils import calculate_percentile
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import skeleton_loader, switch_tab
+from ui.components import skeleton_loader, switch_tab, import_hint
 
 DRAFTED_KEY = 'dhq_drafted'          # ordered list of pick dicts (live draft tracker)
 SIM_KEY = 'dhq_sim_state'
@@ -302,6 +302,7 @@ def _render_settings_panel(cfg):
             boards = list(ECR_BOARDS.keys())
             cfg['board_fmt'] = st.selectbox("Ranking board", boards,
                                             index=_pick_index(boards, cfg['board_fmt']))
+            import_hint('fantasypros_draft')
             ecr_upload = st.file_uploader(
                 "Upload FantasyPros rankings CSV", type=["csv"], key="dhq_ecr_upload",
                 help="Overrides the live consensus feed. The live one comes from a nightly "
@@ -345,6 +346,7 @@ def _render_settings_panel(cfg):
                 "Schedule window", windows, index=_pick_index(windows, cfg['sos_window']),
                 help="Strength of schedule is graded per position group — backs against run "
                      "defenses, passers and pass catchers against pass defenses.")
+            import_hint('fantasypros_adp')
             adp_upload = st.file_uploader(
                 "Upload ADP CSV (overrides live)", type=["csv"], key="dhq_adp_upload",
                 help="Any CSV with a player-name column and an ADP/rank column. Overrides every "
@@ -421,6 +423,7 @@ def _render_settings_panel(cfg):
                 "than their point total is what keeps it correct: their export is half-PPR, so "
                 "reading their points straight off would be wrong in any other format."
             )
+            import_hint('ffa')
             ffa_upload = st.file_uploader("FFA players JSON", type=["json"], key="dhq_ffa_upload")
             st.markdown("**Import a FantasyPros cheat sheet** (optional)")
             st.caption(
@@ -431,6 +434,7 @@ def _render_settings_panel(cfg):
                 "getCheatSheet response; add the draft room's player array too and every player "
                 "resolves instead of ~80%."
             )
+            import_hint('fantasypros_cheatsheet')
             fp_upload = st.file_uploader("FantasyPros cheat sheet / player array",
                                          type=["json", "html", "txt"], key="dhq_fp_upload")
             if fp_upload is not None:
@@ -458,16 +462,14 @@ def _render_settings_panel(cfg):
                 help="One request per half hour. Season-long lines are posted through the "
                      "preseason and pulled once the season starts.")
             st.caption(
-                "No network access to these endpoints? Open one in a browser, save the "
-                "JSON, and drop it here. A saved payload wins over the live fetch and "
-                "loads automatically from then on — it is the reliable path when a book "
-                "changes or blocks its endpoint, which both of these do.\n\n"
-                "• Underdog — `api.underdogfantasy.com/beta/v5/over_under_lines`\n\n"
-                "• PrizePicks **season-long (NFLSZN)** — their season product is a separate league, so league 9 returns weekly props. Find its id at `api.prizepicks.com/leagues`, then `api.prizepicks.com/projections?league_id=<NFLSZN id>&per_page=1000`\n\n"
-                "• FanDuel — `sbapi.oh.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId=nfl&_ak=FhMFpcPWXMeyZxOx`. One page carries every season-long player prop; no login, and the state in the subdomain doesn't matter for this content.\n\n"
-                "• Pinnacle — `guest.api.arcadia.pinnacle.com/0.1/leagues/889/matchups`. Sharpest lines here, but the matchup feed carries no prices, so nothing from it can be devigged.\n\n"
-                "• DraftKings — `sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1/leagues/88808/categories/1759/subcategories/<id>`, **one call per stat**: passing yards 17147, passing TDs 17148, rushing yards 17223, rushing TDs 17224, receiving yards 17314, receiving TDs 17315, **receptions 20168**, sacks 17316. Drop all eight in at once, or one at a time — they accumulate. `scripts/probe_season_odds.py --draftkings --save-dir .` fetches the lot."
+                "No network access to these endpoints? Click a source, save the JSON, "
+                "and drop it here. A saved payload wins over the live fetch and loads "
+                "automatically from then on — it is the reliable path when a book "
+                "changes or blocks its endpoint, which several of these do."
             )
+            from data.import_sources import markdown_list
+            st.markdown(markdown_list('underdog', 'prizepicks_season', 'draftkings_season',
+                                      'fanduel', 'pinnacle'))
             from data.odds_sources import save_book_payload, SAVED_PAYLOADS, BOOKS, MULTI_FILE_BOOKS
             _labels = {'Underdog': 'Underdog over_under_lines JSON',
                        'PrizePicks': 'PrizePicks projections JSON',
@@ -984,6 +986,7 @@ def _render_live_sync(board):
         st.markdown("**Sleeper** (public API, no login needed)")
         c1, c2 = st.columns([3, 1])
         with c1:
+            import_hint('sleeper')
             draft_id = st.text_input("Sleeper draft ID", key="dhq_sleeper_id",
                                      help="The number in sleeper.com/draft/nfl/<this part>")
         with c2:

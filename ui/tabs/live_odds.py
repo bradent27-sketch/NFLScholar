@@ -12,7 +12,7 @@ from config import ODDS_API_PLAYER_PROP_MARKETS
 from data.loaders import fetch_nfl_odds, fetch_nfl_player_props, load_saved_odds_api_key, save_odds_api_key
 from ui.styling import style_plain_dataframe, df_auto_height
 from data.odds_sources import parse_prizepicks_payload, parse_draftkings_payloads
-from ui.components import skeleton_loader
+from ui.components import skeleton_loader, import_hint
 
 
 def _fmt_kickoff(iso_str):
@@ -131,21 +131,15 @@ def _render_weekly_uploads():
     from data.odds_sources import save_book_payload, MULTI_FILE_BOOKS
 
     saved_any = False
+    from data.import_sources import markdown_list
+
     with st.expander("📥 Load a weekly board from a saved file", expanded=False):
         st.caption(
-            "Open the URL in your own browser, save the JSON, drop it here. A saved "
-            "file wins over the live fetch for that book and keeps working when the "
-            "book refuses us.\n\n"
-            "• **PrizePicks weekly** — `api.prizepicks.com/projections?league_id=9&per_page=1000`. "
-            "League **9** is the weekly board; the season one (NFLSZN) is a different "
-            "league and goes in Draft HQ, not here.\n\n"
-            "• **Underdog** — `api.underdogfantasy.com/beta/v5/over_under_lines`. One "
-            "payload carries both game and season lines, so the file you already "
-            "uploaded in Draft HQ is used here too — nothing extra to do.\n\n"
-            "• **DraftKings weekly** — the per-stat subcategory URLs, once a weekly "
-            "board is posted. `scripts/probe_season_odds.py --weekly` prints the live "
-            "ids. Drop all of them in at once; they accumulate."
+            "Click a source, save the JSON it returns, drop it here. A saved file "
+            "wins over the live fetch for that book and keeps working when the book "
+            "refuses us."
         )
+        st.markdown(markdown_list('prizepicks_weekly', 'underdog', 'draftkings_weekly'))
         for provider, label in (('PrizePicks Weekly', 'PrizePicks weekly projections JSON'),
                                 ('DraftKings Weekly', 'DraftKings weekly boards JSON (one or more)')):
             multi = provider in MULTI_FILE_BOOKS
@@ -307,6 +301,8 @@ def render():
     # (session_state takes over after that) - so this pre-fills the box
     # from the saved file on a fresh app launch without fighting Streamlit
     # over who owns the keyed widget's value on later reruns.
+    import_hint('odds_api')
+
     saved_key = load_saved_odds_api_key()
     odds_api_key = st.text_input(
         "The Odds API key", type="password", key="odds_api_key", value=saved_key,

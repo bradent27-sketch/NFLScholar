@@ -90,6 +90,29 @@ CANDIDATE_SEASON_MARKETS = [
 # The stall is the interesting one - it is not a refusal, so it stays in the
 # ladder with a longer timeout rather than being written off.
 BOVADA_COUPON = 'https://www.bovada.lv/services/sports/event/coupon/events/A/description/'
+
+# The coupon endpoint only serves LEAF paths. /football/nfl-season-player-props
+# is a branch, so asking it for a coupon returns an empty body - the same
+# blank-page symptom as a wrong path, which is why the nav tree has to be
+# walked all the way down rather than one level. Its children, with the event
+# counts the nav reported:
+#
+#   regular-season-stat-leaders   9   CATEGORY     (league leaders, winner-style)
+#   quarterbacks                  4
+#   running-backs                 2
+#   tight-ends                    2
+#   wide-receivers                2
+#   defensive-players-sacks       1
+#   regular-season-milestones     1   COMPETITION  (X+ style milestones)
+#
+# Fantasy-relevant scoring lives in the four position leaves. The stat-leader
+# and milestone groups are a different shape (winner markets and X+ ladders)
+# and are pulled here only so their structure is on record.
+BOVADA_SEASON_PROP_LEAVES = [
+    'quarterbacks', 'running-backs', 'wide-receivers', 'tight-ends',
+    'regular-season-stat-leaders', 'regular-season-milestones',
+    'defensive-players-sacks',
+]
 BOOK_PROBES = [
     ('Bovada - nav tree (lists the valid NFL paths)', [
         'https://www.bovada.lv/services/sports/event/v2/nav/A/description/football',
@@ -98,9 +121,12 @@ BOOK_PROBES = [
         'https://www.bovada.lv/services/sports/event/v2/nav/A/description/'
         'football/nfl-season-player-props',
     ]),
-    ('Bovada - NFL SEASON PLAYER PROPS', [
-        BOVADA_COUPON + 'football/nfl-season-player-props?marketFilterId=def&lang=en',
-    ]),
+] + [
+    (f'Bovada - season player props: {leaf}', [
+        BOVADA_COUPON + f'football/nfl-season-player-props/{leaf}?marketFilterId=def&lang=en',
+    ])
+    for leaf in BOVADA_SEASON_PROP_LEAVES
+] + [
     ('Bovada - NFL season team props', [
         BOVADA_COUPON + 'football/nfl-season-props?marketFilterId=def&lang=en',
     ]),

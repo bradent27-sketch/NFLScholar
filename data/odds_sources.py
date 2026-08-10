@@ -1060,6 +1060,7 @@ def parse_fanduel_payload(payload):
     return props, None
 
 
+@st.cache_data(ttl=FETCH_TTL, show_spinner=False)
 def fetch_fanduel_lines():
     """Live FanDuel season props. Returns (props, error)."""
     payload, err = _get_json(FANDUEL_NFL_URL)
@@ -1232,6 +1233,7 @@ def parse_draftkings_payloads(payloads):
     return combined, None
 
 
+@st.cache_data(ttl=FETCH_TTL, show_spinner=False)
 def fetch_draftkings_lines():
     """
     Live DraftKings season props - one call per stat, whatever answers.
@@ -1336,6 +1338,7 @@ def parse_pinnacle_payload(payload):
     return props, None
 
 
+@st.cache_data(ttl=FETCH_TTL, show_spinner=False)
 def fetch_pinnacle_lines():
     """Live Pinnacle season props. Returns (props, error)."""
     payload, err = _get_json(PINNACLE_MATCHUPS_URL)

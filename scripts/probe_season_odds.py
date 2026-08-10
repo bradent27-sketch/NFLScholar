@@ -172,10 +172,30 @@ DK_GAME_SUBCATEGORY = 4518
 #                        clientMetadata/subCategoryId eq '4518'"
 #   }
 #
-# That is OData. It means the season-long board is very probably the same
-# endpoint with a different subcategory id rather than a different service,
-# and it means the filter shapes below are read off DraftKings' own payload
-# rather than guessed at.
+# That is OData, and it explained why the league feed looks game-only. It was
+# NOT the way in, though: passing those filters back is accepted and silently
+# IGNORED - the response comes back byte-identical to the unfiltered one, 225
+# game markets and all. Right about the diagnosis, wrong about the cure.
+#
+# WHAT ACTUALLY WORKS (measured 2026-08-10), and it is the boring one:
+#
+#     /leagues/88808/categories/1759/subcategories/{sub}
+#
+# 200, and every market in it is season-long. The earlier 404 on /categories
+# was a route with no id, which is a different thing from the route being
+# unavailable.
+#
+#   Receiving Yards  73   Receiving TDs  51   Receptions   43   Rushing Yards 41
+#   Sacks            34   Rushing TDs    27   Pass Yards   25   Passing TDs   25
+#
+# EIGHT CALLS, NOT ONE. The category route without a subcategory returns 25
+# markets - exactly the Passing Yards count, i.e. one default subcategory
+# rather than the union. Nothing about the response says it is partial, so
+# a single category call would look like a working adapter that quietly saw
+# a seventh of the board.
+#
+# Legacy v5 is closed for good: 403 on the generic host and on the state
+# host, so the Akamai refusal is the API's answer and not that hostname's.
 DK_STATE_HOSTS = ['dkusoh', 'dkusnj', 'dkusmi', 'dkusva', 'dkusdc']
 
 # The coupon endpoint only serves LEAF paths. /football/nfl-season-player-props

@@ -68,9 +68,19 @@ CANDIDATE_SEASON_MARKETS = [
 #   Bovada          answered, but with an EMPTY body on the futures path.
 #                   That is the good failure - the host is reachable and did
 #                   not refuse us, we just asked for a path it does not
-#                   publish. Hence the nav endpoint below, which enumerates
-#                   the paths that DO exist instead of guessing more of them.
-#                   preMatchOnly=true is also dropped for futures: a season
+#                   publish. The nav endpoint then gave up the real map, and
+#                   the guess had been wrong in SHAPE, not just in spelling:
+#                   the futures leagues are SIBLINGS of /football/nfl, not
+#                   children of it. Confirmed live paths and event counts:
+#
+#                     /football/nfl-season-player-props   21   <- the target
+#                     /football/nfl-regular-season-wins   32
+#                     /football/nfl-futures               15
+#                     /football/nfl-awards                 8
+#                     /football/nfl-season-props           6
+#                     /football/nfl                       20  (games)
+#
+#                   preMatchOnly=true is also dropped for these: a season
 #                   prop has no kickoff, so that filter can legitimately
 #                   empty the result on its own.
 #   Caesars         403. A refusal. Left alone.
@@ -79,22 +89,26 @@ CANDIDATE_SEASON_MARKETS = [
 #
 # The stall is the interesting one - it is not a refusal, so it stays in the
 # ladder with a longer timeout rather than being written off.
+BOVADA_COUPON = 'https://www.bovada.lv/services/sports/event/coupon/events/A/description/'
 BOOK_PROBES = [
     ('Bovada - nav tree (lists the valid NFL paths)', [
         'https://www.bovada.lv/services/sports/event/v2/nav/A/description/football',
-        'https://www.bovada.lv/services/sports/event/v2/nav/A/description/football/nfl',
+    ]),
+    ('Bovada - nav under season player props (per-stat paths)', [
+        'https://www.bovada.lv/services/sports/event/v2/nav/A/description/'
+        'football/nfl-season-player-props',
+    ]),
+    ('Bovada - NFL SEASON PLAYER PROPS', [
+        BOVADA_COUPON + 'football/nfl-season-player-props?marketFilterId=def&lang=en',
+    ]),
+    ('Bovada - NFL season team props', [
+        BOVADA_COUPON + 'football/nfl-season-props?marketFilterId=def&lang=en',
+    ]),
+    ('Bovada - NFL regular season wins', [
+        BOVADA_COUPON + 'football/nfl-regular-season-wins?marketFilterId=def&lang=en',
     ]),
     ('Bovada - NFL game coupon', [
-        'https://www.bovada.lv/services/sports/event/coupon/events/A/description/football/nfl'
-        '?marketFilterId=def&preMatchOnly=true&lang=en',
-    ]),
-    ('Bovada - NFL futures/season props', [
-        # No preMatchOnly: a season-long prop is not attached to a kickoff and
-        # that filter alone can empty the response.
-        'https://www.bovada.lv/services/sports/event/coupon/events/A/description/football/nfl/nfl-futures'
-        '?marketFilterId=def&lang=en',
-        'https://www.bovada.lv/services/sports/event/coupon/events/A/description/football/nfl'
-        '?marketFilterId=def&lang=en&eventsLimit=500',
+        BOVADA_COUPON + 'football/nfl?marketFilterId=def&preMatchOnly=true&lang=en',
     ]),
     ('DraftKings - NFL league feed', [
         'https://sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1/leagues/88808',

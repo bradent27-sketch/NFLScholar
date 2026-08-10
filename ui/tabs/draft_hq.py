@@ -64,9 +64,11 @@ SIM_KEY = 'dhq_sim_state'
 from data.odds_sources import (  # noqa: E402
     parse_underdog_payload as _parse_ud, parse_prizepicks_payload as _parse_pp,
     parse_fanduel_payload as _parse_fd, parse_pinnacle_payload as _parse_pin,
+    parse_draftkings_payloads as _parse_dk,
 )
 _MARKET_PARSERS = {'Underdog': _parse_ud, 'PrizePicks': _parse_pp,
-                   'FanDuel': _parse_fd, 'Pinnacle': _parse_pin}
+                   'FanDuel': _parse_fd, 'Pinnacle': _parse_pin,
+                   'DraftKings': _parse_dk}
 
 # Columns shown on the board by default, in the order a drafter reads them:
 # who, what, how good, how much better than replacement, what it costs, and
@@ -463,18 +465,27 @@ def _render_settings_panel(cfg):
                 "• Underdog — `api.underdogfantasy.com/beta/v5/over_under_lines`\n\n"
                 "• PrizePicks **season-long (NFLSZN)** — their season product is a separate league, so league 9 returns weekly props. Find its id at `api.prizepicks.com/leagues`, then `api.prizepicks.com/projections?league_id=<NFLSZN id>&per_page=1000`\n\n"
                 "• FanDuel — `sbapi.oh.sportsbook.fanduel.com/api/content-managed-page?page=CUSTOM&customPageId=nfl&_ak=FhMFpcPWXMeyZxOx`. One page carries every season-long player prop; no login, and the state in the subdomain doesn't matter for this content.\n\n"
-                "• Pinnacle — `guest.api.arcadia.pinnacle.com/0.1/leagues/889/matchups`. Sharpest lines here, but the matchup feed carries no prices, so nothing from it can be devigged."
+                "• Pinnacle — `guest.api.arcadia.pinnacle.com/0.1/leagues/889/matchups`. Sharpest lines here, but the matchup feed carries no prices, so nothing from it can be devigged.\n\n"
+                "• DraftKings — `sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1/leagues/88808/categories/1759/subcategories/<id>`, **one call per stat**: passing yards 17147, passing TDs 17148, rushing yards 17223, rushing TDs 17224, receiving yards 17314, receiving TDs 17315, **receptions 20168**, sacks 17316. Drop all eight in at once, or one at a time — they accumulate. `scripts/probe_season_odds.py --draftkings --save-dir .` fetches the lot."
             )
-            from data.odds_sources import save_book_payload, SAVED_PAYLOADS, BOOKS
+            from data.odds_sources import save_book_payload, SAVED_PAYLOADS, BOOKS, MULTI_FILE_BOOKS
             _labels = {'Underdog': 'Underdog over_under_lines JSON',
                        'PrizePicks': 'PrizePicks projections JSON',
                        'FanDuel': 'FanDuel NFL page JSON',
-                       'Pinnacle': 'Pinnacle matchups JSON'}
+                       'Pinnacle': 'Pinnacle matchups JSON',
+                       'DraftKings': 'DraftKings player-futures JSON (one or more)'}
             for _provider in BOOKS:
+                _multi = _provider in MULTI_FILE_BOOKS
                 _upload = st.file_uploader(_labels[_provider], type=["json"],
+                                           accept_multiple_files=_multi,
                                            key=f"dhq_market_upload_{_provider.lower()}")
-                if _upload is not None:
+                if _multi and _upload:
+                    _saved, _err = save_book_payload([f.getvalue() for f in _upload], _provider)
+                elif not _multi and _upload is not None:
                     _saved, _err = save_book_payload(_upload.getvalue(), _provider)
+                else:
+                    _saved, _err = None, None
+                if _saved is not None or _err:
                     if _err and _saved is None:
                         st.error(_err)
                     elif _err:
@@ -599,8 +610,7 @@ def _load_market_lines(settings, ecr_board):
     empty = pd.DataFrame()
     from data.odds_sources import (fetch_underdog_lines, fetch_prizepicks_lines,
                                    fetch_fanduel_lines, fetch_pinnacle_lines,
-                                   parse_underdog_payload, parse_prizepicks_payload,
-                                   parse_fanduel_payload, parse_pinnacle_payload,
+                                   fetch_draftkings_lines,
                                    load_saved_book_payload, combine_props, BOOKS)
     from data.odds_projections import market_stat_lines, score_market_lines
 
@@ -609,10 +619,10 @@ def _load_market_lines(settings, ecr_board):
     # keeps working when an endpoint moves or refuses - the same reasoning
     # as the ECR upload override.
     saved = {name: load_saved_book_payload(name) for name in BOOKS}
-    parsers = {'Underdog': parse_underdog_payload, 'PrizePicks': parse_prizepicks_payload,
-               'FanDuel': parse_fanduel_payload, 'Pinnacle': parse_pinnacle_payload}
+    parsers = _MARKET_PARSERS
     fetchers = {'Underdog': fetch_underdog_lines, 'PrizePicks': fetch_prizepicks_lines,
-                'FanDuel': fetch_fanduel_lines, 'Pinnacle': fetch_pinnacle_lines}
+                'FanDuel': fetch_fanduel_lines, 'Pinnacle': fetch_pinnacle_lines,
+                'DraftKings': fetch_draftkings_lines}
 
     if not settings.get('market_lines_on') and not any(v is not None for v in saved.values()):
         return empty, {'enabled': False}

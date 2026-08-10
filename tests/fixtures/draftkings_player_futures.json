@@ -1,0 +1,308 @@
+[
+ {
+  "events": [
+   {
+    "id": "04f9bbbf-dd14-469f-0ac8-08de7f90199e",
+    "name": "NFL 2026/27 - Mike Evans",
+    "leagueId": "88808",
+    "participants": [
+     {
+      "name": "SF 49ers",
+      "type": "Team",
+      "metadata": {
+       "rosettaTeamName": "49ers",
+       "shortName": "SF"
+      }
+     },
+     {
+      "name": "Mike Evans",
+      "type": "Team",
+      "metadata": {}
+     }
+    ]
+   },
+   {
+    "id": "eb693643-dbd4-457f-0acf-08de7f90199e",
+    "name": "NFL 2026/27 - Travis Kelce",
+    "leagueId": "88808",
+    "participants": [
+     {
+      "name": "KC Chiefs",
+      "type": "Team",
+      "metadata": {
+       "rosettaTeamName": "Chiefs",
+       "shortName": "KC"
+      }
+     },
+     {
+      "name": "Travis Kelce",
+      "type": "Team",
+      "metadata": {}
+     }
+    ]
+   }
+  ],
+  "markets": [
+   {
+    "id": "355389054",
+    "eventId": "04f9bbbf-dd14-469f-0ac8-08de7f90199e",
+    "leagueId": "88808",
+    "name": "NFL 2026/27 - Mike Evans Regular Season Receptions",
+    "subcategoryId": 20168,
+    "marketType": {
+     "id": "7206",
+     "betOfferTypeId": 0,
+     "name": "Regular Season Receptions OU"
+    }
+   },
+   {
+    "id": "355389424",
+    "eventId": "eb693643-dbd4-457f-0acf-08de7f90199e",
+    "leagueId": "88808",
+    "name": "NFL 2026/27 - Travis Kelce Regular Season Receptions",
+    "subcategoryId": 20168,
+    "marketType": {
+     "id": "7206",
+     "betOfferTypeId": 0,
+     "name": "Regular Season Receptions OU"
+    }
+   }
+  ],
+  "selections": [
+   {
+    "id": "0QA355389054#2227329052_13L88808Q11219545Q2-1",
+    "marketId": "355389054",
+    "label": "Over 62.5",
+    "displayOdds": {
+     "american": "−115",
+     "decimal": "1.86",
+     "fractional": "20/23",
+     "percentage": "53.4%"
+    },
+    "trueOdds": 1.86956522,
+    "outcomeType": "Over"
+   },
+   {
+    "id": "0QA355389424#2227333141_13L88808Q11346728Q2-1",
+    "marketId": "355389424",
+    "label": "Over 66.5",
+    "displayOdds": {
+     "american": "−115",
+     "decimal": "1.86",
+     "fractional": "20/23",
+     "percentage": "53.4%"
+    },
+    "trueOdds": 1.86956522,
+    "outcomeType": "Over"
+   },
+   {
+    "id": "0QA355389054#2227329051_13L88808Q11219544Q2-1",
+    "marketId": "355389054",
+    "label": "Under 62.5",
+    "displayOdds": {
+     "american": "−110",
+     "decimal": "1.90",
+     "fractional": "10/11",
+     "percentage": "52.3%"
+    },
+    "trueOdds": 1.90909091,
+    "outcomeType": "Under"
+   },
+   {
+    "id": "0QA355389424#2227333140_13L88808Q11346729Q2-1",
+    "marketId": "355389424",
+    "label": "Under 66.5",
+    "displayOdds": {
+     "american": "−110",
+     "decimal": "1.90",
+     "fractional": "10/11",
+     "percentage": "52.3%"
+    },
+    "trueOdds": 1.90909091,
+    "outcomeType": "Under"
+   }
+  ]
+ },
+ {
+  "events": [
+   {
+    "id": "eb693643-dbd4-457f-0acf-08de7f90199e",
+    "name": "NFL 2026/27 - Travis Kelce",
+    "leagueId": "88808",
+    "participants": [
+     {
+      "name": "KC Chiefs",
+      "type": "Team",
+      "metadata": {
+       "rosettaTeamName": "Chiefs",
+       "shortName": "KC"
+      }
+     },
+     {
+      "name": "Travis Kelce",
+      "type": "Team",
+      "metadata": {}
+     }
+    ]
+   },
+   {
+    "id": "4812d286-46c8-4ace-0ace-08de7f90199e",
+    "name": "NFL 2026/27 - Romeo Doubs",
+    "leagueId": "88808",
+    "participants": [
+     {
+      "name": "Romeo Doubs",
+      "type": "Team",
+      "metadata": {}
+     },
+     {
+      "name": "NE Patriots",
+      "type": "Team",
+      "metadata": {
+       "rosettaTeamName": "Patriots",
+       "shortName": "NE"
+      }
+     }
+    ]
+   },
+   {
+    "id": "a5791f45-8d3c-46aa-293b-08de970bad08",
+    "name": "NFL 2026/27 - Amon-Ra St. Brown",
+    "leagueId": "88808",
+    "participants": [
+     {
+      "name": "DET Lions",
+      "type": "Team",
+      "metadata": {
+       "rosettaTeamName": "Lions",
+       "shortName": "DET"
+      }
+     },
+     {
+      "name": "Amon-Ra St. Brown",
+      "type": "Team",
+      "metadata": {}
+     }
+    ]
+   }
+  ],
+  "markets": [
+   {
+    "id": "316808213",
+    "eventId": "4812d286-46c8-4ace-0ace-08de7f90199e",
+    "leagueId": "88808",
+    "name": "NFL 2026/27  -  Romeo Doubs Regular Season Receiving Yards",
+    "subcategoryId": 17314,
+    "marketType": {
+     "id": "5211",
+     "betOfferTypeId": 0,
+     "name": "Regular Season Receiving Yards OU"
+    }
+   },
+   {
+    "id": "327027018",
+    "eventId": "a5791f45-8d3c-46aa-293b-08de970bad08",
+    "leagueId": "88808",
+    "name": "NFL 2026/27 - Amon-Ra St. Brown Regular Season Receiving Yards",
+    "subcategoryId": 17314,
+    "marketType": {
+     "id": "5211",
+     "betOfferTypeId": 0,
+     "name": "Regular Season Receiving Yards OU"
+    }
+   },
+   {
+    "id": "316486706",
+    "eventId": "eb693643-dbd4-457f-0acf-08de7f90199e",
+    "leagueId": "88808",
+    "name": "NFL 2026/27 – Travis Kelce Regular Season Receiving Yards",
+    "subcategoryId": 17314,
+    "marketType": {
+     "id": "5211",
+     "betOfferTypeId": 0,
+     "name": "Regular Season Receiving Yards OU"
+    }
+   }
+  ],
+  "selections": [
+   {
+    "id": "0QA316808213#2198746041_13L88808Q11933392Q2-1",
+    "marketId": "316808213",
+    "label": "Over 649.5",
+    "displayOdds": {
+     "american": "−110",
+     "decimal": "1.90",
+     "fractional": "10/11",
+     "percentage": "52.3%"
+    },
+    "trueOdds": 1.90909091,
+    "outcomeType": "Over"
+   },
+   {
+    "id": "0QA327027018#570076322_13L88808Q1807056Q2-1",
+    "marketId": "327027018",
+    "label": "Over 1249.5",
+    "displayOdds": {
+     "american": "−110",
+     "decimal": "1.90",
+     "fractional": "10/11",
+     "percentage": "52.3%"
+    },
+    "trueOdds": 1.90909091,
+    "outcomeType": "Over"
+   },
+   {
+    "id": "0QA316486706#2160057000_13L88808Q12450318Q2-1",
+    "marketId": "316486706",
+    "label": "Over 674.5",
+    "displayOdds": {
+     "american": "−110",
+     "decimal": "1.90",
+     "fractional": "10/11",
+     "percentage": "52.3%"
+    },
+    "trueOdds": 1.90909091,
+    "outcomeType": "Over"
+   },
+   {
+    "id": "0QA316808213#2198746040_13L88808Q11933391Q2-1",
+    "marketId": "316808213",
+    "label": "Under 649.5",
+    "displayOdds": {
+     "american": "−110",
+     "decimal": "1.90",
+     "fractional": "10/11",
+     "percentage": "52.3%"
+    },
+    "trueOdds": 1.90909091,
+    "outcomeType": "Under"
+   },
+   {
+    "id": "0QA327027018#570076321_13L88808Q1807057Q2-1",
+    "marketId": "327027018",
+    "label": "Under 1249.5",
+    "displayOdds": {
+     "american": "−110",
+     "decimal": "1.90",
+     "fractional": "10/11",
+     "percentage": "52.3%"
+    },
+    "trueOdds": 1.90909091,
+    "outcomeType": "Under"
+   },
+   {
+    "id": "0QA316486706#2160056999_13L88808Q12450303Q2-1",
+    "marketId": "316486706",
+    "label": "Under 674.5",
+    "displayOdds": {
+     "american": "−110",
+     "decimal": "1.90",
+     "fractional": "10/11",
+     "percentage": "52.3%"
+    },
+    "trueOdds": 1.90909091,
+    "outcomeType": "Under"
+   }
+  ]
+ }
+]

@@ -906,7 +906,7 @@ Three market sources feed this app, and they answer different questions.
 |---|---|---|---|
 | The Odds API | paid, **500** req/month | per-game props only | yes |
 | Underdog / PrizePicks | free | **season-long** player props | no |
-| FanDuel / Pinnacle | free | **season-long** player props | no |
+| FanDuel / Pinnacle / DraftKings | free | **season-long** player props | no |
 | **nflverse game lines** | **free, uncapped** | per-game spread + total | **no** |
 
 ### The Odds API cannot supply season-long player lines
@@ -924,7 +924,52 @@ markets requested** — a call naming all 20 documented prop markets, of which
 2 were posted, cost 2 credits. A 16-game in-season slate is therefore about
 190 credits rather than the 320 a naive `markets × regions` reading gives.
 
-### The four season-long books, and why there are four
+### DraftKings, and why it was worth a second run at
+
+DK's league feed answers but carries only game lines, which read as "no
+futures here." It is not: the feed's own `subscriptionPartials` publish the
+query it was built from —
+
+```
+$filter=leagueId eq '88808' and clientMetadata/Subcategories/any(s: s/Id eq '4518')
+```
+
+— and `4518` is the Game Lines subcategory. **The response was filtered to
+game lines, not missing futures.** Passing those OData filters back turns
+out to be accepted and silently ignored (the response returns byte-identical),
+so the grammar was the diagnosis and not the cure. What works is the plain
+nested route:
+
+```
+/leagues/88808/categories/1759/subcategories/{stat}
+```
+
+**Eight calls, not one.** The category route with no subcategory answers 200
+with 25 markets — exactly the Passing Yards count, i.e. one default
+subcategory rather than the union — and nothing in that response says it is
+partial. A single-call adapter would have looked like it worked while seeing
+a seventh of the board.
+
+It was worth the extra effort for one reason: **DraftKings is the only book
+here that prices receptions and receiving TDs season-long.** 319 markets over
+164 players — receiving yards 73, receiving TDs 51, receptions 43, rushing
+yards 41, sacks 34, rushing TDs 27, passing yards 25, passing TDs 25.
+
+Three traps in the payload, all of which parse into convincing nonsense:
+
+- **Prices use U+2212 MINUS SIGN**, not an ASCII hyphen — `"−115"`. `float()`
+  rejects it outright, so this does not degrade a parser, it kills it. Sidestepped
+  by reading `trueOdds` (unrounded decimal) and normalising the character anyway.
+- **The player must come from the event, not the market name.** The separator
+  in `"NFL 2026/27 - Player Regular Season Stat"` is an ASCII hyphen on most
+  rows, an **en dash** on Travis Kelce's, and a **double-spaced hyphen** on
+  Romeo Doubs'. Three of 319 — small enough to never notice. The event's
+  participant list has no such problem.
+- **Team is on the participant flagged with `metadata.rosettaTeamName`.** Both
+  participants are typed `"Team"` and the order varies, so position in the
+  list is not the key.
+
+### The five season-long books, and why there are five
 
 Underdog and PrizePicks are pick'em products: both sides pay the same, so
 the posted number **is** the book's median and can be read straight off.
@@ -951,6 +996,10 @@ Same player, same stat, across every pair of books:
 
 | pair | n | median diff | mean abs diff |
 |---|---|---|---|
+| DraftKings vs Pinnacle | 76 | 0.00% | 1.43% |
+| DraftKings vs Underdog | 202 | 0.00% | 1.70% |
+| DraftKings vs PrizePicks | 265 | 0.00% | 1.79% |
+| DraftKings vs FanDuel | 138 | 0.00% | 2.16% |
 | FanDuel vs Pinnacle | 65 | −1.60% | 2.84% |
 | FanDuel vs PrizePicks | 138 | 0.00% | 1.95% |
 | FanDuel vs Underdog | 128 | −0.41% | 2.65% |
@@ -965,12 +1014,29 @@ within 3% means all four parsers are reading the same quantity. The largest
 disagreements are all on touchdown markets (5.5 vs 6.5), which is line
 granularity on a small integer, not error.
 
-The corollary is that **adding two books barely moved the projections**: 34
-of 158 shared players changed at all, mean absolute change 0.37 fantasy
-points, six players gained coverage they did not have. That is the correct
-outcome and not a disappointing one — the value bought is a four-source
-consensus that no single book's bad line can drag, plus independent
-confirmation that the two we already trusted were right.
+The corollary is that **adding three books barely moved the projections**:
+65 of 155 shared players changed at all, mean absolute change 0.77 fantasy
+points, largest single change 4.9, four players gained coverage they did not
+have. That is the correct outcome and not a disappointing one. What it buys
+is stated better by one number: **books per player went from 1.84 to 3.67.**
+Every line on the board now has, on average, three independent sources behind
+it instead of two, and no single book's bad number can drag a projection.
+
+The receptions case is the sharpest version of it. PPR scoring rests more on
+receptions than on any other single input, and before DraftKings **every
+receptions line came from PrizePicks alone with nothing to check it against**.
+Now 42 of the 78 players with a receptions line are priced by two books, and
+where both price a player they agree to **1.10% mean absolute difference**
+(max 5.4%). The projections barely moved; the confidence in them did.
+
+> A measurement caveat worth recording, because it produced a scary number
+> before it was understood. Run without a consensus board, this comparison
+> showed Kyle Pitts moving +67 points. He hadn't: PrizePicks writes "Kyle
+> Pitts Sr." and every other book writes "Kyle Pitts", so with no board to
+> resolve against he was two separate rows, and adding a book merged them.
+> `market_stat_lines` does the two-tier suffix match only when handed a
+> board — which the app always does, and the harness initially did not.
+> Duplicate player rows in the real path: zero, before and after.
 
 ### 5d. Vig, and why a sportsbook line is not a pick'em line
 

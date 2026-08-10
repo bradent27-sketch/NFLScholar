@@ -28,7 +28,8 @@ from data.odds_sources import (  # noqa: E402
     standardize_team, normalize_stat, combine_props, load_props_fixture,
     odds_api_bookmakers, PROP_COLUMNS, prizepicks_leagues,
     implausible_period_rows, parse_fanduel_payload, parse_pinnacle_payload,
-    devig_two_way, american_to_decimal,
+    devig_two_way, american_to_decimal, parse_draftkings_payload,
+    parse_draftkings_payloads,
 )
 from data.odds_projections import (  # noqa: E402
     market_stat_lines, score_market_lines, compare_to_board,
@@ -893,6 +894,95 @@ def test_pinnacle_publishes_no_prices_so_claims_no_probability():
     props, _ = parse_pinnacle_payload(_fixture('pinnacle_nfl_matchups.json'))
     assert props['p_over'].isna().all()
     assert props['over_payout'].isna().all()
+
+
+# --- DraftKings ------------------------------------------------------------
+
+def test_draftkings_reads_season_player_props():
+    props, err = parse_draftkings_payloads(_fixture('draftkings_player_futures.json'))
+    assert err is None, err
+    assert list(props.columns) == PROP_COLUMNS
+    assert set(props['provider']) == {'DraftKings'}
+    assert set(props['period']) == {'season'}
+    assert set(props['market']) == {'receptions', 'receiving_yards'}
+    assert bool(props['scorable'].all())
+
+
+def test_draftkings_prices_use_a_unicode_minus():
+    # displayOdds.american is written "−115" with U+2212 MINUS SIGN, which
+    # float() rejects outright - this does not degrade a parser, it kills it.
+    raw = json.dumps(_fixture('draftkings_player_futures.json'), ensure_ascii=False)
+    assert '−' in raw, "fixture must keep the real character"
+    assert american_to_decimal('−110') is not None
+    assert abs(american_to_decimal('−100') - 2.0) < 1e-12
+    assert abs(devig_two_way('−110', '−110') - 0.5) < 1e-12
+
+    props, _ = parse_draftkings_payloads(_fixture('draftkings_player_futures.json'))
+    assert props['over_payout'].notna().all(), "every price should have parsed"
+    assert props['p_over'].notna().all()
+    assert all(0.3 < p < 0.7 for p in props['p_over'])
+
+
+def test_draftkings_player_comes_from_the_event_not_the_market_name():
+    """
+    THE BUG THIS LOCKS IN. Splitting the market name on " - " looks like the
+    obvious way to get the player and silently drops three of 319: the
+    separator is an ASCII hyphen on most rows, an EN DASH on Travis Kelce's,
+    and a double-spaced hyphen on Romeo Doubs'. The event's participants have
+    no such problem.
+    """
+    payloads = _fixture('draftkings_player_futures.json')
+    names = [m['name'] for p in payloads for m in p['markets']]
+    assert any('–' in n for n in names), "fixture must keep the en-dash market"
+    assert any('  -  ' in n for n in names), "fixture must keep the double-spaced market"
+
+    props, _ = parse_draftkings_payloads(payloads)
+    assert 'Travis Kelce' in set(props['player'])
+    assert 'Romeo Doubs' in set(props['player'])
+    # And no market-name debris leaked into a player name.
+    assert not any('NFL 20' in p or 'Regular Season' in p for p in props['player'])
+
+
+def test_draftkings_team_comes_from_the_flagged_participant():
+    # Both participants are typed "Team" and the order varies; only one
+    # carries metadata.rosettaTeamName, and that one is the club.
+    props, _ = parse_draftkings_payloads(_fixture('draftkings_player_futures.json'))
+    assert (props['team'] != '').all(), "every row should resolve a team"
+    # Read off the payload rather than from memory of who plays where - the
+    # book knows about the offseason and a hardcoded roster does not.
+    assert dict(zip(props['player'], props['team'])) == {
+        'Mike Evans': 'SF', 'Travis Kelce': 'KC',
+        'Romeo Doubs': 'NE', 'Amon-Ra St. Brown': 'DET',
+    }
+    # Two rows for Kelce, one team - the join is per event, not per market.
+    assert (props['player'] == 'Travis Kelce').sum() == 2
+
+
+def test_draftkings_stat_comes_from_market_type():
+    # The market name says "Receiving TDs" where marketType says "Receiving
+    # Touchdowns" for the same stat; marketType is uniform, the name is not.
+    props, _ = parse_draftkings_payloads(_fixture('draftkings_player_futures.json'))
+    assert set(props['market_raw']) == {'Receptions', 'Receiving Yards'}
+
+
+def test_draftkings_accepts_one_payload_or_many():
+    payloads = _fixture('draftkings_player_futures.json')
+    many, _ = parse_draftkings_payloads(payloads)
+    one, _ = parse_draftkings_payloads(payloads[0])
+    single, _ = parse_draftkings_payload(payloads[0])
+    assert len(one) == len(single) < len(many)
+    assert len(many) == sum(len(parse_draftkings_payload(p)[0]) for p in payloads)
+
+
+def test_draftkings_line_is_in_the_label_not_a_points_field():
+    # Futures selections carry no `points` key at all, unlike the game-lines
+    # feed from the same API where it is populated.
+    payloads = _fixture('draftkings_player_futures.json')
+    assert not any('points' in s for p in payloads for s in p['selections'])
+    props, _ = parse_draftkings_payloads(payloads)
+    assert bool((props['line'] > 0).all())
+    kelce = props[(props['player'] == 'Travis Kelce') & (props['market'] == 'receptions')]
+    assert len(kelce) == 1 and kelce['line'].iloc[0] > 10
 
 
 def test_new_books_combine_with_the_existing_ones():

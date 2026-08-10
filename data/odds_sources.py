@@ -866,26 +866,47 @@ def fetch_prizepicks_lines(league_id=None, season_first=True):
 # Two-way pricing
 # ---------------------------------------------------------------------------
 
+def _american(price):
+    """
+    American odds as a number, tolerating how books actually write them.
+
+    DraftKings publishes "−115" using U+2212 MINUS SIGN rather than an
+    ASCII hyphen - it is the typographically correct character and float()
+    rejects it outright. Every price on their board is negative or positive
+    with these, so a parser that misses it does not degrade, it dies.
+    """
+    if price is None:
+        return None
+    text = str(price).strip().replace('−', '-').replace('–', '-').replace('—', '-')
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
 def american_to_probability(price):
     """American odds -> the probability they IMPLY, vig included."""
-    try:
-        value = float(price)
-    except (TypeError, ValueError):
-        return None
-    if value == 0:
+    value = _american(price)
+    if not value:
         return None
     return (-value) / (-value + 100.0) if value < 0 else 100.0 / (value + 100.0)
 
 
 def american_to_decimal(price):
     """American odds -> decimal odds, the form over_payout/under_payout hold."""
+    value = _american(price)
+    if not value:
+        return None
+    return 1.0 + (100.0 / -value if value < 0 else value / 100.0)
+
+
+def decimal_to_probability(price):
+    """Decimal odds -> implied probability, vig included."""
     try:
         value = float(price)
     except (TypeError, ValueError):
         return None
-    if value == 0:
-        return None
-    return 1.0 + (100.0 / -value if value < 0 else value / 100.0)
+    return 1.0 / value if value > 0 else None
 
 
 def devig_two_way(over_price, under_price):
@@ -912,8 +933,17 @@ def devig_two_way(over_price, under_price):
     Returns None when either side is missing, which is the honest answer for
     Pinnacle's matchup feed - it carries lines but no prices at all.
     """
-    p_over = american_to_probability(over_price)
-    p_under = american_to_probability(under_price)
+    return _devig(american_to_probability(over_price),
+                  american_to_probability(under_price))
+
+
+def devig_two_way_decimal(over_price, under_price):
+    """devig_two_way for books that publish decimal odds instead."""
+    return _devig(decimal_to_probability(over_price),
+                  decimal_to_probability(under_price))
+
+
+def _devig(p_over, p_under):
     if p_over is None or p_under is None:
         return None
     total = p_over + p_under
@@ -1036,6 +1066,194 @@ def fetch_fanduel_lines():
     if err:
         return _empty_props(), err
     return parse_fanduel_payload(payload)
+
+
+# ---------------------------------------------------------------------------
+# DraftKings
+# ---------------------------------------------------------------------------
+
+DK_LEAGUE_NFL = 88808
+DK_PLAYER_FUTURES_CATEGORY = 1759
+DK_NASH_BASE = 'https://sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1'
+
+# EIGHT CALLS, NOT ONE, and the reason is worth keeping. The category route
+# without a subcategory answers 200 with 25 markets - exactly the Passing
+# Yards count, i.e. one default subcategory rather than the union. Nothing in
+# that response says it is partial, so a one-call adapter would look like it
+# worked while seeing a seventh of the board.
+#
+# DraftKings is the only book here that prices RECEPTIONS and RECEIVING TDs
+# season-long, which is the whole reason it was worth chasing: in a PPR
+# league receptions is the largest single scoring input, and before this it
+# rested on PrizePicks alone with nothing to check it against.
+DK_SUBCATEGORIES = {
+    'Passing Yards': 17147, 'Passing TDs': 17148,
+    'Rushing Yards': 17223, 'Rushing TDs': 17224,
+    'Receiving Yards': 17314, 'Receiving TDs': 17315,
+    'Receptions': 20168, 'Sacks': 17316,
+}
+
+# "Over 62.5" - the line is ONLY here. Futures selections carry no `points`
+# field at all, unlike the game-lines feed from the same API where `points`
+# is populated and is the natural place to look.
+_DK_LABEL = re.compile(r'^(?P<side>Over|Under)\s+(?P<line>-?[\d.]+)\s*$')
+
+
+def dk_subcategory_url(subcategory_id, league=DK_LEAGUE_NFL,
+                       category=DK_PLAYER_FUTURES_CATEGORY, base=DK_NASH_BASE):
+    return f'{base}/leagues/{league}/categories/{category}/subcategories/{subcategory_id}'
+
+
+def parse_draftkings_payload(payload):
+    """
+    One DraftKings season-long subcategory -> normalized props.
+
+    Three flat arrays that have to be joined: `selections` point at
+    `markets` by marketId, and markets point at `events` by eventId. The
+    market carries the stat, the selections carry the side and the line, and
+    the event carries the player and his team.
+
+    THE PLAYER COMES FROM THE EVENT, NOT THE MARKET NAME. Parsing
+    "NFL 2026/27 - Mike Evans Regular Season Receptions" looks like the
+    obvious route and quietly loses players: the separator is an ASCII
+    hyphen on most rows, an EN DASH on Travis Kelce's, and a
+    double-spaced hyphen on Romeo Doubs'. Three of 319 - small enough to
+    never notice, and exactly the kind of loss that shows up later as "why
+    is Kelce missing". The event's participant list has no such problem:
+    exactly one of its two entries carries metadata.rosettaTeamName and is
+    the team, the other is the player. Both are typed "Team" and the order
+    varies, so the metadata is the key, not the position.
+
+    Likewise the stat comes from marketType.name ("Regular Season Receptions
+    OU"), which is uniform across all 319, rather than from the market name,
+    where the same stat appears as both "Receiving TDs" and "Receiving
+    Touchdowns".
+    """
+    if not isinstance(payload, dict):
+        return _empty_props(), "DraftKings returned an unexpected payload shape."
+    markets = payload.get('markets') or []
+    selections = payload.get('selections') or []
+    events = payload.get('events') or []
+    if not markets or not selections:
+        return _empty_props(), ("DraftKings returned no markets - check the category and "
+                                "subcategory ids in the URL.")
+
+    by_event = {str(e.get('id')): e for e in events if isinstance(e, dict)}
+    sides = {}
+    for sel in selections:
+        if not isinstance(sel, dict):
+            continue
+        hit = _DK_LABEL.match(str(sel.get('label') or ''))
+        if not hit:
+            continue
+        sides.setdefault(str(sel.get('marketId')), {})[hit.group('side').lower()] = {
+            'line': hit.group('line'),
+            # trueOdds is the unrounded decimal. displayOdds.decimal is
+            # rounded to 2dp and displayOdds.american uses a Unicode minus,
+            # so this is both the most precise field and the least
+            # booby-trapped one.
+            'decimal': sel.get('trueOdds'),
+        }
+
+    rows = []
+    for market in markets:
+        if not isinstance(market, dict):
+            continue
+        pair = sides.get(str(market.get('id')))
+        if not pair or 'over' not in pair or 'under' not in pair:
+            continue
+
+        label = str(((market.get('marketType') or {}).get('name')) or '')
+        if not label.startswith('Regular Season ') or not label.endswith(' OU'):
+            continue
+        stat = label[len('Regular Season '):-len(' OU')]
+
+        event = by_event.get(str(market.get('eventId'))) or {}
+        participants = event.get('participants') or []
+        team, player = '', ''
+        for part in participants:
+            meta = part.get('metadata') or {}
+            if meta.get('rosettaTeamName'):
+                team = standardize_team(meta.get('shortName') or part.get('name'))
+            else:
+                player = str(part.get('name') or '').strip()
+        if not player:
+            continue
+
+        market_name, scorable = normalize_stat(stat)
+        rows.append({
+            'provider': 'DraftKings',
+            'player': player,
+            'team': team,
+            'position': '',
+            'market': market_name or stat,
+            'market_raw': stat,
+            'scorable': bool(scorable),
+            'line': pair['over']['line'],
+            'over_payout': pair['over']['decimal'],
+            'under_payout': pair['under']['decimal'],
+            'p_over': devig_two_way_decimal(pair['over']['decimal'],
+                                            pair['under']['decimal']),
+            'period': 'season',
+            'source_id': str(market.get('id') or ''),
+        })
+
+    props = _finalize(rows)
+    if props.empty:
+        return props, "DraftKings returned no season-long player lines."
+    return props, None
+
+
+def parse_draftkings_payloads(payloads):
+    """
+    Several subcategory payloads -> one frame.
+
+    A saved DraftKings import is a LIST of subcategory responses, because
+    one call only ever returns one stat. Accepts a single response too, so
+    the saved-file path and the live path share a parser.
+    """
+    if isinstance(payloads, dict):
+        if 'markets' in payloads:
+            return parse_draftkings_payload(payloads)
+        payloads = list(payloads.values())
+    if not isinstance(payloads, list):
+        return _empty_props(), "DraftKings returned an unexpected payload shape."
+
+    frames, errors = [], []
+    for payload in payloads:
+        props, err = parse_draftkings_payload(payload)
+        if not props.empty:
+            frames.append(props)
+        elif err:
+            errors.append(err)
+    combined = combine_props(*frames)
+    if combined.empty:
+        return combined, '; '.join(dict.fromkeys(errors)) or "DraftKings returned no lines."
+    return combined, None
+
+
+def fetch_draftkings_lines():
+    """
+    Live DraftKings season props - one call per stat, whatever answers.
+
+    A subcategory that fails is skipped rather than failing the book: they
+    are independent boards and eight-sevenths of an answer beats none.
+    """
+    frames, errors = [], []
+    for name, sub in DK_SUBCATEGORIES.items():
+        payload, err = _get_json(dk_subcategory_url(sub))
+        if err:
+            errors.append(f'{name}: {err}')
+            continue
+        props, parse_err = parse_draftkings_payload(payload)
+        if not props.empty:
+            frames.append(props)
+        elif parse_err:
+            errors.append(f'{name}: {parse_err}')
+    combined = combine_props(*frames)
+    if combined.empty:
+        return combined, '; '.join(errors) or "DraftKings returned no lines."
+    return combined, ('; '.join(errors) if errors else None)
 
 
 # ---------------------------------------------------------------------------
@@ -1233,6 +1451,7 @@ UNDERDOG_SAVED_PATH = os.path.join('external_data', 'underdog_over_under_lines.j
 PRIZEPICKS_SAVED_PATH = os.path.join('external_data', 'prizepicks_projections.json')
 FANDUEL_SAVED_PATH = os.path.join('external_data', 'fanduel_nfl_page.json')
 PINNACLE_SAVED_PATH = os.path.join('external_data', 'pinnacle_nfl_matchups.json')
+DRAFTKINGS_SAVED_PATH = os.path.join('external_data', 'draftkings_player_futures.json')
 
 # Saved payloads, as provider -> (path, a key that must be present, parser).
 # Both books go through the same save/load path because the reason is the
@@ -1248,13 +1467,30 @@ SAVED_PAYLOADS = {
     # parser is what rejects a wrong file, and it does so by finding no
     # season specials rather than by guessing from a key name.
     'Pinnacle': (PINNACLE_SAVED_PATH, None),
+    'DraftKings': (DRAFTKINGS_SAVED_PATH, None),
 }
 
 # Every book the board reads, in the order it reads them. One list so a new
 # adapter reaches the loader, the uploader and the status panel together -
 # the previous shape repeated the pair ('Underdog', 'PrizePicks') in four
 # places, which is three chances to add a book that silently never loads.
-BOOKS = ('Underdog', 'PrizePicks', 'FanDuel', 'Pinnacle')
+BOOKS = ('Underdog', 'PrizePicks', 'DraftKings', 'FanDuel', 'Pinnacle')
+
+# DraftKings serves one stat per call, so its saved import is a LIST of
+# responses rather than one. Uploading them one at a time has to accumulate
+# instead of overwrite, or dropping in Receptions would silently delete
+# Receiving Yards.
+MULTI_FILE_BOOKS = ('DraftKings',)
+
+
+def _dk_subcategory_of(payload):
+    """Which stat board a DraftKings response is, or None if it isn't one."""
+    if not isinstance(payload, dict):
+        return None
+    for market in payload.get('markets') or []:
+        if isinstance(market, dict) and market.get('subcategoryId') is not None:
+            return market['subcategoryId']
+    return None
 
 
 def save_book_payload(raw_bytes, provider):
@@ -1269,10 +1505,26 @@ def save_book_payload(raw_bytes, provider):
     if provider not in SAVED_PAYLOADS:
         return None, f"Unknown provider {provider!r}."
     path, required = SAVED_PAYLOADS[provider]
+    blobs = raw_bytes if isinstance(raw_bytes, (list, tuple)) else [raw_bytes]
     try:
-        payload = json.loads(raw_bytes)
+        parsed = [json.loads(blob) for blob in blobs]
     except Exception as exc:
         return None, f"Couldn't read that file as JSON: {exc}"
+
+    if provider in MULTI_FILE_BOOKS:
+        # Accumulate rather than replace, keyed on the subcategory the
+        # response is for, so dropping in one stat at a time builds the board
+        # up instead of resetting it to whichever file went in last.
+        existing = load_saved_book_payload(provider)
+        merged = list(existing) if isinstance(existing, list) else []
+        for payload in parsed:
+            for one in (payload if isinstance(payload, list) else [payload]):
+                sub = _dk_subcategory_of(one)
+                merged = [m for m in merged if _dk_subcategory_of(m) != sub or sub is None]
+                merged.append(one)
+        payload = merged
+    else:
+        payload = parsed[0]
     if required is None:
         if not isinstance(payload, (dict, list)):
             return None, f"That doesn't look like a {provider} response - expected JSON."

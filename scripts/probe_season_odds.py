@@ -35,6 +35,7 @@ import argparse
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -87,30 +88,50 @@ CANDIDATE_SEASON_MARKETS = [
 # WHAT A HAND CHECK FROM AN ORDINARY CONNECTION SHOWED (2026-08-09, iOS
 # Safari, so treat as directional not definitive):
 #
-#   Bovada          answered, but with an EMPTY body on the futures path.
-#                   That is the good failure - the host is reachable and did
-#                   not refuse us, we just asked for a path it does not
-#                   publish. The nav endpoint then gave up the real map, and
-#                   the guess had been wrong in SHAPE, not just in spelling:
-#                   the futures leagues are SIBLINGS of /football/nfl, not
-#                   children of it. Confirmed live paths and event counts:
+# MEASURED FROM A REAL CONNECTION, 2026-08-09. Four predictions in the
+# original version of this file were wrong, and the ranking they produced was
+# backwards, so the results are recorded here rather than in a chat log:
 #
-#                     /football/nfl-season-player-props   21   <- the target
-#                     /football/nfl-regular-season-wins   32
-#                     /football/nfl-futures               15
-#                     /football/nfl-awards                 8
-#                     /football/nfl-season-props           6
-#                     /football/nfl                       20  (games)
+#   FanDuel      200, 1.15 MB of JSON, to a plain honestly-identified GET.
+#                Labels seen include "season long" plus passing yards,
+#                passing TDs, rushing yards, rushing TDs, receiving yards and
+#                receptions - the broadest stat coverage of anything probed.
+#                Predicted to need a lifted auth token and a Cloudflare
+#                fight. It needed neither; the _ak in the query string was
+#                enough.
+#   DraftKings   200, 367 KB, on the nash host. Season-ish and stat labels
+#                both present. The legacy sportsbook.draftkings.com host is
+#                403 Access Denied, and nash /categories is 404 - so the
+#                league feed is the entry point, not the category index.
+#   Pinnacle     200, 356 KB, guest API, no auth. "season long" plus passing,
+#                rushing and receiving yards. Predicted to have essentially
+#                no season-long player props. It has them.
+#   Bovada       Reachable and friendly - and EMPTY where it counts. Every
+#                season-prop leaf returns "[]" (2 bytes) even though the nav
+#                tree advertises 21 events under them. The game coupon
+#                returns 44 KB perfectly well, so this is not a block, a bad
+#                path or a filter - the season content simply is not served
+#                through the coupon endpoint to us. Also rate-limits to 429
+#                partway through a second run. Predicted to be the #1 target
+#                on the strength of answering a request; answering turned out
+#                not to be the same as having the data.
+#   Caesars      403. A refusal. Left alone. Predicted "least defended".
+#   BetMGM       400 "Access id missing" - needs the accessid from a page
+#                load, as expected.
 #
-#                   preMatchOnly=true is also dropped for these: a season
-#                   prop has no kickoff, so that filter can legitimately
-#                   empty the result on its own.
-#   Caesars         403. A refusal. Left alone.
-#   DraftKings v5   blocked (the legacy host geo-gates and challenges).
-#   DraftKings nash /categories began transferring and then stalled.
+# The lesson worth keeping: "the host answered" and "the host has what we
+# need" are different tests, and only the second one matters. The summary
+# table below reports both, which is why it has a season-props column.
 #
-# The stall is the interesting one - it is not a refusal, so it stays in the
-# ladder with a longer timeout rather than being written off.
+# Bovada's nav map is still recorded below, since it cost something to find
+# and the paths are correct even though the coupons are empty:
+#
+#     /football/nfl-season-player-props   21   (empty via coupon)
+#     /football/nfl-regular-season-wins   32
+#     /football/nfl-futures               15
+#     /football/nfl-awards                 8
+#     /football/nfl-season-props           6
+#     /football/nfl                       20   (games - this one works)
 BOVADA_COUPON = 'https://www.bovada.lv/services/sports/event/coupon/events/A/description/'
 
 # The coupon endpoint only serves LEAF paths. /football/nfl-season-player-props
@@ -235,6 +256,18 @@ def _hits(text, needles):
     return sorted({n for n in needles if n in low})
 
 
+def _slug(label):
+    """Filename-safe slug of the FULL probe label.
+
+    The first version keyed the filename on the book name alone, so all
+    twelve Bovada probes wrote to book_bovada_www.json and each overwrote
+    the last - the eleven interesting results were destroyed by the twelfth
+    before anyone could look at them. The whole label goes in the name now.
+    """
+    keep = [c.lower() if c.isalnum() else '_' for c in label]
+    return ''.join(keep).strip('_').replace('__', '_')
+
+
 # ---------------------------------------------------------------------------
 # Part A - The Odds API
 # ---------------------------------------------------------------------------
@@ -311,8 +344,25 @@ def probe_odds_api(key, spend, save_dir):
         print(f"    {text[:200]}")
         return
     print(f"\n  /events OK - free call. {len(events)} upcoming NFL events.{_quota(headers)}")
-    ev_id = events[0]['id']
-    print(f"  Testing markets against {events[0].get('away_team')} @ {events[0].get('home_team')}")
+    # The SOONEST event, not events[0]. Books post player props a few days
+    # out, so measuring breadth against whatever the list happened to return
+    # first can sample a game months away and report "nothing is posted" as
+    # though it were a fact about the API rather than about the calendar.
+    # Days-to-kickoff is printed for the same reason: without it the market
+    # table is uninterpretable.
+    def _kick(ev):
+        try:
+            return datetime.fromisoformat(str(ev.get('commence_time', '')).replace('Z', '+00:00'))
+        except Exception:
+            return datetime.max.replace(tzinfo=timezone.utc)
+    soonest = min(events, key=_kick)
+    ev_id = soonest['id']
+    days = (_kick(soonest) - datetime.now(timezone.utc)).days
+    print(f"  Testing markets against {soonest.get('away_team')} @ {soonest.get('home_team')}"
+          f" - kickoff in {days} days ({soonest.get('commence_time')})")
+    if days > 3:
+        print("  NOTE: that is far enough out that most player props will not be")
+        print("        posted yet. Breadth measured here is a floor, not the ceiling.")
 
     print("\n  Do season-long player market keys exist?")
     status, headers, payload, text, err = _get(
@@ -337,6 +387,7 @@ def probe_odds_api(key, spend, save_dir):
     if spend:
         print(f"\n  In-season GAME player props - all {len(ODDS_API_PLAYER_PROP_MARKETS)} "
               f"documented markets, one event, one region.")
+        used_before = headers.get('x-requests-used')
         status, headers, payload, text, err = _get(
             f'{ODDS_API}/sports/americanfootball_nfl/events/{ev_id}/odds',
             {'apiKey': key, 'regions': 'us', 'oddsFormat': 'american',
@@ -364,8 +415,28 @@ def probe_odds_api(key, spend, save_dir):
             print(f"\n    {len(per)}/{len(ODDS_API_PLAYER_PROP_MARKETS)} markets posted for this game.")
             if missing:
                 print(f"    absent: {', '.join(missing)}")
-            print(f"\n    COST MODEL: that was one game. A 16-game slate at this market")
-            print(f"    count costs about {16 * len(ODDS_API_PLAYER_PROP_MARKETS)} credits per refresh.")
+            # COST IS BILLED ON MARKETS RETURNED, NOT MARKETS REQUESTED.
+            # Measured 2026-08-09: a request naming all 20 markets, of which
+            # only 2 were posted, moved the counter by 2 - not 20. That is a
+            # much friendlier model than the documented "[markets] x
+            # [regions]" reads, and it means asking for everything is close
+            # to free when a book has posted little. Computed here rather
+            # than assumed, because it is the number that decides whether a
+            # weekly pull fits in the plan.
+            try:
+                spent = int(headers.get('x-requests-used')) - int(used_before)
+            except (TypeError, ValueError):
+                spent = None
+            if spent is not None:
+                print(f"\n    COST: that call named {len(ODDS_API_PLAYER_PROP_MARKETS)} markets, "
+                      f"got {len(per)} back, and cost {spent} credits.")
+                print(f"    Billing follows markets RETURNED, not requested.")
+                if len(per):
+                    print(f"    A 16-game slate at this posting level: ~{16 * spent} credits.")
+                    print(f"    In-season, with most markets up, expect ~{16 * 12}-{16 * 18}.")
+                left = headers.get('x-requests-remaining')
+                if left:
+                    print(f"    You have {left} left this period - budget accordingly.")
         else:
             print(f"    {text[:300]}")
     else:
@@ -382,7 +453,14 @@ def probe_books(save_dir):
     print("PART B - SPORTSBOOKS (one plain GET each, honest User-Agent)")
     print("=" * 72)
     results = []
-    for label, urls in BOOK_PROBES:
+    for i, (label, urls) in enumerate(BOOK_PROBES):
+        # Bovada started returning 429 partway through the second run of the
+        # day. A probe that trips a rate limit reports "declined" for sources
+        # that would have answered, which is a false negative in the one
+        # place we can least afford one. One second between requests costs
+        # nothing here and keeps the result honest.
+        if i:
+            time.sleep(1.0)
         print(f"\n  {label}")
         answered = False
         unreachable = False
@@ -400,8 +478,7 @@ def probe_books(save_dir):
                 print(f"    {host:<44} 200  {size:>9,} bytes  JSON")
                 print(f"      season-ish labels seen: {season or 'none'}")
                 print(f"      stat labels seen:       {stats or 'none'}")
-                _save(save_dir, 'book_' + label.split(' - ')[0].lower().replace(' ', '_')
-                      + '_' + host.split('.')[0], payload)
+                _save(save_dir, 'book_' + _slug(label), payload)
                 results.append((label, 'JSON', bool(season and stats)))
                 answered = True
                 break

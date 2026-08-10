@@ -150,6 +150,34 @@ DK_PLAYER_FUTURE_SUBCATEGORIES = [
     ('Receptions', 20168), ('Sacks', 17316),
 ]
 
+# THE THING THAT MAKES DK WORTH FIGHTING FOR: receptions and receiving TDs.
+# Of the four books already wired in, only PrizePicks prices receptions
+# season-long, so in a PPR league the single largest scoring input rests on
+# one source with nothing to check it against.
+DK_RECEPTIONS = 20168
+
+# Game Lines / "Game". Found in the league feed's own subscriptionPartials,
+# and it is the whole reason the bare league call looks like it has no
+# futures: that call is not unfiltered, it is filtered TO THIS.
+DK_GAME_SUBCATEGORY = 4518
+
+# The league feed ships its own subscription definitions, and they give up
+# the query grammar:
+#
+#   "league-events-88808": {
+#     "entity": "events",
+#     "query": "$filter=leagueId eq '88808' and
+#               clientMetadata/Subcategories/any(s: s/Id eq '4518')",
+#     "includeMarkets": "$filter=tags/all(t: t ne 'SportcastBetBuilder') and
+#                        clientMetadata/subCategoryId eq '4518'"
+#   }
+#
+# That is OData. It means the season-long board is very probably the same
+# endpoint with a different subcategory id rather than a different service,
+# and it means the filter shapes below are read off DraftKings' own payload
+# rather than guessed at.
+DK_STATE_HOSTS = ['dkusoh', 'dkusnj', 'dkusmi', 'dkusva', 'dkusdc']
+
 # The coupon endpoint only serves LEAF paths. /football/nfl-season-player-props
 # is a branch, so asking it for a coupon returns an empty body - the same
 # blank-page symptom as a wrong path, which is why the nav tree has to be
@@ -470,6 +498,114 @@ def probe_odds_api(key, spend, save_dir):
 # Part B - sportsbooks, one honest request each
 # ---------------------------------------------------------------------------
 
+def _dk_candidates(sub=DK_RECEPTIONS, cat=DK_PLAYER_FUTURES, site='dkusoh'):
+    """
+    Every shape worth trying for one DraftKings subcategory, ordered by how
+    much evidence there is for it. Each entry is (label, url, params).
+
+    Tier 1 is the conventional REST nesting. Tier 2 is OData, using the exact
+    grammar DraftKings' own subscriptionPartials publishes - the strongest
+    lead here, because the bare league call is already a filtered call and
+    the only thing that appears to change is the subcategory id. Tier 3 is
+    the legacy v5 API on a STATE host rather than the generic one; the
+    generic host answered 403 from Akamai, which is a property of that
+    hostname's WAF and not necessarily of the API behind it.
+    """
+    nash = f'https://sportsbook-nash.draftkings.com/api/sportscontent/{site}/v1'
+    odata_events = (f"leagueId eq '88808' and "
+                    f"clientMetadata/Subcategories/any(s: s/Id eq '{sub}')")
+    odata_markets = f"clientMetadata/subCategoryId eq '{sub}'"
+    return [
+        # --- tier 1: REST nesting
+        ('nested subcategory', f'{nash}/leagues/88808/categories/{cat}/subcategories/{sub}', None),
+        ('category only', f'{nash}/leagues/88808/categories/{cat}', None),
+        ('league subcategory', f'{nash}/leagues/88808/subcategories/{sub}', None),
+        ('bare category', f'{nash}/categories/{cat}', None),
+        ('bare subcategory', f'{nash}/subcategories/{sub}', None),
+        # --- tier 2: OData, grammar taken from DK's own subscriptionPartials
+        ('odata on league', f'{nash}/leagues/88808',
+         {'$filter': f"clientMetadata/Subcategories/any(s: s/Id eq '{sub}')"}),
+        ('odata on league + markets', f'{nash}/leagues/88808',
+         {'$filter': f"clientMetadata/Subcategories/any(s: s/Id eq '{sub}')",
+          'includeMarkets': f'$filter={odata_markets}'}),
+        ('odata on events entity', f'{nash}/events',
+         {'$filter': odata_events, 'includeMarkets': f'$filter={odata_markets}'}),
+        ('subcategoryId query param', f'{nash}/leagues/88808', {'subcategoryId': str(sub)}),
+        # --- tier 3: legacy v5 on a state host, not the generic one
+        ('legacy v5 state host',
+         f'https://sportsbook-us-oh.draftkings.com/sites/US-OH-SB/api/v5/eventgroups/88808'
+         f'/categories/{cat}/subcategories/{sub}', {'format': 'json'}),
+        ('legacy v5 state host, league only',
+         'https://sportsbook-us-oh.draftkings.com/sites/US-OH-SB/api/v5/eventgroups/88808',
+         {'format': 'json'}),
+    ]
+
+
+def _dk_verdict(payload, text):
+    """Did this response actually contain season-long player lines?"""
+    if not isinstance(payload, dict):
+        return 'not JSON object', 0, 0
+    sel = payload.get('selections') or []
+    mkts = payload.get('markets') or []
+    names = {str(m.get('name') or '') for m in mkts if isinstance(m, dict)}
+    season = {n for n in names if 'Regular Season' in n or 'Season' in n}
+    return (f"{len(mkts)} markets / {len(sel)} selections", len(season), len(names))
+
+
+def probe_draftkings(save_dir):
+    """
+    A dedicated, harder run at DraftKings alone.
+
+    Worth its own pass because DK is the only book probed that prices
+    RECEPTIONS and RECEIVING TDs season-long, and receptions is the largest
+    single scoring input in a PPR league - currently resting on PrizePicks
+    with nothing to cross-check it.
+    """
+    print("\n" + "=" * 72)
+    print("DRAFTKINGS - going through every shape, one subcategory (Receptions)")
+    print("=" * 72)
+    print("  Anything that answers 200 with markets whose names carry 'Regular")
+    print("  Season' is the endpoint we want.\n")
+
+    winners = []
+    for label, url, params in _dk_candidates():
+        status, headers, payload, text, err = _get(url, params)
+        if err:
+            print(f"  {label:<30} network error: {err[:60]}")
+            continue
+        shape, season, total = _dk_verdict(payload, text)
+        flag = ''
+        if status == 200 and season:
+            flag = f'  <<< {season} season markets'
+            winners.append((label, url, params))
+        elif status == 200:
+            flag = f'  ({total} market names, none season-long)'
+        print(f"  {label:<30} {status}  {len(text):>9,}b  {shape}{flag}")
+        if status == 200 and payload is not None:
+            _save(save_dir, 'dk_' + _slug(label), payload)
+        time.sleep(0.6)
+
+    if not winners:
+        print("\n  No shape returned season-long markets.")
+        print("  Next thing to try, and it needs a browser rather than this script:")
+        print("    open sportsbook.draftkings.com/leagues/football/nfl?category=player-futures")
+        print("    with devtools Network open, filter to 'sportscontent', and copy the")
+        print("    request the page itself makes. That is the ground truth, and it is")
+        print("    your own browser session rather than anything pretending to be one.")
+        return
+
+    print(f"\n  {len(winners)} shape(s) worked. Pulling every stat through the first one.")
+    label, url, params = winners[0]
+    for name, sub in DK_PLAYER_FUTURE_SUBCATEGORIES:
+        _, u2, p2 = next(c for c in _dk_candidates(sub=sub) if c[0] == label)
+        status, headers, payload, text, err = _get(u2, p2)
+        shape, season, total = _dk_verdict(payload, text) if not err else ('error', 0, 0)
+        print(f"    {name:<18} {status}  {shape}  season-markets={season}")
+        if status == 200 and payload is not None:
+            _save(save_dir, f'dk_futures_{name.lower().replace(" ", "_")}', payload)
+        time.sleep(0.6)
+
+
 def probe_books(save_dir):
     print("\n" + "=" * 72)
     print("PART B - SPORTSBOOKS (one plain GET each, honest User-Agent)")
@@ -536,11 +672,18 @@ def main():
     ap.add_argument('--spend', action='store_true',
                     help='allow the calls that cost Odds API credits')
     ap.add_argument('--books-only', action='store_true')
+    ap.add_argument('--draftkings', action='store_true',
+                    help='only the deep DraftKings hunt, nothing else')
     ap.add_argument('--save-dir', default='',
                     help='write every payload here for offline inspection')
     args = ap.parse_args()
 
     print(f"probe_season_odds  {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}")
+
+    if args.draftkings:
+        probe_draftkings(args.save_dir)
+        print("\ndone.")
+        return
 
     if not args.books_only:
         key = args.odds_api_key.strip()

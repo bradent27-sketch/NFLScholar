@@ -1126,6 +1126,59 @@ def test_weekly_consensus_medians_across_books_and_reports_the_spread():
     assert out['Spread'].iloc[0] == 4.0
 
 
+def test_browser_fallback_is_switchable_and_reports_itself():
+    """
+    The fallback must be visible in both directions: off means a 403 is
+    still the final answer, and unavailable must say so rather than looking
+    like the book was down.
+    """
+    import data.odds_sources as src
+
+    original = os.environ.get('NFLSCHOLAR_BROWSER_FALLBACK')
+    try:
+        os.environ['NFLSCHOLAR_BROWSER_FALLBACK'] = '0'
+        assert src.browser_fallback_enabled() is False
+        payload, err = src._browser_retry('https://example.invalid/x')
+        assert payload is None and 'switched off' in err
+
+        os.environ['NFLSCHOLAR_BROWSER_FALLBACK'] = '1'
+        assert src.browser_fallback_enabled() is True
+    finally:
+        if original is None:
+            os.environ.pop('NFLSCHOLAR_BROWSER_FALLBACK', None)
+        else:
+            os.environ['NFLSCHOLAR_BROWSER_FALLBACK'] = original
+
+    # Nested shared_browser is a no-op rather than a second browser.
+    with src.shared_browser():
+        with src.shared_browser():
+            pass
+
+
+def test_browser_module_makes_no_evasion_claims_it_breaks():
+    """
+    data/odds_browser lists things it does not do. This checks the one that
+    was actually violated once: the launch args must not carry the flag that
+    turns off navigator.webdriver, because the docstring says they don't.
+    """
+    import inspect
+    import data.odds_browser as browser
+
+    source = inspect.getsource(browser)
+    assert 'no navigator.webdriver patching' in source
+
+    # The flag is named in the docstring, which explains why it is absent -
+    # so check the CODE, not the prose. Everything after the docstring is
+    # what actually runs.
+    body = inspect.getsource(browser._launch)
+    body = body.split('"""')[-1]
+    assert 'AutomationControlled' not in body, \
+        "the module claims not to patch navigator.webdriver - keep that true"
+
+    for banned in ('undetected_chromedriver', 'playwright_stealth', 'stealth('):
+        assert banned not in source, banned
+
+
 def test_bad_payload_shapes_are_reported_not_raised():
     for bad in ({}, {'attachments': {}}, [], 'nonsense', None):
         props, err = parse_fanduel_payload(bad)

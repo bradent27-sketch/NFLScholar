@@ -48,6 +48,7 @@ lines move slowly - they are not a live in-game feed - and hammering someone
 else's endpoint for data that changes twice a week is both rude and
 pointless.
 """
+import contextlib
 import json
 import os
 import re
@@ -55,6 +56,7 @@ import re
 import pandas as pd
 import requests
 import streamlit as st
+from urllib.parse import urlencode
 
 from data.utils import clean_name_exact
 
@@ -439,6 +441,62 @@ def _finalize(rows):
     return df[PROP_COLUMNS].reset_index(drop=True)
 
 
+# Set while a shared_browser() block is open, so a run of calls to the same
+# refusing book pays for one browser start rather than one each.
+_BROWSER_GET = None
+
+# Set to 0 to turn the fallback off entirely and go back to accepting a 403
+# as the final answer.
+BROWSER_FALLBACK_ENV = 'NFLSCHOLAR_BROWSER_FALLBACK'
+
+
+def browser_fallback_enabled():
+    return os.environ.get(BROWSER_FALLBACK_ENV, '1').strip() not in ('0', 'false', 'no')
+
+
+@contextlib.contextmanager
+def shared_browser():
+    """
+    Keep one browser open across a run of fetches.
+
+    DraftKings needs eight calls and PrizePicks one; starting a browser eight
+    times would turn a two-second refresh into a fifteen-second one. Nested
+    use is a no-op so a caller can ask for it without knowing whether an
+    outer one already did.
+    """
+    global _BROWSER_GET
+    if _BROWSER_GET is not None or not browser_fallback_enabled():
+        yield
+        return
+    try:
+        from data.odds_browser import browser_session
+    except ImportError:
+        yield
+        return
+    with browser_session() as get:
+        _BROWSER_GET = get
+        try:
+            yield
+        finally:
+            _BROWSER_GET = None
+
+
+def _browser_retry(url, params=None):
+    """One refused URL, retried through a real browser. Returns (payload, error)."""
+    if not browser_fallback_enabled():
+        return None, "The browser fallback is switched off."
+    full = url
+    if params:
+        full = f"{url}{'&' if '?' in url else '?'}{urlencode(params)}"
+    if _BROWSER_GET is not None:
+        return _BROWSER_GET(full)
+    try:
+        from data.odds_browser import fetch_json_via_browser
+    except ImportError:
+        return None, "Playwright isn't installed, so no browser retry was possible."
+    return fetch_json_via_browser(full)
+
+
 def _get_json(url, params=None, headers=None):
     """
     One HTTPS GET, returning (payload, error). Never raises.
@@ -459,8 +517,16 @@ def _get_json(url, params=None, headers=None):
         except ValueError:
             return None, f"{url} returned 200 but not JSON (got {resp.text[:120]!r})"
     if resp.status_code in (403, 401):
-        return None, (f"{url} refused the request ({resp.status_code}). This source "
-                      "blocks automated access; nothing further is attempted.")
+        # Refused a script. Some of these books serve the same URL to a
+        # browser perfectly well - DraftKings answered this exact endpoint
+        # earlier the same day, and PrizePicks has always been browser-only -
+        # so the next attempt is an actual browser rather than a script
+        # claiming to be one. See data/odds_browser for where that line sits.
+        payload, browser_err = _browser_retry(url, params)
+        if payload is not None:
+            return payload, None
+        return None, (f"{url} refused the request ({resp.status_code}). "
+                      + (browser_err or "Nothing further is attempted."))
     if resp.status_code == 429:
         return None, f"{url} rate-limited the request (429). Try again later."
     return None, f"{url} returned {resp.status_code}: {resp.text[:200]}"
@@ -1377,21 +1443,22 @@ def fetch_draftkings_weekly_lines():
     before trusting it - and note that the discovery step failing is a
     perfectly ordinary preseason answer, not a bug.
     """
-    subs, err = dk_weekly_subcategories()
-    if err:
-        return _empty_props(), err
+    with shared_browser():
+        subs, err = dk_weekly_subcategories()
+        if err:
+            return _empty_props(), err
 
-    frames, errors = [], []
-    for cat_name, name, cat_id, sub_id in subs:
-        payload, fetch_err = _get_json(dk_subcategory_url(sub_id, category=cat_id))
-        if fetch_err:
-            errors.append(f'{name}: {fetch_err}')
-            continue
-        props, parse_err = parse_draftkings_payload(payload)
-        if not props.empty:
-            frames.append(props)
-        elif parse_err:
-            errors.append(f'{name}: {parse_err}')
+        frames, errors = [], []
+        for cat_name, name, cat_id, sub_id in subs:
+            payload, fetch_err = _get_json(dk_subcategory_url(sub_id, category=cat_id))
+            if fetch_err:
+                errors.append(f'{name}: {fetch_err}')
+                continue
+            props, parse_err = parse_draftkings_payload(payload)
+            if not props.empty:
+                frames.append(props)
+            elif parse_err:
+                errors.append(f'{name}: {parse_err}')
 
     combined = combine_props(*frames)
     if combined.empty:
@@ -1408,16 +1475,17 @@ def fetch_draftkings_lines():
     are independent boards and eight-sevenths of an answer beats none.
     """
     frames, errors = [], []
-    for name, sub in DK_SUBCATEGORIES.items():
-        payload, err = _get_json(dk_subcategory_url(sub))
-        if err:
-            errors.append(f'{name}: {err}')
-            continue
-        props, parse_err = parse_draftkings_payload(payload)
-        if not props.empty:
-            frames.append(props)
-        elif parse_err:
-            errors.append(f'{name}: {parse_err}')
+    with shared_browser():
+        for name, sub in DK_SUBCATEGORIES.items():
+            payload, err = _get_json(dk_subcategory_url(sub))
+            if err:
+                errors.append(f'{name}: {err}')
+                continue
+            props, parse_err = parse_draftkings_payload(payload)
+            if not props.empty:
+                frames.append(props)
+            elif parse_err:
+                errors.append(f'{name}: {parse_err}')
     combined = combine_props(*frames)
     if combined.empty:
         return combined, '; '.join(errors) or "DraftKings returned no lines."

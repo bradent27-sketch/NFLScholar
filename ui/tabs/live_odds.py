@@ -132,6 +132,18 @@ def _render_weekly_props():
         "want the current numbers rather than the ones posted at the start of the week."
     )
 
+    # PrizePicks has always been browser-only, and DraftKings started
+    # refusing scripts after a burst of requests. Both serve the same URL to
+    # a browser, so there is a fallback - but it needs Playwright installed,
+    # and silently doing nothing would look identical to the book being down.
+    from data.odds_browser import browser_available
+    have_browser, why = browser_available()
+    if not have_browser:
+        st.warning(
+            f"**PrizePicks and DraftKings may refuse a plain request.** {why}",
+            icon="🧭",
+        )
+
     force = st.button("🔄 Refresh weekly lines", key="weekly_props_refresh",
                       help="Goes back to all three books now, ignoring the saved snapshot.")
     if force:

@@ -6,3 +6,10 @@ nflreadpy>=0.1.5
 pyarrow>=25.0
 matplotlib>=3.11
 rapidfuzz>=3.14
+
+# Optional. Enables the browser fallback for books that serve a browser and
+# refuse a script (PrizePicks always; DraftKings after a burst of requests).
+# Not required for anything else in the app, and it pulls a browser binary,
+# so it is left to an explicit install:
+#     pip install playwright && playwright install chromium
+# playwright

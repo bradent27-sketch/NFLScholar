@@ -1109,6 +1109,51 @@ def test_weekly_snapshot_round_trips_and_survives_a_bad_file():
     assert (consensus['Books'] >= 1).all()
 
 
+def test_weekly_consensus_repeats_a_player_across_stats():
+    """
+    One row per player PER STAT, so player names repeat. This is the thing
+    that broke the tab: indexing that frame by Player gives a non-unique
+    index, and pandas' Styler refuses to apply against one - which surfaced
+    as the whole Live Odds tab failing to render rather than as a bad table.
+    """
+    from data.odds_weekly import weekly_consensus
+    # Built rather than taken from the fixture: the recorded payload happens
+    # to give each player one stat, so it cannot show the case that broke.
+    rows = pd.DataFrame([
+        {'provider': 'Underdog', 'player': 'A Back', 'player_key': 'aback',
+         'team': 'KC', 'position': 'RB', 'market': market, 'market_raw': market,
+         'scorable': True, 'line': line, 'over_payout': None, 'under_payout': None,
+         'p_over': None, 'period': 'game', 'source_id': market}
+        for market, line in (('rushing_yards', 62.5), ('receiving_yards', 21.5))
+    ])
+    out = weekly_consensus(rows)
+    assert len(out) == 2
+    assert out['Player'].duplicated().any(), \
+        "a player with two stats must appear twice - do not index by Player"
+    assert out.index.is_unique
+
+
+def test_weekly_prefers_a_saved_payload_over_the_network():
+    """
+    A saved file wins, and its own separate slot matters: PrizePicks' weekly
+    board is a different league from its season board, so one file must not
+    be able to overwrite the other.
+    """
+    from data.odds_sources import SAVED_PAYLOADS
+    from data.odds_weekly import WEEKLY_SAVED_SOURCES
+
+    season_path = SAVED_PAYLOADS['PrizePicks'][0]
+    weekly_path = SAVED_PAYLOADS['PrizePicks Weekly'][0]
+    assert season_path != weekly_path, \
+        "weekly must not overwrite the season payload Book Proj is built from"
+
+    # Underdog deliberately has no separate weekly file: one endpoint returns
+    # both periods, so the season file already carries the weekly board.
+    assert WEEKLY_SAVED_SOURCES['Underdog'][0] == 'Underdog'
+    assert WEEKLY_SAVED_SOURCES['PrizePicks'][0] == 'PrizePicks Weekly'
+    assert WEEKLY_SAVED_SOURCES['DraftKings'][0] == 'DraftKings Weekly'
+
+
 def test_weekly_consensus_medians_across_books_and_reports_the_spread():
     from data.odds_weekly import weekly_consensus
     rows = pd.DataFrame([

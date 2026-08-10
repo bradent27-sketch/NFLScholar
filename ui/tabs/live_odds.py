@@ -11,6 +11,7 @@ import streamlit as st
 from config import ODDS_API_PLAYER_PROP_MARKETS
 from data.loaders import fetch_nfl_odds, fetch_nfl_player_props, load_saved_odds_api_key, save_odds_api_key
 from ui.styling import style_plain_dataframe, df_auto_height
+from data.odds_sources import parse_prizepicks_payload, parse_draftkings_payloads
 from ui.components import skeleton_loader
 
 
@@ -113,6 +114,74 @@ def _fmt_age(stamp):
     return f"{int(hours // 24)}d ago"
 
 
+def _render_weekly_uploads():
+    """
+    Drop a weekly board in by hand, per book. Returns True if anything was
+    saved, so the caller can rebuild the snapshot instead of serving the one
+    that predates the upload.
+
+    PrizePicks is the reason this exists. Cloudflare refuses this app whether
+    it asks as a script or through a browser, and the remaining ways past
+    that are ones this project won't use - so their weekly board arrives as a
+    file or not at all. The file is deliberately separate from the season
+    one: their weekly product is a different league, and saving one over the
+    other would swap season totals for single-game props, which would parse
+    perfectly and be wrong by two orders of magnitude.
+    """
+    from data.odds_sources import save_book_payload, MULTI_FILE_BOOKS
+
+    saved_any = False
+    with st.expander("📥 Load a weekly board from a saved file", expanded=False):
+        st.caption(
+            "Open the URL in your own browser, save the JSON, drop it here. A saved "
+            "file wins over the live fetch for that book and keeps working when the "
+            "book refuses us.\n\n"
+            "• **PrizePicks weekly** — `api.prizepicks.com/projections?league_id=9&per_page=1000`. "
+            "League **9** is the weekly board; the season one (NFLSZN) is a different "
+            "league and goes in Draft HQ, not here.\n\n"
+            "• **Underdog** — `api.underdogfantasy.com/beta/v5/over_under_lines`. One "
+            "payload carries both game and season lines, so the file you already "
+            "uploaded in Draft HQ is used here too — nothing extra to do.\n\n"
+            "• **DraftKings weekly** — the per-stat subcategory URLs, once a weekly "
+            "board is posted. `scripts/probe_season_odds.py --weekly` prints the live "
+            "ids. Drop all of them in at once; they accumulate."
+        )
+        for provider, label in (('PrizePicks Weekly', 'PrizePicks weekly projections JSON'),
+                                ('DraftKings Weekly', 'DraftKings weekly boards JSON (one or more)')):
+            multi = provider in MULTI_FILE_BOOKS
+            upload = st.file_uploader(label, type=["json"], accept_multiple_files=multi,
+                                      key=f"weekly_upload_{provider.replace(' ', '_').lower()}")
+            if multi and upload:
+                payload, err = save_book_payload([f.getvalue() for f in upload], provider)
+            elif not multi and upload is not None:
+                payload, err = save_book_payload(upload.getvalue(), provider)
+            else:
+                continue
+
+            if err and payload is None:
+                st.error(err)
+                continue
+            if err:
+                st.warning(err)
+            parser = (parse_draftkings_payloads if provider.startswith('DraftKings')
+                      else parse_prizepicks_payload)
+            parsed, perr = parser(payload)
+            game = parsed[parsed['period'] == 'game'] if not parsed.empty else parsed
+            if perr and game.empty:
+                st.warning(f"Saved it, but: {perr}")
+            elif game.empty:
+                st.warning(
+                    "Saved it, but there are no single-game lines in that file. For "
+                    "PrizePicks make sure it's `league_id=9` — the season board parses "
+                    "fine and is the wrong product for this panel."
+                )
+            else:
+                st.success(f"Saved {len(game)} weekly {provider.split()[0]} lines "
+                           f"({game['player'].nunique()} players).")
+                saved_any = True
+    return saved_any
+
+
 def _render_weekly_props():
     """
     This week's player props from the books that cost nothing to ask.
@@ -146,6 +215,7 @@ def _render_weekly_props():
 
     force = st.button("🔄 Refresh weekly lines", key="weekly_props_refresh",
                       help="Goes back to all three books now, ignoring the saved snapshot.")
+    force = _render_weekly_uploads() or force
     if force:
         for fn in ('fetch_prizepicks_lines', 'fetch_underdog_lines',
                    'fetch_draftkings_weekly_lines', 'dk_weekly_subcategories'):
@@ -176,6 +246,10 @@ def _render_weekly_props():
 
     summary = weekly_summary(props)
     if not summary.empty:
+        sources = {k: v.get('source') for k, v in status.items() if v.get('source')}
+        if sources:
+            summary = summary.assign(
+                Source=summary['Book'].map(lambda b: sources.get(b, '')))
         st.dataframe(summary, width="stretch", hide_index=True)
     for book, err in problems.items():
         st.caption(f"⚠️ **{book}** — {err}")
@@ -205,8 +279,13 @@ def _render_weekly_props():
         "gap between the highest and lowest. A stat every book agrees on is settled; the "
         "wide ones are where a disagreement is worth reading."
     )
-    st.dataframe(style_plain_dataframe(view.set_index('Player')),
-                 width="stretch", height=df_auto_height(min(len(view), 25)))
+    # NOT set_index('Player'). A player has one row per stat here, so that
+    # index is non-unique and pandas' Styler refuses to apply against it -
+    # which surfaces as the whole tab failing to render, not as a bad table.
+    # Draft HQ can index by player because there it IS one row per player.
+    st.dataframe(style_plain_dataframe(view.reset_index(drop=True)),
+                 width="stretch", hide_index=True,
+                 height=df_auto_height(min(len(view), 25)))
     st.caption(f"{len(view)} of {len(consensus)} player-stat rows.")
 
 

@@ -48,4 +48,6 @@ external_data/pinnacle_nfl_matchups.json
 external_data/draftkings_player_futures.json
 # The weekly snapshot is a cache of someone else's live board, rewritten
 # every Tuesday. Same reasoning, plus it would churn the diff weekly.
+external_data/prizepicks_weekly_projections.json
+external_data/draftkings_weekly_props.json
 external_data/weekly_props_snapshot.json

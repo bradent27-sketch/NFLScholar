@@ -36,8 +36,29 @@ import pandas as pd
 
 from data.odds_sources import (
     _empty_props, combine_props, fetch_prizepicks_lines, fetch_underdog_lines,
-    fetch_draftkings_weekly_lines,
+    fetch_draftkings_weekly_lines, load_saved_book_payload,
+    parse_prizepicks_payload, parse_underdog_payload, parse_draftkings_payloads,
 )
+
+# Where a saved payload for each weekly book comes from, when there is one.
+# A saved file WINS over the live fetch, for the same reason it does on the
+# season side: it is a deliberate act by someone who has just looked at that
+# board, and it is the path that keeps working when a book refuses us.
+#
+# PrizePicks is the one that needs this most. Cloudflare refuses this app
+# whether it asks as a script or through a browser, so their weekly board is
+# only ever going to arrive as a file - and it has to be a DIFFERENT file
+# from the season one, because their weekly product is a separate league and
+# saving one over the other would swap season totals for single-game props.
+#
+# Underdog has no separate entry: one endpoint returns its game and season
+# lines together, so the season file already carries the weekly board and a
+# second copy would only be a second thing to keep current.
+WEEKLY_SAVED_SOURCES = {
+    'PrizePicks': ('PrizePicks Weekly', parse_prizepicks_payload),
+    'Underdog': ('Underdog', parse_underdog_payload),
+    'DraftKings': ('DraftKings Weekly', parse_draftkings_payloads),
+}
 
 # The books that need no key and no quota. All three are pulled together on
 # a weekly load; The Odds API is deliberately NOT in this list - it costs
@@ -126,21 +147,34 @@ def fetch_weekly_props(books=WEEKLY_BOOKS):
     """
     status, frames = {}, []
     for name in books:
-        if name == 'PrizePicks':
-            # season_first=False is the whole difference: their weekly board
-            # is league 9 and the season board is a different league, so
-            # asking for season first would return the wrong product.
-            props, err = fetch_prizepicks_lines(season_first=False)
-        elif name == 'Underdog':
-            props, err = fetch_underdog_lines()
-        elif name == 'DraftKings':
-            props, err = fetch_draftkings_weekly_lines()
-        else:
-            continue
+        props, err, source = _empty_props(), None, ''
+
+        saved_key, parser = WEEKLY_SAVED_SOURCES.get(name, (None, None))
+        payload = load_saved_book_payload(saved_key) if saved_key else None
+        if payload is not None:
+            props, err = parser(payload)
+            source = 'your saved payload'
+
+        # Only go to the network when there is no file to read. A saved
+        # payload is there precisely because the live path did not work.
+        if props.empty and not source:
+            if name == 'PrizePicks':
+                # season_first=False is the whole difference: their weekly
+                # board is league 9 and the season board is a different
+                # league, so asking for season first returns the wrong
+                # product entirely.
+                props, err = fetch_prizepicks_lines(season_first=False)
+            elif name == 'Underdog':
+                props, err = fetch_underdog_lines()
+            elif name == 'DraftKings':
+                props, err = fetch_draftkings_weekly_lines()
+            else:
+                continue
+            source = 'live'
 
         if not props.empty:
             props = props[props['period'] == 'game']
-        status[name] = {'rows': int(len(props)), 'error': err,
+        status[name] = {'rows': int(len(props)), 'error': err, 'source': source,
                         'players': int(props['player'].nunique()) if not props.empty else 0}
         if not props.empty:
             frames.append(props)

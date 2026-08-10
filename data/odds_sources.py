@@ -1713,6 +1713,15 @@ def load_props_fixture(path):
 
 UNDERDOG_SAVED_PATH = os.path.join('external_data', 'underdog_over_under_lines.json')
 PRIZEPICKS_SAVED_PATH = os.path.join('external_data', 'prizepicks_projections.json')
+# WEEKLY payloads live in their own files. PrizePicks' weekly board is a
+# DIFFERENT league from its season board (9 vs NFLSZN), so saving one over
+# the other would silently swap the season-long lines Draft HQ's Book Proj
+# is built from for a set of single-game props - which would parse cleanly,
+# look plausible, and be wrong by two orders of magnitude.
+PRIZEPICKS_WEEKLY_SAVED_PATH = os.path.join('external_data',
+                                            'prizepicks_weekly_projections.json')
+DRAFTKINGS_WEEKLY_SAVED_PATH = os.path.join('external_data',
+                                            'draftkings_weekly_props.json')
 FANDUEL_SAVED_PATH = os.path.join('external_data', 'fanduel_nfl_page.json')
 PINNACLE_SAVED_PATH = os.path.join('external_data', 'pinnacle_nfl_matchups.json')
 DRAFTKINGS_SAVED_PATH = os.path.join('external_data', 'draftkings_player_futures.json')
@@ -1732,6 +1741,9 @@ SAVED_PAYLOADS = {
     # season specials rather than by guessing from a key name.
     'Pinnacle': (PINNACLE_SAVED_PATH, None),
     'DraftKings': (DRAFTKINGS_SAVED_PATH, None),
+    # Weekly, kept apart from the season files above on purpose.
+    'PrizePicks Weekly': (PRIZEPICKS_WEEKLY_SAVED_PATH, 'data'),
+    'DraftKings Weekly': (DRAFTKINGS_WEEKLY_SAVED_PATH, None),
 }
 
 # Every book the board reads, in the order it reads them. One list so a new
@@ -1744,7 +1756,7 @@ BOOKS = ('Underdog', 'PrizePicks', 'DraftKings', 'FanDuel', 'Pinnacle')
 # responses rather than one. Uploading them one at a time has to accumulate
 # instead of overwrite, or dropping in Receptions would silently delete
 # Receiving Yards.
-MULTI_FILE_BOOKS = ('DraftKings',)
+MULTI_FILE_BOOKS = ('DraftKings', 'DraftKings Weekly')
 
 
 def _dk_subcategory_of(payload):

@@ -41,8 +41,30 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import requests  # noqa: E402
 
-from config import ODDS_API_PLAYER_PROP_MARKETS  # noqa: E402
-from data.odds_sources import DEFAULT_HEADERS  # noqa: E402
+# Runs from inside the project OR from a bare folder with nothing but
+# `requests` installed. A diagnostic that needs the whole app importable
+# before it will tell you why the app can't see any odds is a diagnostic
+# that fails exactly when you need it, so the two constants it borrows have
+# a local fallback. In-repo they come from the real definitions and stay in
+# step; standalone they are close enough to answer the question.
+try:
+    from config import ODDS_API_PLAYER_PROP_MARKETS  # noqa: E402
+    from data.odds_sources import DEFAULT_HEADERS  # noqa: E402
+except Exception:
+    ODDS_API_PLAYER_PROP_MARKETS = [
+        'player_pass_yds', 'player_pass_tds', 'player_pass_completions', 'player_pass_attempts',
+        'player_pass_interceptions', 'player_pass_longest_completion',
+        'player_rush_yds', 'player_rush_attempts', 'player_rush_longest',
+        'player_reception_yds', 'player_receptions', 'player_reception_longest',
+        'player_anytime_td', 'player_1st_td', 'player_last_td',
+        'player_kicking_points', 'player_field_goals',
+        'player_tackles_assists', 'player_sacks', 'player_solo_tackles',
+    ]
+    DEFAULT_HEADERS = {
+        'User-Agent': 'NFLScholar/1.0 (personal fantasy analytics; non-commercial)',
+        'Accept': 'application/json',
+        'Accept-Language': 'en-US,en;q=0.9',
+    }
 
 ODDS_API = 'https://api.the-odds-api.com/v4'
 TIMEOUT = 20

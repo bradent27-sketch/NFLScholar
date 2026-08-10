@@ -1097,12 +1097,77 @@ DK_SUBCATEGORIES = {
 # "Over 62.5" - the line is ONLY here. Futures selections carry no `points`
 # field at all, unlike the game-lines feed from the same API where `points`
 # is populated and is the natural place to look.
-_DK_LABEL = re.compile(r'^(?P<side>Over|Under)\s+(?P<line>-?[\d.]+)\s*$')
+#
+# The optional leading group is for weekly markets, where books commonly put
+# the man's name in front of the side ("Patrick Mahomes Over 275.5") because
+# one market covers a whole game rather than one player. Optional, so a
+# season label still matches exactly as before.
+_DK_LABEL = re.compile(r'^(?:(?P<player>.+?)\s+)?(?P<side>Over|Under)\s+(?P<line>-?[\d.]+)\s*$')
 
 
 def dk_subcategory_url(subcategory_id, league=DK_LEAGUE_NFL,
                        category=DK_PLAYER_FUTURES_CATEGORY, base=DK_NASH_BASE):
     return f'{base}/leagues/{league}/categories/{category}/subcategories/{subcategory_id}'
+
+
+def _dk_player_team_period(event, market, pair):
+    """
+    Who the line is about, which club he plays for, and whether it is a
+    season or a single-game market. Returns (player, team, period).
+
+    DraftKings files a season prop under a PLAYER EVENT and a weekly prop
+    under a GAME EVENT, and that difference is structural rather than a
+    matter of wording:
+
+      season: participants are [the club, the player] - exactly one carries
+              metadata.rosettaTeamName, and the other is the man.
+      game:   participants are the two clubs - BOTH carry it, and the player
+              is named somewhere else entirely.
+
+    Counting how many participants are teams therefore classifies the market
+    without reading a single English word, which is the property worth having
+    given how many times a label has been the thing that moved.
+
+    For a game market the player then has to come from the market name
+    ("Patrick Mahomes Passing Yards") or from the selection label
+    ("Patrick Mahomes Over 275.5"). Both shapes are handled because both are
+    plausible and this has not been seen live - a weekly board is not posted
+    in August. Neither is guessed at silently: if no player can be recovered
+    the row is dropped rather than filed under a wrong name.
+    """
+    participants = event.get('participants') or []
+    teams, others = [], []
+    for part in participants:
+        meta = part.get('metadata') or {}
+        if meta.get('rosettaTeamName'):
+            teams.append(standardize_team(meta.get('shortName') or part.get('name')))
+        else:
+            others.append(str(part.get('name') or '').strip())
+
+    if len(teams) == 1 and others:
+        return others[0], teams[0], 'season'
+
+    # A game event. Two clubs, and the player named elsewhere.
+    stat_label = str(((market.get('marketType') or {}).get('name')) or '')
+    if stat_label.endswith(' OU'):
+        stat_label = stat_label[:-len(' OU')]
+    name = str(market.get('name') or '')
+    for suffix in (stat_label, stat_label.replace('Regular Season ', '')):
+        if suffix and name.endswith(suffix):
+            candidate = name[:-len(suffix)].strip(' -–—')
+            # "NFL 2026/27 - " style prefixes, when present.
+            candidate = re.sub(r'^NFL\s+\d{4}/\d{2,4}\s*[-–—]\s*', '', candidate).strip()
+            if candidate:
+                return candidate, '', 'game'
+
+    # Last resort: the selection labels carry the man's name in front of the
+    # side, which is how FanDuel writes them.
+    for side in ('over', 'under'):
+        raw = (pair.get(side) or {}).get('raw_label') or ''
+        hit = re.match(r'^(?P<player>.+?)\s+(?:Over|Under)\s+-?[\d.]+\s*$', str(raw))
+        if hit and hit.group('player').strip():
+            return hit.group('player').strip(), '', 'game'
+    return '', '', 'game'
 
 
 def parse_draftkings_payload(payload):
@@ -1154,6 +1219,7 @@ def parse_draftkings_payload(payload):
             # so this is both the most precise field and the least
             # booby-trapped one.
             'decimal': sel.get('trueOdds'),
+            'raw_label': sel.get('label'),
         }
 
     rows = []
@@ -1165,21 +1231,22 @@ def parse_draftkings_payload(payload):
             continue
 
         label = str(((market.get('marketType') or {}).get('name')) or '')
-        if not label.startswith('Regular Season ') or not label.endswith(' OU'):
+        if not label.endswith(' OU'):
             continue
-        stat = label[len('Regular Season '):-len(' OU')]
+        stat = label[:-len(' OU')]
+        season = stat.startswith('Regular Season ')
+        if season:
+            stat = stat[len('Regular Season '):]
 
         event = by_event.get(str(market.get('eventId'))) or {}
-        participants = event.get('participants') or []
-        team, player = '', ''
-        for part in participants:
-            meta = part.get('metadata') or {}
-            if meta.get('rosettaTeamName'):
-                team = standardize_team(meta.get('shortName') or part.get('name'))
-            else:
-                player = str(part.get('name') or '').strip()
+        player, team, period = _dk_player_team_period(event, market, pair)
         if not player:
             continue
+        # The market label is the authority when it says "Regular Season";
+        # otherwise the event's own shape decides, which is structural rather
+        # than a guess about wording.
+        if season:
+            period = 'season'
 
         market_name, scorable = normalize_stat(stat)
         rows.append({
@@ -1195,7 +1262,7 @@ def parse_draftkings_payload(payload):
             'under_payout': pair['under']['decimal'],
             'p_over': devig_two_way_decimal(pair['over']['decimal'],
                                             pair['under']['decimal']),
-            'period': 'season',
+            'period': period,
             'source_id': str(market.get('id') or ''),
         })
 
@@ -1231,6 +1298,105 @@ def parse_draftkings_payloads(payloads):
     if combined.empty:
         return combined, '; '.join(dict.fromkeys(errors)) or "DraftKings returned no lines."
     return combined, None
+
+
+# Subcategory names on DraftKings' weekly board that are per-player counting
+# stats. Matched case-insensitively against whatever the league feed reports,
+# so the ids never have to be hardcoded - which matters because the weekly
+# ids are not knowable in the preseason, when no weekly board is posted.
+DK_WEEKLY_STAT_NAMES = (
+    'pass yards', 'passing yards', 'pass tds', 'passing tds',
+    'pass completions', 'pass attempts', 'interceptions',
+    'rush yards', 'rushing yards', 'rush tds', 'rushing tds', 'rush attempts',
+    'rec yards', 'receiving yards', 'rec tds', 'receiving tds', 'receptions',
+)
+
+# Categories whose contents are season-long or otherwise not a weekly player
+# total, matched by name so a renamed id does not break the exclusion.
+DK_NON_WEEKLY_CATEGORIES = (
+    'player futures', 'stat leaders', 'milestones', 'season high totals',
+    'rookie watch', 'awards', 'futures', 'fast futures', 'wins',
+    'division specials', 'season specials', 'playoffs', 'team specials',
+    'next player to record',
+)
+
+
+@st.cache_data(ttl=FETCH_TTL, show_spinner=False)
+def dk_weekly_subcategories():
+    """
+    Which subcategories on DraftKings' NFL board are weekly player totals.
+
+    DISCOVERED AT RUNTIME, NOT HARDCODED. The league feed ships its own
+    category and subcategory catalogue, so the right ids can be read off it
+    rather than guessed - which is the only workable approach here, because
+    the weekly ids cannot be looked up in August. No weekly board is posted
+    in the preseason, so a constant written now would be a constant written
+    blind.
+
+    Returns (list of (category_name, subcategory_name, category_id,
+    subcategory_id), error).
+    """
+    payload, err = _get_json(f'{DK_NASH_BASE}/leagues/{DK_LEAGUE_NFL}')
+    if err:
+        return [], err
+    if not isinstance(payload, dict):
+        return [], "DraftKings' league feed returned an unexpected shape."
+
+    categories = {c.get('id'): str(c.get('name') or '')
+                  for c in payload.get('categories') or [] if isinstance(c, dict)}
+    found = []
+    for sub in payload.get('subcategories') or []:
+        if not isinstance(sub, dict):
+            continue
+        cat_name = categories.get(sub.get('categoryId'), '')
+        if cat_name.lower() in DK_NON_WEEKLY_CATEGORIES:
+            continue
+        name = str(sub.get('name') or '')
+        if name.lower() in DK_WEEKLY_STAT_NAMES:
+            found.append((cat_name, name, sub.get('categoryId'), sub.get('id')))
+    if not found:
+        return [], ("DraftKings is not posting weekly player props right now - no "
+                    "per-player stat subcategory is in their NFL board. That is "
+                    "expected outside the season; the weekly slate goes up on "
+                    "Tuesday or Wednesday.")
+    return found, None
+
+
+@st.cache_data(ttl=FETCH_TTL, show_spinner=False)
+def fetch_draftkings_weekly_lines():
+    """
+    DraftKings' weekly player props - discover the subcategories, then pull
+    one board per stat, the same route the season props use.
+
+    NOT LIVE-VERIFIED. Everything below the discovery step is the route that
+    is known to work for season props with a different subcategory id, and
+    the parser classifies season vs game from the event's own shape rather
+    than from wording. But a weekly board is not posted in August, so this
+    path has never returned a real row. Run
+    `scripts/probe_season_odds.py --weekly` in season to confirm the shape
+    before trusting it - and note that the discovery step failing is a
+    perfectly ordinary preseason answer, not a bug.
+    """
+    subs, err = dk_weekly_subcategories()
+    if err:
+        return _empty_props(), err
+
+    frames, errors = [], []
+    for cat_name, name, cat_id, sub_id in subs:
+        payload, fetch_err = _get_json(dk_subcategory_url(sub_id, category=cat_id))
+        if fetch_err:
+            errors.append(f'{name}: {fetch_err}')
+            continue
+        props, parse_err = parse_draftkings_payload(payload)
+        if not props.empty:
+            frames.append(props)
+        elif parse_err:
+            errors.append(f'{name}: {parse_err}')
+
+    combined = combine_props(*frames)
+    if combined.empty:
+        return combined, '; '.join(errors) or "DraftKings returned no weekly lines."
+    return combined, ('; '.join(errors) if errors else None)
 
 
 @st.cache_data(ttl=FETCH_TTL, show_spinner=False)

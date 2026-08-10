@@ -101,8 +101,116 @@ def _build_props_comparison_table(props_long_df):
     return pivot
 
 
+def _fmt_age(stamp):
+    if stamp is None:
+        return "never"
+    delta = datetime.datetime.now(datetime.timezone.utc) - stamp
+    hours = delta.total_seconds() / 3600
+    if hours < 1:
+        return f"{int(delta.total_seconds() // 60)} min ago"
+    if hours < 48:
+        return f"{int(hours)}h ago"
+    return f"{int(hours // 24)}d ago"
+
+
+def _render_weekly_props():
+    """
+    This week's player props from the books that cost nothing to ask.
+
+    ABOVE the paid section and outside its key check on purpose: these three
+    need no key and no quota, so making them wait behind a text box someone
+    may never fill in would hide the part of this tab that can be used every
+    day of the season.
+    """
+    from data.odds_weekly import weekly_props, weekly_summary, weekly_consensus, posting_anchor
+
+    st.markdown("#### This week's player props")
+    st.caption(
+        "PrizePicks, Underdog and DraftKings — no key, no quota, no request limit. "
+        "Books post the coming weekend on Tuesday or Wednesday, so this reloads on its "
+        "own the first time you open it after Tuesday morning. Hit refresh whenever you "
+        "want the current numbers rather than the ones posted at the start of the week."
+    )
+
+    force = st.button("🔄 Refresh weekly lines", key="weekly_props_refresh",
+                      help="Goes back to all three books now, ignoring the saved snapshot.")
+    if force:
+        for fn in ('fetch_prizepicks_lines', 'fetch_underdog_lines',
+                   'fetch_draftkings_weekly_lines', 'dk_weekly_subcategories'):
+            getattr(__import__('data.odds_sources', fromlist=[fn]), fn).clear()
+
+    with skeleton_loader("table", n_rows=5, n_cols=5):
+        props, meta = weekly_props(force=force)
+
+    stamp = meta.get('fetched_at')
+    bits = [f"Pulled {_fmt_age(stamp)}"]
+    if meta.get('from_network'):
+        bits.append("refetched just now" if not meta.get('stale') else "refetch returned nothing")
+    else:
+        bits.append("from the saved snapshot")
+    bits.append(f"slate posted {posting_anchor():%a %d %b}")
+    st.caption(" · ".join(bits))
+
+    status = meta.get('status') or {}
+    problems = {k: v.get('error') for k, v in status.items() if v.get('error')}
+    if props.empty:
+        st.info(
+            "No weekly player props right now. Outside the season that is the expected "
+            "answer — the books post a slate on Tuesday and pull it after the games."
+        )
+        for book, err in problems.items():
+            st.caption(f"**{book}** — {err}")
+        return
+
+    summary = weekly_summary(props)
+    if not summary.empty:
+        st.dataframe(summary, width="stretch", hide_index=True)
+    for book, err in problems.items():
+        st.caption(f"⚠️ **{book}** — {err}")
+
+    consensus = weekly_consensus(props)
+    if consensus.empty:
+        st.info("Lines came back but none mapped to a stat this app scores.")
+        return
+
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        markets = sorted(consensus['Market'].unique().tolist())
+        chosen = st.multiselect("Stat", markets, default=[], key="weekly_props_market")
+    with c2:
+        search = st.text_input("Player", key="weekly_props_player",
+                               placeholder="filter by name")
+
+    view = consensus
+    if chosen:
+        view = view[view['Market'].isin(chosen)]
+    if search:
+        view = view[view['Player'].str.contains(search, case=False, na=False)]
+
+    st.markdown(
+        "**Consensus board** — one row per player and stat. `Consensus` is the median "
+        "across whichever books priced him, `Books` is how many did, and `Spread` is the "
+        "gap between the highest and lowest. A stat every book agrees on is settled; the "
+        "wide ones are where a disagreement is worth reading."
+    )
+    st.dataframe(style_plain_dataframe(view.set_index('Player')),
+                 width="stretch", height=df_auto_height(min(len(view), 25)))
+    st.caption(f"{len(view)} of {len(consensus)} player-stat rows.")
+
+
 def render():
     st.markdown("<div class='custom-section-header'>LIVE NFL ODDS</div>", unsafe_allow_html=True)
+
+    _render_weekly_props()
+
+    st.divider()
+    st.markdown("#### More books, via The Odds API")
+    st.caption(
+        "Everything above is free and uncapped. This section is the metered one — it "
+        "adds the sportsbooks the three above don't cover (BetMGM, Caesars, BetRivers "
+        "and the rest) and it spends credits from your plan to do it, so it only ever "
+        "fetches when you ask."
+    )
 
     # value= only seeds the widget on its very first render this session
     # (session_state takes over after that) - so this pre-fills the box
@@ -118,7 +226,8 @@ def render():
         save_odds_api_key(odds_api_key)
 
     if not odds_api_key:
-        st.info("Enter an API key above to load odds. Free tier available at the-odds-api.com.")
+        st.info("Enter an API key above to add these books. Free tier at the-odds-api.com. "
+                "The weekly board above works without one.")
         return
 
     oc1, oc2 = st.columns([1, 3])

@@ -626,6 +626,66 @@ def probe_draftkings(save_dir):
         time.sleep(0.6)
 
 
+def probe_weekly(save_dir):
+    """
+    Can we see THIS WEEK's player props, from the three books that cost
+    nothing to ask?
+
+    Split out from the season probe because the answer changes with the
+    calendar: a weekly board does not exist in August, so "nothing here" is
+    the correct preseason result and should not read as a failure. Run it in
+    season, on a Tuesday or later.
+    """
+    print("\n" + "=" * 72)
+    print("WEEKLY PLAYER PROPS - PrizePicks, Underdog, DraftKings")
+    print("=" * 72)
+
+    # DraftKings first: the discovery step is the part that has never been
+    # seen answering, since the subcategory ids for a weekly board cannot be
+    # read off a preseason payload.
+    status, headers, payload, text, err = _get(f'{DK_NASH}/leagues/88808')
+    print("\n  DraftKings - what subcategories is the NFL board carrying?")
+    if err or status != 200 or not isinstance(payload, dict):
+        print(f"    league feed unavailable: {err or status}")
+    else:
+        cats = {c.get('id'): str(c.get('name') or '') for c in payload.get('categories') or []}
+        subs = payload.get('subcategories') or []
+        print(f"    {len(cats)} categories, {len(subs)} subcategories")
+        _save(save_dir, 'dk_league_catalogue', payload)
+        wanted = ('yards', 'tds', 'receptions', 'completions', 'attempts', 'interceptions')
+        by_cat = {}
+        for s in subs:
+            name = str(s.get('name') or '')
+            if any(w in name.lower() for w in wanted):
+                by_cat.setdefault(cats.get(s.get('categoryId'), '?'), []).append(
+                    (name, s.get('categoryId'), s.get('id')))
+        for cat, entries in sorted(by_cat.items()):
+            print(f"      {cat}")
+            for name, cid, sid in sorted(entries):
+                print(f"         {name:<22} category={cid} subcategory={sid}")
+        print("\n    Anything above under a GAME-ish category (not Player Futures, Stat")
+        print("    Leaders, Milestones, Rookie Watch) is a weekly board. In the")
+        print("    preseason there will be none, and that is the right answer.")
+
+    for label, url, params in (
+        ('PrizePicks weekly (league 9)',
+         'https://api.prizepicks.com/projections', {'league_id': 9, 'per_page': 1000}),
+        ('Underdog board',
+         'https://api.underdogfantasy.com/beta/v5/over_under_lines', None),
+    ):
+        status, headers, payload, text, err = _get(url, params)
+        print(f"\n  {label}")
+        if err:
+            print(f"    network error: {err[:90]}")
+            continue
+        print(f"    {status}  {len(text):,}b")
+        if status == 200 and payload is not None:
+            _save(save_dir, 'weekly_' + _slug(label), payload)
+        elif status in (401, 403):
+            print("    refused - use the browser-save path for this one.")
+        time.sleep(0.6)
+
+
 def probe_books(save_dir):
     print("\n" + "=" * 72)
     print("PART B - SPORTSBOOKS (one plain GET each, honest User-Agent)")
@@ -694,6 +754,8 @@ def main():
     ap.add_argument('--books-only', action='store_true')
     ap.add_argument('--draftkings', action='store_true',
                     help='only the deep DraftKings hunt, nothing else')
+    ap.add_argument('--weekly', action='store_true',
+                    help="only this week's player props from the three free books")
     ap.add_argument('--save-dir', default='',
                     help='write every payload here for offline inspection')
     args = ap.parse_args()
@@ -702,6 +764,11 @@ def main():
 
     if args.draftkings:
         probe_draftkings(args.save_dir)
+        print("\ndone.")
+        return
+
+    if args.weekly:
+        probe_weekly(args.save_dir)
         print("\ndone.")
         return
 

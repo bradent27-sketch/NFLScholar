@@ -995,6 +995,137 @@ def test_new_books_combine_with_the_existing_ones():
     assert len(both) == len(fd) + len(pin) + len(ud)
 
 
+# --- weekly ----------------------------------------------------------------
+
+def _dk_game_payload(market_name, label_prefix=''):
+    """A DraftKings weekly market: a GAME event, so two club participants."""
+    return {
+        'events': [{'id': 'ev1', 'name': 'KC Chiefs @ BUF Bills', 'participants': [
+            {'name': 'KC Chiefs', 'type': 'Team',
+             'metadata': {'rosettaTeamName': 'Chiefs', 'shortName': 'KC'}},
+            {'name': 'BUF Bills', 'type': 'Team',
+             'metadata': {'rosettaTeamName': 'Bills', 'shortName': 'BUF'}},
+        ]}],
+        'markets': [{'id': 'm1', 'eventId': 'ev1', 'name': market_name,
+                     'subcategoryId': 999,
+                     'marketType': {'name': 'Passing Yards OU'}}],
+        'selections': [
+            {'id': 's1', 'marketId': 'm1', 'label': f'{label_prefix}Over 275.5',
+             'trueOdds': 1.91, 'outcomeType': 'Over'},
+            {'id': 's2', 'marketId': 'm1', 'label': f'{label_prefix}Under 275.5',
+             'trueOdds': 1.91, 'outcomeType': 'Under'},
+        ],
+    }
+
+
+def test_draftkings_classifies_game_vs_season_from_event_shape():
+    """
+    A season market hangs off a PLAYER event (one club participant plus the
+    man); a weekly market hangs off a GAME event (two clubs). Counting the
+    team-flagged participants classifies it without reading any wording,
+    which is the property worth having given how often a label has moved.
+    """
+    weekly, err = parse_draftkings_payload(_dk_game_payload('Patrick Mahomes Passing Yards'))
+    assert err is None, err
+    assert list(weekly['period']) == ['game']
+    assert weekly['player'].iloc[0] == 'Patrick Mahomes'
+    assert weekly['market'].iloc[0] == 'passing_yards'
+    assert weekly['line'].iloc[0] == 275.5
+
+    season, _ = parse_draftkings_payloads(_fixture('draftkings_player_futures.json'))
+    assert set(season['period']) == {'season'}
+
+
+def test_draftkings_weekly_player_can_come_from_the_selection_label():
+    # The other shape books use: one market for the game, the man named on
+    # each selection. Neither shape is confirmed live, so both are handled.
+    props, err = parse_draftkings_payload(
+        _dk_game_payload('Passing Yards', label_prefix='Patrick Mahomes '))
+    assert err is None, err
+    assert props['player'].iloc[0] == 'Patrick Mahomes'
+    assert props['period'].iloc[0] == 'game'
+
+
+def test_draftkings_drops_a_game_market_with_no_recoverable_player():
+    # Better a missing row than one filed under a wrong name.
+    props, err = parse_draftkings_payload(_dk_game_payload('Passing Yards'))
+    assert props.empty and err
+
+
+def test_weekly_posting_anchor_walks_back_to_tuesday():
+    import datetime as dt
+    from data.odds_weekly import posting_anchor, is_stale, POST_HOUR_UTC
+
+    def at(text):
+        return dt.datetime.fromisoformat(text).replace(tzinfo=dt.timezone.utc)
+
+    # Before Tuesday's posting hour, the current slate is still last week's.
+    assert posting_anchor(at('2026-08-11 14:00')) == at('2026-08-04 15:00')
+    # After it, the new slate is up.
+    assert posting_anchor(at('2026-08-11 16:00')) == at('2026-08-11 15:00')
+    # And it stays the anchor all the way to the following Tuesday.
+    for when in ('2026-08-14 09:00', '2026-08-16 23:00', '2026-08-17 09:00'):
+        assert posting_anchor(at(when)) == at('2026-08-11 15:00'), when
+    assert posting_anchor(at('2026-08-11 16:00')).hour == POST_HOUR_UTC
+
+    # Staleness is about which slate, not about elapsed hours: a snapshot
+    # taken Friday is current on Sunday and stale on Wednesday.
+    friday = at('2026-08-14 09:00')
+    assert is_stale(friday, at('2026-08-16 12:00')) is False
+    assert is_stale(friday, at('2026-08-18 16:00')) is True
+    assert is_stale(None) is True
+
+
+def test_weekly_snapshot_round_trips_and_survives_a_bad_file():
+    import tempfile
+    from data.odds_weekly import save_snapshot, load_snapshot, weekly_summary, weekly_consensus
+
+    props, _ = parse_underdog_payload(_fixture('underdog_over_under_lines.json'))
+    game = props[props['period'] == 'game']
+    assert not game.empty, "fixture should carry single-game lines"
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'snap.json')
+        assert save_snapshot(game, {'Underdog': {'rows': len(game)}}, path=path) is None
+        back, when, status = load_snapshot(path)
+        assert len(back) == len(game)
+        assert when is not None and status['Underdog']['rows'] == len(game)
+        assert list(back['line']) == list(game['line'])
+
+        # A missing or corrupt file reads as "no snapshot" so the next call
+        # refetches, rather than raising on a tab that is drawing odds.
+        empty, when2, _ = load_snapshot(os.path.join(tmp, 'nope.json'))
+        assert empty.empty and when2 is None
+        with open(path, 'w') as handle:
+            handle.write('{not json')
+        empty2, _, _ = load_snapshot(path)
+        assert empty2.empty
+
+    summary = weekly_summary(game)
+    assert set(summary.columns) == {'Book', 'Lines', 'Players', 'Markets'}
+    consensus = weekly_consensus(game)
+    assert list(consensus.columns[:6]) == ['Player', 'Team', 'Market',
+                                           'Consensus', 'Books', 'Spread']
+    assert (consensus['Books'] >= 1).all()
+
+
+def test_weekly_consensus_medians_across_books_and_reports_the_spread():
+    from data.odds_weekly import weekly_consensus
+    rows = pd.DataFrame([
+        {'provider': b, 'player': 'A Back', 'player_key': 'aback', 'team': 'KC',
+         'position': 'RB', 'market': 'rushing_yards', 'market_raw': 'Rush Yards',
+         'scorable': True, 'line': line, 'over_payout': None, 'under_payout': None,
+         'p_over': None, 'period': 'game', 'source_id': str(i)}
+        for i, (b, line) in enumerate([('Underdog', 60.5), ('PrizePicks', 64.5),
+                                       ('DraftKings', 62.5)])
+    ])
+    out = weekly_consensus(rows)
+    assert len(out) == 1
+    assert out['Consensus'].iloc[0] == 62.5, "median of the three, not the mean"
+    assert out['Books'].iloc[0] == 3
+    assert out['Spread'].iloc[0] == 4.0
+
+
 def test_bad_payload_shapes_are_reported_not_raised():
     for bad in ({}, {'attachments': {}}, [], 'nonsense', None):
         props, err = parse_fanduel_payload(bad)

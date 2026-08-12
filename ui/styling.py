@@ -941,6 +941,120 @@ def inject_theme():
         }}
         .gl-row {{ animation: row-in 240ms ease-out backwards; }}
         .gl-row:hover td {{ filter: brightness(1.18); }}
+
+        /* ---- GAME SLATE matchup cards -------------------------------------
+           Every rule here is scoped to div[class*="st-key-gs_card_"], the
+           class Streamlit generates for st.container(key="gs_card_N"). That
+           prefix is what makes a Streamlit-owned container styleable at all,
+           and scoping to it keeps these rules out of every other tab's
+           containers.
+
+           The card cannot be one block of raw HTML: it has to hold real
+           st.button widgets, because switching tabs is only legal from an
+           on_click callback (see ui.components.switch_tab). So it is a
+           styled container with markdown inside it. */
+        div[class*="st-key-gs_card_"] {{
+            position: relative;
+            background: {C['surface_container_low']};
+            border: 1px solid {C['outline_variant']};
+            border-radius: {R['md']};
+            padding: 14px 14px 10px 14px;
+            margin-bottom: 14px;
+            overflow: hidden;
+            transition: border-color 160ms ease-out, transform 160ms ease-out,
+                        box-shadow 160ms ease-out;
+        }}
+        div[class*="st-key-gs_card_"]:hover {{
+            border-color: {C['outline']};
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
+        }}
+        /* The accent bar reads the two teams' real colors, which arrive as
+           custom properties from a one-line <style> the card itself emits -
+           a Streamlit-owned element has no inline style attribute to set.
+           Each var() carries a neutral fallback so a team with no color
+           degrades to the outline instead of an invalid gradient. */
+        div[class*="st-key-gs_card_"]::before {{
+            content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+            background: linear-gradient(90deg,
+                var(--gs-a, {C['outline']}) 0%, var(--gs-a, {C['outline']}) 48%,
+                var(--gs-b, {C['outline']}) 52%, var(--gs-b, {C['outline']}) 100%);
+        }}
+
+        .gs-meta {{
+            display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+            font-family: {F['mono']}; font-size: 10.5px; letter-spacing: 0.04em;
+            text-transform: uppercase; color: {C['on_surface_variant']};
+            margin-bottom: 8px;
+        }}
+        .gs-dot {{ opacity: 0.45; }}
+        .gs-tv {{ color: {C['tertiary']}; }}
+        .gs-headline {{
+            font-family: {F['display']}; font-size: 11px; font-weight: 700;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: {C['tertiary']}; margin-bottom: 6px;
+        }}
+        .gs-status {{ color: {C['error']}; }}
+
+        /* One row per team. .gs-name takes the free space so conference,
+           score and the W pill are pushed to the right edge; everything
+           else is fixed so a long name can't squeeze the logo. */
+        .gs-team {{
+            display: flex; align-items: center; gap: 9px;
+            padding: 7px 9px; border-radius: {R['default']};
+            border-left: 3px solid var(--gs-color, {C['outline']});
+            background: {C['surface_container']};
+            margin-bottom: 5px;
+        }}
+        .gs-team .gs-side {{
+            flex: 0 0 34px; font-family: {F['mono']}; font-size: 9px;
+            letter-spacing: 0.08em; color: {C['on_surface_variant']}; opacity: 0.7;
+        }}
+        .gs-team .gs-logo {{
+            height: 24px; width: 24px; object-fit: contain; flex: 0 0 24px;
+            filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+        }}
+        .gs-team .gs-name {{
+            flex: 1 1 auto; font-family: {F['display']}; font-size: 14px;
+            font-weight: 600; color: {C['on_surface']};
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }}
+        .gs-team .gs-score {{
+            flex: 0 0 auto; font-family: {F['mono']}; font-size: 17px;
+            font-weight: 700; color: {C['on_surface']};
+        }}
+        .gs-team .gs-win-flag {{
+            flex: 0 0 auto; font-family: {F['mono']}; font-size: 9px; font-weight: 700;
+            background: var(--gs-color, {C['outline']}); color: #fff;
+            border-radius: {R['full']}; padding: 1px 6px; letter-spacing: 0.06em;
+        }}
+        .gs-team.gs-won {{ background: {C['surface_container_high']}; }}
+        .gs-team.gs-won .gs-score {{ color: {C['primary']}; }}
+        /* A tie dims NEITHER team - both rows get no state class at all. */
+        .gs-team.gs-lost .gs-name {{ opacity: 0.55; }}
+        .gs-team.gs-lost .gs-score {{ opacity: 0.6; }}
+
+        /* Descendant selector, NOT `.stButton > button`. Streamlit wraps a
+           button carrying help= in two extra spans, so the direct-child form
+           matches nothing - with no error, while Streamlit's own accent
+           hover keeps the buttons looking styled. !important because
+           Streamlit injects its button CSS with emotion at runtime, AFTER
+           this block, so an equally-specific rule loses the cascade. */
+        div[class*="st-key-gs_card_"] .stButton button {{
+            background: transparent !important;
+            border: 1px solid {C['outline_variant']} !important;
+            color: {C['on_surface_variant']} !important;
+            font-size: 11.5px !important;
+            padding: 3px 8px !important;
+        }}
+        div[class*="st-key-gs_card_"] .stButton button:hover:not(:disabled) {{
+            background: {C['surface_container_high']} !important;
+            border-color: {C['primary']} !important;
+            color: {C['primary']} !important;
+        }}
+        div[class*="st-key-gs_card_"] .stButton button:disabled {{
+            opacity: 0.4 !important;
+        }}
         </style>
     """, unsafe_allow_html=True)
 

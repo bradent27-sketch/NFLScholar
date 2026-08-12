@@ -33,8 +33,8 @@ from ui.components import (  # noqa: E402
     render_data_health_sidebar, ensure_pff_imports_dir, render_intro_and_glossary,
 )
 from ui.tabs import (  # noqa: E402
-    player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare,
-    draft_hq,
+    game_slate, player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds,
+    player_compare, draft_hq,
 )
 
 
@@ -84,7 +84,7 @@ render_intro_and_glossary()
 # than pointing at the tab that was actually added.
 _tabs = st.tabs(TAB_LABELS, key="active_tab", on_change="rerun")
 
-_tab_modules = [player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare, draft_hq]
+_tab_modules = [game_slate, player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare, draft_hq]
 assert len(_tab_modules) == len(TAB_LABELS), "TAB_LABELS and _tab_modules must stay in sync"
 for _tab, _module, _label in zip(_tabs, _tab_modules, TAB_LABELS):
     if _tab.open:

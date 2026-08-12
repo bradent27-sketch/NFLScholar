@@ -13,3 +13,7 @@ rapidfuzz>=3.14
 # so it is left to an explicit install:
 #     pip install playwright && playwright install chromium
 # playwright
+# Windows ships no system tz database, so zoneinfo.ZoneInfo() RAISES there
+# without this. Game Slate derives EDT/EST from it; the fallback says UTC
+# rather than silently mislabelling every kickoff.
+tzdata

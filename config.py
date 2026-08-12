@@ -191,6 +191,7 @@ TAB_RANKINGS = "WEEKLY RANKINGS"
 TAB_LIVE_ODDS = "LIVE ODDS"
 TAB_PLAYER_COMPARE = "PLAYER COMPARE"
 TAB_DRAFT_HQ = "DRAFT HQ"
+TAB_GAME_SLATE = "GAME SLATE"
 # Draft HQ sits LAST, deliberately. It's the most capable tab in the app,
 # but it answers a question that's only live for a week or two a year -
 # every other tab is used all season. Ordering by how good a tab is rather
@@ -201,9 +202,15 @@ TAB_DRAFT_HQ = "DRAFT HQ"
 # labels here and not ten: that tab computed replacement-level VORP off
 # last season's per-game pace, which is a strict subset of what Draft HQ
 # does (real projections, market blend, injury and aging adjustments).
+# Game Slate sits FIRST, by the same logic that puts Draft HQ last. It is a
+# launchpad rather than a report - it answers "who is playing" and then hands
+# the game to another tab with both teams filled in - so it is the natural
+# first thing opened in a prep session, and being first is what makes it
+# useful rather than a detour.
 TAB_LABELS = [
-    TAB_PLAYER_SEARCH, TAB_DEPTH_CHARTS, TAB_DEFENSIVE_YIELD, TAB_RISERS,
-    TAB_ROOKIE_WATCH, TAB_RANKINGS, TAB_LIVE_ODDS, TAB_PLAYER_COMPARE, TAB_DRAFT_HQ,
+    TAB_GAME_SLATE, TAB_PLAYER_SEARCH, TAB_DEPTH_CHARTS, TAB_DEFENSIVE_YIELD,
+    TAB_RISERS, TAB_ROOKIE_WATCH, TAB_RANKINGS, TAB_LIVE_ODDS, TAB_PLAYER_COMPARE,
+    TAB_DRAFT_HQ,
 ]
 
 # Decimal places per stat, approved list: whole numbers for counting stats

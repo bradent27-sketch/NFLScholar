@@ -1245,10 +1245,17 @@ def test_every_import_source_renders_a_link_and_an_instruction():
         # never a bare title that looks like a dead link.
         assert ('](' in line) if source.url else ('**' in line)
 
-    # The one source with no public URL is a subscription export, and that
-    # is a decision rather than an oversight: a fabricated link would send
-    # someone somewhere wrong with confidence.
-    assert [k for k, v in IMPORT_SOURCES.items() if v.url is None] == ['ffa']
+    # Every source currently has a real page behind it. The renderer still
+    # supports an absent URL - a subscription export may have no public page
+    # worth linking, and a fabricated link is worse than none - but that has
+    # to stay a deliberate choice rather than an entry someone forgot to
+    # finish, so it is asserted empty here and exercised below instead.
+    assert [k for k, v in IMPORT_SOURCES.items() if v.url is None] == []
+
+    from data.import_sources import ImportSource
+    unlinked = ImportSource('Some Paid Export', None, 'Save it and upload.')
+    rendered = f"**{unlinked.title}** — {unlinked.how}"
+    assert '](' not in rendered and '**' in rendered
 
     combined = markdown_list('underdog', 'pinnacle')
     assert combined.count('•') == 2

@@ -49,11 +49,12 @@ IMPORT_SOURCES = {
         'resolves, instead of about 80%.',
     ),
     'ffa': ImportSource(
-        'Fantasy Football Advice',
-        None,
-        'Export the players JSON from your subscription and upload it. Their '
-        'projected STAT LINE gets re-scored under your league settings, so the '
-        'half-PPR total in the file never reaches your board.',
+        'Fantasy Football Advice — mock draft',
+        'https://thefantasyfootballadvice.com/mock-draft',
+        'Run a mock draft with **preserve log** on, then save the players JSON it '
+        'loads. Their projected STAT LINE gets re-scored under your league '
+        'settings, so the half-PPR point total in the file never reaches your '
+        'board.',
     ),
 
     # --- season-long book lines --------------------------------------------

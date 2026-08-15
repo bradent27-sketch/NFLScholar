@@ -403,12 +403,23 @@ def record_pick(state, team, player_row):
     return entry
 
 
-def run_until_user_pick(state, settings, pool, order_col, reach_window=3.0):
+def run_until_user_pick(state, settings, pool, order_col, reach_window=3.0, max_picks=None):
     """
     Advance the draft through every bot pick until it's the user's turn (or
     the draft ends). Returns the picks that just happened, so the UI can
     show "here's what went between your picks" - which is the part of a mock
     people actually study.
+
+    `max_picks` caps how many bot picks happen in one call. The default
+    (None) runs the whole gap in one go, which is what the batch tools want
+    - _render_mock_tools runs dozens of complete drafts and pacing them
+    would turn seconds into minutes. The paced draft room passes 1 and
+    calls this repeatedly, so the room fills in one pick at a time instead
+    of jumping from your pick straight to your next one.
+
+    Capping is safe to resume from because all the state lives in `state`:
+    the loop's own bookkeeping (which players are gone, whose turn it is) is
+    re-derived from it on entry, not carried across calls.
     """
     made = []
     rng = np.random.default_rng(state['seed'] + state['pick_no'])
@@ -434,6 +445,8 @@ def run_until_user_pick(state, settings, pool, order_col, reach_window=3.0):
         drafted.add(choice['Player'])
         if state['pick_no'] > total_picks:
             state['complete'] = True
+        if max_picks is not None and len(made) >= max_picks:
+            break
     return made
 
 

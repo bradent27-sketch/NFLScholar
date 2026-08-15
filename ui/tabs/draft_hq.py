@@ -18,6 +18,8 @@ Mock Draft and News follow because they're preparation, not draft night.
 League Settings sits in a collapsed expander above all of it: it's
 configured once and then never touched again while a clock is running.
 """
+import time
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -57,6 +59,24 @@ from ui.components import skeleton_loader, switch_tab, import_hint
 
 DRAFTED_KEY = 'dhq_drafted'          # ordered list of pick dicts (live draft tracker)
 SIM_KEY = 'dhq_sim_state'
+PACE_KEY = 'dhq_mock_pace'           # seconds between simulated picks; 0 = instant
+
+# How fast the room drafts around you in a mock, in seconds per pick.
+#
+# The whole point of a mock is rehearsing a read under time pressure, and a
+# room that teleports from your pick to your next one gives you nothing to
+# read - eleven players vanish between two frames. Letting the picks land
+# one at a time is what makes a run visible while it is happening, which is
+# the thing you are actually practising noticing.
+#
+# Instant is kept, and kept first, because it is the right mode for a
+# twelfth mock when you are checking one specific branch rather than
+# rehearsing. The batch tools ("run many mocks") ignore pacing entirely.
+MOCK_PACE_OPTIONS = {
+    'Instant': 0.0,
+    'Fast (0.25s)': 0.25,
+    'Draft room (0.6s)': 0.6,
+}
 
 # Provider -> parser, for the upload panel's confirmation message. Imported
 # at module scope because the panel needs it before the settings expander has
@@ -569,7 +589,7 @@ def _ecr_signature():
 # Board assembly
 # ---------------------------------------------------------------------------
 
-def _board_cache_key(settings, next_pick, adp_meta):
+def _board_cache_key(settings, adp_meta):
     """
     A fully hashable summary of everything that changes the board.
 
@@ -579,12 +599,26 @@ def _board_cache_key(settings, next_pick, adp_meta):
     file was attached. The uploaded ADP still participates in the key via
     adp_meta's source label plus the row count of the frame it produced, so
     swapping one upload for another does invalidate the cache.
+
+    WHAT IS DELIBERATELY NOT IN HERE: `next_pick`. It used to be, and it was
+    the reason a live draft stuttered. Your next pick number advances as the
+    room drafts, so it changed every pick or two, and every change threw the
+    whole cached board away and rebuilt it - a measured 1.3s, almost all of
+    it re-running build_projected_board over ~700 players.
+
+    That work was pure waste even before the timing mattered. The only two
+    columns that depend on the pick number are 'Avail Next %' and 'VONA',
+    and _draft_context already recomputes both against the LIVE pick via
+    data.draft_board.refresh_pick_context - so the versions baked in here
+    were overwritten a few lines later on every single render. The board is
+    now cached against league settings alone, which is what its own
+    docstring always claimed it was.
     """
     scoring = settings['scoring']
     roster = settings['roster']
     return (
         settings['num_teams'], settings['board_format'], settings['draft_type'],
-        next_pick, settings['uncertainty'], settings['tiers'],
+        settings['uncertainty'], settings['tiers'],
         settings['baseline_season'], settings['market_weight'],
         settings['sos_window'], settings['ffa_weight'], settings.get('ffa_rows', 0),
         settings.get('adp_source', 'Auto'), settings.get('ecr_signature'),
@@ -714,8 +748,13 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _market_scored, _settings, cache
         # leave a delta that disagrees with the column beside it.
         book_projection = build_book_projection(projected, _market_scored, scoring)
 
+    # next_pick=None on purpose: 'Avail Next %' and 'VONA' are left blank
+    # here and filled in by refresh_pick_context against the live pick every
+    # render (see _draft_context and _board_cache_key). Passing a pick
+    # number here computed them against whatever pick the board happened to
+    # be BUILT at, which is not the pick you are on.
     board, meta = build_draft_board(
-        projected, _settings, adp_df=_adp_df, next_pick=cache_key[3],
+        projected, _settings, adp_df=_adp_df, next_pick=None,
         tiers_per_position=_settings['tiers'], rank_sd_scale=_settings['uncertainty'],
         latest_season=season, market_weight=_settings['market_weight'],
     )
@@ -745,8 +784,14 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _market_scored, _settings, cache
     return board, meta
 
 
-def _load_board(settings, next_pick):
-    """Fetch sources and assemble the board, reporting what did and didn't load."""
+def _load_board(settings):
+    """
+    Fetch sources and assemble the board, reporting what did and didn't load.
+
+    Takes no pick number: the board is a statement about the player pool
+    under this league's settings, and the two pick-dependent columns are
+    layered on afterwards by refresh_pick_context. See _board_cache_key.
+    """
     status = {}
     # An uploaded FantasyPros export wins over the live mirror outright. It's
     # a deliberate act by someone who has just looked at the rankings, which
@@ -798,7 +843,7 @@ def _load_board(settings, next_pick):
     settings = {**settings, 'market_rows': int(len(market_scored))}
 
     board, meta = _cached_board(ecr_board, adp_df, ffa_df, market_scored, settings,
-                                _board_cache_key(settings, next_pick, adp_meta))
+                                _board_cache_key(settings, adp_meta))
     meta['market_scored'] = market_scored
 
     # Merged after the cached build rather than inside it: this is pure
@@ -2134,6 +2179,39 @@ def _availability_pick(my_picks, current_pick):
     return None
 
 
+def _mock_pace():
+    """Seconds to hold each simulated pick on screen; 0 when instant."""
+    return MOCK_PACE_OPTIONS.get(st.session_state.get(PACE_KEY, 'Fast (0.25s)'), 0.0)
+
+
+def _tick_mock_draft(dc, settings, reach):
+    """
+    Advance a paced mock by one bot pick per render, holding each on screen
+    for the chosen interval before asking for the next frame.
+
+    The sleep is in the script body, not a callback - it has to be, since a
+    callback runs before the frame it would be pausing is drawn. The order
+    matters: the page is fully rendered by the time this runs, so the pause
+    is spent LOOKING at the pick that just landed rather than waiting for it.
+
+    Termination is on the draft's own state, not a counter: each pass
+    records exactly one pick, so the loop ends when the clock comes back to
+    you or the draft finishes. If the pace control is switched to Instant
+    mid-flight, the next pass runs the remaining gap in one go and stops.
+    """
+    pace = _mock_pace()
+    if not pace or dc['complete'] or dc['on_clock_me']:
+        return
+    state = dc['state']
+    made = run_until_user_pick(state, settings, dc['pool'], dc['order_col'],
+                               reach_window=reach, max_picks=1)
+    if not made:
+        return
+    st.session_state[SIM_KEY] = state
+    time.sleep(pace)
+    st.rerun()
+
+
 def _commit_pick(dc, settings, player_name, mine=True, reach=3.0):
     """Take a player, in whichever mode is active."""
     row = dc['available'][dc['available']['Player'] == player_name]
@@ -2142,7 +2220,11 @@ def _commit_pick(dc, settings, player_name, mine=True, reach=3.0):
     if dc['mode'] == 'Mock draft':
         state = dc['state']
         record_pick(state, state['my_slot'], row.iloc[0])
-        run_until_user_pick(state, settings, dc['pool'], dc['order_col'], reach_window=reach)
+        # Paced mode advances ONE bot pick here and leaves the rest to the
+        # ticker at the end of the room render, so the picks between your
+        # turns land one at a time instead of all at once.
+        run_until_user_pick(state, settings, dc['pool'], dc['order_col'], reach_window=reach,
+                            max_picks=1 if _mock_pace() else None)
         st.session_state[SIM_KEY] = state
     else:
         _record_pick(row.iloc[0], mine=mine)
@@ -2240,7 +2322,7 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
 
     reach = 3.0
     if mode == "Mock draft":
-        controls = st.columns([1.1, 1, 1, 1, 2])
+        controls = st.columns([1.1, 0.8, 0.8, 1, 1.3])
         with controls[0]:
             start_mock = st.button("🎲 New mock", key="dhq_new_mock", type="primary",
                                    width="stretch")
@@ -2252,13 +2334,25 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
         with controls[3]:
             reach = st.slider("Chaos", 1.0, 8.0, 3.0, 0.5, key="dhq_mock_reach",
                               help="How far simulated opponents stray from ADP.")
+        with controls[4]:
+            st.selectbox(
+                "Pace", list(MOCK_PACE_OPTIONS), key=PACE_KEY,
+                index=list(MOCK_PACE_OPTIONS).index('Fast (0.25s)'),
+                help="How fast the room drafts around you. Anything but Instant lets the "
+                     "picks between your turns land one at a time, so a run is visible while "
+                     "it happens instead of eleven players vanishing between two frames.",
+            )
         if start_mock:
             pool, order_col, _ = prepare_sim_pool(board, settings.get('bot_weights'))
             if pool.empty:
                 st.error("No board to simulate against.")
             else:
                 state = init_draft_state({**settings, 'my_slot': int(slot)}, int(slot), int(rounds))
-                run_until_user_pick(state, settings, pool, order_col, reach_window=reach)
+                # One pick when paced, so the opening round ticks in the same
+                # way every later round does rather than the draft opening
+                # already at your first turn.
+                run_until_user_pick(state, settings, pool, order_col, reach_window=reach,
+                                    max_picks=1 if _mock_pace() else None)
                 st.session_state[SIM_KEY] = state
                 st.session_state['dhq_selected'] = None
                 st.rerun()
@@ -2395,6 +2489,12 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
     # about, and he isn't in `available` any more.
     if st.session_state.get(NOTES_PLAYER_KEY):
         _open_notes_dialog(board, st.session_state[NOTES_PLAYER_KEY])
+
+    # Dead last in the render, deliberately. This is what makes a paced mock
+    # tick, and it ends the run with st.rerun() - so anything below it would
+    # never draw while the room is between your picks.
+    if mode == "Mock draft":
+        _tick_mock_draft(dc, settings, reach)
 
 
 # ---------------------------------------------------------------------------
@@ -2568,7 +2668,7 @@ def render():
     ctx = _pick_context(settings)
 
     with skeleton_loader("table", n_rows=12, n_cols=8):
-        board, meta, adp_df, adp_meta, status = _load_board(settings, ctx['next_pick'])
+        board, meta, adp_df, adp_meta, status = _load_board(settings)
 
     with head_right:
         _render_source_status(status, meta)

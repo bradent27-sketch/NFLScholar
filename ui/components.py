@@ -878,6 +878,36 @@ def position_filter_multiselect(df, key, pos_col='Pos', label="Filter by positio
     return df[df[pos_col].isin(positions)]
 
 
+@st.cache_data(show_spinner=False)
+def _count_rows(path, mtime, size):
+    """
+    Line count for one file, cached on its own (path, mtime, size).
+
+    The count itself is a full read of a multi-megabyte CSV, and
+    check_data_health does nine of them. It runs in the sidebar, which
+    means it ran on EVERY rerun of the whole app - every widget interaction
+    on every tab, including every pick of a live draft. Profiling a draft
+    pick put it at ~0.07s of the ~0.30s total, spent re-counting files that
+    had not changed.
+
+    mtime AND size are both in the key so dropping in a refreshed export
+    busts it immediately, which is the entire point of the panel.
+    """
+    try:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as fh:
+            return sum(1 for _ in fh) - 1
+    except Exception:
+        return None
+
+
+def _file_rows(path):
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return _count_rows(path, stat.st_mtime, stat.st_size)
+
+
 def check_data_health():
     """
     Lightweight local-file diagnostics for the sidebar panel below. Checks
@@ -893,11 +923,7 @@ def check_data_health():
     def check_file(label, candidates):
         for c in candidates:
             if os.path.exists(c):
-                try:
-                    with open(c, 'r', encoding='utf-8', errors='ignore') as fh:
-                        n = sum(1 for _ in fh) - 1
-                except Exception:
-                    n = None
+                n = _file_rows(c)
                 checks.append((label, c, True, n))
                 return
         checks.append((label, " or ".join(candidates), False, None))
@@ -912,12 +938,7 @@ def check_data_health():
         year_dir = os.path.join('pff_imports', str(year))
         matches = sorted(glob.glob(os.path.join(year_dir, f'{base_filename}*.csv')))
         if matches:
-            try:
-                with open(matches[0], 'r', encoding='utf-8', errors='ignore') as fh:
-                    n = sum(1 for _ in fh) - 1
-            except Exception:
-                n = None
-            checks.append((label, matches[0], True, n))
+            checks.append((label, matches[0], True, _file_rows(matches[0])))
         else:
             checks.append((label, os.path.join(year_dir, f'{base_filename}*.csv'), False, None))
 

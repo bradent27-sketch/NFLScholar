@@ -21,6 +21,13 @@ from ui.player_snapshot import (
     position_branch_group,
 )
 
+# Same C/F/R aliases ui.components uses, so the inline HTML below reads as
+# token lookups rather than a wall of THEME['...']['...'] subscripts.
+C = THEME['colors']
+F = THEME['fonts']
+R = THEME['radius']
+S = THEME['spacing']
+
 
 def _load_player_side(name, df_stats, n_col, t_col, pff, df_percentiles, target_year):
     """
@@ -38,7 +45,11 @@ def _load_player_side(name, df_stats, n_col, t_col, pff, df_percentiles, target_
     if pos == 'NAN' or not pos:
         pos = 'N/A'
     team = str(p_bio.get(t_col, '')).upper()
-    team_cfg = TEAM_CONFIG.get(team, {'color': '#00fff9'})
+    # THEME token, not a literal cyan - this is the "team unknown" fallback
+    # (a free agent, or a row whose team column is blank), and every other
+    # accent in the app resolves through THEME so a palette change lands
+    # everywhere at once.
+    team_cfg = TEAM_CONFIG.get(team, {'color': THEME['colors']['primary']})
     overall_grade = pff['pff_grades_map'].get(name.lower(), 0.0)
     grade_color = get_pff_color(overall_grade, raw_grade=True)
     jersey_val = str(p_bio.get('jersey_number', '--')).replace('.0', '')
@@ -89,16 +100,22 @@ def _render_legend(side_1, side_2):
         # reason.
         pos_color = get_position_color(side['pos'])
         return (
-            f'<span style="display:inline-flex; align-items:center; gap:7px;">'
-            f'<span style="width:13px; height:13px; border-radius:3px; background:{side["color"]}; '
-            f'box-shadow:0 0 0 1px rgba(255,255,255,0.25); display:inline-block;"></span>'
-            f'<span style="font-family:{THEME["fonts"]["display"]}; font-weight:700; color:#ffffff; font-size:13.5px;">{side["name"]}</span>'
-            f'<span style="font-family:{THEME["fonts"]["mono"]}; font-weight:700; color:{pos_color}; font-size:10.5px; '
-            f'letter-spacing:0.05em; background:rgba(255,255,255,0.06); border-radius:4px; padding:2px 6px;">{side["pos"]}</span></span>'
+            f'<span style="display:inline-flex; align-items:center; gap:{S["xs"]};">'
+            f'<span style="width:13px; height:13px; border-radius:{R["sm"]}; background:{side["color"]}; '
+            f'box-shadow:0 0 0 1px {C["outline"]}; display:inline-block;"></span>'
+            f'<span style="font-family:{F["display"]}; font-weight:700; color:{C["on_surface"]}; font-size:13.5px;">{side["name"]}</span>'
+            f'<span style="font-family:{F["mono"]}; font-weight:700; color:{pos_color}; font-size:10.5px; '
+            f'letter-spacing:0.05em; background:{C["surface_container_high"]}; border-radius:{R["default"]}; '
+            f'padding:2px 6px;">{side["pos"]}</span></span>'
         )
+    # Double-quoted style attribute here too, for the reason spelled out in
+    # swatch() above - this div carries no font token today, but the two
+    # conventions sitting side by side is exactly how the single-quoted form
+    # gets copied into a block that does.
     st.markdown(
-        f"<div style='display:flex; justify-content:center; gap:26px; margin:2px 0 10px 0; flex-wrap:wrap;'>"
-        f"{swatch(side_1)}{swatch(side_2)}</div>",
+        f'<div style="display:flex; justify-content:center; gap:{S["md"]}; '
+        f'margin:{S["xs"]} 0 {S["sm"]} 0; flex-wrap:wrap;">'
+        f'{swatch(side_1)}{swatch(side_2)}</div>',
         unsafe_allow_html=True,
     )
 

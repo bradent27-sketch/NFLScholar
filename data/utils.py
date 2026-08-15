@@ -5,6 +5,9 @@ module so loaders.py and transforms.py can each depend on this without a
 circular import between the two of them.
 """
 import datetime
+import html
+import unicodedata
+
 import numpy as np
 import pandas as pd
 
@@ -145,6 +148,132 @@ def get_val(row, col, fmt="{}"):
     except: return fmt.format(row[col])
 
 
+def _normalize_name_text(name_series):
+    """
+    Repairs two encoding defects that survive all the way into the match keys
+    below, BEFORE any lowercasing/punctuation-stripping happens. Both were
+    found by scanning the real 2025 files, not reasoned about:
+
+    1. HTML entities. snap_counts_2025.csv.csv stores apostrophes escaped -
+       "Ja&apos;Marr Chase", "D&apos;Andre Swift", "Wan&apos;Dale Robinson",
+       "Za&apos;Darius Smith", "Adoree&apos; Jackson", "L&apos;Jarius Sneed",
+       "Dre&apos;Mont Jones" and 10 more. Stripping punctuation does NOT
+       rescue these, it makes them worse: "D&apos;Andre Swift" collapses to
+       "damposandreswift", which matches nothing on any other source, so
+       every one of those players silently carried NO snap data at all.
+    2. Accents. "Jevón Holland", "Rakeem Nuñez-Roches", "Audric Estimé" -
+       the [^a-z] strip DELETES the accented letter rather than folding it,
+       turning "jevón" into "jevn" instead of "jevon", so the same player
+       spelled with and without the accent across two sources never met.
+
+    Applied inside both match-key builders below, so every existing call
+    site in the app picks the fix up without changing.
+    """
+    s = name_series.astype(str)
+    # Only pay for the unescape pass when an entity is actually present -
+    # this runs over every name in every source on a cold load.
+    if s.str.contains('&', regex=False, na=False).any():
+        s = s.map(html.unescape)
+    return s.map(_strip_accents)
+
+
+def _strip_accents(value):
+    # NFKD splits an accented character into base letter + combining mark, so
+    # dropping the marks leaves plain ASCII ("ó" -> "o") rather than deleting
+    # the letter outright.
+    return ''.join(c for c in unicodedata.normalize('NFKD', str(value)) if not unicodedata.combining(c))
+
+
+# Cross-source first-name variants for the SAME real player, as
+# (variant, canonical) pairs. This is a hand-curated list on purpose.
+#
+# The obvious general fix - match on first initial + last name whenever the
+# exact and suffix-stripped keys both miss - was built and then measured
+# against the real 2025 files, and it is NOT SAFE: of the 44 snap-count
+# names it "uniquely" resolved, at least 10 resolved to a DIFFERENT REAL
+# PLAYER, including "Landon Jackson" -> "Lamar Jackson", "Terrell Edmunds"
+# -> "Tremaine Edmunds", "Jeff Wilson Jr." -> "Jared Wilson" and "Carlos
+# Washington Jr." -> "Casey Washington". Silently attributing one player's
+# snaps to another is far worse than the missing row it replaces, so the
+# looseness is spent only where a human has confirmed the two names are one
+# person.
+#
+# Kenneth Walker III is the case that prompted this: the snap-count export
+# calls him "Ken Walker III" while the weekly stats, rosters and every PFF
+# export call him "Kenneth Walker III", so his snap share resolved to no
+# data at all. The rest of the list came from the same scan of names that
+# match on neither existing tier.
+#
+# To extend: add a pair here. Both directions are registered, so it doesn't
+# matter which spelling a future source happens to use.
+PLAYER_NAME_ALIASES = [
+    ("Ken Walker III", "Kenneth Walker III"),
+    ("Zach Carter", "Zachary Carter"),
+    ("Nathan Carter", "Nate Carter"),
+    ("Jake Hummel", "Jacob Hummel"),
+    ("Joshua Palmer", "Josh Palmer"),
+    ("Mitch Tinsley", "Mitchell Tinsley"),
+    ("Dax Hill", "Daxton Hill"),
+    ("Patrick Surtain II", "Pat Surtain II"),
+    ("Folorunso Fatukasi", "Foley Fatukasi"),
+    ("Cam Bynum", "Camryn Bynum"),
+    ("Foyesade Oluokun", "Foye Oluokun"),
+    ("Mike Danna", "Michael Danna"),
+    ("Chris Roland-Wallace", "Christian Roland-Wallace"),
+    ("JuJu Brents", "Julius Brents"),
+    ("Joshua Metellus", "Josh Metellus"),
+    ("Josh Uche", "Joshua Uche"),
+    ("Scotty Miller", "Scott Miller"),
+    ("T.J. Slaton Jr.", "Tedarrell Slaton"),
+    ("Christopher Edmonds", "Chris Edmonds"),
+    ("Chig Okonkwo", "Chigoziem Okonkwo"),
+    ("Gabe Davis", "Gabriel Davis"),
+    ("Marquise Brown", "Hollywood Brown"),
+    ("Cam Akers", "Cameron Akers"),
+    ("Tank Bigsby", "Tarik Bigsby"),
+    ("Nick Westbrook-Ikhine", "Nicholas Westbrook-Ikhine"),
+]
+
+
+def _base_clean(series):
+    """Lowercase + drop everything that isn't a letter. The shared tail of
+    both key builders, after _normalize_name_text has done the repairs."""
+    return _normalize_name_text(series).str.lower().str.replace('[^a-z]', '', regex=True)
+
+
+def _strip_suffix(series):
+    return _normalize_name_text(series).str.lower().str.replace(
+        r'\s+(jr|sr|ii|iii|iv|v)\.?\s*$', '', regex=True)
+
+
+def _build_alias_maps():
+    """
+    Two lookup tables built from PLAYER_NAME_ALIASES - one keyed on the
+    exact-match form, one on the suffix-stripped form - so each tier of the
+    app's existing two-tier match can canonicalize with its own key shape.
+
+    Every pair is registered in BOTH directions, collapsing onto whichever
+    spelling sorts first. The alternative (treating the second element as
+    "the" canonical name) only works if every source in the app agrees on
+    which one that is, and they demonstrably don't - the snap file and the
+    stats file disagree about Kenneth Walker in one direction and about
+    Josh Palmer in the other. Collapsing to an arbitrary-but-stable
+    representative means both spellings land on the same key regardless.
+    """
+    exact_map, loose_map = {}, {}
+    for variant, canonical in PLAYER_NAME_ALIASES:
+        pair = pd.Series([variant, canonical])
+        ex_a, ex_b = _base_clean(pair).tolist()
+        lo_a, lo_b = _base_clean(_strip_suffix(pair)).tolist()
+        ex_rep, lo_rep = min(ex_a, ex_b), min(lo_a, lo_b)
+        exact_map[ex_a] = exact_map[ex_b] = ex_rep
+        loose_map[lo_a] = loose_map[lo_b] = lo_rep
+    return exact_map, loose_map
+
+
+_ALIAS_EXACT, _ALIAS_LOOSE = _build_alias_maps()
+
+
 def clean_name_exact(name_series):
     """
     Same cleaning as clean_name_for_merge but WITHOUT stripping suffixes -
@@ -153,8 +282,15 @@ def clean_name_exact(name_series):
     also exists) so two different players who share a base name but are
     distinguished by a real suffix - e.g. "Byron Murphy" (Vikings CB) vs
     "Byron Murphy II" (Seahawks DT) - don't collide into the same key.
+
+    Names are repaired (HTML entities, accents - see _normalize_name_text)
+    and run through PLAYER_NAME_ALIASES before the key is returned, so a
+    curated cross-source first-name variant like "Ken Walker III" vs
+    "Kenneth Walker III" produces one shared key here at TIER ONE rather
+    than falling through to the looser tier that exists for suffixes.
     """
-    return name_series.astype(str).str.lower().str.replace('[^a-z]', '', regex=True)
+    keys = _base_clean(name_series)
+    return keys.map(lambda k: _ALIAS_EXACT.get(k, k))
 
 
 def clean_name_for_merge(name_series):
@@ -173,10 +309,14 @@ def clean_name_for_merge(name_series):
     # are two different real players, but both collapse to "byronmurphy"
     # once suffixes are stripped, which silently merged one player's data
     # onto the other. See the two-tier matching in load_year_data.
-    cleaned = name_series.astype(str).str.lower()
-    cleaned = cleaned.str.replace(r'\s+(jr|sr|ii|iii|iv|v)\.?\s*$', '', regex=True)
-    cleaned = cleaned.str.replace('[^a-z]', '', regex=True)
-    return cleaned
+    #
+    # Also canonicalizes through PLAYER_NAME_ALIASES (suffix-stripped
+    # variant of the same table clean_name_exact uses), which is what
+    # rescues a source that drops the suffix as well as changing the first
+    # name - "Ken Walker" for "Kenneth Walker III" hits neither tier
+    # otherwise.
+    cleaned = _base_clean(_strip_suffix(name_series))
+    return cleaned.map(lambda k: _ALIAS_LOOSE.get(k, k))
 
 
 _NAME_SUFFIXES = {'jr', 'jr.', 'sr', 'sr.', 'ii', 'iii', 'iv', 'v'}
@@ -195,10 +335,14 @@ def build_last_name_index(full_name_pool):
     """
     index = {}
     for full_name in full_name_pool:
-        parts = str(full_name).split()
+        # Same entity/accent repair the match keys get - the index is keyed
+        # on a raw last name here rather than on a cleaned key, so without
+        # it "Nuñez-Roches" and "Nunez-Roches" land in two different buckets
+        # and an F.Last lookup finds neither reliably.
+        parts = _strip_accents(html.unescape(str(full_name))).split()
         if not parts:
             continue
-        last_idx = -2 if (parts[-1] in _NAME_SUFFIXES and len(parts) > 2) else -1
+        last_idx = -2 if (parts[-1].lower() in _NAME_SUFFIXES and len(parts) > 2) else -1
         index.setdefault(parts[last_idx], []).append((parts[0], full_name))
     return index
 
@@ -226,6 +370,7 @@ def match_abbreviated_name(abbrev_name, last_name_index):
     single first letter throws away exactly the information nflverse added
     to disambiguate them, and silently resolved one to the other.
     """
+    abbrev_name = _strip_accents(html.unescape(str(abbrev_name)))
     if '.' not in abbrev_name:
         return None
     prefix, _, last = abbrev_name.partition('.')

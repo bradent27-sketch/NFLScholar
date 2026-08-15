@@ -6,7 +6,7 @@ percentile matrix, weekly game log (sticky season-average footer), and
 import pandas as pd
 import streamlit as st
 
-from config import TEAM_CONFIG, OLINE_POSITIONS, DEFENSIVE_POSITIONS, TAB_DEFENSIVE_YIELD, abbr_to_pff_team, ODDS_API_PLAYER_PROP_MARKETS, AVAILABLE_SEASONS_WITH_UPCOMING
+from config import TEAM_CONFIG, THEME, OLINE_POSITIONS, DEFENSIVE_POSITIONS, TAB_DEFENSIVE_YIELD, abbr_to_pff_team, ODDS_API_PLAYER_PROP_MARKETS, AVAILABLE_SEASONS_WITH_UPCOMING
 from data.transforms import (
     load_and_merge_data, precompute_league_percentiles, build_player_historical_summary,
     build_stat_allowed_matrix, build_alignment_multiplier, build_player_projection,
@@ -319,7 +319,9 @@ def render():
         if pos == 'NAN' or not pos: pos = 'N/A'
 
         filter_team = str(p_bio.get(t1_t_col, '')).upper()
-        team_cfg = TEAM_CONFIG.get(filter_team, {'color': '#00fff9'})
+        # THEME token rather than a literal cyan, so the "team unknown"
+        # fallback tracks the palette instead of drifting from it.
+        team_cfg = TEAM_CONFIG.get(filter_team, {'color': THEME['colors']['primary']})
         is_player_rookie = selected_player.lower() in global_rookie_names
 
         overall_grade = pff['pff_grades_map'].get(selected_player.lower(), 0.0)

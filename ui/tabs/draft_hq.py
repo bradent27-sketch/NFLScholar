@@ -226,6 +226,230 @@ def _pick_index(options, value, default=0):
         return default
 
 
+def _record_import_time(key):
+    """When a session-held import (rankings, ADP) was dropped in.
+
+    Saved imports get this from the file's own mtime; these two never touch
+    disk - deliberately, see their call sites - so the moment has to be
+    recorded when it happens or it is gone.
+    """
+    import datetime
+    from data.import_status import UPLOAD_TIME_KEYS
+    st.session_state[UPLOAD_TIME_KEYS[key]] = datetime.datetime.now()
+
+
+def _render_import_status():
+    """
+    One table saying what is loaded, when it landed, and what came out of it.
+
+    This is the half of the consolidation that actually answers the
+    question. Putting all the uploaders in one place stops you hunting for
+    them; only a status readout tells you whether the file you dropped in
+    last August is still the one the board is using, or whether the payload
+    you saved this morning parsed into anything at all.
+
+    "What came out of it" is the important column, and it is a PARSE, not a
+    byte count. A weekly PrizePicks board saved over the season one parses
+    perfectly and is wrong by two orders of magnitude; the only thing that
+    catches it is noticing zero season-long lines came out.
+    """
+    from data.import_status import status_table
+
+    table = status_table(st.session_state)
+    loaded = int((table['Loaded'] == '✅').sum())
+    st.markdown(f"**Currently imported — {loaded} of {len(table)} sources**")
+    st.dataframe(
+        table[['Source', 'Loaded', 'Imported', 'Age', 'Size', 'What came out of it', 'File']],
+        width="stretch", hide_index=True, height=df_auto_height(len(table)),
+        column_config={
+            'Loaded': st.column_config.TextColumn('', width='small'),
+            'Imported': st.column_config.TextColumn(
+                'Imported', help="When the file landed here. A browser never sends a file's own "
+                                 "modification date, so this is the timestamp that actually exists."),
+            'What came out of it': st.column_config.TextColumn(width='large'),
+            'File': st.column_config.TextColumn(width='medium'),
+        },
+    )
+
+
+def _render_imports_panel():
+    """
+    Every manual import in one place, grouped by what it does.
+
+    Previously these were in three separate corners of this panel -
+    rankings and ADP buried under "Board & market" beside a set of unrelated
+    sliders, the FFA export and cheat sheet under one heading, and five
+    sportsbook payloads under another - which made the answer to "what have
+    I actually loaded?" a scavenger hunt across the settings screen.
+
+    Returns the FFA upload handle, which is the one import the caller still
+    needs: it is parsed downstream inside _load_board so that a fresh file
+    reaches the board on the same run it was dropped in.
+    """
+    from data.import_status import IMPORT_GROUPS, import_status
+
+    st.markdown("### 📥 Data imports")
+    st.caption(
+        "Every file the board can read, in one place. Uploads are saved to disk and survive a "
+        "restart, except the two rankings imports, which are held for this session only — "
+        "each row below says which."
+    )
+    _render_import_status()
+
+    ffa_upload = None
+    tab_labels = [group for group, _entries in IMPORT_GROUPS]
+    tabs = st.tabs(tab_labels)
+
+    with tabs[0]:
+        _render_rankings_imports()
+    with tabs[1]:
+        ffa_upload = _render_projection_imports()
+    with tabs[2]:
+        _render_book_imports()
+
+    # A quick way to see one source's state without reading the table.
+    with st.expander("Anything that didn't load cleanly"):
+        problems = [(key, import_status(key, st.session_state))
+                    for group, entries in IMPORT_GROUPS for key, _l, _d in entries]
+        problems = [(k, s) for k, s in problems if s.get('error')]
+        if not problems:
+            st.caption("Nothing is erroring. Sources showing “—” above simply aren't imported.")
+        for key, status in problems:
+            st.warning(f"**{status.get('label', key)}** — {status.get('detail')}")
+    return ffa_upload
+
+
+def _render_rankings_imports():
+    import_hint('fantasypros_draft')
+    ecr_upload = st.file_uploader(
+        "FantasyPros rankings CSV", type=["csv"], key="dhq_ecr_upload",
+        help="Overrides the live consensus feed. The live one comes from a nightly "
+             "third-party mirror of FantasyPros, and that mirror can stall — it has. "
+             "Export the Draft Rankings view from FantasyPros and drop it here to be "
+             "certain the board is current. Include BEST/WORST/STD DEV if the export "
+             "offers them; that spread is what Upside, Bust and Risk are built from.",
+    )
+    if ecr_upload is not None:
+        parsed, ecr_error = parse_ecr_upload(ecr_upload)
+        # Parsed and held rather than kept as a file handle: this widget
+        # stops existing the moment the panel closes.
+        st.session_state[ECR_UPLOAD_KEY] = None if parsed.empty else parsed
+        st.session_state[ECR_UPLOAD_ERROR_KEY] = ecr_error
+        if not parsed.empty:
+            _record_import_time('ecr')
+    if st.session_state.get(ECR_UPLOAD_ERROR_KEY):
+        st.error(st.session_state[ECR_UPLOAD_ERROR_KEY])
+    held_ecr = st.session_state.get(ECR_UPLOAD_KEY)
+    if held_ecr is not None and not held_ecr.empty:
+        if st.button("Back to the live feed", key="dhq_ecr_clear"):
+            st.session_state[ECR_UPLOAD_KEY] = None
+            st.session_state[ECR_UPLOAD_ERROR_KEY] = None
+            st.rerun()
+
+    st.markdown("---")
+    import_hint('fantasypros_adp')
+    adp_upload = st.file_uploader(
+        "ADP CSV (overrides every live source)", type=["csv"], key="dhq_adp_upload",
+        help="Any CSV with a player-name column and an ADP/rank column.",
+    )
+    if adp_upload is not None:
+        # Parsed and stashed immediately rather than handed on as a file
+        # object, because the uploader widget itself disappears the moment
+        # this panel is closed - and an ADP source that silently reverts
+        # when you collapse the settings would be a nasty thing to discover
+        # mid-draft.
+        parsed = parse_adp_upload(adp_upload)
+        st.session_state[ADP_UPLOAD_KEY] = parsed if not parsed.empty else None
+        if not parsed.empty:
+            _record_import_time('adp')
+    if st.session_state.get(ADP_UPLOAD_KEY) is not None:
+        if st.button("Clear uploaded ADP", key="dhq_adp_clear"):
+            st.session_state[ADP_UPLOAD_KEY] = None
+            st.rerun()
+
+
+def _render_projection_imports():
+    st.caption(
+        "Drop in an FFA player export and the board will use their analysts' projected "
+        "STAT LINE — carries, yards, receptions — re-scored under your league settings, "
+        "plus their FFA Value and written player notes. Importing the stat line rather "
+        "than their point total is what keeps it correct: their export is half-PPR, so "
+        "reading their points straight off would be wrong in any other format."
+    )
+    import_hint('ffa')
+    ffa_upload = st.file_uploader("FFA players JSON", type=["json"], key="dhq_ffa_upload")
+
+    st.markdown("---")
+    st.caption(
+        "A FantasyPros cheat sheet adds auction dollar values, their analysts' tiers alongside "
+        "this board's own, and a written note per player. Auction values are the piece nothing "
+        "else here can produce — VORP says who is worth more, not whether that's a $47 player "
+        "or a $12 one, which is the entire question in an auction. Drop in the getCheatSheet "
+        "response; add the draft room's player array too and every player resolves instead of "
+        "~80%."
+    )
+    import_hint('fantasypros_cheatsheet')
+    fp_upload = st.file_uploader("FantasyPros cheat sheet / player array",
+                                 type=["json", "html", "txt"], key="dhq_fp_upload")
+    if fp_upload is not None:
+        kind, fp_error = save_fp_upload(fp_upload)
+        if fp_error:
+            st.error(fp_error)
+        elif kind:
+            st.success(f"Saved the {kind}.")
+    return ffa_upload
+
+
+def _render_book_imports():
+    st.caption(
+        "Season-long player over/unders — 1,275.5 receiving yards for the whole year — "
+        "re-scored under your league settings into a market projection built with no reference "
+        "to this app's model. That makes it a real second opinion rather than another view of "
+        "the same numbers. The gap shows up as Book Δ on the board and under "
+        "'Market lines vs this board'."
+    )
+    st.caption(
+        "No network access to these endpoints? Click a source, save the JSON, and drop it here. "
+        "A saved payload wins over the live fetch and loads automatically from then on — it is "
+        "the reliable path when a book changes or blocks its endpoint, which several of these do."
+    )
+    from data.import_sources import markdown_list
+    st.markdown(markdown_list('underdog', 'prizepicks_season', 'draftkings_season',
+                              'fanduel', 'pinnacle'))
+    from data.odds_sources import save_book_payload, BOOKS, MULTI_FILE_BOOKS
+    labels = {'Underdog': 'Underdog over_under_lines JSON',
+              'PrizePicks': 'PrizePicks projections JSON',
+              'FanDuel': 'FanDuel NFL page JSON',
+              'Pinnacle': 'Pinnacle matchups JSON',
+              'DraftKings': 'DraftKings player-futures JSON (one or more)'}
+    for provider in BOOKS:
+        multi = provider in MULTI_FILE_BOOKS
+        upload = st.file_uploader(labels[provider], type=["json"],
+                                  accept_multiple_files=multi,
+                                  key=f"dhq_market_upload_{provider.lower()}")
+        if multi and upload:
+            saved, err = save_book_payload([f.getvalue() for f in upload], provider)
+        elif not multi and upload is not None:
+            saved, err = save_book_payload(upload.getvalue(), provider)
+        else:
+            continue
+        if err and saved is None:
+            st.error(err)
+            continue
+        if err:
+            st.warning(err)
+        # Parsed rather than counted, so a right-shaped-but-wrong file is
+        # caught here rather than silently at draft time. Pinnacle's payload
+        # is a bare list and FanDuel's nests its markets, so counting a
+        # container only works for the two pick'em books anyway.
+        props, perr = _MARKET_PARSERS[provider](saved)
+        if perr:
+            st.warning(f"Saved it, but: {perr}")
+        else:
+            st.success(f"Saved {len(props)} {provider} lines "
+                       f"({int((props['period'] == 'season').sum())} season-long).")
+
+
 def _render_settings_panel(cfg):
     """
     The full-width settings surface, rendered only while it's open.
@@ -322,33 +546,6 @@ def _render_settings_panel(cfg):
             boards = list(ECR_BOARDS.keys())
             cfg['board_fmt'] = st.selectbox("Ranking board", boards,
                                             index=_pick_index(boards, cfg['board_fmt']))
-            import_hint('fantasypros_draft')
-            ecr_upload = st.file_uploader(
-                "Upload FantasyPros rankings CSV", type=["csv"], key="dhq_ecr_upload",
-                help="Overrides the live consensus feed. The live one comes from a nightly "
-                     "third-party mirror of FantasyPros, and that mirror can stall — it has. "
-                     "Export the Draft Rankings view from FantasyPros and drop it here to be "
-                     "certain the board is current. Include BEST/WORST/STD DEV if the export "
-                     "offers them; that spread is what Upside, Bust and Risk are built from.",
-            )
-            if ecr_upload is not None:
-                parsed, ecr_error = parse_ecr_upload(ecr_upload)
-                # Parsed and held rather than kept as a file handle, for the
-                # same reason as the ADP upload: this widget stops existing
-                # the moment the panel closes.
-                st.session_state[ECR_UPLOAD_KEY] = None if parsed.empty else parsed
-                st.session_state[ECR_UPLOAD_ERROR_KEY] = ecr_error
-            if st.session_state.get(ECR_UPLOAD_ERROR_KEY):
-                st.error(st.session_state[ECR_UPLOAD_ERROR_KEY])
-            held_ecr = st.session_state.get(ECR_UPLOAD_KEY)
-            if held_ecr is not None and not held_ecr.empty:
-                spread = 'with' if held_ecr['ECR SD'].notna().any() else 'without'
-                st.caption(f"✅ Using your export — {len(held_ecr)} players, {spread} "
-                           "expert spread")
-                if st.button("Back to the live feed", key="dhq_ecr_clear"):
-                    st.session_state[ECR_UPLOAD_KEY] = None
-                    st.session_state[ECR_UPLOAD_ERROR_KEY] = None
-                    st.rerun()
             cfg['adp_year'] = st.selectbox(
                 "ADP season", AVAILABLE_SEASONS_WITH_UPCOMING,
                 index=_pick_index(AVAILABLE_SEASONS_WITH_UPCOMING, cfg['adp_year']))
@@ -366,25 +563,6 @@ def _render_settings_panel(cfg):
                 "Schedule window", windows, index=_pick_index(windows, cfg['sos_window']),
                 help="Strength of schedule is graded per position group — backs against run "
                      "defenses, passers and pass catchers against pass defenses.")
-            import_hint('fantasypros_adp')
-            adp_upload = st.file_uploader(
-                "Upload ADP CSV (overrides live)", type=["csv"], key="dhq_adp_upload",
-                help="Any CSV with a player-name column and an ADP/rank column. Overrides every "
-                     "live source.",
-            )
-            if adp_upload is not None:
-                # Parsed and stashed immediately rather than handed on as a
-                # file object, because the uploader widget itself disappears
-                # the moment this panel is closed - and an ADP source that
-                # silently reverts when you collapse the settings would be a
-                # nasty thing to discover mid-draft.
-                parsed = parse_adp_upload(adp_upload)
-                st.session_state[ADP_UPLOAD_KEY] = parsed if not parsed.empty else None
-            if st.session_state.get(ADP_UPLOAD_KEY) is not None:
-                st.caption(f"✅ {len(st.session_state[ADP_UPLOAD_KEY])} rows held from your upload")
-                if st.button("Clear uploaded ADP", key="dhq_adp_clear"):
-                    st.session_state[ADP_UPLOAD_KEY] = None
-                    st.rerun()
             cfg['market_weight'] = st.slider(
                 "Market blend", 0, 100, int(cfg['market_weight']), 5,
                 help="How much the board's ORDER defers to ADP. 0 = pure model, 100 = pure ADP. "
@@ -435,96 +613,23 @@ def _render_settings_panel(cfg):
                 "Weight on FFA rank", 0, 100, int(cfg['bot_ffa']), 5,
                 help="Only has an effect once an FFA export has been imported below.")
         with s2:
-            st.markdown("**Import Fantasy Football Advice projections** (optional)")
-            st.caption(
-                "Drop in an FFA player export and the board will use their analysts' projected "
-                "STAT LINE — carries, yards, receptions — re-scored under your league settings, "
-                "plus their FFA Value and written player notes. Importing the stat line rather "
-                "than their point total is what keeps it correct: their export is half-PPR, so "
-                "reading their points straight off would be wrong in any other format."
-            )
-            import_hint('ffa')
-            ffa_upload = st.file_uploader("FFA players JSON", type=["json"], key="dhq_ffa_upload")
-            st.markdown("**Import a FantasyPros cheat sheet** (optional)")
-            st.caption(
-                "Adds auction dollar values, their analysts' tiers alongside this board's own, "
-                "and a written note per player. Auction values are the piece nothing else here "
-                "can produce — VORP says who is worth more, not whether that's a $47 player or "
-                "a $12 one, which is the entire question in an auction. Drop in the "
-                "getCheatSheet response; add the draft room's player array too and every player "
-                "resolves instead of ~80%."
-            )
-            import_hint('fantasypros_cheatsheet')
-            fp_upload = st.file_uploader("FantasyPros cheat sheet / player array",
-                                         type=["json", "html", "txt"], key="dhq_fp_upload")
-            if fp_upload is not None:
-                kind, fp_error = save_fp_upload(fp_upload)
-                if fp_error:
-                    st.error(fp_error)
-                elif kind:
-                    st.success(f"Saved the {kind}.")
+            # The three blend sliders stay here beside the bot-weight
+            # sliders they read alongside; every UPLOADER moved into
+            # _render_imports_panel below, which is the whole point of that
+            # section. A slider is a setting, a file is an import, and
+            # mixing them is what made "did that import take?" unanswerable.
+            st.markdown("**Blends**")
             cfg['ffa_weight'] = st.slider(
                 "Blend FFA stat line into projections", 0, 100, int(cfg['ffa_weight']), 5,
                 help="100 = use their projections outright, 0 = keep this app's own and take "
-                     "only their notes and value score.")
-
-            st.markdown("**Season-long sportsbook lines** (optional)")
-            st.caption(
-                "Pulls Underdog's season-long player over/unders — 1,275.5 receiving yards for "
-                "the whole year — and re-scores them under your league settings into a market "
-                "projection built with no reference to this app's model. That makes it a real "
-                "second opinion rather than another view of the same numbers. The gap between "
-                "the two shows up under 'Market lines vs this board' below the draft room."
-            )
+                     "only their notes and value score. Import the FFA export under Data "
+                     "imports below first.")
             cfg['market_lines_on'] = st.checkbox(
-                "Fetch season-long lines", value=bool(cfg['market_lines_on']),
+                "Fetch season-long sportsbook lines", value=bool(cfg['market_lines_on']),
                 key="dhq_market_lines_on",
                 help="One request per half hour. Season-long lines are posted through the "
-                     "preseason and pulled once the season starts.")
-            st.caption(
-                "No network access to these endpoints? Click a source, save the JSON, "
-                "and drop it here. A saved payload wins over the live fetch and loads "
-                "automatically from then on — it is the reliable path when a book "
-                "changes or blocks its endpoint, which several of these do."
-            )
-            from data.import_sources import markdown_list
-            st.markdown(markdown_list('underdog', 'prizepicks_season', 'draftkings_season',
-                                      'fanduel', 'pinnacle'))
-            from data.odds_sources import save_book_payload, SAVED_PAYLOADS, BOOKS, MULTI_FILE_BOOKS
-            _labels = {'Underdog': 'Underdog over_under_lines JSON',
-                       'PrizePicks': 'PrizePicks projections JSON',
-                       'FanDuel': 'FanDuel NFL page JSON',
-                       'Pinnacle': 'Pinnacle matchups JSON',
-                       'DraftKings': 'DraftKings player-futures JSON (one or more)'}
-            for _provider in BOOKS:
-                _multi = _provider in MULTI_FILE_BOOKS
-                _upload = st.file_uploader(_labels[_provider], type=["json"],
-                                           accept_multiple_files=_multi,
-                                           key=f"dhq_market_upload_{_provider.lower()}")
-                if _multi and _upload:
-                    _saved, _err = save_book_payload([f.getvalue() for f in _upload], _provider)
-                elif not _multi and _upload is not None:
-                    _saved, _err = save_book_payload(_upload.getvalue(), _provider)
-                else:
-                    _saved, _err = None, None
-                if _saved is not None or _err:
-                    if _err and _saved is None:
-                        st.error(_err)
-                    elif _err:
-                        st.warning(_err)
-                    else:
-                        # Pinnacle's payload is a bare list and FanDuel's nests
-                        # its markets, so "count the required key" only works
-                        # for the two pick'em books. Parse instead of counting
-                        # a container - it is the number that matters anyway,
-                        # and it catches a right-shaped-but-wrong file here
-                        # rather than silently at draft time.
-                        _props, _perr = _MARKET_PARSERS[_provider](_saved)
-                        if _perr:
-                            st.warning(f"Saved it, but: {_perr}")
-                        else:
-                            st.success(f"Saved {len(_props)} {_provider} lines "
-                                       f"({int((_props['period'] == 'season').sum())} season-long).")
+                     "preseason and pulled once the season starts. A payload you saved "
+                     "yourself always wins over this.")
             cfg['market_lines_weight'] = st.slider(
                 "Blend market lines into projections", 0, 100,
                 int(cfg['market_lines_weight']), 5, key="dhq_market_lines_weight",
@@ -532,6 +637,9 @@ def _render_settings_panel(cfg):
                      "toward the market once, through ADP and ECR — moving projections toward "
                      "book lines as well prices the same opinion in twice, and the second dose "
                      "is invisible because it lands inside the projection.")
+
+        st.markdown("---")
+        ffa_upload = _render_imports_panel()
 
     return ffa_upload
 
@@ -1275,11 +1383,14 @@ def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None
     if 'Book Proj' in display.columns:
         column_config['Book Proj'] = st.column_config.NumberColumn(
             "Book Proj", format="%.1f",
-            help="This player's projection rebuilt from Underdog's season-long lines: the "
+            help="This player's projection rebuilt from season-long sportsbook lines: the "
                  "book's number for every stat it priced, ours for the rest. A complete "
                  "projection on the same scale as Proj Pts — receptions and anything else "
                  "the book doesn't post fall back to our model rather than counting as zero. "
-                 "Blank where no season-long lines exist.")
+                 "Blank where no season-long lines exist. For ONE player's own breakdown — "
+                 "which books were read, which stats they priced and at what line, and what "
+                 "this app filled in — open his 📝 write-up from the row, or look under the "
+                 "recommendation below the board.")
     if 'Book Δ' in display.columns:
         column_config['Book Δ'] = st.column_config.NumberColumn(
             "Book Δ", format="%+.1f",
@@ -1554,6 +1665,8 @@ def _render_notes_dialog_body(row, player):
     if stat_line:
         st.caption(f"Projected: {stat_line}  ({row.get('proj_basis', 'projection')})")
 
+    _render_book_breakdown(row, player)
+
     written = _analyst_notes(row)
     if not written:
         st.info(
@@ -1587,6 +1700,53 @@ def _open_notes_dialog(board, player):
     dialog(row, player)
 
 
+def _render_book_breakdown(row, player):
+    """
+    How this player's Book Proj was assembled: which books were read, which
+    stats they priced and at what line, and what this app filled in.
+
+    WHY THIS IS A PANEL AND NOT A HOVER ON THE COLUMN. A per-cell tooltip is
+    not reachable here: st.dataframe renders on a <canvas>, which is why
+    every other per-row control in this tab is a checkbox column rather than
+    an inline link, and st.column_config's `help` is per COLUMN - the same
+    text for all 700 players, which is the opposite of what's wanted. A
+    Styler tooltip doesn't survive the canvas either (the grid reads only
+    background-color/color/font-weight out of a Styler).
+
+    So the breakdown lives in the two places a specific player is already in
+    focus - here, under the recommendation, and in the 📝 modal, which is
+    reachable for ANY row on the board in one click. The column header still
+    carries the general explanation.
+
+    Renders nothing when the board has no book data at all, which is the
+    normal state until a sportsbook payload is imported.
+    """
+    detail = row.get('Book Detail')
+    if not isinstance(detail, str) or not detail.strip():
+        return
+    book_proj = pd.to_numeric(row.get('Book Proj'), errors='coerce')
+    delta = pd.to_numeric(row.get('Book Δ'), errors='coerce')
+    share = pd.to_numeric(row.get('Book Share'), errors='coerce')
+    headline = []
+    if pd.notna(book_proj):
+        headline.append(f"Book Proj {book_proj:.0f}")
+    if pd.notna(delta):
+        headline.append(f"{delta:+.0f} vs this board")
+    if pd.notna(share):
+        headline.append(f"{share * 100:.0f}% of it from the market")
+    title = f"📊 Book calculation — {player}"
+    if headline:
+        title += f" ({' · '.join(headline)})"
+    with st.expander(title, expanded=False):
+        st.markdown(detail)
+        st.caption(
+            "Where a book posted a line it wins outright — no averaging with this app's "
+            "number, because a posted line is a price someone will take money on. Everything "
+            "the book was silent on falls back to this board's own projection, which is what "
+            "keeps the total a whole player rather than a third of one."
+        )
+
+
 def _render_player_detail(board, selected):
     """
     Notes and the projected stat line for whoever is selected.
@@ -1602,6 +1762,7 @@ def _render_player_detail(board, selected):
     stat_line = _projected_stat_line(row)
     if stat_line:
         st.caption(f"Projected: {stat_line}  ({row.get('proj_basis', 'projection')})")
+    _render_book_breakdown(row, selected)
     written = _analyst_notes(row)
     if written:
         label = " / ".join(source for source, _ in written)

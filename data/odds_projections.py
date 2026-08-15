@@ -258,11 +258,12 @@ def build_book_projection(board, market_scored, scoring):
     if merged.empty:
         return pd.DataFrame()
 
-    rows, book_counts, book_only = [], [], []
+    rows, book_counts, book_only, details = [], [], [], []
     for _, row in merged.iterrows():
         line = {'position': str(row.get('Pos') or '').upper()}
         used = 0
         priced_line = dict(line)
+        from_market, from_us = [], []
         for stat in PROJECTED_STATS:
             ours_col = f'{stat}_ours' if f'{stat}_ours' in merged.columns else stat
             our_value = pd.to_numeric(row.get(ours_col), errors='coerce')
@@ -276,13 +277,17 @@ def build_book_projection(board, market_scored, scoring):
                 value = float(book_value) * MEDIAN_TO_MEAN.get(stat, 1.0)
                 used += 1
                 priced_line[stat] = value
+                from_market.append((stat, float(book_value), value))
             else:
                 value = our_value
                 priced_line[stat] = 0.0
+                if our_value:
+                    from_us.append((stat, our_value))
             line[stat] = value
         rows.append(line)
         book_counts.append(used)
         book_only.append(priced_line)
+        details.append(_explain_book_line(row, from_market, from_us))
 
     frame = pd.DataFrame(rows)
     out = pd.DataFrame({
@@ -292,6 +297,7 @@ def build_book_projection(board, market_scored, scoring):
         'Proj Pts': pd.to_numeric(merged['Proj Pts'], errors='coerce').to_numpy(),
         'Book Proj': score_stats(frame, scoring, position_col='position').round(1).to_numpy(),
         'Book Stats': book_counts,
+        'Book Detail': details,
     })
     # How much of the projected total the book is actually responsible for -
     # the honest read on whether a Book Proj is a market number with a little
@@ -313,12 +319,82 @@ def build_book_projection(board, market_scored, scoring):
     return out
 
 
+_STAT_LABELS = {
+    'carries': 'Carries', 'rushing_yards': 'Rush yds', 'rushing_tds': 'Rush TD',
+    'targets': 'Targets', 'receptions': 'Rec', 'receiving_yards': 'Rec yds',
+    'receiving_tds': 'Rec TD', 'attempts': 'Pass att', 'passing_yards': 'Pass yds',
+    'passing_tds': 'Pass TD', 'passing_interceptions': 'INT',
+    'rushing_fumbles_lost': 'Fum lost (rush)', 'receiving_fumbles_lost': 'Fum lost (rec)',
+    'pat_made': 'XP',
+}
+
+
+def _stat_label(stat):
+    return _STAT_LABELS.get(stat, stat.replace('_', ' ').title())
+
+
+def _explain_book_line(row, from_market, from_us):
+    """
+    A per-player account of how Book Proj was actually assembled: which books
+    were read, which stats they priced, the line each posted, and what this
+    app filled in for the rest.
+
+    Written out because "Book Proj 214.3" on its own is unusable for the
+    decision it's meant to inform. Two players can carry the same Book Proj
+    with completely different provenance - one priced across four stats by
+    three books, the other a single receiving-yards line with our own
+    projection making up the other 70% - and those are not the same evidence.
+    Only the breakdown separates them.
+
+    Both numbers are shown for a market stat: the LINE the book posted, and
+    the value used after the median-to-mean correction (see MEDIAN_TO_MEAN -
+    a line is a median, a projection is a mean, and for touchdowns the gap is
+    large). Showing only the corrected figure would make the panel disagree
+    with the book's own page for no visible reason.
+    """
+    providers = str(row.get('providers') or '').strip()
+    books = row.get('Books')
+    parts = []
+    if providers:
+        count = f" ({int(books)} book{'s' if int(books) != 1 else ''})" if pd.notna(books) else ''
+        parts.append(f"**Books read:** {providers}{count}")
+    else:
+        parts.append("**Books read:** unknown")
+
+    if from_market:
+        priced = []
+        for stat, line_value, used_value in from_market:
+            shown = f"{_stat_label(stat)} {line_value:g}"
+            # Only surface the correction where it actually moved the number.
+            if abs(used_value - line_value) > 0.05:
+                shown += f" → {used_value:.1f} used"
+            priced.append(shown)
+        parts.append("**From the market:** " + " · ".join(priced))
+    else:
+        parts.append("**From the market:** nothing priced")
+
+    if from_us:
+        ours = " · ".join(f"{_stat_label(stat)} {value:.1f}" for stat, value in from_us[:6])
+        extra = f" (+{len(from_us) - 6} more)" if len(from_us) > 6 else ""
+        parts.append(f"**Filled in from this app's projection:** {ours}{extra}")
+    else:
+        parts.append("**Filled in from this app's projection:** nothing — the book priced it all")
+
+    n_lines = row.get('n_lines')
+    if pd.notna(n_lines):
+        parts.append(
+            f"*Averaged from {int(n_lines)} posted line{'s' if int(n_lines) != 1 else ''} "
+            "— the median is taken per stat, so a stat only one book priced still counts.*"
+        )
+    return "\n\n".join(parts)
+
+
 def attach_book_projection(board, book_projection):
     """Put Book Proj and Book Δ on the board, blank where the book was silent."""
     if board is None or board.empty or book_projection is None or book_projection.empty:
         return board
     out = board.copy()
-    for column in ('Book Proj', 'Book Δ', 'Book Share'):
+    for column in ('Book Proj', 'Book Δ', 'Book Share', 'Book Detail'):
         if column in book_projection.columns:
             out[column] = out['Player'].map(
                 dict(zip(book_projection['board_player'], book_projection[column])))

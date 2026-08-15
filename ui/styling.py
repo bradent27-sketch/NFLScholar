@@ -1034,6 +1034,77 @@ def inject_theme():
         .gs-team.gs-lost .gs-name {{ opacity: 0.55; }}
         .gs-team.gs-lost .gs-score {{ opacity: 0.6; }}
 
+        /* ---- Box score panel (full width, above the card grid) ---------
+           Same visual language as a card, scaled up: this is the one place
+           in the tab that gets the whole width, so the type can be bigger
+           and the two teams can sit as full rows rather than compressed
+           ones. */
+        .bs-header {{
+            background: {C['surface_container_low']};
+            border: 1px solid {C['outline_variant']};
+            border-radius: {R['md']}; padding: 14px 16px 10px; margin-bottom: 10px;
+        }}
+        .bs-team {{
+            display: flex; align-items: center; gap: 12px;
+            padding: 9px 12px; border-radius: {R['default']};
+            border-left: 4px solid var(--bs-color, {C['outline']});
+            background: {C['surface_container']}; margin-bottom: 6px;
+        }}
+        .bs-team .bs-side {{
+            flex: 0 0 44px; font-family: {F['mono']}; font-size: 10px;
+            letter-spacing: 0.08em; color: {C['on_surface_variant']}; opacity: 0.7;
+        }}
+        .bs-team .bs-logo {{
+            height: 32px; width: 32px; object-fit: contain; flex: 0 0 32px;
+            filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.55));
+        }}
+        .bs-team .bs-name {{
+            flex: 1 1 auto; font-family: {F['display']}; font-size: 18px;
+            font-weight: 700; color: {C['on_surface']};
+        }}
+        .bs-team .bs-score {{
+            flex: 0 0 auto; font-family: {F['mono']}; font-size: 26px;
+            font-weight: 700; color: {C['on_surface']};
+        }}
+        .bs-team.bs-won .bs-score {{ color: {C['primary']}; }}
+        .bs-team.bs-lost .bs-name, .bs-team.bs-lost .bs-score {{ opacity: 0.6; }}
+        .bs-meta {{
+            display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+            font-family: {F['mono']}; font-size: 10.5px; letter-spacing: 0.04em;
+            text-transform: uppercase; color: {C['on_surface_variant']};
+        }}
+
+        /* One SHARED track per stat, split by each side's share, rather
+           than two independent bars - the comparison is between the two
+           halves of one row, and two separate bars make the reader do that
+           subtraction themselves. */
+        .bs-compare {{
+            background: {C['surface_container_low']};
+            border: 1px solid {C['outline_variant']};
+            border-radius: {R['md']}; padding: 12px 16px; margin-bottom: 10px;
+        }}
+        .bs-cmp-row {{
+            display: grid; grid-template-columns: 54px 1fr 54px;
+            align-items: center; gap: 8px; margin-bottom: 9px;
+        }}
+        .bs-cmp-label {{
+            text-align: center; font-family: {F['mono']}; font-size: 10px;
+            letter-spacing: 0.06em; text-transform: uppercase;
+            color: {C['on_surface_variant']};
+        }}
+        .bs-cmp-val {{
+            font-family: {F['mono']}; font-size: 14px; font-weight: 600;
+            color: {C['on_surface_variant']};
+        }}
+        .bs-cmp-row .bs-cmp-val:last-of-type {{ text-align: right; }}
+        .bs-cmp-lead {{ color: {C['on_surface']}; font-weight: 700; }}
+        .bs-cmp-track {{
+            grid-column: 1 / -1; display: flex; height: 7px; gap: 2px;
+            border-radius: {R['full']}; overflow: hidden;
+            background: {C['surface_container_high']};
+        }}
+        .bs-cmp-fill {{ height: 100%; }}
+
         /* Descendant selector, NOT `.stButton > button`. Streamlit wraps a
            button carrying help= in two extra spans, so the direct-child form
            matches nothing - with no error, while Streamlit's own accent

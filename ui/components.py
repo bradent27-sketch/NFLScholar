@@ -209,6 +209,77 @@ def switch_tab(tab_label, **context):
         st.session_state[key] = value
 
 
+def open_box_score(season, game_id, _from_slate=False):
+    """
+    Jump to the Game Slate with one game's box score open.
+
+    MUST be used as an on_click callback, for the same reason switch_tab
+    must be - see that function's docstring. This delegates to it rather
+    than assigning active_tab itself, so exactly one place in the app
+    records where you came from.
+
+    `_from_slate=True` for a button that is ALREADY on the Game Slate:
+    opening a box score from a slate card is not a tab change, and routing
+    it through switch_tab would leave a "Back to GAME SLATE" button
+    pointing at the tab you are already looking at.
+
+    The season is seeded alongside the game because a link can name a game
+    from a different season than the slate currently shows. It's a direct
+    widget-key assignment, which is only safe because the value is
+    guaranteed valid: every caller passes a season out of the same
+    AVAILABLE_SEASONS_WITH_UPCOMING list the destination selectbox is built
+    from. Seeding an unlisted value would make Streamlit raise.
+    """
+    if _from_slate:
+        st.session_state['gs_box_game'] = str(game_id)
+        st.session_state['gs_season'] = int(season)
+        return
+    from config import TAB_GAME_SLATE
+    switch_tab(TAB_GAME_SLATE, gs_box_game=str(game_id), gs_season=int(season))
+
+
+def close_box_score():
+    st.session_state.pop('gs_box_game', None)
+
+
+def render_game_links(entries, season, key_prefix, caption=None, per_row=4):
+    """
+    A strip of small buttons under a per-game table or chart, one per game,
+    each opening that game's box score.
+
+    Why buttons and not links: Streamlit's tables render on a <canvas> and
+    the charts here are inline SVG, and NEITHER can fire a Python callback.
+    An <a href="?game=..."> would work visually and must not be used - a
+    query-string link is a real page navigation, which starts a new
+    Streamlit session and wipes every picker on every tab.
+
+    `entries` come from data.box_score.game_link_rows, which drops any row
+    it cannot resolve - so every button here is guaranteed to open a real
+    game.
+    """
+    if not entries:
+        return
+    if caption:
+        st.caption(caption)
+    # Laid out row by row rather than filling each column top to bottom, so
+    # the chips read left-to-right in week order. `per_row` is small by
+    # default because both current callers sit inside a half-width column,
+    # where eight chips across would truncate every label.
+    #
+    # One level of column nesting is spent here. Nothing inside a chip may
+    # open another - Streamlit allows exactly one.
+    for start in range(0, len(entries), per_row):
+        chunk = entries[start:start + per_row]
+        cols = st.columns(per_row)
+        for col, entry in zip(cols, chunk):
+            with col:
+                st.button(
+                    entry['label'], key=f"{key_prefix}_{entry['game_id']}",
+                    help=entry['help'], width="stretch",
+                    on_click=open_box_score, args=(season, entry['game_id']),
+                )
+
+
 def render_back_button():
     """
     "<- Back to X" button shown at the top of a tab when it was reached via

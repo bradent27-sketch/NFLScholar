@@ -26,12 +26,22 @@ into pure HTML with <a> tags, the pre-seeding - the entire point of the tab
 import pandas as pd
 import streamlit as st
 
-from config import AVAILABLE_SEASONS_WITH_UPCOMING, TAB_PLAYER_SEARCH, TEAM_CONFIG
-from data.game_slate import (
-    escape, escape_attr, load_slate, refresh_slate, slate_source, slate_team_bridge,
-    slate_weeks, default_week_index, team_display_name, team_abbrev_label,
+from config import (
+    AVAILABLE_SEASONS_WITH_UPCOMING, TAB_MATCHUP_ANALYZER, TAB_PLAYER_SEARCH,
+    TEAM_CONFIG, THEME,
 )
-from ui.components import skeleton_loader, switch_tab
+from data.box_score import (
+    BOX_SECTIONS, TOTALS_COMPARISON, game_players, leading_performers, section_rows,
+    team_totals,
+)
+from data.game_slate import (
+    escape, escape_attr, find_slate_game, load_slate, refresh_slate, slate_source,
+    slate_team_bridge, slate_weeks, default_week_index, team_display_name,
+    team_abbrev_label, team_color, team_logo,
+)
+from ui.components import (
+    close_box_score, open_box_score, render_back_button, skeleton_loader, switch_tab,
+)
 
 # A full NFL week is ~16 games, so there is no paging, no conference filter
 # and no "analyzable game" checkbox. Those exist in the college versions of
@@ -131,6 +141,19 @@ def card_html(idx, row):
 def _render_card(idx, row, season, bridge):
     with st.container(key=f"gs_card_{idx}"):
         st.markdown(card_html(idx, row), unsafe_allow_html=True)
+        # The box-score control sits on its own row ABOVE the two team
+        # buttons rather than beside them. Streamlit allows exactly one
+        # level of column nesting and the team row already spends it, so a
+        # third column here would have to share that row and squeeze both
+        # team names to an unreadable width.
+        game_id = str(row.get('Game Id') or '')
+        if bool(row.get('Played')) and game_id:
+            st.button(
+                "📋 Box score", key=f"gs_box_{idx}", width="stretch",
+                help="Full box score for this game, above the grid",
+                on_click=open_box_score, args=(season, game_id),
+                kwargs={'_from_slate': True},
+            )
         cols = st.columns(2)
         for col, side in zip(cols, ('Away', 'Home')):
             abbr = row[side]
@@ -154,7 +177,172 @@ def _render_card(idx, row, season, bridge):
                 )
 
 
+def _box_header_html(game):
+    """Both teams, logos, scores, with the winner's score brightened."""
+    away, home = game['Away'], game['Home']
+    winner = game.get('Winner')
+    winner = winner if (winner is not None and pd.notna(winner)) else None
+    rows = []
+    for side, abbr, points in (('AWAY', away, game.get('Away Pts')), ('HOME', home, game.get('Home Pts'))):
+        color = team_color(abbr) or THEME['colors']['outline']
+        logo = team_logo(abbr)
+        won = (winner == abbr) if winner else None
+        classes = 'bs-team' + (' bs-won' if won is True else (' bs-lost' if won is False else ''))
+        score = f"<span class='bs-score'>{int(points)}</span>" if pd.notna(points) else ''
+        logo_html = f"<img class='bs-logo' src='{escape_attr(logo)}' alt=''>" if logo else ''
+        rows.append(
+            f"<div class='{classes}' style='--bs-color:{color};'>"
+            f"<span class='bs-side'>{side}</span>{logo_html}"
+            f"<span class='bs-name'>{escape(team_display_name(abbr))}</span>{score}</div>"
+        )
+    meta = [escape(game.get('Date Display')), escape(game.get('Status Detail') or '')]
+    if game.get('Venue') and pd.notna(game.get('Venue')):
+        meta.append(escape(str(game['Venue'])))
+    if game.get('Broadcast') and pd.notna(game.get('Broadcast')):
+        meta.append(escape(str(game['Broadcast'])))
+    meta_html = "<span class='gs-dot'>·</span>".join(m for m in meta if m)
+    return f"<div class='bs-header'>{''.join(rows)}<div class='bs-meta'>{meta_html}</div></div>"
+
+
+def _totals_bar_html(label, away_value, home_value, more_is_better, away_color, home_color):
+    """
+    One shared track per stat, split by each side's share.
+
+    A 0-0 row does not collapse the track - it splits evenly, because an
+    empty bar reads as missing data rather than as "neither team did this".
+    `more_is_better=False` (turnovers, penalties) flips which side is
+    highlighted, so the team with MORE turnovers isn't shown winning the row.
+    """
+    total = float(away_value) + float(home_value)
+    away_share = 50.0 if total <= 0 else float(away_value) / total * 100
+    leader = None
+    if away_value != home_value:
+        away_ahead = away_value > home_value
+        leader = 'away' if (away_ahead == more_is_better) else 'home'
+    fmt = (lambda v: f"{v:.0f}")
+    return (
+        f"<div class='bs-cmp-row'>"
+        f"<span class='bs-cmp-val{' bs-cmp-lead' if leader == 'away' else ''}'>{fmt(away_value)}</span>"
+        f"<span class='bs-cmp-label'>{escape(label)}</span>"
+        f"<span class='bs-cmp-val{' bs-cmp-lead' if leader == 'home' else ''}'>{fmt(home_value)}</span>"
+        f"<div class='bs-cmp-track'>"
+        f"<div class='bs-cmp-fill' style='width:{away_share:.1f}%; background:{away_color};'></div>"
+        f"<div class='bs-cmp-fill' style='width:{100 - away_share:.1f}%; background:{home_color};'></div>"
+        f"</div></div>"
+    )
+
+
+def _render_box_panel(season):
+    """
+    The box score, FULL WIDTH ABOVE THE CARD GRID, and rendered before the
+    week's games are even loaded.
+
+    Full width because a two-team box is unreadable at half width, and
+    because a card has already spent Streamlit's single level of column
+    nesting on its own button row.
+
+    Before the grid, and resolved against the whole season
+    (data.game_slate.find_slate_game), because this panel is the
+    destination for every cross-tab link in the app - see that function's
+    docstring.
+    """
+    game_id = st.session_state.get('gs_box_game')
+    if not game_id:
+        return
+    game = find_slate_game(season, game_id)
+    if game is None:
+        # The link named a game this season doesn't have - most likely the
+        # season selector moved. Say so and clear it, rather than leaving a
+        # control that silently does nothing.
+        st.info("That game isn't in the selected season. Pick the right season, or open another game.")
+        st.button("Close", key="gs_box_close_missing", on_click=close_box_score)
+        return
+
+    st.markdown(_box_header_html(game), unsafe_allow_html=True)
+    away, home = game['Away'], game['Home']
+    away_color = team_color(away) or THEME['colors']['secondary']
+    home_color = team_color(home) or THEME['colors']['primary']
+
+    # Loaded HERE, not in render(), so a slate with no box open pays nothing
+    # for this - it's the same @st.cache_data frame six other tabs already
+    # use, so it's usually a cache hit, but on a cold session it's a real
+    # multi-second CSV parse and the slate itself needs none of it.
+    from data.transforms import load_and_merge_data
+    with skeleton_loader("table", n_rows=6, n_cols=6):
+        stats_df, _t, _n, _ = load_and_merge_data(season, st.session_state.get('score_tab1', 'Full PPR'))
+    players = game_players(stats_df, game_id)
+    if players.empty:
+        st.caption("No player box score on file for this game yet.")
+        st.button("Close box score", key="gs_box_close", on_click=close_box_score)
+        return
+
+    away_totals, home_totals = team_totals(players, away), team_totals(players, home)
+    if away_totals and home_totals:
+        bars = ''.join(
+            _totals_bar_html(label, away_totals.get(label, 0), home_totals.get(label, 0),
+                             more_is_better, away_color, home_color)
+            for label, more_is_better in TOTALS_COMPARISON
+            if label in away_totals
+        )
+        st.markdown(f"<div class='bs-compare'>{bars}</div>", unsafe_allow_html=True)
+        st.caption(
+            "Team totals are summed from the player rows, which is exact for these stats. "
+            "Time of possession, third-down rate and total plays aren't derivable from player "
+            "rows at all, so they're not shown rather than approximated — that's why this is "
+            "shorter than a TV box score."
+        )
+
+    lead_cols = st.columns(2)
+    for col, abbr in zip(lead_cols, (away, home)):
+        with col:
+            leaders = leading_performers(players, abbr)
+            if not leaders:
+                continue
+            st.markdown(f"**{team_display_name(abbr)} leaders**")
+            for entry in leaders:
+                st.markdown(f"- *{entry['phase']}* — **{entry['player']}**: {entry['line']}")
+
+    from ui.styling import df_auto_height, style_plain_dataframe
+    team_tabs = st.tabs([team_display_name(away), team_display_name(home)])
+    for tab, abbr in zip(team_tabs, (away, home)):
+        with tab:
+            rendered_any = False
+            for title, columns, gate in BOX_SECTIONS:
+                table = section_rows(players, abbr, columns, gate)
+                if table.empty:
+                    continue
+                rendered_any = True
+                st.markdown(f"**{title}**")
+                st.dataframe(
+                    style_plain_dataframe(table.set_index('Player')),
+                    width="stretch", height=df_auto_height(len(table)),
+                )
+            if not rendered_any:
+                st.caption("No stat lines on file for this team in this game.")
+
+    action_cols = st.columns(3)
+    with action_cols[0]:
+        st.button("Close box score", key="gs_box_close", width="stretch", on_click=close_box_score)
+    for col, abbr, other in ((action_cols[1], away, home), (action_cols[2], home, away)):
+        with col:
+            st.button(
+                f"{team_abbrev_label(abbr)} vs {team_abbrev_label(other)} defense",
+                key=f"gs_box_ma_{abbr}", width="stretch",
+                help=f"Open the Matchup Analyzer with the {other} defense selected",
+                on_click=switch_tab, args=(TAB_MATCHUP_ANALYZER,),
+                kwargs={'ma_jump_defense': other},
+            )
+    st.divider()
+
+
 def render():
+    # This tab is now a jump DESTINATION as well as a launchpad - a box-score
+    # chip on Player Search or the Matchup Analyzer lands here - so it needs
+    # the same way back every other destination tab already offers. Rendered
+    # here rather than once above the tab bar in app.py, because
+    # render_back_button uses a fixed widget key and instantiating it in two
+    # places at once is a duplicate-key error.
+    render_back_button()
     st.markdown("<div class='custom-section-header'>GAME SLATE</div>", unsafe_allow_html=True)
 
     weeks, err = [], None
@@ -162,6 +350,11 @@ def render():
     with c1:
         season = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=0,
                               key="gs_season")
+
+    # Above the grid AND above the "no games this week" early return - this
+    # panel is a deep-link destination, not a page element, so it must not
+    # depend on what the week selector happens to be showing.
+    _render_box_panel(season)
 
     with skeleton_loader("table", n_rows=4, n_cols=4):
         weeks, err = slate_weeks(season)

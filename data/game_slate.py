@@ -71,6 +71,12 @@ ROUND_LABELS = {
 }
 
 SLATE_COLUMNS = [
+    # 'Game Id' is nflverse's own schedule id ("2025_01_DAL_PHI"), carried
+    # so a card can open a box score and so any per-game stat elsewhere in
+    # the app can resolve back to the game it came from. It is the SAME id
+    # stats_player_week_{season}.csv uses - measured at 285/285 games in
+    # both directions on the real 2025 files. See data/box_score.py.
+    'Game Id',
     'Away', 'Home', 'Away Pts', 'Home Pts', 'Winner',
     'Date', 'Date Display', 'Kickoff', 'Kickoff Long', 'Time TBD',
     'Status', 'Status Detail', 'Played', 'Live',
@@ -241,6 +247,7 @@ def season_slate(season):
             detail = 'Final/OT'
 
         rows.append({
+            'Game Id': str(src.get('game_id') or ''),
             'Away': away.iloc[i], 'Home': home.iloc[i],
             'Away Pts': a_pts, 'Home Pts': h_pts, 'Winner': winner,
             'Date': day.isoformat() if day else '',
@@ -326,6 +333,27 @@ def load_slate(season, week):
     if games.empty:
         return games, err
     return games[games['Week'] == int(week)].reset_index(drop=True), None
+
+
+def find_slate_game(season, game_id):
+    """
+    One game, resolved against the WHOLE SEASON rather than whatever week
+    the tab is currently showing. Returns the row, or None.
+
+    This is deliberate and load-bearing: the box-score panel is the
+    destination for every cross-tab link in the app, and requiring the game
+    to also survive the slate's current week selector would make links fail
+    for a reason that has nothing to do with the game they name - click a
+    week 3 game from a player's log while the slate sits on week 12 and
+    nothing would open.
+    """
+    if not game_id:
+        return None
+    games, _err = season_slate(season)
+    if games.empty or 'Game Id' not in games.columns:
+        return None
+    match = games[games['Game Id'].astype(str) == str(game_id)]
+    return match.iloc[0] if not match.empty else None
 
 
 def slate_source(season, week=None):

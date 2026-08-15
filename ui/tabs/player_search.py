@@ -23,7 +23,7 @@ from ui.styling import get_pff_color, style_plain_dataframe, df_auto_height
 from ui.components import (
     render_player_card, render_bio_strip, render_sticky_game_log, switch_tab, get_drafted_players_clean_keys,
     render_back_button, compute_bye_weeks, build_player_search_labels, render_stat_tiles, render_hero_tiles,
-    render_fpts_week_strip, render_matchup_heat_strip, skeleton_loader,
+    render_fpts_week_strip, render_matchup_heat_strip, render_game_links, skeleton_loader,
 )
 from ui.player_snapshot import build_player_snapshot, render_percentile_bars_figure, render_percentile_radar_grid, split_snapshot_for_display
 
@@ -605,6 +605,20 @@ def render():
                         log_df_view = log_df
 
                     render_sticky_game_log(log_df_view, log_df_view, log_cols, header_map)
+                    # A chip strip, not a control inside the table: the game
+                    # log is hand-rolled HTML (ui.styling.render_game_log_html_table),
+                    # and HTML cannot fire a Python callback, so a per-row
+                    # button has to live outside the table. Rows that don't
+                    # resolve to a real game are dropped by game_link_rows,
+                    # so every chip here opens something.
+                    from data.box_score import game_link_rows
+                    from data.game_slate import season_slate
+                    slate, _slate_err = season_slate(t1_target_year)
+                    links = game_link_rows(log_df_view, slate, team=filter_team, limit=8)
+                    render_game_links(
+                        links, t1_target_year, key_prefix="ps_box",
+                        caption="Open a game's full box score:",
+                    )
                 else:
                     st.info("No weekly game logs available for this player profile structure.")
 

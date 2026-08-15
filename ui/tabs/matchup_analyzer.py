@@ -46,8 +46,8 @@ from data.transforms import (
 from data.utils import american_odds_to_prob
 from ui.charts import render_game_log_bars, render_percentile_bar_list, render_split_bars, render_tier_curve
 from ui.components import (
-    build_player_search_labels, compute_bye_weeks, render_back_button, render_hero_tiles,
-    render_stat_tiles, render_team_banner, skeleton_loader, switch_tab,
+    build_player_search_labels, compute_bye_weeks, render_back_button, render_game_links,
+    render_hero_tiles, render_stat_tiles, render_team_banner, skeleton_loader, switch_tab,
 )
 from ui.player_snapshot import build_player_snapshot
 from ui.styling import get_matchup_color, get_pff_color
@@ -321,6 +321,20 @@ def _render_game_log_and_curves(season, stats_df, name_col, player_name, positio
         bar_labels=[(str(r.opponent), f"W{int(r.week)}") for r in series.itertuples()],
     )
     st.caption("Dashed line = season average. ★ = a top-quartile game for this player. Label = opponent + week.")
+
+    # A chip strip under the chart rather than a transparent button overlay
+    # on the bars themselves. The overlay is the better gesture - the bar IS
+    # the affordance - but it depends on undocumented Streamlit DOM
+    # structure and percentage-padding geometry that can only be confirmed
+    # by clicking at real coordinates in a real browser. Shipping CSS that
+    # can't be verified here would look fine in a screenshot and be dead in
+    # the DOM, which is the failure mode worth avoiding. The strip works,
+    # and swapping it for an overlay later is a local change.
+    from data.box_score import game_link_rows
+    from data.game_slate import season_slate
+    slate, _err = season_slate(season)
+    links = game_link_rows(series, slate, team=offense_team, limit=8)
+    render_game_links(links, season, key_prefix="ma_box", caption="Open a game's full box score:")
 
     _render_matchup_curves(series, softness_map, defense_team, stat_label, season, offense_team)
     return stat_col, stat_label

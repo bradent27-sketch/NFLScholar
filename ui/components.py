@@ -645,17 +645,22 @@ def render_matchup_title(player_label, team_label, team_color=None):
     )
 
 
-def render_team_banner(team_abbr, subtitle=""):
+def render_team_banner(team_abbr, subtitle="", title=None):
     """
     Team identity banner (Depth Charts): logo + full team name over a
     team-color gradient that fades into the app surface - the standard
     "team page" header treatment on pro sports sites. Logo comes from the
     local teams_colors_logos.csv via load_team_logos() (ESPN CDN, same
     host as the player headshots already used app-wide).
+
+    `title` overrides the team name as the headline while keeping the
+    team's colour and logo as the backdrop - the Matchup Analyzer's player
+    column uses it to head a banner with the PLAYER's name in his team's
+    identity, so both halves of that tab are labelled the same way.
     """
     from data.loaders import load_team_logos
     cfg = TEAM_CONFIG.get(team_abbr, {})
-    name = cfg.get('name', team_abbr)
+    name = title or cfg.get('name', team_abbr)
     color = cfg.get('color', C['surface_container_high'])
     logo_url = load_team_logos().get(team_abbr, '')
     logo_html = f"<img src='{logo_url}' alt='{team_abbr}'>" if logo_url else ""

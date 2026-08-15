@@ -190,6 +190,7 @@ TAB_ROOKIE_WATCH = "ROOKIE WATCH"
 TAB_RANKINGS = "WEEKLY RANKINGS"
 TAB_LIVE_ODDS = "LIVE ODDS"
 TAB_PLAYER_COMPARE = "PLAYER COMPARE"
+TAB_MATCHUP_ANALYZER = "MATCHUP ANALYZER"
 TAB_DRAFT_HQ = "DRAFT HQ"
 TAB_GAME_SLATE = "GAME SLATE"
 # Draft HQ sits LAST, deliberately. It's the most capable tab in the app,
@@ -207,10 +208,17 @@ TAB_GAME_SLATE = "GAME SLATE"
 # the game to another tab with both teams filled in - so it is the natural
 # first thing opened in a prep session, and being first is what makes it
 # useful rather than a detour.
+#
+# Matchup Analyzer is inserted directly after Player Compare rather than
+# anywhere earlier, deliberately: every existing tab keeps the position it
+# has always had, and Draft HQ stays last for the reason above. It sits next
+# to Compare because the two answer adjacent questions - Compare is
+# player-vs-player, Matchup Analyzer is player-vs-defense - so the pair reads
+# as one "who do I actually start" neighbourhood.
 TAB_LABELS = [
     TAB_GAME_SLATE, TAB_PLAYER_SEARCH, TAB_DEPTH_CHARTS, TAB_DEFENSIVE_YIELD,
     TAB_RISERS, TAB_ROOKIE_WATCH, TAB_RANKINGS, TAB_LIVE_ODDS, TAB_PLAYER_COMPARE,
-    TAB_DRAFT_HQ,
+    TAB_MATCHUP_ANALYZER, TAB_DRAFT_HQ,
 ]
 
 # Decimal places per stat, approved list: whole numbers for counting stats

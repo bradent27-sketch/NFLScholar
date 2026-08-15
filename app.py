@@ -34,7 +34,7 @@ from ui.components import (  # noqa: E402
 )
 from ui.tabs import (  # noqa: E402
     game_slate, player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds,
-    player_compare, draft_hq,
+    player_compare, matchup_analyzer, draft_hq,
 )
 
 
@@ -84,7 +84,7 @@ render_intro_and_glossary()
 # than pointing at the tab that was actually added.
 _tabs = st.tabs(TAB_LABELS, key="active_tab", on_change="rerun")
 
-_tab_modules = [game_slate, player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare, draft_hq]
+_tab_modules = [game_slate, player_search, depth_charts, defensive_yield, risers, rookie_watch, rankings, live_odds, player_compare, matchup_analyzer, draft_hq]
 assert len(_tab_modules) == len(TAB_LABELS), "TAB_LABELS and _tab_modules must stay in sync"
 for _tab, _module, _label in zip(_tabs, _tab_modules, TAB_LABELS):
     if _tab.open:

@@ -150,6 +150,27 @@ ROLE_CHANGE_RATIO = 0.6
 # interrupted recent run.
 SEASON_RECENCY_WEIGHTS = [1.0, 0.55, 0.30, 0.15, 0.08]
 
+# SEASON COMPLETENESS. Recency answers "how relevant is this season";
+# completeness answers a different question, "how much of this player did
+# we actually see" - and a season cut short by injury scores low on the
+# second one no matter how high it scores on the first. Before this, an
+# 8-game injury season carried the same PER-GAME weight as a full 17-game
+# one at the same recency slot, so a shortened season sitting in the most
+# recent slot (weight 1.0) could swing the blend as hard as a full season
+# would, and quality seasons just one slot further back faded fast under
+# SEASON_RECENCY_WEIGHTS regardless of how good they were. Confirmed real:
+# Joe Burrow's 8-game 2025 (reduced pace, turf toe) sat at recency weight
+# 1.0 while his healthy, better 2024 (17 games, 289 yd/g, 43 TD) had
+# already faded to 0.55 - the blend read closer to the hurt season than to
+# his actual current form.
+#
+# Scaled toward SEASON_COMPLETENESS_FLOOR rather than to zero: a short
+# season is still real evidence, just noisier and less representative than
+# a full one. Dropping it out entirely would trade one distortion for
+# another - a rookie who played 6 committee games would vanish from his own
+# projection instead of just counting for less.
+SEASON_COMPLETENESS_FLOOR = 0.45
+
 # AGING. Measured here rather than assumed, off 1,644 contributor seasons
 # (>=8 games, >=4 ppg) from 2014 on, matched to birthdates from the
 # DynastyProcess ID crosswalk. The quantity measured is the median
@@ -373,7 +394,20 @@ def build_player_rates(latest_season, n_seasons=CURVE_SEASONS):
     seasons = sorted(df['season'].unique(), reverse=True)
     weight_for = {s: (SEASON_RECENCY_WEIGHTS[i] if i < len(SEASON_RECENCY_WEIGHTS) else 0.05)
                   for i, s in enumerate(seasons)}
-    df['_w'] = df['season'].map(weight_for).fillna(0.05)
+    recency_weight = df['season'].map(weight_for).fillna(0.05)
+
+    # Completeness scales EACH row's weight by how much of that player's
+    # OWN season it came from - a season with 8 games contributes 8 rows at
+    # a discounted per-row weight, on top of already contributing fewer rows
+    # than a full season would. Both effects are real and distinct: fewer
+    # rows is "less data from this season"; the discount is "and what's
+    # there is a less reliable sample of him", which matters most exactly
+    # when a short season also happens to be the most-recent, highest-weight
+    # one.
+    games_in_season = df.groupby([name_col, 'season'])['week'].transform('nunique')
+    completeness = (games_in_season / MODERN_SEASON_GAMES).clip(upper=1.0)
+    completeness_factor = SEASON_COMPLETENESS_FLOOR + (1 - SEASON_COMPLETENESS_FLOOR) * completeness
+    df['_w'] = (recency_weight * completeness_factor).fillna(0.05)
 
     for stat in PROJECTED_STATS:
         df[stat] = _stat_series(df, stat)

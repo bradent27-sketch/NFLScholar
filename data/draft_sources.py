@@ -913,6 +913,19 @@ def fetch_fantasypros_players(api_key, scoring='Full PPR'):
         return pd.DataFrame(), pd.DataFrame(), {
             'error': 'API key rejected (401) - request/verify one at '
                      'secure.fantasypros.com/api-keys/request/'}
+    if resp.status_code == 403:
+        # Different failure than a 401: the key was recognized, but this
+        # ACCOUNT isn't cleared for this request. The public API is
+        # apply-and-wait ("request an API key" at the URL below, not
+        # instant self-serve), so the two live causes are the key is still
+        # pending approval, or this account's tier doesn't include the
+        # players/ECR endpoint - not a bug in what gets sent, which matches
+        # the request URL/params/header in FantasyPros' own docs exactly.
+        return pd.DataFrame(), pd.DataFrame(), {
+            'error': "API key valid but not authorized for this endpoint (403) - most likely "
+                     "still pending approval, or this account's tier doesn't include "
+                     "/nfl/players. Check status at secure.fantasypros.com/api-keys/request/ "
+                     "or email api@fantasypros.com."}
     if resp.status_code == 429:
         return pd.DataFrame(), pd.DataFrame(), {
             'error': 'rate limited (429) - the monthly call budget is likely exhausted'}

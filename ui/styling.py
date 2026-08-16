@@ -778,7 +778,7 @@ def inject_theme():
             background-color: {C['surface_container']} !important;
             border: 1px solid {C['outline_variant']} !important;
             border-radius: {R['sm']} !important;
-            padding: 6px;
+            padding: 0 6px;
             font-family: {F['mono']} !important;
             /* box-sizing + overflow are load-bearing, not cosmetic. The
                grid inside is a canvas sized to 100% of this element's
@@ -789,6 +789,24 @@ def inject_theme():
                Clipping to the rounded corner finishes it. */
             box-sizing: border-box !important;
             overflow: hidden !important;
+        }}
+        /* No VERTICAL padding here specifically (horizontal is fine) -
+           measured live (Playwright) that the grid's inner canvas is
+           always exactly (requested height - 2px) tall regardless of
+           padding, i.e. it does NOT shrink to fit a padded content box the
+           way the width dimension does. Any top/bottom padding just pushes
+           that fixed-size canvas down without shrinking it, so it overhangs
+           the bottom by (padding+border amount - 2px) and gets clipped by
+           overflow:hidden above - invisible on a tall table (a few px lost
+           out of hundreds) but it ate the entire last row on a real 1-row
+           box-score table (a single QB's passing line). Zero vertical
+           padding + the 1px border leaves exactly (requested height - 2px)
+           of content-box height, which matches the canvas's own size
+           exactly - confirmed via getBoundingClientRect() on real tables
+           from 1 row to 20+, zero overhang at every size. */
+        div[data-testid="stDataFrame"] {{
+            padding-top: 0 !important;
+            padding-bottom: 0 !important;
         }}
         div[data-testid="stDataFrame"] > div,
         div[data-testid="stDataFrame"] canvas {{

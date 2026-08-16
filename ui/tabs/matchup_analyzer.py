@@ -35,7 +35,7 @@ from config import (
 )
 from data import matchup_signals as ms
 from data.loaders import (
-    load_all_pff_data, load_external_coverage_schemes, load_pbp,
+    load_all_pff_data, load_external_coverage_schemes,
     load_saved_odds_api_key, load_schedule, load_sharp_positional_coverage,
     load_sumersports_tendency_data, fetch_nfl_odds, fetch_nfl_player_props,
     load_pff_data_with_fallback,
@@ -44,9 +44,12 @@ from data.transforms import (
     build_points_allowed_matrix, load_and_merge_data, precompute_league_percentiles,
 )
 from data.utils import american_odds_to_prob
-from ui.charts import render_game_log_bars, render_percentile_bar_list, render_split_bars, render_tier_curve
+from ui.charts import (
+    render_chart_click_overlay, render_game_log_bars, render_game_log_line,
+    render_percentile_bar_list, render_split_bars, render_tier_curve,
+)
 from ui.components import (
-    build_player_search_labels, compute_bye_weeks, render_back_button, render_game_links,
+    build_player_search_labels, compute_bye_weeks, render_back_button,
     render_hero_tiles, render_stat_tiles, render_team_banner, skeleton_loader, switch_tab,
 )
 from ui.player_snapshot import build_player_snapshot
@@ -78,9 +81,21 @@ def _team_label(abbr):
 
 def render():
     render_back_button()
-    _section("MATCHUP ANALYZER", "Look up any player, then pick any defense to check them against — they don't have to be playing each other.")
+    _section("MATCHUP ANALYZER", "Pick a team to filter the roster, then a player from it — or search the whole league. Pick any defense to check them against; they don't have to be playing each other.")
 
-    c_season, c_player, c_defense = st.columns([1, 2, 1.4])
+    # A jump from another tab (Game Slate's "{TEAM} players" button is the
+    # one live caller today) can request a season - must land in
+    # session_state BEFORE the season selectbox below is instantiated this
+    # pass, same widget-state-ordering rule every other cross-tab trigger in
+    # this app follows. Guarded on membership: Game Slate's own season list
+    # (AVAILABLE_SEASONS_WITH_UPCOMING) includes an upcoming season with no
+    # played games yet, which this tab's own list doesn't carry - seeding an
+    # unlisted value would make the selectbox raise.
+    jump_season = st.session_state.pop('ma_jump_season', None)
+    if jump_season in AVAILABLE_SEASONS and st.session_state.get('ma_season') != jump_season:
+        st.session_state['ma_season'] = jump_season
+
+    c_season, c_team, c_player, c_defense = st.columns([1, 1.3, 1.7, 1.4])
     with c_season:
         season = st.selectbox("Season", AVAILABLE_SEASONS, index=0, key="ma_season")
 
@@ -91,11 +106,30 @@ def render():
         return
 
     bye_weeks = compute_bye_weeks(season)
+
+    # Team filter narrows the player picker below it, same "team first,
+    # then player" pattern Player Search uses - explicit user request,
+    # since typing a name blind is slower than picking a roster first when
+    # you already know which team you care about (this is exactly how a
+    # jump from Game Slate arrives: a team, not yet a specific player).
+    team_options = ["All Teams"] + sorted(TEAM_CONFIG.keys(), key=lambda a: TEAM_CONFIG[a].get('name', a))
+    team_option_labels = {"All Teams": "All Teams (search whole league)"}
+    team_option_labels.update({a: f"{TEAM_CONFIG[a]['name']} ({a})" for a in TEAM_CONFIG})
+
+    jump_team = st.session_state.pop('ma_jump_team', None)
+    if jump_team and jump_team in TEAM_CONFIG and st.session_state.get('ma_team_filter') != jump_team:
+        st.session_state['ma_team_filter'] = jump_team
+    with c_team:
+        team_filter = st.selectbox(
+            "Team filter (optional)", team_options, index=0, key="ma_team_filter",
+            format_func=lambda a: team_option_labels.get(a, a),
+        )
+
     # hide_drafted=False: this is a season-analysis tool, not a draft board.
     # Filtering out players already drafted in a mock would silently remove
     # most of the league from a picker whose whole job is "look anyone up".
     labels, label_to_name = build_player_search_labels(
-        stats_df, name_col, team_col, bye_weeks, hide_drafted=False,
+        stats_df, name_col, team_col, bye_weeks, team_filter=team_filter, hide_drafted=False,
     )
     with c_player:
         # A jump from another tab lands here by pre-seeding this key, so the
@@ -109,7 +143,7 @@ def render():
                 st.session_state['ma_player'] = match
         player_label = st.selectbox(
             "Player", labels, index=None, key="ma_player", placeholder="— Search any player —",
-            help="Type any part of a name to filter live.",
+            help="Type any part of a name to filter live. Use the team filter to the left first if you don't know the exact name.",
         )
     with c_defense:
         default_def = st.session_state.pop('ma_jump_defense', None)
@@ -157,7 +191,6 @@ def render():
 
     _render_scheme_fit(season, player_name, position, defense_team)
     _render_anytime_td(stats_df, name_col, player_name, position, defense_team, softness_map)
-    _render_compare_board(season, stats_df, name_col, team_col, offense_team, position, defense_team, player_name)
     _render_prop_analysis(season, stats_df, name_col, player_name, position, offense_team, defense_team, selected_stat)
 
 
@@ -179,7 +212,6 @@ def _render_player_column(season, stats_df, name_col, team_col, p_data, p_bio,
         st.caption(f"⚠️ Showing {pff_year} PFF grades — nothing uploaded for {season} yet.")
 
     _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_name, position, pff)
-    _render_snap_workload(p_bio, pff, player_name, position)
     _render_route_efficiency(pff, player_name, position)
     _render_usage_and_role(stats_df, name_col, team_col, player_name, offense_team)
     return _render_game_log_and_curves(
@@ -216,44 +248,25 @@ def _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_n
     render_percentile_bar_list(entries, sort=False)
 
 
-def _render_snap_workload(p_bio, pff, player_name, position):
-    _section("SNAP WORKLOAD")
-    tiles = []
-    if bool(p_bio.get('has_snap_match', True)):
-        snap = float(p_bio.get('snap_pct_avg', 0) or 0)
-        tiles.append({'label': 'Snap share', 'value': f"{snap:.0f}%", 'accent': get_pff_color(snap)})
-    else:
-        # "N/A", never "0%" - the local snap export barely covers some
-        # position groups, and a 0 there reads as "never plays".
-        tiles.append({'label': 'Snap share', 'value': 'N/A', 'sub': 'not tracked'})
-    tiles.append({'label': 'Games', 'value': f"{int(p_bio.get('snap_games_played', 0) or 0)}"})
-
-    rec = pff.get('rec', pd.DataFrame())
-    if position in ('WR', 'TE', 'RB', 'FB') and not rec.empty and 'player' in rec.columns:
-        from data.utils import clean_name_exact
-        key = clean_name_exact(pd.Series([player_name])).iloc[0]
-        pool = rec.copy()
-        pool['_key'] = clean_name_exact(pool['player'])
-        row = pool[pool['_key'] == key]
-        if not row.empty:
-            r = row.iloc[0]
-            for label, col, fmt in (('Routes', 'routes', '{:.0f}'), ('Route rate', 'route_rate', '{:.0f}%')):
-                value = pd.to_numeric(pd.Series([r.get(col)]), errors='coerce').iloc[0]
-                if pd.notna(value):
-                    tiles.append({'label': label, 'value': fmt.format(value)})
-    render_hero_tiles(tiles)
-
-
 def _render_route_efficiency(pff, player_name, position):
     if position not in ('WR', 'TE', 'RB', 'FB'):
         return
-    splits = ms.route_efficiency_splits(pff.get('rec'), pff.get('rec_scheme'), player_name)
+    splits = ms.route_efficiency_splits(
+        pff.get('rec'), pff.get('rec_scheme'), player_name, route_concept=pff.get('route_concept'),
+    )
     if not splits['available']:
         return
     _section("ROUTE EFFICIENCY")
     if splits['alignment']:
         st.caption("Where he lines up and how efficient he is — percentile among receivers with 25+ routes.")
         render_percentile_bar_list(splits['alignment'], sort=False)
+        # No Wide YPRR alongside Slot YPRR above: PFF's route-concept
+        # exports break out Slot and Screen specifically, never Wide as its
+        # own concept, and receiving_summary's Wide rate (above) is a SHARE
+        # of snaps, not an efficiency number - there's no source in this app
+        # for it, so it's not shown rather than approximated.
+        if any(e['label'] == 'Slot YPRR' for e in splits['alignment']):
+            st.caption("No Wide YPRR shown: PFF's route-concept data splits out Slot and Screen specifically, never Wide as its own number.")
     if splits['scheme']:
         st.caption("Same player, split by the coverage he faced. Bars are percentiles; the number is the raw value.")
         render_split_bars(splits['scheme'], 'vs Man', 'vs Zone')
@@ -312,29 +325,29 @@ def _render_game_log_and_curves(season, stats_df, name_col, player_name, positio
 
     values = series['value'].tolist()
     tooltips = [
-        f"Wk {int(r.week)} vs {r.opponent}: {r.value:.1f} {stat_label}"
+        f"Wk {int(r.week)} vs {r.opponent}: {r.value:.1f} {stat_label} — click to open the box score"
         for r in series.itertuples()
     ]
-    render_game_log_bars(
+    render_game_log_line(
         values, tooltips, highlight=ms.highlight_games(values),
         avg=sum(values) / len(values),
         bar_labels=[(str(r.opponent), f"W{int(r.week)}") for r in series.itertuples()],
     )
-    st.caption("Dashed line = season average. ★ = a top-quartile game for this player. Label = opponent + week.")
-
-    # A chip strip under the chart rather than a transparent button overlay
-    # on the bars themselves. The overlay is the better gesture - the bar IS
-    # the affordance - but it depends on undocumented Streamlit DOM
-    # structure and percentage-padding geometry that can only be confirmed
-    # by clicking at real coordinates in a real browser. Shipping CSS that
-    # can't be verified here would look fine in a screenshot and be dead in
-    # the DOM, which is the failure mode worth avoiding. The strip works,
-    # and swapping it for an overlay later is a local change.
-    from data.box_score import game_link_rows
+    # Real Streamlit buttons, invisible, laid out in the SAME equal-width
+    # st.columns(n) the chart divides its width into - clicking a point
+    # opens that game's box score directly, which is what used to need a
+    # separate chip strip below the chart (see render_chart_click_overlay's
+    # own docstring for why this is safe to do now: it's real column layout,
+    # not CSS chasing undocumented SVG hit-testing). game_link_positions,
+    # not game_link_rows - this needs exactly one entry per point, in order,
+    # including a None for a week that didn't resolve, or a dropped row
+    # would shift every later column onto the wrong week's point.
+    from data.box_score import game_link_positions
     from data.game_slate import season_slate
     slate, _err = season_slate(season)
-    links = game_link_rows(series, slate, team=offense_team, limit=8)
-    render_game_links(links, season, key_prefix="ma_box", caption="Open a game's full box score:")
+    positions = game_link_positions(series, slate, team=offense_team)
+    render_chart_click_overlay(positions, season, key_prefix="ma_game_pt")
+    st.caption("Dashed line = season average. ★ = a top-quartile game for this player. Click a point to open that game's box score.")
 
     _render_matchup_curves(series, softness_map, defense_team, stat_label, season, offense_team)
     return stat_col, stat_label
@@ -381,14 +394,13 @@ def _render_matchup_curves(series, softness_map, defense_team, stat_label, seaso
 
 def _render_defense_column(season, stats_df, defense_team, position):
     points_allowed = build_points_allowed_matrix(stats_df, season)
-    _render_positional_vulnerability(points_allowed, defense_team, position)
+    _render_positional_vulnerability(stats_df, points_allowed, defense_team, position)
     _render_coverage(defense_team, season)
-    _render_red_zone(season, defense_team)
     _render_run_defense(defense_team, season)
     _render_allowed_by_position(stats_df, defense_team, position)
 
 
-def _render_positional_vulnerability(points_allowed, defense_team, position):
+def _render_positional_vulnerability(stats_df, points_allowed, defense_team, position):
     _section("POSITIONAL VULNERABILITY", "Which position to actually target. Rank 1 = allows the MOST, i.e. the softest matchup.")
     rows = ms.positional_vulnerability(points_allowed, defense_team)
     if not rows:
@@ -406,6 +418,40 @@ def _render_positional_vulnerability(points_allowed, defense_team, position):
         })
     render_percentile_bar_list(cells, sort=False)
     st.caption("Fantasy points allowed per game. Green = soft, red = tough. ◀ marks the selected player's position.")
+
+    # What the bar above actually rolls up: the same defense's week-by-week
+    # numbers, per position - explicit user request ("I wanna see the week
+    # by week stats that lead to this calculation... can kinda show a change
+    # over time"). A season average can hide a defense that got torched in
+    # September and tightened up since, or one that's trending the other
+    # way - this is the same "trend vs. one blowup" check
+    # _render_allowed_by_position's own season bars already give a season
+    # total for, just spread across every week instead of collapsed to one
+    # number, and for every position, not just the analyzed player's own.
+    available_positions = [r['position'] for r in rows]
+    default_idx = available_positions.index(position) if position in available_positions else 0
+    detail_pos = st.selectbox(
+        "Week-by-week detail for", available_positions, index=default_idx,
+        key=f"ma_vuln_detail_pos_{defense_team}",
+        help="What this defense has allowed to this position, game by game - not just the season number above.",
+    )
+    detail_stats = list(ms.ALLOWED_STAT_KEYS.get(detail_pos, [])) + [('fantasy_points', 'Fantasy Pts')]
+    any_shown = False
+    for stat_col, stat_label in detail_stats:
+        weekly = ms.defense_weekly_allowed(stats_df, defense_team, detail_pos, stat_col, last_n=None)
+        if weekly.empty:
+            continue
+        any_shown = True
+        st.markdown(f"**{stat_label} allowed to {detail_pos}s, by week**")
+        values = weekly['value'].astype(float).tolist()
+        render_game_log_line(
+            values,
+            [f"Wk {int(r.week)} vs {r.offense}: {r.value:.1f} {stat_label}" for r in weekly.itertuples()],
+            avg=sum(values) / len(values),
+            bar_labels=[(str(r.offense), f"W{int(r.week)}") for r in weekly.itertuples()],
+        )
+    if not any_shown:
+        st.caption(f"No week-by-week data for {detail_pos}s allowed by this defense yet.")
 
 
 def _render_coverage(defense_team, season):
@@ -452,47 +498,6 @@ def _render_coverage(defense_team, season):
             st.caption("PFF's per-defender coverage grades weighted by each player's own coverage snaps, so a 40-snap backup doesn't count like a 600-snap starter. Higher percentile = softer matchup.")
 
 
-def _render_red_zone(season, defense_team):
-    """
-    Opt-in behind a button, unlike every other section here.
-
-    Red-zone rate is the one signal on this tab that no local export
-    carries - "did a drive that reached the 20 finish in the end zone"
-    needs field position per play, so it needs nflverse play-by-play, which
-    is a live multi-megabyte download. Every other section on this tab
-    renders from files already on disk in well under a second, and making
-    all of them wait on that pull would turn a fast tab into a slow one for
-    a section not everyone opens.
-
-    Once loaded it stays loaded: load_pbp is @st.cache_data, so the button
-    is a one-time cost per session, and it's already warm if Player Search's
-    own red-zone usage section has been opened.
-    """
-    _section("RED ZONE DEFENSE")
-    state_key = f"ma_rz_loaded_{season}"
-    if not st.session_state.get(state_key):
-        st.caption(
-            "Needs a live play-by-play pull (field position per play isn't in any local export). "
-            "One download per session — everything else on this tab is already on disk."
-        )
-        if not st.button("Load red-zone defense", key=f"ma_rz_btn_{season}"):
-            return
-        st.session_state[state_key] = True
-    with st.spinner("Loading play-by-play…"):
-        rz = ms.red_zone_defense(load_pbp(season), defense_team)
-    if not rz['available']:
-        st.caption(rz.get('reason', 'Red-zone data unavailable.'))
-        return
-    render_hero_tiles([
-        {'label': 'TD rate allowed', 'value': f"{rz['td_rate']:.0f}%",
-         'sub': f"league {rz['league_td_rate']:.0f}%", 'accent': get_matchup_color(rz['td_rate_pct'])},
-        {'label': 'Trips faced / game', 'value': f"{rz['trips_per_game']:.1f}"},
-        {'label': 'Trips', 'value': f"{rz['trips']}"},
-        {'label': 'TDs allowed', 'value': f"{rz['tds']}"},
-    ])
-    st.caption("A trip is a distinct drive that reached the 20, not a count of red-zone plays — a long grinding drive is one trip, same as a one-play score.")
-
-
 def _render_run_defense(defense_team, season):
     sumer = load_sumersports_tendency_data()
     profile = ms.run_defense_profile(
@@ -524,21 +529,6 @@ def _render_allowed_by_position(stats_df, defense_team, position):
         for e in allowed['entries']
     ], sort=False)
     st.caption(f"Per game across {allowed['games']} games. Higher percentile = softer. Hover for the league average and rank.")
-
-    key_spec = ms.MATCHUP_KEY.get(position)
-    if key_spec:
-        stat_col, stat_label = key_spec
-        weekly = ms.defense_weekly_allowed(stats_df, defense_team, position, stat_col)
-        if not weekly.empty:
-            st.markdown(f"**Last {len(weekly)} games — {stat_label} allowed**")
-            values = weekly['value'].astype(float).tolist()
-            render_game_log_bars(
-                values,
-                [f"Wk {int(r.week)} vs {r.offense}: {r.value:.0f}" for r in weekly.itertuples()],
-                avg=sum(values) / len(values),
-                bar_labels=[(str(r.offense), f"W{int(r.week)}") for r in weekly.itertuples()],
-            )
-            st.caption("Is the season number a trend or one blowup? This is the check a season average can't answer.")
 
 
 # ---------------------------------------------------------------------------
@@ -647,61 +637,21 @@ def _render_anytime_td(stats_df, name_col, player_name, position, defense_team, 
     )
 
 
-def _render_compare_board(season, stats_df, name_col, team_col, offense_team, position, defense_team, player_name):
-    """
-    The single-player view answers "is this guy a good play". It can't
-    answer "which of these three is the play", which is the question a real
-    slate poses - one flex spot, three candidates. This puts them in one
-    table against the same defense.
-    """
-    _section("COMPARE BOARD", f"Up to 3 players against the {defense_team} defense.")
-    same_pos = stats_df[stats_df['position'].astype(str).str.upper() == position]
-    pool = sorted(same_pos[name_col].dropna().astype(str).unique().tolist())
-    if len(pool) < 2:
-        st.caption("Not enough players at this position to compare.")
-        return
-    default = [p for p in (player_name,) if p in pool]
-    picked = st.multiselect(
-        f"{position}s to compare", pool, default=default, max_selections=3, key="ma_compare_players",
-    )
-    if not picked:
-        st.caption("Pick up to three players to line them up.")
-        return
-
-    points_allowed = build_points_allowed_matrix(stats_df, season)
-    softness = ms.defense_softness(points_allowed, position)
-    stat_col, stat_label = ms.MATCHUP_KEY.get(position, ('fantasy_points', 'Fantasy Pts'))
-    rows = []
-    for name in picked:
-        series = ms.player_game_series(stats_df, name_col, name, stat_col)
-        fpts = ms.player_game_series(stats_df, name_col, name, 'fantasy_points')
-        player_rows = stats_df[stats_df[name_col].astype(str) == name]
-        team = str(player_rows.iloc[0].get(team_col, '')).upper() if not player_rows.empty else ''
-        usage = ms.usage_and_role(stats_df, name_col, name, team, team_col=team_col)
-        elasticity = ms.efficiency_elasticity_curve(series, softness, defense_team, stat_label)
-        rows.append({
-            'Player': name,
-            'Team': team,
-            'G': len(series),
-            f'{stat_label}/g': round(series['value'].mean(), 1) if not series.empty else None,
-            'Fantasy/g': round(fpts['value'].mean(), 1) if not fpts.empty else None,
-            'Opp share': round(usage['opportunity_share'], 1) if usage.get('opportunity_share') else None,
-            f'Proj vs {defense_team}': (
-                round(elasticity['projection']['y'], 1)
-                if elasticity['available'] and elasticity['projection'] else None
-            ),
-        })
-    from ui.styling import df_auto_height, style_plain_dataframe
-    board = pd.DataFrame(rows).set_index('Player')
-    st.dataframe(style_plain_dataframe(board), width="stretch", height=df_auto_height(len(rows)))
-    st.caption(f"Proj is each player's own elasticity curve read off at the {defense_team} defense's softness percentile — not a shared model.")
-
-
 def _render_prop_analysis(season, stats_df, name_col, player_name, position, offense_team, defense_team, selected_stat):
-    if position not in _POSITION_MARKETS or not selected_stat:
+    options = ms.GAME_LOG_STATS.get(position)
+    if position not in _POSITION_MARKETS or not options:
         return
     _section("PROP ANALYSIS")
-    stat_col, stat_label = selected_stat
+    # Its own stat picker, not a read of Game By Game's selection above -
+    # explicit user request, so checking a different line doesn't mean
+    # scrolling back up to change that dropdown. Defaults to whatever's
+    # selected up there for continuity on first load.
+    stat_labels = [label for _, label in options]
+    default_label = selected_stat[1] if selected_stat and selected_stat[1] in stat_labels else stat_labels[0]
+    choice = st.selectbox(
+        "Stat", stat_labels, index=stat_labels.index(default_label), key="ma_prop_stat",
+    )
+    stat_col, stat_label = options[stat_labels.index(choice)]
     series = ms.player_game_series(stats_df, name_col, player_name, stat_col)
     if series.empty:
         st.caption("No game log to check a line against.")

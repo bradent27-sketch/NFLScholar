@@ -268,27 +268,10 @@ def game_link_rows(log_df, slate_df, team=None, id_col='game_id', week_col='week
     if 'Game Id' not in slate_df.columns:
         return empty
 
-    by_id = {str(r['Game Id']): r for _, r in slate_df.iterrows()}
-    by_week = {}
-    if team:
-        team_up = str(team).upper()
-        for _, r in slate_df.iterrows():
-            if team_up in (str(r['Away']).upper(), str(r['Home']).upper()):
-                by_week[int(r['Week'])] = r
-
+    by_id, by_week = _slate_lookups(slate_df, team)
     seen, out = set(), []
     for _, row in log_df.iterrows():
-        game = None
-        raw_id = row.get(id_col) if id_col in log_df.columns else None
-        if raw_id is not None and pd.notna(raw_id):
-            game = by_id.get(str(raw_id))
-        if game is None and week_col in log_df.columns:
-            week = row.get(week_col)
-            if pd.notna(week):
-                try:
-                    game = by_week.get(int(week))
-                except (TypeError, ValueError):
-                    game = None
+        game = _resolve_row(row, by_id, by_week, id_col, week_col, log_df.columns)
         if game is None:
             continue
         entry = _link_entry(game, team)
@@ -299,6 +282,61 @@ def game_link_rows(log_df, slate_df, team=None, id_col='game_id', week_col='week
     # `limit` keeps the MOST RECENT, which is what a strip under a game log
     # wants - the last five games, not the first five.
     return out[-limit:] if limit else out
+
+
+def _slate_lookups(slate_df, team):
+    by_id = {str(r['Game Id']): r for _, r in slate_df.iterrows()}
+    by_week = {}
+    if team:
+        team_up = str(team).upper()
+        for _, r in slate_df.iterrows():
+            if team_up in (str(r['Away']).upper(), str(r['Home']).upper()):
+                by_week[int(r['Week'])] = r
+    return by_id, by_week
+
+
+def _resolve_row(row, by_id, by_week, id_col, week_col, columns):
+    game = None
+    raw_id = row.get(id_col) if id_col in columns else None
+    if raw_id is not None and pd.notna(raw_id):
+        game = by_id.get(str(raw_id))
+    if game is None and week_col in columns:
+        week = row.get(week_col)
+        if pd.notna(week):
+            try:
+                game = by_week.get(int(week))
+            except (TypeError, ValueError):
+                game = None
+    return game
+
+
+def game_link_positions(log_df, slate_df, team=None, id_col='game_id', week_col='week'):
+    """
+    Positional twin of game_link_rows: exactly one entry per row of
+    `log_df`, IN ORDER, IN THE SAME LENGTH - a row that resolves to nothing
+    is `None`, never dropped, and a repeated game_id is kept rather than
+    deduplicated.
+
+    game_link_rows drops what it can't resolve, which is correct for a chip
+    strip - a dead chip is worse than no chip. It's wrong for a caller that
+    needs to line up entry i with point i of an already-drawn chart (a
+    clickable-point overlay laid out in equal-width `st.columns(n)`,
+    matching a chart that put point i at slot i - see
+    ui.charts.render_game_log_line): dropping row 3 there would shift every
+    later column onto the wrong week's point instead of just leaving one
+    column dead.
+    """
+    if log_df is None or len(log_df) == 0 or slate_df is None or slate_df.empty:
+        return [None] * (0 if log_df is None else len(log_df))
+    if 'Game Id' not in slate_df.columns:
+        return [None] * len(log_df)
+
+    by_id, by_week = _slate_lookups(slate_df, team)
+    out = []
+    for _, row in log_df.iterrows():
+        game = _resolve_row(row, by_id, by_week, id_col, week_col, log_df.columns)
+        out.append(_link_entry(game, team) if game is not None else None)
+    return out
 
 
 def _link_entry(game, team):

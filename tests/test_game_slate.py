@@ -312,12 +312,17 @@ def test_each_button_seeds_its_own_team_and_an_unbridged_team_is_disabled():
         away_label, away_kw = captured[0]
         assert away_label == 'KC players'
         assert away_kw['disabled'] is False
-        assert away_kw['kwargs']['player_search_team_filter'] == 'KC'
-        assert away_kw['kwargs']['jump_to_year'] == 2026
+        # Routes into the Matchup Analyzer with THIS team as the roster
+        # filter and the actual opponent pre-filled as the defense to check
+        # against - the whole point of task 5's routing change.
+        assert away_kw['kwargs']['ma_jump_team'] == 'KC'
+        assert away_kw['kwargs']['ma_jump_defense'] == 'BUF'
+        assert away_kw['kwargs']['ma_jump_season'] == 2026
         assert away_kw['on_click'] is tab.switch_tab
         home_label, home_kw = captured[1]
         assert home_label == 'BUF players'
-        assert home_kw['kwargs']['player_search_team_filter'] == 'BUF'
+        assert home_kw['kwargs']['ma_jump_team'] == 'BUF'
+        assert home_kw['kwargs']['ma_jump_defense'] == 'KC'
 
         captured.clear()
         tab._render_card(0, _row(**{'Away': 'OAK'}), 2026, {'BUF': 'BUF'})

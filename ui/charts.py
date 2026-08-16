@@ -129,6 +129,180 @@ def render_game_log_bars(values, tooltips, highlight=None, avg=None, avg_label="
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
+def render_game_log_line(values, tooltips, highlight=None, avg=None, avg_label="season avg", bar_labels=None):
+    """
+    Line-chart twin of render_game_log_bars - same slot layout, same average
+    reference line, same per-point value label and week/opponent caption,
+    just a smoothed curve THROUGH the points instead of a bar per game. Per
+    explicit feedback that a line reads better for a season trend than a bar
+    strip does.
+
+    Points sit at the CENTER of the same equal-width per-game "slot" the bar
+    chart divides the width into (`slot*i + slot/2`), not spread edge-to-edge
+    across the full width the way Player Search's fpts strip does - this is
+    deliberate, not an oversight: it's what lets a caller lay real Streamlit
+    buttons in `st.columns(n)` underneath (equal-width columns, so column i's
+    center lines up with point i's) as a click target, without duplicating
+    the x-position math in two places or fighting undocumented SVG-in-HTML
+    hit-testing. See ui.tabs.matchup_analyzer's game-by-game section for that
+    overlay.
+
+    Returns the list of each point's x position as a 0-1 FRACTION of the
+    chart width (not pixels) - the caller needs this only if it's building
+    that overlay; every other caller can ignore the return value.
+    """
+    if not values:
+        return []
+    from ui.components import _smooth_svg_path
+    highlight = highlight or [False] * len(values)
+    W, H, MB, MT = 860, 208, 30, 36
+    plot_h = H - MB - MT
+    n = len(values)
+    slot = W / n
+    vmax = max(max(values), (avg or 0)) or 1
+
+    def x_at(i):
+        return slot * i + slot / 2
+
+    def y_at(v):
+        return MT + plot_h - plot_h * float(v) / vmax
+
+    pts = [(x_at(i), y_at(v)) for i, v in enumerate(values)]
+    line_path = _smooth_svg_path(pts)
+
+    parts = [
+        f"<svg viewBox='0 0 {W} {H}' xmlns='http://www.w3.org/2000/svg' "
+        f"style='width:100%; height:auto; font-family:{_BODY_FONT};'>"
+    ]
+    if avg is not None and vmax:
+        ay = MT + plot_h - plot_h * float(avg) / vmax
+        parts.append(
+            f"<line x1='0' y1='{ay:.1f}' x2='{W}' y2='{ay:.1f}' stroke='{C['on_surface_variant']}' "
+            f"stroke-width='1.2' stroke-dasharray='5,5' opacity='0.8'/>"
+        )
+        parts.append(
+            f"<text x='{W - 4}' y='{ay - 5:.1f}' text-anchor='end' font-size='10' font-family='{_MONO_FONT}' "
+            f"fill='{C['on_surface_variant']}'>{_esc(avg_label)} {avg:.1f}</text>"
+        )
+    area_path = f"{line_path} L{pts[-1][0]:.1f},{MT + plot_h:.1f} L{pts[0][0]:.1f},{MT + plot_h:.1f} Z"
+    parts.append(f"<path d='{area_path}' fill='{C['secondary']}' opacity='0.08'/>")
+    parts.append(f"<path d='{line_path}' fill='none' stroke='{C['secondary']}' stroke-width='2.4' stroke-linecap='round'/>")
+
+    for i, (x, y) in enumerate(pts):
+        is_star = bool(highlight[i]) if i < len(highlight) else False
+        fill = C['primary'] if is_star else C['secondary']
+        tip = _esc(tooltips[i]) if i < len(tooltips) else ''
+        parts.append(
+            f"<circle cx='{x:.1f}' cy='{y:.1f}' r='{4.5 if is_star else 3.5}' fill='{fill}' "
+            f"stroke='{C['surface']}' stroke-width='1.3'><title>{tip}</title></circle>"
+        )
+        if is_star:
+            parts.append(
+                f"<text x='{x:.1f}' y='{y - 18:.1f}' text-anchor='middle' font-size='12' "
+                f"fill='{C['primary']}'>★<title>{tip}</title></text>"
+            )
+        v = values[i]
+        value_text = f"{v:.0f}" if abs(v - round(v)) < 0.05 else f"{v:.1f}"
+        parts.append(
+            f"<text x='{x:.1f}' y='{y - (32 if is_star else 10):.1f}' text-anchor='middle' "
+            f"font-size='9.5' font-weight='600' font-family='{_MONO_FONT}' fill='{C['on_surface']}'>"
+            f"{value_text}<title>{tip}</title></text>"
+        )
+        if bar_labels and i < len(bar_labels) and bar_labels[i]:
+            line1, line2 = bar_labels[i]
+            for offset, text in ((17, line1), (5, line2)):
+                parts.append(
+                    f"<text x='{x:.1f}' y='{H - offset}' text-anchor='middle' font-size='8.5' "
+                    f"font-family='{_MONO_FONT}' fill='{C['on_surface_variant']}' opacity='0.9'>{_esc(text)}"
+                    f"<title>{tip}</title></text>"
+                )
+        else:
+            parts.append(
+                f"<text x='{x:.1f}' y='{H - 8}' text-anchor='middle' font-size='9.5' "
+                f"font-family='{_MONO_FONT}' fill='{C['on_surface_variant']}'>{i + 1}</text>"
+            )
+    parts.append("</svg>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+    return [x / W for x, _ in pts]
+
+
+def render_chart_click_overlay(entries, season, key_prefix):
+    """
+    Invisible per-point click targets laid directly over a chart that was
+    JUST rendered by render_game_log_line (must be called immediately
+    after, same script pass) - clicking anywhere in a game's column opens
+    that game's box score, not just via a chip strip underneath.
+
+    `entries` must be data.box_score.game_link_positions()'s output - one
+    entry per point IN THE SAME ORDER, `None` for a point that didn't
+    resolve to a real game. Positional, not the dropping game_link_rows,
+    because this has to line up column-for-point with an already-drawn
+    chart - dropping an unresolved row would shift every later column onto
+    the wrong week.
+
+    HOW THE OVERLAY LINES UP WITH THE CHART, with no coordinate math shared
+    between Python and the SVG: render_game_log_line places point i at the
+    center of an equal-width 1/n slot, and st.columns(n) below it is ALSO n
+    equal-width slots - column i's center already IS point i's x position,
+    by construction. No absolute positioning, no percentage-left offsets to
+    get right.
+
+    Getting the button row to sit ON TOP of the chart instead of below it
+    uses a CSS negative margin-top sized as a PERCENTAGE (not a fixed
+    pixel value) matching the chart's own fixed aspect ratio (H/W from its
+    viewBox). Percentage margins resolve against the parent's WIDTH even
+    for a top/bottom margin (real CSS behavior, not a bug) - since the
+    chart is `width:100%; height:auto` off a fixed viewBox, its rendered
+    pixel height is always exactly `renderedWidth * H/W`, so a percentage
+    margin of that same ratio cancels it exactly AT WHATEVER WIDTH THE
+    COLUMN ACTUALLY RENDERS, unlike a fixed px offset which would only be
+    correct at one specific viewport width. Verified live (Playwright,
+    getBoundingClientRect on both the chart and the button row) before
+    shipping - this is exactly the DOM/geometry verification a past pass's
+    comment on the chip-strip-only approach said wasn't available yet.
+    """
+    if not entries:
+        return
+    n = len(entries)
+    wrap_key = f"{key_prefix}_overlay"
+    aspect_pct = (208 / 860) * 100  # render_game_log_line's own H/W
+    st.markdown(
+        f"<style>"
+        f".st-key-{wrap_key} {{ margin-top: -{aspect_pct:.3f}%; position: relative; z-index: 3; }}"
+        f".st-key-{wrap_key} div[data-testid='stHorizontalBlock'] {{ gap: 0 !important; }}"
+        f".st-key-{wrap_key} div[data-testid='stButton'] button {{"
+        f"  width: 100%; min-height: 165px; background: transparent !important;"
+        f"  border: none !important; box-shadow: none !important; opacity: 0;"
+        f"  border-radius: 0 !important; transition: background-color 120ms ease;"
+        f"}}"
+        f".st-key-{wrap_key} div[data-testid='stButton'] button:hover {{"
+        f"  background: {C['surface_container_high']}55 !important;"
+        f"}}"
+        f"</style>",
+        unsafe_allow_html=True,
+    )
+    with st.container(key=wrap_key):
+        cols = st.columns(n)
+        for i, (col, entry) in enumerate(zip(cols, entries)):
+            with col:
+                if entry is None:
+                    # Disabled, not omitted - an empty column here would
+                    # shrink to content width in some Streamlit layouts and
+                    # break the equal-width alignment every other column
+                    # depends on.
+                    st.button(
+                        "​", key=f"{key_prefix}_ov_{i}", width="stretch",
+                        disabled=True, help="No box score on file for this game.",
+                    )
+                else:
+                    from ui.components import open_box_score
+                    st.button(
+                        "​", key=f"{key_prefix}_ov_{i}", width="stretch",
+                        help=entry['help'],
+                        on_click=open_box_score, args=(season, entry['game_id']),
+                    )
+
+
 def render_percentile_bar_list(entries, row_h=42, sort=True):
     """
     One full-width horizontal percentile bar per row, coloured on the app's

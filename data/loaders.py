@@ -90,15 +90,16 @@ def build_veteran_database(target_year):
 
 
 @st.cache_data
-def load_year_data(year):
+def _load_raw_weekly_stats(year):
     """
-    Loads and merges roster/stat/snap data for one season. This is the
-    expensive part (multiple CSV reads + 3 merges) and none of it depends on
-    scoring format, so it's cached on `year` alone. Profiled on the real
-    dataset: ~1.5s wall time / ~120MB peak for a full season. See
-    apply_scoring_and_percentiles() (data/transforms.py) for the part that
-    used to be fused in here and busted this entire cache on every PPR-format
-    toggle.
+    The weekly stats file for one season, exactly as it sits on disk (or the
+    nflreadpy fallback) - REG AND POST rows both, no season_type filtering.
+
+    Split out of load_year_data() so a box score (data/box_score.py, looked
+    up by a single game_id and never aggregated across a season) can reach
+    playoff games. load_year_data()'s REG-only filter is correct for every
+    season-level view it feeds - do not add that filter here, that's the one
+    thing this function exists to NOT do.
     """
     stats = pd.DataFrame()
     # Prefer an explicit weekly-granularity filename for this year (same
@@ -145,6 +146,46 @@ def load_year_data(year):
             stats = nflreadpy.load_player_stats([year]).to_pandas().fillna(0)
         except Exception:
             stats = pd.DataFrame(columns=['player_id'])
+    return stats
+
+
+def load_box_score_stats(year):
+    """
+    Every weekly player-stat row for a season, REG and POST both - what a
+    single game's box score needs (data.box_score.game_players() filters to
+    one game_id, so a whole season sitting in memory here is never summed or
+    ranked together - the REG-only guardrail load_year_data() enforces for
+    every season-level view doesn't apply to a single-game lookup).
+
+    Renames the same 3 columns load_year_data()'s canonical-column pass
+    does that data.box_score's column lists actually reference (completions/
+    attempts/carries -> passing_completions/passing_attempts/
+    rushing_attempts) - every other column box_score.py needs
+    (def_sacks, receiving_yards, sacks_suffered, fg_made, ...) is already
+    named that way in the raw export. Skips load_year_data()'s roster merge
+    and snap-count join entirely since a box score needs neither.
+    """
+    stats = _load_raw_weekly_stats(year).copy()
+    renames = {'completions': 'passing_completions', 'attempts': 'passing_attempts',
+               'carries': 'rushing_attempts'}
+    for raw_col, canonical_col in renames.items():
+        if canonical_col not in stats.columns and raw_col in stats.columns:
+            stats = stats.rename(columns={raw_col: canonical_col})
+    return stats
+
+
+@st.cache_data
+def load_year_data(year):
+    """
+    Loads and merges roster/stat/snap data for one season. This is the
+    expensive part (multiple CSV reads + 3 merges) and none of it depends on
+    scoring format, so it's cached on `year` alone. Profiled on the real
+    dataset: ~1.5s wall time / ~120MB peak for a full season. See
+    apply_scoring_and_percentiles() (data/transforms.py) for the part that
+    used to be fused in here and busted this entire cache on every PPR-format
+    toggle.
+    """
+    stats = _load_raw_weekly_stats(year)
 
     # Regular season only - every local stats_player_week_{year}.csv (2019-
     # 2025, confirmed on all seven files) mixes REG rows in with POST

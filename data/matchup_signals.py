@@ -239,7 +239,7 @@ def _mean_or_none(series):
     return float(clean.mean()) if len(clean) else None
 
 
-def route_efficiency_splits(receiving_summary, receiving_scheme, player_name):
+def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, route_concept=None):
     """
     A receiver's efficiency broken out two independent ways: by ALIGNMENT
     (how often he lines up slot vs wide, from PFF's receiving_summary) and
@@ -256,6 +256,16 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name):
     Percentiles are computed against every qualifying receiver in the same
     export (25+ routes), so "68th percentile YPRR vs man" means among real
     route-runners, not among everyone with a single snap.
+
+    `route_concept` (PFF's receiving_concept export, `pff['route_concept']`)
+    adds Slot YPRR - a THIRD, independent file from the two above, which is
+    also where ui.player_snapshot's own "Slot YPRR" tile reads it from (same
+    column, same percentile pool - one number, not two implementations of
+    it). There is no Wide-YPRR counterpart to add alongside it: PFF's route-
+    concept exports break out Slot and Screen specifically, never "Wide" as
+    its own concept, and receiving_summary's wide_rate/wide_snaps are a
+    SHARE of snaps, not an efficiency number - confirmed by checking every
+    column in every 2025 PFF export for this app, not assumed absent.
     """
     out = {'available': False, 'alignment': [], 'scheme': [], 'routes': None, 'yprr': None}
     key = clean_name_exact(pd.Series([player_name])).iloc[0]
@@ -280,6 +290,17 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name):
                     _pct_entry('Contested catch %', r, 'contested_catch_rate', qualified, '{:.1f}%'),
                 ) if e
             ]
+
+    if route_concept is not None and not route_concept.empty and 'player' in route_concept.columns:
+        pool = route_concept.copy()
+        pool['_key'] = clean_name_exact(pool['player'])
+        row = pool[pool['_key'] == key]
+        if not row.empty:
+            r = row.iloc[0]
+            entry = _pct_entry('Slot YPRR', r, 'slot_yprr', pool, '{:.2f}')
+            if entry:
+                out['available'] = True
+                out['alignment'].append(entry)
 
     if receiving_scheme is not None and not receiving_scheme.empty and 'player' in receiving_scheme.columns:
         pool = receiving_scheme.copy()
@@ -439,9 +460,14 @@ def defense_allowed_by_position(stats_df, defense_team, position):
 
 def defense_weekly_allowed(stats_df, defense_team, position, stat_col, last_n=6):
     """
-    This defense's most recent games, as the total `stat_col` it gave up to
-    `position` in each - the "are they trending soft or did one blowup carry
-    the season number" check that a single season average can't answer.
+    This defense's games, as the total `stat_col` it gave up to `position`
+    in each - the "are they trending soft or did one blowup carry the
+    season number" check that a single season average can't answer.
+
+    `last_n=None` returns the WHOLE season in week order rather than a
+    trailing window - what the Positional Vulnerability detail chart wants
+    (a full-season trend line), vs. the trailing-window use this function
+    was built for originally (still the default, unchanged).
     """
     if stats_df.empty or 'opponent_team' not in stats_df.columns:
         return pd.DataFrame(columns=['week', 'value', 'offense'])
@@ -456,7 +482,8 @@ def defense_weekly_allowed(stats_df, defense_team, position, stat_col, last_n=6)
         value=(stat_col, 'sum'),
         offense=('team', 'first') if 'team' in rows.columns else (stat_col, 'size'),
     ).reset_index()
-    return grouped.sort_values('week').tail(last_n).reset_index(drop=True)
+    grouped = grouped.sort_values('week')
+    return (grouped if last_n is None else grouped.tail(last_n)).reset_index(drop=True)
 
 
 def coverage_profile(defense_team, team_name, scheme_rates, positional_coverage, pff_coverage_scheme=None):

@@ -242,7 +242,13 @@ def close_box_score():
     st.session_state.pop('gs_box_game', None)
 
 
-def render_game_links(entries, season, key_prefix, caption=None, per_row=4):
+def _open_box_score_and_remember(season, game_id, remember):
+    if remember:
+        st.session_state[remember[0]] = remember[1]
+    open_box_score(season, game_id)
+
+
+def render_game_links(entries, season, key_prefix, caption=None, per_row=4, remember=None):
     """
     A strip of small buttons under a per-game table or chart, one per game,
     each opening that game's box score.
@@ -256,6 +262,16 @@ def render_game_links(entries, season, key_prefix, caption=None, per_row=4):
     `entries` come from data.box_score.game_link_rows, which drops any row
     it cannot resolve - so every button here is guaranteed to open a real
     game.
+
+    `remember`, an optional (session_state_key, value) pair, is stashed
+    right alongside the jump. This exists because Streamlit forgets a keyed
+    widget's own committed value for any run in which that widget isn't
+    instantiated - confirmed live: leaving this tab (its body simply never
+    runs while another tab is active - lazy tab execution) and coming back
+    resets e.g. a selectbox to its unset/default state, not whatever the
+    user had picked. A caller whose selection would otherwise vanish on the
+    round trip through the box score (Player Search's selected player) uses
+    this to stash the value it'll need to restore on return.
     """
     if not entries:
         return
@@ -276,7 +292,8 @@ def render_game_links(entries, season, key_prefix, caption=None, per_row=4):
                 st.button(
                     entry['label'], key=f"{key_prefix}_{entry['game_id']}",
                     help=entry['help'], width="stretch",
-                    on_click=open_box_score, args=(season, entry['game_id']),
+                    on_click=_open_box_score_and_remember,
+                    args=(season, entry['game_id'], remember),
                 )
 
 

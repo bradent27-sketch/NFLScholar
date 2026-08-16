@@ -27,12 +27,10 @@ import pandas as pd
 import streamlit as st
 
 from config import (
-    AVAILABLE_SEASONS_WITH_UPCOMING, TAB_MATCHUP_ANALYZER, TAB_PLAYER_SEARCH,
-    TEAM_CONFIG, THEME,
+    AVAILABLE_SEASONS_WITH_UPCOMING, TAB_MATCHUP_ANALYZER, TEAM_CONFIG, THEME,
 )
 from data.box_score import (
-    BOX_SECTIONS, TOTALS_COMPARISON, game_players, leading_performers, section_rows,
-    team_totals,
+    BOX_SECTIONS, TOTALS_COMPARISON, game_players, section_rows, team_totals,
 )
 from data.game_slate import (
     escape, escape_attr, find_slate_game, load_slate, refresh_slate, slate_source,
@@ -157,23 +155,38 @@ def _render_card(idx, row, season, bridge):
         cols = st.columns(2)
         for col, side in zip(cols, ('Away', 'Home')):
             abbr = row[side]
+            other_abbr = row['Home'] if side == 'Away' else row['Away']
             resolved = bridge.get(abbr)
+            other_resolved = bridge.get(other_abbr)
             with col:
+                # Routes into the Matchup Analyzer with this team's roster
+                # AND this game's actual opponent pre-filled as the defense
+                # to check against - automates exactly the matchup this card
+                # already represents, instead of dropping you in Player
+                # Search with no defense context at all. Disabled rather
+                # than seeding a guess when the team itself doesn't resolve:
+                # a best-guess team opens the wrong roster with nothing
+                # anywhere saying so. A missing OPPONENT resolution (a
+                # relocated-franchise code from an old season, not in this
+                # app's team list) only skips pre-filling the defense - the
+                # team side still works.
+                kwargs = {}
+                if resolved:
+                    kwargs['ma_jump_team'] = resolved
+                    kwargs['ma_jump_season'] = int(season)
+                    if other_resolved:
+                        kwargs['ma_jump_defense'] = other_resolved
                 st.button(
                     f"{team_abbrev_label(abbr)} players",
                     key=f"gs_go_{side.lower()}_{idx}",
                     width="stretch",
-                    # Disabled rather than seeding a guess: a best-guess team
-                    # opens Player Search on the WRONG team with nothing
-                    # anywhere saying so.
                     disabled=resolved is None,
-                    help=(f"Open Player Search filtered to {team_display_name(abbr)}"
+                    help=(f"Open the Matchup Analyzer with {team_display_name(abbr)} vs {team_display_name(other_abbr)}'s defense"
                           if resolved else
                           f"{abbr} isn't in this app's team list, so it can't be opened"),
                     on_click=switch_tab,
-                    args=(TAB_PLAYER_SEARCH,),
-                    kwargs={'jump_to_year': int(season),
-                            'player_search_team_filter': resolved} if resolved else {},
+                    args=(TAB_MATCHUP_ANALYZER,),
+                    kwargs=kwargs,
                 )
 
 
@@ -234,17 +247,29 @@ def _totals_bar_html(label, away_value, home_value, more_is_better, away_color, 
 
 def _render_box_panel(season):
     """
-    The box score, FULL WIDTH ABOVE THE CARD GRID, and rendered before the
-    week's games are even loaded.
+    The box score, FULL WIDTH, called from one of two spots in render():
 
-    Full width because a two-team box is unreadable at half width, and
-    because a card has already spent Streamlit's single level of column
-    nesting on its own button row.
+      - Inline, right after the grid row that holds the clicked card - the
+        common case (you're already looking at the slate and click a card's
+        own "Box score" button). This is what lets the panel expand from
+        the row you clicked instead of the page jumping to the top, and
+        what puts you back at that same row when you close it - it's
+        DOM position, not a scroll hack.
+      - Above the grid, before the week's games are even loaded, when the
+        open game isn't part of the week currently on screen at all - a
+        deep link from another tab (Player Search's game log, the Matchup
+        Analyzer) can legitimately name a game from a DIFFERENT week or
+        season than the selectors above happen to be showing. render()
+        resolves which case applies; this function itself doesn't care
+        which spot it was called from.
 
-    Before the grid, and resolved against the whole season
-    (data.game_slate.find_slate_game), because this panel is the
-    destination for every cross-tab link in the app - see that function's
-    docstring.
+    Full width either way, because a two-team box is unreadable at half
+    width, and because a card has already spent Streamlit's single level of
+    column nesting on its own button row.
+
+    Resolved against the WHOLE season (data.game_slate.find_slate_game),
+    never just the week on screen, because this panel is the destination
+    for every cross-tab link in the app - see that function's docstring.
     """
     game_id = st.session_state.get('gs_box_game')
     if not game_id:
@@ -264,12 +289,15 @@ def _render_box_panel(season):
     home_color = team_color(home) or THEME['colors']['primary']
 
     # Loaded HERE, not in render(), so a slate with no box open pays nothing
-    # for this - it's the same @st.cache_data frame six other tabs already
-    # use, so it's usually a cache hit, but on a cold session it's a real
-    # multi-second CSV parse and the slate itself needs none of it.
-    from data.transforms import load_and_merge_data
+    # for this. A dedicated raw loader, not the six-tabs-share
+    # load_and_merge_data() - that one runs every row through
+    # load_year_data()'s REG-only filter (see its docstring), which drops
+    # every playoff game before a box score ever gets a chance to look one
+    # up. load_box_score_stats() reads the same file without that filter -
+    # see its docstring for why that's safe for a single-game lookup.
+    from data.loaders import load_box_score_stats
     with skeleton_loader("table", n_rows=6, n_cols=6):
-        stats_df, _t, _n, _ = load_and_merge_data(season, st.session_state.get('score_tab1', 'Full PPR'))
+        stats_df = load_box_score_stats(season)
     players = game_players(stats_df, game_id)
     if players.empty:
         st.caption("No player box score on file for this game yet.")
@@ -285,22 +313,6 @@ def _render_box_panel(season):
             if label in away_totals
         )
         st.markdown(f"<div class='bs-compare'>{bars}</div>", unsafe_allow_html=True)
-        st.caption(
-            "Team totals are summed from the player rows, which is exact for these stats. "
-            "Time of possession, third-down rate and total plays aren't derivable from player "
-            "rows at all, so they're not shown rather than approximated — that's why this is "
-            "shorter than a TV box score."
-        )
-
-    lead_cols = st.columns(2)
-    for col, abbr in zip(lead_cols, (away, home)):
-        with col:
-            leaders = leading_performers(players, abbr)
-            if not leaders:
-                continue
-            st.markdown(f"**{team_display_name(abbr)} leaders**")
-            for entry in leaders:
-                st.markdown(f"- *{entry['phase']}* — **{entry['player']}**: {entry['line']}")
 
     from ui.styling import df_auto_height, style_plain_dataframe
     team_tabs = st.tabs([team_display_name(away), team_display_name(home)])
@@ -351,15 +363,20 @@ def render():
         season = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=0,
                               key="gs_season")
 
-    # Above the grid AND above the "no games this week" early return - this
-    # panel is a deep-link destination, not a page element, so it must not
-    # depend on what the week selector happens to be showing.
-    _render_box_panel(season)
+    # Whichever game is open, if any - resolved once, up front, so both the
+    # "does it belong to the week on screen" check below and the panel
+    # itself (called from one of two spots) agree on the same value.
+    open_game_id = st.session_state.get('gs_box_game')
 
     with skeleton_loader("table", n_rows=4, n_cols=4):
         weeks, err = slate_weeks(season)
 
     if err or not weeks:
+        # No grid to anchor into - same "deep-link destination, not a page
+        # element" reasoning as the inline case below, just with nowhere to
+        # inline it into.
+        if open_game_id:
+            _render_box_panel(season)
         st.info(err or f"No {season} games in the schedule file yet.")
         return
 
@@ -377,8 +394,29 @@ def render():
 
     games, _ = load_slate(season, week['week'])
     if games.empty:
+        if open_game_id:
+            _render_box_panel(season)
         st.info("No games in that week.")
         return
+
+    # Where the open game sits IN THIS WEEK'S GRID, if it's here at all. A
+    # box score opened by clicking a card on THIS page is always here - this
+    # is the common case, and it's what lets the panel expand from the same
+    # row you clicked instead of the page yanking you to the top. A box
+    # score opened by a deep link from another tab (Player Search's game
+    # log, the Matchup Analyzer) can legitimately name a game from a
+    # DIFFERENT week or season than whatever the selectors above happen to
+    # be showing right now - see find_slate_game's own docstring - so that
+    # case still falls back to rendering above the grid, exactly as before,
+    # rather than silently not opening at all.
+    inline_row_start = None
+    if open_game_id:
+        hits = games.index[games['Game Id'].astype(str) == str(open_game_id)]
+        if len(hits):
+            row_pos = games.index.get_loc(hits[0])
+            inline_row_start = (row_pos // _CARDS_PER_ROW) * _CARDS_PER_ROW
+        else:
+            _render_box_panel(season)
 
     bridge = slate_team_bridge(games)
 
@@ -396,6 +434,13 @@ def render():
                 continue
             with col:
                 _render_card(idx, games.iloc[idx], season, bridge)
+        # Full width, right after the row that contains the clicked card -
+        # not squeezed into either column, for the same "unreadable at half
+        # width" reason _render_box_panel's own docstring gives. Closing it
+        # (close_box_score just pops gs_box_game) leaves you exactly here,
+        # at this row, instead of back at the top of the page.
+        if start == inline_row_start:
+            _render_box_panel(season)
 
     played = int(games['Played'].sum())
     tbd = int(games['Time TBD'].sum())

@@ -185,9 +185,13 @@ def get_position_color(pos):
 TAB_PLAYER_SEARCH = "PLAYER SEARCH"
 TAB_DEPTH_CHARTS = "NFL DEPTH CHARTS"
 TAB_DEFENSIVE_YIELD = "DEFENSIVE YIELD SCHEMES"
-TAB_RISERS = "RISERS / WAIVER WIRE"
-TAB_ROOKIE_WATCH = "ROOKIE WATCH"
-TAB_RANKINGS = "WEEKLY RANKINGS"
+# Risers/Waiver Wire, Rookie Watch and Weekly Rankings used to be three
+# separate top-level tabs - merged into one (ui.tabs.weekly_fantasy) with
+# sub-tabs carrying their old names, per explicit user request. No
+# TAB_RISERS/TAB_ROOKIE_WATCH/TAB_RANKINGS constants anymore: nothing
+# outside this merge jumped to any of the three by name (grepped before
+# removing them), so there was nothing else to update.
+TAB_WEEKLY_FANTASY = "WEEKLY FANTASY"
 TAB_LIVE_ODDS = "LIVE ODDS"
 TAB_PLAYER_COMPARE = "PLAYER COMPARE"
 TAB_MATCHUP_ANALYZER = "MATCHUP ANALYZER"
@@ -215,10 +219,15 @@ TAB_GAME_SLATE = "GAME SLATE"
 # to Compare because the two answer adjacent questions - Compare is
 # player-vs-player, Matchup Analyzer is player-vs-defense - so the pair reads
 # as one "who do I actually start" neighbourhood.
+#
+# Weekly Fantasy (the Risers/Rookie Watch/Weekly Rankings merge) sits
+# SECOND TO LAST - explicit user request, directly ahead of Draft HQ rather
+# than back where Risers used to live. Every other tab keeps its existing
+# position; this is the one deliberate reshuffle.
 TAB_LABELS = [
     TAB_GAME_SLATE, TAB_PLAYER_SEARCH, TAB_DEPTH_CHARTS, TAB_DEFENSIVE_YIELD,
-    TAB_RISERS, TAB_ROOKIE_WATCH, TAB_RANKINGS, TAB_LIVE_ODDS, TAB_PLAYER_COMPARE,
-    TAB_MATCHUP_ANALYZER, TAB_DRAFT_HQ,
+    TAB_LIVE_ODDS, TAB_PLAYER_COMPARE, TAB_MATCHUP_ANALYZER,
+    TAB_WEEKLY_FANTASY, TAB_DRAFT_HQ,
 ]
 
 # Decimal places per stat, approved list: whole numbers for counting stats

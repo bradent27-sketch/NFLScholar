@@ -140,6 +140,17 @@ def _build_player_props_micro_table(props_data, player_name):
 def render():
     render_back_button()
 
+    # Restores the player/season/team-filter this tab was showing before the
+    # user followed a game-log link out to its box score (Game Slate) and
+    # came back. NOT a Streamlit quirk to work around defensively - confirmed
+    # live (AppTest) that a keyed widget's own committed value is reset the
+    # moment a script run doesn't instantiate it, which is exactly what
+    # happens to every widget in this tab while Game Slate's body is the one
+    # running. `ps_return_ctx` is stashed by render_game_links's `remember=`
+    # at the moment a box-score chip is clicked (see below), and popped here
+    # so it only fires once, on the very next render of this tab.
+    return_ctx = st.session_state.pop('ps_return_ctx', None)
+
     # A cross-tab jump can request a specific season (e.g. clicking a name
     # on the 2022 Depth Chart should search 2022, not whatever year this tab
     # last happened to show) - must land in session_state BEFORE the year
@@ -149,6 +160,9 @@ def render():
     jump_to_year = st.session_state.pop('jump_to_year', None)
     if jump_to_year in AVAILABLE_SEASONS_WITH_UPCOMING and st.session_state.get('year_tab1') != jump_to_year:
         st.session_state['year_tab1'] = jump_to_year
+    elif (not jump_to_year and return_ctx and return_ctx.get('year') in AVAILABLE_SEASONS_WITH_UPCOMING
+          and st.session_state.get('year_tab1') != return_ctx['year']):
+        st.session_state['year_tab1'] = return_ctx['year']
 
     # Optional team narrowing, for when you don't know (or don't want to
     # type) a player's exact name - "All Teams" (default) leaves the full
@@ -174,6 +188,10 @@ def render():
             st.session_state['player_search_team_filter'] = jump_to_team
         elif st.session_state.get('player_search_team_filter', 'All Teams') != 'All Teams':
             st.session_state['player_search_team_filter'] = 'All Teams'
+    elif return_ctx and return_ctx.get('team_filter'):
+        restored_filter = return_ctx['team_filter']
+        if restored_filter == 'All Teams' or restored_filter in TEAM_CONFIG:
+            st.session_state['player_search_team_filter'] = restored_filter
 
     # Scoring format is a segmented control in the global header now (same
     # key="score_tab1", instantiated once in ui.components.render_intro_and_
@@ -277,7 +295,7 @@ def render():
     carry_over_name = st.session_state.get('player_sel_t1_name') if year_changed else None
     st.session_state['_player_search_last_year'] = t1_target_year
 
-    target_name = jump_to_player or carry_over_name
+    target_name = jump_to_player or (return_ctx.get('player') if return_ctx else None) or carry_over_name
     if target_name:
         match_label = _resolve_label(target_name)
         if match_label:
@@ -614,10 +632,19 @@ def render():
                     from data.box_score import game_link_rows
                     from data.game_slate import season_slate
                     slate, _slate_err = season_slate(t1_target_year)
-                    links = game_link_rows(log_df_view, slate, team=filter_team, limit=8)
+                    # No `limit` - every game in the selected week range gets
+                    # a chip. This used to cap at 8, which silently hid the
+                    # earlier part of any season with more games than that
+                    # (a full 18-week slate, or any season with a playoff
+                    # run) with no indication anything was cut off.
+                    links = game_link_rows(log_df_view, slate, team=filter_team)
                     render_game_links(
                         links, t1_target_year, key_prefix="ps_box",
                         caption="Open a game's full box score:",
+                        remember=('ps_return_ctx', {
+                            'player': selected_player, 'team_filter': team_filter,
+                            'year': t1_target_year,
+                        }),
                     )
                 else:
                     st.info("No weekly game logs available for this player profile structure.")

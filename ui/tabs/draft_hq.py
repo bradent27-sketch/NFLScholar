@@ -273,7 +273,7 @@ def _render_import_status():
     )
 
 
-def _render_imports_panel():
+def _render_imports_panel(cfg):
     """
     Every manual import in one place, grouped by what it does.
 
@@ -302,7 +302,7 @@ def _render_imports_panel():
     tabs = st.tabs(tab_labels)
 
     with tabs[0]:
-        _render_rankings_imports()
+        _render_rankings_imports(cfg)
     with tabs[1]:
         ffa_upload = _render_projection_imports()
     with tabs[2]:
@@ -320,7 +320,7 @@ def _render_imports_panel():
     return ffa_upload
 
 
-def _render_rankings_imports():
+def _render_rankings_imports(cfg):
     import_hint('fantasypros_draft')
     ecr_upload = st.file_uploader(
         "FantasyPros rankings CSV", type=["csv"], key="dhq_ecr_upload",
@@ -336,6 +336,10 @@ def _render_rankings_imports():
         # stops existing the moment the panel closes.
         st.session_state[ECR_UPLOAD_KEY] = None if parsed.empty else parsed
         st.session_state[ECR_UPLOAD_ERROR_KEY] = ecr_error
+        # A fresh CSV overrides whatever was here before, including a
+        # FantasyPros API pull - drop that marker so the status table
+        # doesn't keep crediting this upload to a call it didn't spend.
+        st.session_state.pop('_import_source_ecr', None)
         if not parsed.empty:
             _record_import_time('ecr')
     if st.session_state.get(ECR_UPLOAD_ERROR_KEY):
@@ -345,6 +349,7 @@ def _render_rankings_imports():
         if st.button("Back to the live feed", key="dhq_ecr_clear"):
             st.session_state[ECR_UPLOAD_KEY] = None
             st.session_state[ECR_UPLOAD_ERROR_KEY] = None
+            st.session_state.pop('_import_source_ecr', None)
             st.rerun()
 
     st.markdown("---")
@@ -361,11 +366,83 @@ def _render_rankings_imports():
         # mid-draft.
         parsed = parse_adp_upload(adp_upload)
         st.session_state[ADP_UPLOAD_KEY] = parsed if not parsed.empty else None
+        st.session_state.pop('_import_source_adp', None)
         if not parsed.empty:
             _record_import_time('adp')
     if st.session_state.get(ADP_UPLOAD_KEY) is not None:
         if st.button("Clear uploaded ADP", key="dhq_adp_clear"):
             st.session_state[ADP_UPLOAD_KEY] = None
+            st.session_state.pop('_import_source_adp', None)
+            st.rerun()
+
+    st.markdown("---")
+    _render_fantasypros_api_import(cfg)
+
+
+def _render_fantasypros_api_import(cfg):
+    """
+    A button-triggered pull of ECR + ADP straight from FantasyPros' own API.
+
+    Deliberately not automatic. The free tier is 50 calls/MONTH (~1.6/day)
+    with no quota header to read back, so a fetch here only ever happens on
+    an explicit click - see data.draft_sources.fetch_fantasypros_players for
+    why one call covers both ECR and ADP. The result is written into the
+    same ECR_UPLOAD_KEY / ADP_UPLOAD_KEY slots the CSV uploaders above use,
+    so it overrides the live mirror/ADP chain exactly the way an upload
+    does, with no separate code path downstream.
+    """
+    from data.draft_sources import (
+        load_saved_fantasypros_api_key, save_fantasypros_api_key,
+        fantasypros_api_calls_this_month, fetch_fantasypros_players,
+        FANTASYPROS_API_MONTHLY_LIMIT,
+    )
+    st.caption(
+        "**FantasyPros API** — one call pulls ECR *and* ADP for the whole player pool at "
+        "once, straight from FantasyPros rather than a third-party mirror. Free key at "
+        "[secure.fantasypros.com/api-keys/request](https://secure.fantasypros.com/api-keys/request/) "
+        "— the free tier is capped at 50 calls a month, so this is a manual refresh, not "
+        "something the board pulls on its own."
+    )
+    saved_key = load_saved_fantasypros_api_key()
+    api_key = st.text_input(
+        "FantasyPros API key", type="password", key="dhq_fp_api_key", value=saved_key,
+        help="Saved locally in .streamlit/fantasypros_api_key.txt so you don't re-enter it "
+             "every launch.",
+    )
+    if api_key and api_key != saved_key:
+        save_fantasypros_api_key(api_key)
+
+    used = fantasypros_api_calls_this_month()
+    remaining = FANTASYPROS_API_MONTHLY_LIMIT - used
+    st.caption(f"{used} of {FANTASYPROS_API_MONTHLY_LIMIT} calls used this month "
+               f"({max(remaining, 0)} left, resets on the 1st).")
+
+    fetch = st.button("📡 Fetch ECR + ADP from FantasyPros API", key="dhq_fp_api_fetch",
+                      disabled=not api_key or remaining <= 0)
+    if not api_key:
+        st.caption("Enter a key above to enable this.")
+    elif remaining <= 0:
+        st.warning("This month's 50 free calls are spent — resets on the 1st.")
+    if fetch:
+        scoring = ('Full PPR' if cfg['ppr'] >= 0.75 else 'Half-PPR'
+                  if cfg['ppr'] >= 0.25 else 'Standard')
+        with st.spinner("Calling the FantasyPros API…"):
+            ecr_df, adp_df, meta = fetch_fantasypros_players(api_key, scoring=scoring)
+        if meta.get('error'):
+            st.error(f"FantasyPros API: {meta['error']}")
+        else:
+            st.session_state[ECR_UPLOAD_KEY] = ecr_df if not ecr_df.empty else None
+            st.session_state[ADP_UPLOAD_KEY] = adp_df if not adp_df.empty else None
+            st.session_state[ECR_UPLOAD_ERROR_KEY] = None
+            st.session_state['_import_source_ecr'] = 'FantasyPros API'
+            st.session_state['_import_source_adp'] = 'FantasyPros API'
+            if not ecr_df.empty:
+                _record_import_time('ecr')
+            if not adp_df.empty:
+                _record_import_time('adp')
+            st.success(f"Pulled {meta['ecr_rows']:,} ECR rows and {meta['adp_rows']:,} ADP "
+                      f"rows ({scoring}). Overriding the live mirror and ADP chain until cleared "
+                      f"above.")
             st.rerun()
 
 
@@ -640,7 +717,7 @@ def _render_settings_panel(cfg):
                      "is invisible because it lands inside the projection.")
 
         st.markdown("---")
-        ffa_upload = _render_imports_panel()
+        ffa_upload = _render_imports_panel(cfg)
 
     return ffa_upload
 
@@ -813,6 +890,42 @@ def _load_market_lines(settings, ecr_board):
     return scored, status
 
 
+def _record_live_market_status(market_status):
+    """
+    Mirror a live sportsbook fetch into session state for the imports table.
+
+    data.import_status._book_status only ever checked disk for a SAVED
+    payload, so a book pulled through the "Fetch season-long sportsbook
+    lines" toggle populated the board's Book Proj/Book Δ columns while
+    Currently Imported kept showing '-' for every book — there was nowhere
+    for a live fetch's result to land. This is that place; import_status
+    reads 'dhq_live_book_status' back out to fill the gap.
+    """
+    import datetime
+    live = st.session_state.setdefault('dhq_live_book_status', {})
+    if not market_status.get('enabled'):
+        # Nothing is being fetched live and no saved payload exists for any
+        # book (see _load_market_lines) - clear rather than leave a stale
+        # "loaded" behind for a fetch that isn't feeding the board anymore.
+        live.clear()
+        return
+    seen = set()
+    for label, info in (market_status.get('providers') or {}).items():
+        if label.endswith(' (your saved payload)'):
+            continue  # the on-disk status check already covers this one
+        seen.add(label)
+        prior = live.get(label, {})
+        signature = (info.get('rows'), info.get('season'), info.get('error'))
+        prior_signature = (prior.get('rows'), prior.get('season'), prior.get('error'))
+        # Only stamp a new fetch time when the result actually changed - the
+        # underlying fetch is cached for 30 minutes, and re-stamping "just
+        # now" on every rerun would make Age lie about how fresh this is.
+        fetched_at = prior.get('fetched_at') if signature == prior_signature else datetime.datetime.now()
+        live[label] = {**info, 'fetched_at': fetched_at}
+    for stale in set(live) - seen:
+        del live[stale]
+
+
 @st.cache_data(show_spinner=False)
 def _cached_board(_ecr_board, _adp_df, _ffa_df, _market_scored, _settings, cache_key):
     """
@@ -949,6 +1062,7 @@ def _load_board(settings):
     # @st.cache_data whose key doesn't mention the network.
     market_scored, market_status = _load_market_lines(settings, ecr_board)
     status['market'] = market_status
+    _record_live_market_status(market_status)
     settings = {**settings, 'market_rows': int(len(market_scored))}
 
     board, meta = _cached_board(ecr_board, adp_df, ffa_df, market_scored, settings,

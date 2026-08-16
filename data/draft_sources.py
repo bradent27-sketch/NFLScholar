@@ -774,6 +774,192 @@ def ffa_adp_frame(ffa_df):
     return out.sort_values('ADP').reset_index(drop=True)
 
 
+
+# --- FantasyPros official API (free tier: 50 calls / calendar month) ------
+#
+# https://api.fantasypros.com/public/v2/json - request a key at
+# https://secure.fantasypros.com/api-keys/request/. Separate credential and
+# separate source from the DynastyProcess mirror above: the mirror scrapes
+# FantasyPros' public pages once nightly and can silently stall (see
+# load_ecr_raw's docstring); this is FantasyPros' own endpoint, hit only
+# when the user asks for it.
+#
+# THE CALL BUDGET IS THE WHOLE DESIGN CONSTRAINT. 50/month is ~1.6/day, and
+# there's no quota header to read back on this tier - so nothing here is
+# auto-fetched on a rerun timer the way the DP mirror or Odds API are. One
+# endpoint, GET /nfl/players?ecr=included&show=pos_rank, returns ECR AND ADP
+# (both a standard-scoring number and a PPR-scoring number) for the ENTIRE
+# player pool in a SINGLE call - that's why it's the one used here rather
+# than /rankings or /consensus-rankings, which are paginated per POSITION
+# per FORMAT and would cost 6-12+ calls for the same refresh. This module
+# never calls the network on its own; fetch_fantasypros_players is only
+# ever invoked from a button click (ui.tabs.draft_hq), and the result is
+# dropped straight into the same session-held ECR_UPLOAD_KEY / ADP_UPLOAD_KEY
+# slots a pasted CSV export already uses - "a deliberate act by someone who
+# has just looked at the board" applies just as much to a button press as a
+# file upload, and reusing those slots means every downstream consumer
+# (build_ecr_board's caller, fetch_adp's 'Uploaded CSV' branch, the imports
+# status table) needed zero changes to pick this source up.
+FANTASYPROS_API_BASE = "https://api.fantasypros.com/public/v2/json"
+FANTASYPROS_API_KEY_FILE = os.path.join('.streamlit', 'fantasypros_api_key.txt')
+FANTASYPROS_API_USAGE_FILE = os.path.join('.streamlit', 'fantasypros_api_usage.json')
+FANTASYPROS_API_MONTHLY_LIMIT = 50
+
+
+def load_saved_fantasypros_api_key():
+    """Mirrors data.loaders.load_saved_odds_api_key - same reasoning, own file."""
+    try:
+        if os.path.exists(FANTASYPROS_API_KEY_FILE):
+            with open(FANTASYPROS_API_KEY_FILE, 'r', encoding='utf-8') as fh:
+                return fh.read().strip()
+    except Exception:
+        pass
+    return ''
+
+
+def save_fantasypros_api_key(api_key):
+    """Plaintext under .streamlit/, gitignored - same tradeoff as the Odds API key."""
+    try:
+        os.makedirs('.streamlit', exist_ok=True)
+        with open(FANTASYPROS_API_KEY_FILE, 'w', encoding='utf-8') as fh:
+            fh.write((api_key or '').strip())
+    except Exception:
+        pass
+
+
+def _load_fantasypros_api_usage():
+    import json
+    try:
+        if os.path.exists(FANTASYPROS_API_USAGE_FILE):
+            with open(FANTASYPROS_API_USAGE_FILE, 'r', encoding='utf-8') as fh:
+                return json.load(fh)
+    except Exception:
+        pass
+    return {}
+
+
+def fantasypros_api_calls_this_month():
+    """
+    Calls actually made against the live API so far this calendar month.
+
+    The free tier resets on the calendar month, not a rolling 30 days, and
+    there is no response header reporting remaining quota on this tier - so
+    usage is tracked locally in a small JSON file, incremented only by
+    fetch_fantasypros_players right before it makes a real request. Reading
+    this never costs a call.
+    """
+    import datetime
+    month_key = datetime.date.today().strftime('%Y-%m')
+    return int(_load_fantasypros_api_usage().get(month_key, 0))
+
+
+def _record_fantasypros_api_call():
+    import datetime
+    import json
+    month_key = datetime.date.today().strftime('%Y-%m')
+    usage = _load_fantasypros_api_usage()
+    usage[month_key] = int(usage.get(month_key, 0)) + 1
+    try:
+        os.makedirs('.streamlit', exist_ok=True)
+        with open(FANTASYPROS_API_USAGE_FILE, 'w', encoding='utf-8') as fh:
+            json.dump(usage, fh)
+    except Exception:
+        pass
+    return usage[month_key]
+
+
+def fetch_fantasypros_players(api_key, scoring='Full PPR'):
+    """
+    ECR + ADP for the whole NFL player pool from FantasyPros' own API.
+
+    One request, GET /nfl/players?ecr=included&show=pos_rank, which returns
+    both a standard-scoring rank (rank_ecr/rank_adp) and a PPR-scoring rank
+    (rank_ecr_ppr/rank_adp_ppr) per player. There's no half-PPR variant on
+    this endpoint, so 'Half-PPR' and 'Full PPR' both read the PPR columns -
+    closer to a half-PPR market than the standard numbers would be, but
+    worth knowing if the two look identical for a half-PPR league.
+
+    Returns (ecr_df, adp_df, meta). The two frames are shaped exactly like
+    parse_ecr_upload's and parse_adp_upload's output (Player/Pos/Team/ECR/
+    Bye/ECR SD/ECR Best/ECR Worst/Pos Rank, and Player/Pos/ADP) so they can
+    be written straight into ECR_UPLOAD_KEY / ADP_UPLOAD_KEY and need no
+    special-casing anywhere downstream. This endpoint publishes one
+    consensus board (redraft, 1QB) - it does not carry the per-format splits
+    (superflex/dynasty/best-ball) the DynastyProcess mirror does, so this is
+    a redraft-1QB refresh tool specifically, not a replacement for the format
+    picker.
+
+    NEVER CALLED AUTOMATICALLY. This is the only function in the module that
+    touches the local call-budget counter, and it does so unconditionally on
+    every real request (including one that comes back an error - a 401 or a
+    parse failure still spent a call against FantasyPros' quota, even though
+    nothing useful came back). Callers gate this behind an explicit button
+    and check fantasypros_api_calls_this_month() first so a call that would
+    push past FANTASYPROS_API_MONTHLY_LIMIT never fires.
+    """
+    if not api_key:
+        return pd.DataFrame(), pd.DataFrame(), {'error': 'no API key set'}
+    _record_fantasypros_api_call()
+    try:
+        resp = requests.get(
+            f"{FANTASYPROS_API_BASE}/nfl/players",
+            params={'ecr': 'included', 'show': 'pos_rank'},
+            headers={**_REQUEST_HEADERS, 'x-api-key': api_key},
+            timeout=25,
+        )
+    except Exception as exc:
+        return pd.DataFrame(), pd.DataFrame(), {'error': f"{type(exc).__name__}: {exc}"}
+    if resp.status_code == 401:
+        return pd.DataFrame(), pd.DataFrame(), {
+            'error': 'API key rejected (401) - request/verify one at '
+                     'secure.fantasypros.com/api-keys/request/'}
+    if resp.status_code == 429:
+        return pd.DataFrame(), pd.DataFrame(), {
+            'error': 'rate limited (429) - the monthly call budget is likely exhausted'}
+    if resp.status_code != 200:
+        return pd.DataFrame(), pd.DataFrame(), {'error': f'HTTP {resp.status_code}: {resp.text[:200]}'}
+    try:
+        payload = resp.json()
+        players = payload.get('players', [])
+    except Exception as exc:
+        return pd.DataFrame(), pd.DataFrame(), {'error': f'parse failed: {exc}'}
+    if not players:
+        return pd.DataFrame(), pd.DataFrame(), {'error': 'no players in response'}
+
+    df = pd.DataFrame(players)
+    name = df.get('player_name', pd.Series(dtype=str)).astype(str).str.strip()
+    pos = df.get('position_id', pd.Series(dtype=str)).astype(str).str.upper().str.strip()
+    team = df.get('team_id', pd.Series(dtype=str)).astype(str).str.strip()
+    use_ppr = scoring != 'Standard'
+    ecr_rank = df.get('rank_ecr_ppr') if use_ppr else df.get('rank_ecr')
+    adp_rank = df.get('rank_adp_ppr') if use_ppr else df.get('rank_adp')
+
+    ecr = pd.DataFrame({
+        'Player': name, 'Pos': pos, 'Team': team,
+        'ECR': pd.to_numeric(ecr_rank, errors='coerce'),
+        'Bye': np.nan,
+        # This endpoint publishes one consensus number per player, not the
+        # per-expert spread consensus-rankings carries - same gap a CSV
+        # export without BEST/WORST/STD DEV already leaves, and the same
+        # fallback (a modelled estimate) already covers it downstream.
+        'ECR SD': np.nan, 'ECR Best': np.nan, 'ECR Worst': np.nan,
+    }).dropna(subset=['ECR'])
+    ecr = ecr[ecr['Player'].ne('') & ecr['Player'].str.lower().ne('nan')]
+    ecr = ecr.sort_values('ECR').drop_duplicates(subset=['Player'], keep='first')
+    ecr['Pos Rank'] = ecr.groupby('Pos')['ECR'].rank(method='first').astype(int)
+    ecr = ecr.reset_index(drop=True)
+
+    adp = pd.DataFrame({
+        'Player': name, 'Pos': pos, 'ADP': pd.to_numeric(adp_rank, errors='coerce'),
+    }).dropna(subset=['ADP'])
+    adp = adp[adp['Player'].ne('') & adp['Player'].str.lower().ne('nan')]
+    adp = adp.sort_values('ADP').drop_duplicates(subset=['Player'], keep='first').reset_index(drop=True)
+
+    meta = {'error': None, 'players': int(len(df)), 'ecr_rows': int(len(ecr)),
+            'adp_rows': int(len(adp)), 'scoring': scoring}
+    return ecr, adp, meta
+
+
 def ecr_age_days(ecr_raw):
     """How stale the consensus scrape is, in days, or None if unknown."""
     if ecr_raw is None or ecr_raw.empty or 'scrape_date' not in ecr_raw.columns:

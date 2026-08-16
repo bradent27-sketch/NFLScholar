@@ -3,6 +3,13 @@
 # this file before sharing the folder.
 .streamlit/odds_api_key.txt
 
+# Same reasoning, for the FantasyPros API key (data/draft_sources.py's
+# fetch_fantasypros_players). The usage file isn't a secret but is local
+# runtime state (this month's call count against the 50/mo free-tier
+# budget) with no reason to live in a public repo either.
+.streamlit/fantasypros_api_key.txt
+.streamlit/fantasypros_api_usage.json
+
 # Imported Fantasy Football Advice data. This is paid subscription content
 # belonging to FFA, imported for personal use via tools/har_extract.py +
 # data/ffa_import.py - it should live on your machine, not in a git repo.

@@ -78,13 +78,39 @@ def _file_status(path):
     }
 
 
-def _book_status(provider):
+def _book_status(provider, session=None):
     from data.odds_sources import SAVED_PAYLOADS, load_saved_book_payload
 
     path = SAVED_PAYLOADS.get(provider, (None, None))[0]
     status = _file_status(path)
     status['label'] = provider
     if not status['loaded']:
+        # A saved file isn't the only way a book can be feeding the board -
+        # the "Fetch season-long sportsbook lines" toggle pulls live and
+        # never touches disk. draft_hq._record_live_market_status mirrors
+        # that fetch's own result into session state; check it here so this
+        # table doesn't say "-" for a book that's actually loaded live.
+        live = ((session or {}).get('dhq_live_book_status') or {}).get(provider)
+        if live:
+            status['loaded'] = True
+            status['uploaded'] = live.get('fetched_at')
+            status['live_fetch'] = True
+            # _file_status always fills 'path' with where a save WOULD land,
+            # loaded or not - clear it here so the File column doesn't claim
+            # an on-disk file that was never actually written.
+            status['path'] = None
+            if live.get('error'):
+                status['detail'] = f"Live fetch: {live['error']}"
+                status['error'] = live['error']
+            else:
+                rows, season = live.get('rows', 0), live.get('season', 0)
+                status['rows'] = rows
+                status['season_lines'] = season
+                status['detail'] = f"{rows:,} lines · {season:,} season-long (live fetch, not saved)"
+                if season == 0 and rows:
+                    status['detail'] += (
+                        " — no SEASON-LONG lines, so Book Proj gets nothing from this")
+            return status
         status['detail'] = 'Not imported — the live fetch is used if enabled.'
         return status
 
@@ -184,6 +210,13 @@ def _session_status(key, session):
     detail = f"{len(frame):,} players"
     if key == 'ecr' and 'ECR SD' in frame.columns:
         detail += ', with expert spread' if frame['ECR SD'].notna().any() else ', no expert spread'
+    # Both a pasted CSV and a FantasyPros API pull land in the same session
+    # slot (see ui.tabs.draft_hq._render_fantasypros_api_import) - this is
+    # the one place that still distinguishes them, since the API pull spends
+    # a real call against a 50/month budget and is worth being able to spot.
+    source = session.get(f'_import_source_{key}')
+    if source:
+        detail += f' — via {source}'
     status['detail'] = detail
     return status
 
@@ -197,7 +230,7 @@ def import_status(key, session=None):
         return _ffa_status()
     if key in ('cheatsheet', 'fp_players'):
         return _cheatsheet_status(key)
-    return _book_status(key)
+    return _book_status(key, session)
 
 
 def all_import_status(session=None):
@@ -258,8 +291,10 @@ def status_table(session=None):
                 'Age': format_age(uploaded),
                 'Size': format_size(status.get('bytes')),
                 'What came out of it': status.get('detail', ''),
-                'File': status.get('path') or ('held in this session only'
-                                               if status.get('session_only') else ''),
+                'File': status.get('path') or (
+                    'held in this session only' if status.get('session_only')
+                    else 'live fetch, not saved' if status.get('live_fetch')
+                    else ''),
                 'Purpose': purpose,
             })
     return pd.DataFrame(rows)

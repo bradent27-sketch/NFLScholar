@@ -1309,3 +1309,123 @@ changing it is risk without benefit.
 Nothing sourced was touched: FFA Value, FFA ADP, FFA projections, FantasyPros
 ECR, dynasty values, injury designations and news are all displayed exactly
 as fetched.
+
+## 7. August 2026 follow-up — recency evidence and the RB handcuff term
+
+Triggered by §5's own finding: RB was undervalued vs ADP by a median 17
+ranks (pure model, full pool), growing from +6 inside the realistically
+drafted range to +18 past the bench-stash line - concentrated almost
+entirely in the backup/handcuff tier, not top-of-draft picks. Two changes,
+measured the same way as every other change in this document: rebuild the
+board, join ECR/ADP, compare rank-corr and per-position bias before and
+after.
+
+### 7.1 Recency evidence (`data/draft_projections.py`, `project_stat_lines`)
+
+**What.** `evidence = min(1, games_sample / FULL_TRUST_GAMES)` counts CAREER
+games, so a player with one clean, uncontested, full season reads
+identically to one with the same games total scattered thin across several
+years of committee snaps - it can't distinguish "just proved it" from
+"never proved it." A second, independent evidence path now takes the
+player's `games_last_season` (how much of the just-finished schedule he
+played) times his role-change `usage_ratio` (capped at 1.0 - no extra
+credit for exceeding expectation) as a second confidence estimate, and
+takes the max with the existing evidence. It can only ADD confidence for a
+confirmed recent season, never undo the role-change guard next to it.
+
+**Two real bugs found and fixed building this, both worth recording so
+they aren't reintroduced:**
+
+- `if games_last_season:` is truthy for `float('nan')` - NaN is non-zero.
+  Every player with an undefined `games_last_season` (no local-CSV row for
+  him last season - true of most deep backups) was silently read as having
+  played a full 17-game season, because `min(1.0, nan / 17.0)` returns
+  `1.0` rather than raising or propagating the NaN. Confirmed real: Sam
+  Ehlinger, Case Keenum, Bailey Zappe, Skylar Thompson and Hendon Hooker -
+  every one a QB4+/inactive-most-weeks arm with a small, noisy own-rate
+  sample and an undefined `games_last_season` - jumped straight to 100%
+  own-history trust off garbage-time attempt rates 6-9x what a player at
+  their real draft slot normally carries. Fixed with an explicit
+  `is not None and np.isfinite(...)` check.
+- The handcuff term (below) originally looped every backup on a team's
+  depth chart, not just the next-best one, and gated the STARTER on
+  clearing the league's overall replacement level. Both were wrong: the
+  loop priced the same injury against half a depth chart at once (a
+  McCaffrey handcuff and San Francisco's fullback landed within 5 points of
+  each other), and the replacement gate zeroed out backups behind a
+  real-but-unspectacular committee lead (Rachaad White, Aaron Jones Sr.)
+  for no principled reason - the option-value math already scales down on
+  its own when the starter's own projection is modest. Fixed by restricting
+  to the single next-best back by Proj Pts and dropping the starter gate
+  entirely.
+
+**Effect, isolated from the handcuff term below (QB-only fix, same board
+otherwise):** small and narrow by construction - most veterans already sit
+at evidence 1.0 from career sample alone, so this only moves players with
+a genuinely thin CAREER total. Real examples: J.J. McCarthy +6.1 pts,
+Shedeur Sanders +4.8, Dillon Gabriel +8.7 (all with a strong recent-season
+usage_ratio); Cam Ward −1.6, Jaxson Dart −1.4 (recency evidence raised
+their trust, but their own measured rate turned out to be BELOW what their
+draft slot's history implies, so more trust moved them down, not up - the
+mechanism is about ACCURACY of the evidence weight, not a one-directional
+boost). Overall pure-model rank-corr improved slightly (vs ECR 0.863 →
+0.877, vs ADP 0.843 → 0.857) with both fixes together; see the combined
+numbers below.
+
+### 7.2 RB handcuff value (`data/draft_board.py`, `add_handcuff_value`)
+
+**What.** VORP prices a backup RB at the touches he's actually expected to
+get, which for a clear depth-chart #2 is little enough to land deeply
+below replacement - correct as an expected-role estimate, and exactly why
+a real ADP dart throw still reads by VORP alone as one of the worst
+players on the board. Reuses `contingency_value` (the same
+`E[max(X − waiver, 0)]` option-value math already used for a bench spot on
+a drafter's OWN roster in `positional_value_add`), pointed instead at the
+STARTER's own outcome distribution and scaled by the position's measured
+season-absence rate (`measure_absence_rates`, RB ≈ 21%). Added to VORP as
+a new `Handcuff Value` column, kept visible rather than folded in
+invisibly. RB-only: the identical bias-by-depth measurement run on WR
+never left a ±3 band at any pool size, so there's no evidence the pattern
+exists there at all.
+
+**Eligible only when:** the team has 2+ RBs on the board, the SINGLE
+next-best back by Proj Pts is below RB replacement on his own current-role
+projection (a real 1A/1B committee, both already clearing replacement, is
+priced fairly by VORP alone already), restricted to exactly that one back
+- not the whole depth chart down to the fullback.
+
+**Historical backtest of the underlying premise** (does a real handcuff's
+production actually jump when the starter is out?): 62 team-seasons
+(2019-2025) with a clear RB1/RB2 carries hierarchy (RB2 season carries <
+50% of RB1's) and at least one week RB1 didn't play. Backup PPR points/game
+in starter-out weeks vs starter-active weeks: median uplift **+6.3
+pts/game**, mean **+6.6**, positive in **85.5%** of cases. The premise is
+real, not just plausible-sounding, and the computed Handcuff Values (7-52
+points of season-long VORP depending on the starter's own projection) sit
+in the same ballpark as this uplift scaled by season length and the
+measured absence rate.
+
+**Combined effect (both changes together, vs the pre-existing board):**
+
+```
+                    pure-model rank-corr        RB median bias vs ADP
+                    vs ECR   vs ADP             pure model   board (40% blend)
+before              0.863    0.843               +17           +8
+after                0.877    0.857               +4            +2
+```
+
+QB/WR/TE rank-corr and bias were not meaningfully harmed (WR −3→−1, TE
+−41→−29, both moving toward zero; QB's own median bias moved from +20 to
++28 in this pool, driven by a small number of legitimately-corrected
+players rather than a regression - see §7.1). Sanity checks all still
+pass: Ceiling ≥ Proj, Floor ≤ Proj, no negative projections, no K/DST in
+the top 100, every position has a replacement level.
+
+**Known remaining gap, confirmed against real book data (season-long lines
+from Underdog/PrizePicks/DraftKings/FanDuel/Pinnacle):** books still price
+several RB handcuffs above this board even after the fix (Blake Corum,
+J.K. Dobbins, Isiah Pacheco), and price several veteran, unspectacular
+starting QBs above it too (Aaron Rodgers, Sam Darnold, Malik Willis, Tyler
+Shough, Cam Ward, Bryce Young), by 20-35%. Both are real, market-confirmed
+disagreements, not resolved by this pass - noted here rather than chased
+further without a validated next lever.

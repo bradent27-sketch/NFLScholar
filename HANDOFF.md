@@ -564,6 +564,22 @@ here, young ascending WRs lower) are documented with reasons in §5 of the metho
 There's an audit script pattern worth reusing — rebuild the board, join ECR and FFA Value,
 report rank-corr + per-position bias + a sanity-check block.
 
+**August 2026 follow-up** (methodology doc §7): the pure-model (pre-market-blend)
+RB bias vs ADP was measured separately by draft depth and found concentrated almost
+entirely in the backup/handcuff tier (+6 inside the realistically-drafted range,
++18 past the bench-stash line) rather than flat across the position. Two changes
+shipped off that finding — a recency-evidence path in `project_stat_lines` (a thin
+CAREER games sample no longer dilutes a player who just proved a full, uncontested
+season) and a new RB-only `Handcuff Value` term in `add_value_over_replacement`'s
+pipeline (`data.draft_board.add_handcuff_value`, reusing `contingency_value`'s
+option-value math against the STARTER's own distribution). Median RB bias vs ADP:
+pure model +17 → +4, blended board +8 → +2. Backtested against 62 real
+team-seasons: a confirmed handcuff RB's PPG jumps a median +6.3 when the starter
+misses a game (positive in 85.5% of cases) — the premise is real, not assumed.
+Full derivation, the two real bugs hit building it (a `nan` truthiness bug and a
+depth-chart over-spreading bug, both fixed), and the remaining book-confirmed gaps
+(veteran QBs, some handcuffs) are in the methodology doc, not repeated here.
+
 ## 4. UI conventions
 
 - **Stat tiles / hero tiles / team banner** (July 2026 polish pass) -
@@ -920,6 +936,27 @@ report rank-corr + per-position bias + a sanity-check block.
     Left orphaned text after a closing `"""` and got `SyntaxError: invalid decimal
     literal` — a genuinely confusing error for what was a documentation edit. Worth a
     `py_compile` after any docstring surgery.
+
+30. **`if x:` is truthy for `float('nan')` — NaN is non-zero, so a NaN guard needs
+    `is not None and np.isfinite(x)`, not a bare truthiness check.** Building the
+    August 2026 recency-evidence path (methodology doc §7.1), `if games_last_season:`
+    let every player with an undefined `games_last_season` (no local-CSV row last
+    season — true of most deep backups) through as if the value were real, because
+    `min(1.0, nan / 17.0)` silently returns `1.0` rather than raising or propagating
+    the NaN. Confirmed real: Sam Ehlinger, Case Keenum, Bailey Zappe, Skylar Thompson
+    and Hendon Hooker — QB4+ arms with tiny, noisy own-rate samples and no
+    `games_last_season` at all — jumped to 100% own-history trust off garbage-time
+    attempt rates several times what a player at their real draft slot carries.
+    `python -m py_compile` and a plain read of the logic both look completely fine;
+    only printing the actual `evidence` value for a real NaN case surfaces it.
+
+31. **Don't let one option-value calculation fire once per row when it should fire
+    once per GROUP.** The first version of the RB handcuff term (methodology doc
+    §7.2) looped every backup on a team's depth chart against the same starter,
+    which priced the same "starter gets hurt" event again for the 3rd- and
+    4th-string bodies behind the real handcuff — a McCaffrey backup and San
+    Francisco's fullback landed within 5 points of each other. Fixed by restricting
+    to the single next-best player by projection, not the whole remaining group.
 
 ## 6. Verification workflow (what "done" means here)
 

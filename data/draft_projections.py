@@ -843,6 +843,50 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
                     # rather than a cliff that would make one extra carry
                     # flip a player between two very different projections.
                     evidence *= max(0.0, usage_ratio / ROLE_CHANGE_RATIO)
+
+                # RECENCY EVIDENCE. games_sample/FULL_TRUST_GAMES alone counts
+                # CAREER games, so a player with one clean, uncontested season
+                # reads identically to one with the same games total scattered
+                # thin across three years of committee snaps - it can't tell
+                # "just proved it" from "never proved it." A player who played
+                # nearly every week of the season just finished, at or above
+                # the workload his current rank implies, has already answered
+                # the role-stability question a second season would otherwise
+                # be collecting evidence for.
+                #
+                # Confirmed real: Cam Ward (TEN) started all 17 games as a
+                # rookie at 97% of the per-game workload a player at his
+                # consensus rank normally carries, and still landed at 71%
+                # trust (17 career games / 24) under games_sample alone -
+                # diluting a proven, uncontested season toward a curve where
+                # half the historical field at that rank didn't hold the job
+                # the whole year.
+                #
+                # Takes the MAX with the evidence above rather than replacing
+                # it, so this can only ADD confidence for a confirmed recent
+                # season - never undo the role-change guard just above. A
+                # real backup granted a full season on the depth chart but
+                # not in touches scores low here too, since recency_evidence
+                # is scaled by the same usage_ratio that guard uses.
+                games_last_season = history.get('games_last_season')
+                # NOT `if games_last_season:` - that's truthy for float('nan')
+                # (NaN is non-zero), so a player with no games-last-season
+                # figure at all was silently read as having played a full
+                # 17-game season. Confirmed real: every deep backup QB with
+                # an undefined games_last_season and a small, noisy own-rate
+                # sample (Sam Ehlinger, Case Keenum, Bailey Zappe...) jumped
+                # straight to 100% own-history trust off garbage-time attempt
+                # rates, because min(1.0, nan) silently returns 1.0 in
+                # Python rather than raising or propagating the NaN.
+                if games_last_season is not None and np.isfinite(games_last_season):
+                    # Full real-calendar weeks (17), not expected_games(pos) -
+                    # this is asking "how much of the schedule did he just
+                    # play", a distinct question from "how many games does a
+                    # typical starter play" (which already prices in average
+                    # missed time and would let this fire too easily).
+                    season_share = min(1.0, float(games_last_season) / 17.0)
+                    recency_evidence = season_share * min(1.0, max(0.0, usage_ratio))
+                    evidence = max(evidence, recency_evidence)
         if history and evidence > 0:
             out.at[idx, 'proj_basis'] = ('own history' if evidence >= 0.99
                                          else f'blend ({int(evidence * 100)}% own)')

@@ -1522,6 +1522,96 @@ def add_value_over_replacement(board, settings):
     return out, meta
 
 
+def add_handcuff_value(board, settings, replacement=None):
+    """
+    Insurance value for a clear backup running back sitting directly behind
+    a real starting workload on the same team.
+
+    VORP prices a backup at the touches he's actually expected to get, which
+    for a depth-chart #2 back is little enough to land below replacement -
+    correct as an expected-role estimate, and the reason a real dart throw
+    like a handcuff running back still reads by VORP alone as one of the
+    worst players on the board even though ADP keeps drafting him as a
+    bench stash. Measured on the August 2026 board: a pure-model rank vs ADP
+    comparison showed running backs undervalued by a median 17 spots
+    league-wide, growing from +6 inside the realistically-drafted top 10
+    rounds to +18 past the bench-stash line - almost entirely this failure
+    mode, concentrated in exactly this tier (see docs/draft_hq_methodology.md).
+
+    What VORP alone misses is the same kind of option value
+    `contingency_value` already prices for a bench spot on YOUR OWN roster
+    (used by data.draft_intel.positional_value_add) - except here the
+    "waiver pickup" being insured against is a role transplant, not a
+    stream. An NFL backfield concentrates touches on one back far more than
+    a passing game concentrates targets, so the back who inherits a
+    starter's job doesn't get a marginal bump, he gets a new season. This
+    reuses the exact same E[max(X - waiver, 0)] math, pointed at the
+    STARTER's own outcome distribution instead of a generic waiver-wire
+    player, scaled by the position's measured season-absence rate instead
+    of a personal roster's depth.
+
+    Deliberately RB-only, and deliberately restricted to the SINGLE
+    next-best back on the team (not the whole depth chart down to the
+    fullback). A real handcuff situation has one clear heir; pricing the
+    same insurance event again for the 3rd- and 4th-string bodies behind
+    him would count the same injury multiple times over. No floor on the
+    starter's own workload, either - the E[max(X - waiver, 0)] math below
+    already scales down on its own when the starter's own projection is
+    modest, so a hard replacement-level gate on him only did one thing in
+    practice: it zeroed out backups on a mediocre committee backfield (a
+    Rachaad White/Jacory Croskey-Merritt- caliber lead back, real but not
+    replacement-clearing) for no principled reason - the backup behind a
+    real-if-unspectacular starter still deserves SOME insurance value, just
+    a smaller one, which the formula already produces unaided.
+
+    The backup himself still has to be worth nothing on his OWN current
+    role (below replacement) - a genuine 1A/1B committee, where both backs
+    already clear replacement on their own workload, is already priced
+    fairly by VORP alone and isn't what this is for. The identical
+    measurement run on WR never showed the underlying pattern at all: a
+    WR2 stepping in for an injured WR1 gets a target bump, not a role
+    transplant, because passing volume is shared across a receiving corps
+    in a way rushing volume isn't concentrated on one back.
+    """
+    if board.empty or 'VORP' not in board.columns or 'Team' not in board.columns:
+        return board
+    out = board.copy()
+    out['Handcuff Value'] = 0.0
+    pos_upper = out['Pos'].astype(str).str.upper()
+    rb_mask = pos_upper == 'RB'
+    if not rb_mask.any():
+        return out
+
+    rb_replacement = float((replacement or {}).get('RB', 0.0))
+    absence = measure_absence_rates(
+        settings.get('baseline_season', 2025)).get('RB', _DEFAULT_ABSENCE['RB'])
+
+    handcuff_values = {}
+    for team, group in out[rb_mask].groupby('Team'):
+        grp = group.dropna(subset=['Proj Pts']).sort_values('Proj Pts', ascending=False)
+        if len(grp) < 2 or not team:
+            continue
+        starter, backup = grp.iloc[0], grp.iloc[1]
+        # Only a genuine "worth nothing on his own current role" backup. A
+        # real committee 1B (already above replacement on his own touches)
+        # is already priced fairly by VORP alone, and stacking an insurance
+        # value on top of an already-positive VORP would double-count the
+        # workload he's already getting.
+        if backup['Proj Pts'] >= rb_replacement:
+            continue
+        value = contingency_value(
+            float(starter['Proj Pts']), starter.get('Ceiling'), 'RB',
+            share=absence, waiver_points=float(backup['Proj Pts']),
+        )
+        handcuff_values[backup.name] = round(value, 1)
+
+    if handcuff_values:
+        idx = pd.Index(handcuff_values.keys())
+        out.loc[idx, 'Handcuff Value'] = pd.Series(handcuff_values)
+        out['VORP'] = (out['VORP'] + out['Handcuff Value']).round(1)
+    return out
+
+
 def _kmeans_1d(values, k, iters=60):
     """
     Deterministic 1-D k-means, seeded at evenly spaced quantiles.
@@ -2023,6 +2113,7 @@ def build_draft_board(ecr_board, settings, adp_df=None, next_pick=None,
     # know who is actually draftable - see assign_tiers on why clustering
     # the undraftable tail wrecks resolution where it matters.
     board, meta = add_value_over_replacement(board, settings)
+    board = add_handcuff_value(board, settings, replacement=meta.get('replacement'))
     board = assign_tiers(board, tiers_per_position=tiers_per_position)
     board = add_risk_labels(board)
     board = attach_adp(board, adp_df, market_weight=market_weight)

@@ -180,6 +180,7 @@ SETTINGS_OPEN_KEY = 'dhq_settings_open'
 ADP_UPLOAD_KEY = 'dhq_adp_upload_df'
 ECR_UPLOAD_KEY = 'dhq_ecr_upload_df'
 ECR_UPLOAD_ERROR_KEY = 'dhq_ecr_upload_error'
+BOARD_LOADED_SIG_KEY = 'dhq_board_loaded_sig'
 
 SETTING_DEFAULTS = {
     'teams': 12, 'draft_type': 'Snake', 'slot': 5,
@@ -2797,6 +2798,26 @@ def _render_news(board, settings):
             st.dataframe(show.head(120), width="stretch", hide_index=True, height=df_auto_height(24))
 
 
+def _board_load_signature(cfg, ffa_upload):
+    """
+    Everything that can change what `_load_board` returns, collapsed into one
+    tuple that's cheap to compare across reruns. This is NOT `_board_cache_key`
+    (that one gates the actual expensive rebuild inside `_cached_board`) - this
+    one only decides whether the loading skeleton below is honest to show.
+
+    `id(...)` rather than a content hash for the three upload slots: each is
+    either None or the same DataFrame/UploadedFile object surviving from a
+    previous rerun until the user picks a new file, so identity already
+    tracks "did this change" without hashing a whole frame every render.
+    """
+    return (
+        tuple(sorted(cfg.items())),
+        id(ffa_upload) if ffa_upload is not None else None,
+        id(st.session_state.get(ECR_UPLOAD_KEY)),
+        id(st.session_state.get(ADP_UPLOAD_KEY)),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -2828,8 +2849,24 @@ def render():
     settings = _settings_from_cfg(cfg, ffa_upload)
     ctx = _pick_context(settings)
 
-    with skeleton_loader("table", n_rows=12, n_cols=8):
+    # The skeleton only flashes in on a genuine first load or an actual
+    # settings/import change. Draft HQ reruns ITSELF constantly outside of
+    # any settings change - a pick, the mock ticker between your turns, an
+    # undo, toggling the draft-board panel - and every one of those calls
+    # `_load_board` again (it's what re-syncs the pick-dependent columns).
+    # `_cached_board` underneath already answers those from cache in
+    # milliseconds, but re-showing the full loading skeleton for the exact
+    # same board on every single one of those reruns was a large placeholder
+    # box mounting and unmounting right above the draft room on every pick -
+    # abrupt for anyone scrolled down into the picks/board area, since
+    # everything below it shifts down and back with no visible cause.
+    sig = _board_load_signature(cfg, ffa_upload)
+    if st.session_state.get(BOARD_LOADED_SIG_KEY) == sig:
         board, meta, adp_df, adp_meta, status = _load_board(settings)
+    else:
+        with skeleton_loader("table", n_rows=12, n_cols=8):
+            board, meta, adp_df, adp_meta, status = _load_board(settings)
+        st.session_state[BOARD_LOADED_SIG_KEY] = sig
 
     with head_right:
         _render_source_status(status, meta)

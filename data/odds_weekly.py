@@ -251,3 +251,40 @@ def weekly_consensus(props):
                                              'market': 'Market'})
     ordered = ['Player', 'Team', 'Market', 'Consensus', 'Books', 'Spread'] + books
     return out[ordered].sort_values(['Player', 'Market']).reset_index(drop=True)
+
+
+def weekly_market_projection(props, scoring, board=None):
+    """
+    This week's player-prop lines -> a projected fantasy-points column, the
+    same arithmetic data.odds_projections already uses to turn a SEASON-long
+    market line into a projection, applied instead to one week's lines.
+
+    No season-to-per-game division is needed here the way a season line
+    needs one: a book's line for a stat THIS WEEK already is a single-game
+    projection of that stat, so data.odds_projections.market_stat_lines can
+    read it straight through with `season_only=False` - safe because
+    `props` coming from weekly_props()/fetch_weekly_props() is already
+    filtered to `period == 'game'` rows only, never a mix of game and
+    season lines.
+
+    `board` is passed through to market_stat_lines' name-canonicalization
+    step (any DataFrame with a 'Player' column - this app's Weekly Rankings
+    pool works fine, it doesn't have to be a draft board) so two books
+    spelling one player differently collapse into a single row instead of
+    two partial ones.
+
+    Returns (scored, meta) - scored carries one row per player with
+    'Market Pts' (this week's market-implied fantasy points) and
+    'Coverage' (how much of a typical week's points that covers); meta
+    just carries a player count for a caption. Never raises - an empty or
+    unusable props table returns an empty frame, same degrade-gracefully
+    convention as everything else that reads a live odds source.
+    """
+    from data.odds_projections import market_stat_lines, score_market_lines
+    if props is None or props.empty:
+        return pd.DataFrame(), {'players': 0}
+    rows = market_stat_lines(props, season_only=False, board=board)
+    if rows.empty:
+        return pd.DataFrame(), {'players': 0}
+    scored = score_market_lines(rows, scoring)
+    return scored, {'players': int(len(scored))}

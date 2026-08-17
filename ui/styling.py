@@ -99,6 +99,10 @@ COLUMN_HELP = {
     'VORP vs FantasyPros': "Positive means this app's VORP model ranks the player higher (better) than FantasyPros does",
     'VORP vs Custom': "Positive means this app's VORP model ranks the player higher (better) than your uploaded ranking does",
     'Proj Pts (17-gm pace)': "Last season's per-game pace stretched to a 17-game season - a volume-based stand-in, not a real projection",
+    'Rank': "Positional rank for the selected week (e.g. \"RB4\"), shaded by tier - a cluster break in Model Proj Pts at that position, not a fixed players-per-tier cutoff",
+    'Market Proj Pts': "This week's live sportsbook player-prop lines, re-scored under this league's scoring settings - independent of this app's own model",
+    'Market Coverage': "Share of a typical week's fantasy points the market's posted lines actually covered for this player",
+    'L5 Avg FPTS': "Average fantasy points over the player's last 5 games played, not a season-long or extrapolated number",
 }
 for _pos in ['QB', 'RB', 'WR', 'TE']:
     COLUMN_HELP[f'{_pos} SOS'] = f"Strength of schedule for {_pos}s - average fantasy points allowed per game by teams left on the schedule (higher = softer matchups)"
@@ -1373,7 +1377,7 @@ def get_tier_color(tier):
     return TIER_COLORS[min(index, len(TIER_COLORS) - 1)]
 
 
-def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None):
+def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None, tier_cols=None):
     """
     Sortable Styler for st.dataframe (historical totals, risers, rookie
     watch, rankings, VORP sheet, odds tables, coverage scheme tendencies).
@@ -1408,6 +1412,16 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     tier doesn't apply. Takes precedence over numeric_pct_cols for any
     column listed in both (checked after diverging_cols).
 
+    tier_cols: dict of {column_name: tier-number sequence}, same row-position
+    matching, colored via get_tier_color's fixed tier palette instead of a
+    continuous percentile scale - for a column whose own displayed text
+    ISN'T the tier number itself (e.g. Weekly Rankings' "Rank" column shows
+    "RB4", not "3", but should still be shaded by which tier RB4 landed in).
+    A column literally named 'Tier' already colors off its own value further
+    down; this is for coloring a DIFFERENT column by a tier computed
+    alongside it. Takes precedence over everything else, since a caller that
+    passes this has already decided tier is the right read for that column.
+
     Every numeric column also gets an explicit, auto-detected decimal count
     (see the loop below) - without it, whatever raw float precision the
     underlying dtype happens to carry gets displayed as-is: a float32
@@ -1420,8 +1434,10 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     numeric_pct_cols = numeric_pct_cols or {}
     diverging_cols = diverging_cols or {}
     matchup_pct_cols = matchup_pct_cols or {}
+    tier_cols = tier_cols or {}
     pct_arrays = {col: list(vals) for col, vals in numeric_pct_cols.items()}
     matchup_arrays = {col: list(vals) for col, vals in matchup_pct_cols.items()}
+    tier_arrays = {col: list(vals) for col, vals in tier_cols.items()}
 
     _DEFAULT_STYLE = f"background-color:{C['surface_container']}; color:{C['on_surface']};"
 
@@ -1446,6 +1462,7 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
             ]
         matchup_vals = matchup_arrays.get(col)
         pct_vals = pct_arrays.get(col)
+        tier_vals = tier_arrays.get(col)
         is_team = col == 'Team'
         is_position = col in ('Pos', 'Position')
         is_tier = col == 'Tier'
@@ -1455,6 +1472,11 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
                 # Handled before the percentile branch so a Tier column that
                 # also appears in numeric_pct_cols still reads as tiers.
                 tier_bg = get_tier_color(v)
+                out.append(f"background-color:{tier_bg}; color:#ffffff; font-weight:bold;"
+                           if tier_bg else _DEFAULT_STYLE)
+                continue
+            if tier_vals is not None and pos < len(tier_vals):
+                tier_bg = get_tier_color(tier_vals[pos])
                 out.append(f"background-color:{tier_bg}; color:#ffffff; font-weight:bold;"
                            if tier_bg else _DEFAULT_STYLE)
                 continue

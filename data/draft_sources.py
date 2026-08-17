@@ -952,6 +952,26 @@ def fantasypros_effective_limit():
     return FANTASYPROS_API_MONTHLY_LIMIT
 
 
+def _rank_or_unranked(series):
+    """
+    A rank column, with FantasyPros' own "unranked" sentinel converted to a
+    real missing value.
+
+    CONFIRMED LIVE: this API returns 0 - not null, not absent - for a
+    player with no real ECR/ADP on that scoring column (deep bench players,
+    backups, some team defenses). 0 sorts BEFORE rank 1 in every consumer
+    downstream (the board table, the availability model), so a handful of
+    unranked players were rendering as the consensus #1 overall picks with
+    absurd derived Proj Pts/VORP - confirmed real on a live pull, not a
+    theoretical edge case. A rank of 0 is never meaningful in this domain
+    (ranks start at 1), so it's treated identically to a missing value here
+    - dropped by the caller's dropna(), same as a genuine null would be,
+    rather than sorting to the top of the board.
+    """
+    numeric = pd.to_numeric(series, errors='coerce')
+    return numeric.mask(numeric <= 0)
+
+
 def fetch_fantasypros_players(api_key, scoring='Full PPR'):
     """
     ECR + ADP for the whole NFL player pool from FantasyPros' own API.
@@ -1071,7 +1091,7 @@ def fetch_fantasypros_players(api_key, scoring='Full PPR'):
 
     ecr = pd.DataFrame({
         'Player': name, 'Pos': pos, 'Team': team,
-        'ECR': pd.to_numeric(ecr_rank, errors='coerce'),
+        'ECR': _rank_or_unranked(ecr_rank),
         'Bye': np.nan,
         # This endpoint publishes one consensus number per player, not the
         # per-expert spread consensus-rankings carries - same gap a CSV
@@ -1085,7 +1105,7 @@ def fetch_fantasypros_players(api_key, scoring='Full PPR'):
     ecr = ecr.reset_index(drop=True)
 
     adp = pd.DataFrame({
-        'Player': name, 'Pos': pos, 'ADP': pd.to_numeric(adp_rank, errors='coerce'),
+        'Player': name, 'Pos': pos, 'ADP': _rank_or_unranked(adp_rank),
     }).dropna(subset=['ADP'])
     adp = adp[adp['Player'].ne('') & adp['Player'].str.lower().ne('nan')]
     adp = adp.sort_values('ADP').drop_duplicates(subset=['Player'], keep='first').reset_index(drop=True)

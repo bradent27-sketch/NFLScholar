@@ -120,6 +120,81 @@ attempt a full doc reconciliation; it added the entries below for what it actual
 
 ---
 
+**August 2026 pass — Matchup Analyzer bolstering (receiver alignment stats,
+defense coverage overhaul, usage trend chart).** Scoped entirely to
+`ui/tabs/matchup_analyzer.py` / `data/matchup_signals.py` per explicit
+request; Player Search and its shared `ui/player_snapshot.py` builder are
+untouched (HANDOFF.md section 8's "don't change Player Search" still holds -
+see below for how that constraint was honored).
+
+- **Calculated Wide YPRR** (`data.matchup_signals.build_wide_yprr_table` /
+  `wide_yprr_entry`) - PFF's route-concept export breaks out Slot specifically
+  (real `slot_routes`/`slot_yards`/`slot_yprr`) but never publishes Wide as
+  its own concept. Computed as "the rest of his routes" - season total minus
+  the real slot routes/yards, from `receiving_summary` + `receiving_concept`
+  - per explicit request. For a WR this is clean (in-line snaps are
+  negligible); for a TE the non-slot remainder is genuinely "wide + in-line
+  combined" since no export in this app has in-line yardage broken out
+  separately - `includes_inline` flags that on every row so callers can
+  disclose it rather than overclaiming precision. Surfaces in two places:
+  Route Efficiency (as a sub-bar under Wide rate, mirroring Slot YPRR's
+  existing sub-bar under Slot rate) and the new receiver Tendency Profile.
+- **Receiver Tendency Profile is now a dedicated builder**
+  (`data.matchup_signals.receiver_tendency_entries`), a deliberate FORK of
+  `ui.player_snapshot.build_player_snapshot`'s WR/TE branch, not an edit to
+  it - that shared function also feeds Player Search's matrix table and
+  Player Compare, both off-limits. New order: PFF Rec Grade (renamed from
+  RecV Grade), PFF Blocking Grade (new -
+  `data.matchup_signals.blocking_grade_entry`, from PFF's `offense_blocking`
+  export, percentiled within the player's OWN position only since that file
+  also carries O-line), Targets/G, Rec/G, RecYd/G (new), [TE only: Inline%],
+  Slot% (+ Slot YPRR / Slot Rec Grade sub-rows), Wide% (+ calculated Wide
+  YPRR sub-row), EPA/Target, Success Rate, ADOT, YPRR, Drop Rate. Slot Route
+  %/Screen Route %/Screen YPRR are gone from this tab's profile per explicit
+  request (still present, unchanged, on Player Search/Player Compare via the
+  shared builder). QB/RB/every other position still goes through
+  `build_player_snapshot` exactly as before.
+- **Defense Coverage panel rebuilt** (`_render_coverage`) - Man vs Zone is
+  now a 2-column split-bar table (`data.matchup_signals.man_zone_grade_rows`)
+  laid out exactly like the player side's own vs-Man/vs-Zone panel (Rate,
+  Coverage Grade, QB Rating Allowed rows, Man left/Zone right, league
+  percentile driving bar length/color) instead of four flat hero tiles with
+  no league context. MOF Closed/Open renamed to Single-High/Two-High (the
+  correct shell-naming direction - MOF closed = one deep safety = single-high;
+  MOF open = two deep safeties = two-high; the OLD hero-tile caption had this
+  backwards) and given real league percentiles for the first time
+  (`coverage_profile`'s scheme dict gained `zone_pct`/`mof_closed_pct`/
+  `mof_open_pct` alongside the pre-existing `man_pct`). Outside/Slot yards-
+  per-target (a single rate with no volume context) replaced by
+  `data.matchup_signals.defense_alignment_allowed`: real Targets/Rec/Yards/
+  TDs/Yds-per-Target, Slot vs "Wide". Slot is real, measured PFF data
+  (`pff['slot_cov']`); PFF has no outside/wide coverage export, so Wide is
+  computed the same "total minus real slot" way Wide YPRR is
+  (`pff['cov_summary']` minus `pff['slot_cov']`, summed per team) - same
+  caveat inherited (a safety in middle-of-field zone isn't "outside" either).
+- **Usage & Role is now a week-by-week line chart** (`_render_usage_and_role`)
+  instead of three static season-average tiles - one chart, a picker for
+  Target share / Carry share / Opportunity share, same shape as the player's
+  own Game By Game chart. Catch rate dropped from this section (still
+  computed by `ms.usage_and_role`, just not shown here - it's an efficiency
+  read, not a role one). `usage_and_role`'s weekly frame gained an `opponent`
+  column to feed the chart's tooltips/bar labels.
+- **Defense Week By Week Detail simplified** - the "By Stat" tab is gone (it
+  was a strictly worse path to the same chart, position-second instead of
+  position-first); Position and Stat pickers now sit side by side
+  (`st.columns(2)`) instead of stacked, and a small percentile-colored
+  indicator tile (`data.matchup_signals.defense_stat_rank`,
+  `ui.components.render_percentile_metric_tiles`) sits above the chart
+  showing the season per-game average, league rank, and league average
+  before the trend line does.
+- **Hover polish extended to `ui.charts.render_split_bars`** (now used by
+  the new Man/Zone and Slot/Wide tables, on top of its pre-existing Route
+  Efficiency/Scheme Fit callers) - same brighten-the-fill/bold-the-label
+  language `.pbar-row:hover` already established, via new `.split-bar-row`/
+  `.split-bar-fill`/`.split-bar-label`/`.split-bar-value` CSS classes.
+  `.metric-tile` also picked up the same lift/border-glow card-hover token
+  `.stat-tile`/`.hero-tile` already had (it never got it when those did).
+
 ## 1. Architecture
 
 ```

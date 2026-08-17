@@ -561,6 +561,26 @@ def inject_theme():
         .pbar-row:hover .pbar-value {{ transform: scale(1.28); }}
         .pbar-row:hover .pbar-label {{ fill: #ffffff; }}
 
+        /* Paired split-bar chart (ui.charts.render_split_bars) - the "vs
+           Man / vs Zone" and "Slot / Wide" panels. Same hover language as
+           .pbar-row above (outline + brighten the filled bar, bold the
+           label) so every percentile chart on Matchup Analyzer feels like
+           one system rather than some rows being interactive and others not. */
+        .split-bar-fill {{
+            stroke: transparent;
+            stroke-width: 0;
+            transition: filter 150ms ease-out, stroke-width 150ms ease-out;
+        }}
+        .split-bar-label {{ transition: fill 150ms ease-out; }}
+        .split-bar-value {{
+            transition: transform 150ms ease-out;
+            transform-box: fill-box;
+            transform-origin: right center;
+        }}
+        .split-bar-row:hover .split-bar-fill {{ stroke: #ffffff; stroke-width: 2px; filter: brightness(1.12); }}
+        .split-bar-row:hover .split-bar-value {{ transform: scale(1.15); }}
+        .split-bar-row:hover .split-bar-label {{ fill: #ffffff; }}
+
         /* Percentile-colored metric tiles (Defensive Yield's Coverage
            Matchup Radar) - ui.components.render_percentile_metric_tiles.
            Centered layout like .hero-tile, but color is per-tile and
@@ -579,6 +599,13 @@ def inject_theme():
             padding: 12px 14px;
             text-align: center;
             border: 1px solid {C['outline_variant']};
+            transition: transform 200ms ease-out, border-color 200ms ease-out;
+        }}
+        /* Same card-hover token as .stat-tile/.hero-tile - this tile type
+           never picked it up when the others did. */
+        .metric-tile:hover {{
+            transform: translateY(-2px);
+            border-color: rgba(0, 255, 249, 0.35);
         }}
         .metric-tile .m-label {{
             font-size: 10.5px;

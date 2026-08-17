@@ -537,9 +537,10 @@ def render_split_bars(rows, left_label, right_label):
     y = 26
     for r in rows:
         cy = y + row_h / 2
+        parts.append(f"<g class='split-bar-row'>")
         parts.append(
             f"<text x='{LABEL_W - 12}' y='{cy + 5:.1f}' text-anchor='end' font-size='14' font-weight='600' "
-            f"fill='{C['on_surface']}'>{_esc(r['label'])}</text>"
+            f"class='split-bar-label' fill='{C['on_surface']}'>{_esc(r['label'])}</text>"
         )
         for side, x0 in (('left', LABEL_W), ('right', LABEL_W + half + 30)):
             val = r.get(side)
@@ -553,13 +554,14 @@ def render_split_bars(rows, left_label, right_label):
             shown = r.get(f'{side}_str', f"{val:.0f}")
             parts.append(
                 f"<rect x='{x0:.1f}' y='{cy - BAR_H / 2:.1f}' width='{length:.1f}' height='{BAR_H}' rx='4' "
-                f"fill='{get_pff_color(val)}'><title>{_esc(r['label'])} "
+                f"class='split-bar-fill' fill='{get_pff_color(val)}'><title>{_esc(r['label'])} "
                 f"{_esc(left_label if side == 'left' else right_label)}: {_esc(shown)}</title></rect>"
             )
             parts.append(
                 f"<text x='{x0 + half - 6:.1f}' y='{cy + 4:.1f}' text-anchor='end' font-size='12' "
-                f"font-family='{_MONO_FONT}' font-weight='600' fill='{C['on_surface']}'>{_esc(shown)}</text>"
+                f"font-family='{_MONO_FONT}' font-weight='600' class='split-bar-value' fill='{C['on_surface']}'>{_esc(shown)}</text>"
             )
+        parts.append("</g>")
         y += row_h
     parts.append("</svg>")
     st.markdown("".join(parts), unsafe_allow_html=True)

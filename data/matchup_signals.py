@@ -24,7 +24,7 @@ disclosed approximations they are in the college version.
 import numpy as np
 import pandas as pd
 
-from data.utils import calculate_percentile, clean_name_exact
+from data.utils import calculate_percentile, clean_name_exact, get_val
 
 # Position -> the stats offered in the player's own game-by-game chart. A
 # curated, position-relevant subset, not every column the weekly export
@@ -195,7 +195,10 @@ def usage_and_role(stats_df, name_col, player_name, team, team_col='team'):
         'targets': _numeric(player_rows, 'targets').fillna(0.0),
         'carries': _numeric(player_rows, 'rushing_attempts').fillna(0.0),
         'receptions': _numeric(player_rows, 'receptions').fillna(0.0),
-    }).groupby('week', as_index=False).sum()
+        'opponent': player_rows['opponent_team'].astype(str) if 'opponent_team' in player_rows.columns else '',
+    }).groupby('week', as_index=False).agg({
+        'targets': 'sum', 'carries': 'sum', 'receptions': 'sum', 'opponent': 'first',
+    })
     per_week = per_week.merge(team_totals, left_on='week', right_index=True, how='left')
 
     def share(num, den):
@@ -261,11 +264,14 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, ro
     adds Slot YPRR - a THIRD, independent file from the two above, which is
     also where ui.player_snapshot's own "Slot YPRR" tile reads it from (same
     column, same percentile pool - one number, not two implementations of
-    it). There is no Wide-YPRR counterpart to add alongside it: PFF's route-
-    concept exports break out Slot and Screen specifically, never "Wide" as
-    its own concept, and receiving_summary's wide_rate/wide_snaps are a
-    SHARE of snaps, not an efficiency number - confirmed by checking every
-    column in every 2025 PFF export for this app, not assumed absent.
+    it), plus a CALCULATED Wide YPRR (wide_yprr_entry below) - PFF doesn't
+    publish Wide as its own route concept, so it's derived as "the rest of
+    his routes" once the real slot routes/yards are removed from the season
+    total. Slot YPRR renders as a sub-row directly under Slot rate, and Wide
+    YPRR as a sub-row under Wide rate - the same "smaller stat living WITH
+    its parent row" convention Positional Vulnerability's YPT sub-bar uses,
+    per explicit request that these read as companions to the rate above
+    them rather than peers of their own.
     """
     out = {'available': False, 'alignment': [], 'scheme': [], 'routes': None, 'yprr': None}
     key = clean_name_exact(pd.Series([player_name])).iloc[0]
@@ -280,27 +286,40 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, ro
             out['available'] = True
             out['routes'] = _float_or_none(r.get('routes'))
             out['yprr'] = _float_or_none(r.get('yprr'))
+            slot_rate_entry = _pct_entry('Slot rate', r, 'slot_rate', qualified, '{:.1f}%')
+            wide_rate_entry = _pct_entry('Wide rate', r, 'wide_rate', qualified, '{:.1f}%')
+            slot_yprr_entry = None
+            if route_concept is not None and not route_concept.empty and 'player' in route_concept.columns:
+                rc_pool = route_concept.copy()
+                rc_pool['_key'] = clean_name_exact(rc_pool['player'])
+                rc_row = rc_pool[rc_pool['_key'] == key]
+                if not rc_row.empty:
+                    entry = _pct_entry('Slot YPRR', rc_row.iloc[0], 'slot_yprr', rc_pool, '{:.2f}')
+                    if entry:
+                        entry['sub'] = True
+                        slot_yprr_entry = entry
+            wide = wide_yprr_entry(receiving_summary, route_concept, player_name)
+            wide_yprr_row = None
+            if wide:
+                help_text = (
+                    "Not published by PFF - calculated as (season yards minus real slot yards) / "
+                    "(season routes minus real slot routes)."
+                )
+                if wide['includes_inline']:
+                    help_text += " For a TE this also folds in in-line routes, which PFF has no separate yardage split for."
+                wide_yprr_row = {
+                    'label': 'Wide YPRR', 'value_str': f"{wide['value']:.2f}", 'pct': wide['pct'],
+                    'sub': True, 'help': help_text,
+                }
             out['alignment'] = [
                 e for e in (
-                    _pct_entry('Slot rate', r, 'slot_rate', qualified, '{:.1f}%'),
-                    _pct_entry('Wide rate', r, 'wide_rate', qualified, '{:.1f}%'),
+                    slot_rate_entry, slot_yprr_entry, wide_rate_entry, wide_yprr_row,
                     _pct_entry('YPRR', r, 'yprr', qualified, '{:.2f}'),
                     _pct_entry('Yds / Rec', r, 'yards_per_reception', qualified, '{:.1f}'),
                     _pct_entry('ADOT', r, 'avg_depth_of_target', qualified, '{:.1f}'),
                     _pct_entry('Contested catch %', r, 'contested_catch_rate', qualified, '{:.1f}%'),
                 ) if e
             ]
-
-    if route_concept is not None and not route_concept.empty and 'player' in route_concept.columns:
-        pool = route_concept.copy()
-        pool['_key'] = clean_name_exact(pool['player'])
-        row = pool[pool['_key'] == key]
-        if not row.empty:
-            r = row.iloc[0]
-            entry = _pct_entry('Slot YPRR', r, 'slot_yprr', pool, '{:.2f}')
-            if entry:
-                out['available'] = True
-                out['alignment'].append(entry)
 
     if receiving_scheme is not None and not receiving_scheme.empty and 'player' in receiving_scheme.columns:
         pool = receiving_scheme.copy()
@@ -355,6 +374,217 @@ def _pct_entry(label, row, col, pool_df, fmt):
         'label': label, 'value_str': fmt.format(value),
         'pct': _percentile_of(value, _numeric(pool_df, col).dropna()),
     }
+
+
+# ---------------------------------------------------------------------------
+# Receiver alignment stats PFF doesn't publish - computed here
+# ---------------------------------------------------------------------------
+
+def build_wide_yprr_table(receiving_summary, route_concept):
+    """
+    Per-player "Wide YPRR" - a stat PFF doesn't publish. PFF's route-concept
+    export (receiving_concept.csv) breaks out Slot specifically (real,
+    measured slot_routes/slot_yards/slot_yprr) but never Wide as its own
+    concept, so this is computed as "whatever's left once the real slot
+    routes/yards are removed from the season total" - the rest of the
+    routes he ran, per explicit request that this be assumed wide.
+
+    That assumption is clean for a WR (in-line snaps are negligible for the
+    position) but NOT clean for a TE: a TE's non-slot routes are a mix of
+    wide AND in-line alignment, and no export in this app has a route-level
+    yardage split for in-line snaps to subtract out separately - so a TE's
+    number here is really "wide + in-line combined". `includes_inline`
+    flags that per row so a caller's help text can say so, rather than
+    silently claiming precision the data doesn't support.
+
+    Vectorized (one merge over the whole pool) rather than a per-player
+    lookup loop, since this runs against the full receiving_summary pool
+    every time a WR/TE profile is built.
+    """
+    empty = pd.DataFrame(columns=['player', 'position', 'wide_routes', 'wide_yards', 'wide_yprr', 'includes_inline'])
+    if receiving_summary is None or receiving_summary.empty or 'player' not in receiving_summary.columns:
+        return empty
+    base = receiving_summary[['player', 'position']].copy()
+    base['routes'] = _numeric(receiving_summary, 'routes')
+    base['yards'] = _numeric(receiving_summary, 'yards')
+    if (route_concept is not None and not route_concept.empty
+            and {'player', 'slot_routes', 'slot_yards'}.issubset(route_concept.columns)):
+        rc = route_concept[['player', 'slot_routes', 'slot_yards']].copy()
+        rc['slot_routes'] = _numeric(rc, 'slot_routes').fillna(0)
+        rc['slot_yards'] = _numeric(rc, 'slot_yards').fillna(0)
+        # Collapsed defensively in case of a duplicate player row (not
+        # expected - one row per player in this export) - a plain merge
+        # would otherwise silently fan out and double-count.
+        rc = rc.groupby('player', as_index=False).sum(numeric_only=True)
+        base = base.merge(rc, on='player', how='left')
+    else:
+        base['slot_routes'] = 0.0
+        base['slot_yards'] = 0.0
+    base['slot_routes'] = base['slot_routes'].fillna(0)
+    base['slot_yards'] = base['slot_yards'].fillna(0)
+    base['wide_routes'] = (base['routes'] - base['slot_routes']).clip(lower=0)
+    base['wide_yards'] = base['yards'] - base['slot_yards']
+    with np.errstate(divide='ignore', invalid='ignore'):
+        base['wide_yprr'] = base['wide_yards'] / base['wide_routes'].replace(0, np.nan)
+    base['includes_inline'] = base['position'].astype(str).str.upper() == 'TE'
+    return base
+
+
+def wide_yprr_entry(receiving_summary, route_concept, player_name, min_routes=10):
+    """
+    One player's calculated Wide YPRR plus its league percentile, ranked
+    against every other player with at least `min_routes` estimated wide
+    routes - a lower bar than route_efficiency_splits' 25+ routes
+    qualification since this is already a subset of a subset for a
+    slot-heavy player. Returns None when there's nothing to compute or too
+    thin a pool to rank against (see _percentile_of).
+    """
+    table = build_wide_yprr_table(receiving_summary, route_concept)
+    if table.empty:
+        return None
+    key = clean_name_exact(pd.Series([player_name])).iloc[0]
+    table = table.copy()
+    table['_key'] = clean_name_exact(table['player'])
+    row = table[table['_key'] == key]
+    if row.empty:
+        return None
+    r = row.iloc[0]
+    value = _float_or_none(r['wide_yprr'])
+    if value is None:
+        return None
+    qualified = table[table['wide_routes'] >= min_routes]
+    return {
+        'value': value,
+        'pct': _percentile_of(value, _numeric(qualified, 'wide_yprr').dropna()),
+        'routes': float(r['wide_routes']),
+        'includes_inline': bool(r['includes_inline']),
+    }
+
+
+def blocking_grade_entry(block_df, player_name, position):
+    """
+    A WR/TE's own run-blocking grade, from PFF's offense_blocking export
+    (pff['block']) - the same file data.loaders._build_master_pff_grades
+    already reads league-wide, just not previously surfaced per-player for
+    a skill position. Percentiled within his OWN position only:
+    offense_blocking.csv also carries guards/tackles/centers, and ranking a
+    receiver's blocking grade against a starting guard's would bottom out
+    almost every skill player for no real reason.
+    """
+    if (block_df is None or block_df.empty or 'player' not in block_df.columns
+            or 'position' not in block_df.columns or 'grades_run_block' not in block_df.columns):
+        return None
+    pool = block_df[block_df['position'].astype(str).str.upper() == str(position).upper()]
+    if pool.empty:
+        return None
+    key = clean_name_exact(pd.Series([player_name])).iloc[0]
+    pool = pool.copy()
+    pool['_key'] = clean_name_exact(pool['player'])
+    row = pool[pool['_key'] == key]
+    if row.empty:
+        return None
+    value = _float_or_none(row.iloc[0].get('grades_run_block'))
+    if value is None:
+        return None
+    return {'value': value, 'pct': _percentile_of(value, _numeric(pool, 'grades_run_block').dropna())}
+
+
+def receiver_tendency_entries(pff, player_name, position, pct_row):
+    """
+    Matchup Analyzer's own WR/TE Tendency Profile order - a FORK of
+    ui.player_snapshot.build_player_snapshot's WR/TE branch, not a change
+    to it: that shared function also feeds Player Search's matrix table and
+    Player Compare, both explicitly off-limits (see HANDOFF.md section 8 -
+    "Don't change the Player Search tab"), while this ordering/label/
+    stat-set request is specific to this tab alone.
+
+    `pct_row` is precompute_league_percentiles' per-player row, already
+    filtered to this player+position by the caller - the same source
+    Targets/G and Rec/G always read from.
+
+    Order: PFF Rec Grade, PFF Blocking Grade, Targets/G, Rec/G, RecYd/G,
+    [TE only: Inline%], Slot% (+ Slot YPRR / Slot Rec Grade sub-rows),
+    Wide% (+ calculated Wide YPRR sub-row), EPA/Target, Success Rate, ADOT,
+    YPRR, Drop Rate. Slot Route %/Screen Route %/Screen YPRR from the old
+    shared branch are deliberately absent here, per explicit request.
+    """
+    position = str(position).upper()
+    entries = []
+
+    def add(label, value_str, pct, sub=False, help_text=None):
+        e = {'label': label, 'value_str': value_str, 'pct': pct}
+        if sub:
+            e['sub'] = True
+        if help_text:
+            e['help'] = help_text
+        entries.append(e)
+
+    rec = pff.get('rec')
+    row = None
+    if rec is not None and not rec.empty and 'player' in rec.columns:
+        match = rec[rec['player'].str.lower() == str(player_name).lower()]
+        if not match.empty:
+            row = match.iloc[0]
+
+    if row is not None:
+        add('PFF Rec Grade', get_val(row, 'grades_pass_route', "{:.1f}"), row.get('grades_pass_route_pct', 0))
+
+    block_entry = blocking_grade_entry(pff.get('block'), player_name, position)
+    if block_entry:
+        add('PFF Blocking Grade', f"{block_entry['value']:.1f}", block_entry['pct'])
+
+    if pct_row is not None and not pct_row.empty:
+        pr = pct_row.iloc[0]
+        if pd.notna(pr.get('targets_per_g')):
+            add('Targets/G', f"{pr['targets_per_g']:.1f}", pr.get('targets_per_g_pct'))
+        if pd.notna(pr.get('rec_per_g')):
+            add('Rec/G', f"{pr['rec_per_g']:.1f}", pr.get('rec_per_g_pct'))
+        if pd.notna(pr.get('receiving_yards_mean')):
+            add('RecYd/G', f"{pr['receiving_yards_mean']:.1f}", pr.get('receiving_yards_mean_pct'))
+
+    if position == 'TE' and row is not None:
+        add('Inline%', get_val(row, 'inline_rate', "{:.1f}%"), row.get('inline_rate_pct', 0))
+
+    route_concept = pff.get('route_concept')
+    rc_row = None
+    if route_concept is not None and not route_concept.empty and 'player' in route_concept.columns:
+        match = route_concept[route_concept['player'].str.lower() == str(player_name).lower()]
+        if not match.empty:
+            rc_row = match.iloc[0]
+
+    if row is not None:
+        add('Slot%', get_val(row, 'slot_rate', "{:.1f}%"), row.get('slot_rate_pct', 0))
+    if rc_row is not None:
+        if 'slot_yprr' in route_concept.columns:
+            add('Slot YPRR', get_val(rc_row, 'slot_yprr', "{:.2f}"),
+                calculate_percentile(route_concept, 'slot_yprr').loc[rc_row.name], sub=True)
+        if 'slot_grades_pass_route' in route_concept.columns:
+            add('Slot Rec Grade', get_val(rc_row, 'slot_grades_pass_route', "{:.1f}"),
+                calculate_percentile(route_concept, 'slot_grades_pass_route').loc[rc_row.name], sub=True)
+
+    if row is not None:
+        add('Wide%', get_val(row, 'wide_rate', "{:.1f}%"), row.get('wide_rate_pct', 0))
+    wide = wide_yprr_entry(rec, route_concept, player_name)
+    if wide:
+        wide_help = ("Not published by PFF - calculated as (season yards minus real slot yards) / "
+                     "(season routes minus real slot routes).")
+        if wide['includes_inline']:
+            wide_help += " For a TE this also folds in in-line routes, which PFF has no separate yardage split for."
+        add('Wide YPRR', f"{wide['value']:.2f}", wide['pct'], sub=True, help_text=wide_help)
+
+    if pct_row is not None and not pct_row.empty:
+        pr = pct_row.iloc[0]
+        if pd.notna(pr.get('epa_per_target')):
+            add('EPA/Target', f"{pr['epa_per_target']:.2f}", pr.get('epa_per_target_pct'))
+        if pd.notna(pr.get('success_rate_rec')):
+            add('Success Rate', f"{pr['success_rate_rec'] * 100:.1f}%", pr.get('success_rate_rec_pct'))
+
+    if row is not None:
+        add('ADOT', get_val(row, 'avg_depth_of_target', "{:.1f}"), row.get('adot_pct', 0))
+        add('YPRR', get_val(row, 'yprr', "{:.2f}"), row.get('yprr_pct', 0))
+        add('Drop Rate', get_val(row, 'drop_rate', "{:.1f}%"), row.get('drop_pct', 0))
+
+    return entries
 
 
 # ---------------------------------------------------------------------------
@@ -631,10 +861,22 @@ def coverage_profile(defense_team, team_name, scheme_rates, positional_coverage,
             out['scheme'] = {
                 'man_rate': _float_or_none(r.get('man_rate')),
                 'zone_rate': _float_or_none(r.get('zone_rate')),
+                # MOF (middle of field) CLOSED = one deep safety, i.e. a
+                # SINGLE-HIGH shell; MOF OPEN = two deep safeties splitting
+                # the field, i.e. a TWO-HIGH shell - renamed in the UI to
+                # the shell names per explicit request, kept as mof_closed/
+                # mof_open here since that's what Sharp's own source
+                # columns (middle_closed_rate/middle_open_rate) measure.
                 'mof_closed': _float_or_none(r.get('middle_closed_rate')),
                 'mof_open': _float_or_none(r.get('middle_open_rate')),
                 'man_pct': _percentile_of(_float_or_none(r.get('man_rate')),
                                           _numeric(scheme_rates, 'man_rate').dropna()),
+                'zone_pct': _percentile_of(_float_or_none(r.get('zone_rate')),
+                                           _numeric(scheme_rates, 'zone_rate').dropna()),
+                'mof_closed_pct': _percentile_of(_float_or_none(r.get('middle_closed_rate')),
+                                                 _numeric(scheme_rates, 'middle_closed_rate').dropna()),
+                'mof_open_pct': _percentile_of(_float_or_none(r.get('middle_open_rate')),
+                                               _numeric(scheme_rates, 'middle_open_rate').dropna()),
             }
 
     if positional_coverage is not None and not positional_coverage.empty and 'team' in positional_coverage.columns:
@@ -717,6 +959,143 @@ def _team_coverage_grades(team_rows, full_pool):
             pct = 100 - pct
         result[key] = {'value': value, 'pct': pct}
     return result
+
+
+def man_zone_grade_rows(scheme, pff_cov):
+    """
+    The defense's Man vs Zone read laid out in the same
+    {'label', 'left', 'right', 'left_str', 'right_str'} row shape
+    ui.charts.render_split_bars/the player side's own vs-Man/vs-Zone panel
+    uses - Rate (Sharp's scheme dict), then Coverage Grade and QB Rating
+    Allowed (PFF, snap-weighted - see _team_coverage_grades) - so the
+    defense's man/zone comparison is drawn exactly like the player's,
+    per explicit request. Man is always `left`, Zone always `right`.
+    """
+    rows = []
+    man_rate, zone_rate = scheme.get('man_rate'), scheme.get('zone_rate')
+    if man_rate is not None or zone_rate is not None:
+        rows.append({
+            'label': 'Rate', 'left': scheme.get('man_pct'), 'right': scheme.get('zone_pct'),
+            'left_str': f"{man_rate:.1f}%" if man_rate is not None else '--',
+            'right_str': f"{zone_rate:.1f}%" if zone_rate is not None else '--',
+        })
+    man_grade, zone_grade = pff_cov.get('man_grade'), pff_cov.get('zone_grade')
+    if man_grade or zone_grade:
+        rows.append({
+            'label': 'Coverage Grade',
+            'left': man_grade['pct'] if man_grade else None, 'right': zone_grade['pct'] if zone_grade else None,
+            'left_str': f"{man_grade['value']:.1f}" if man_grade else '--',
+            'right_str': f"{zone_grade['value']:.1f}" if zone_grade else '--',
+        })
+    man_rtg, zone_rtg = pff_cov.get('man_rating_allowed'), pff_cov.get('zone_rating_allowed')
+    if man_rtg or zone_rtg:
+        rows.append({
+            'label': 'QB Rating Allowed',
+            'left': man_rtg['pct'] if man_rtg else None, 'right': zone_rtg['pct'] if zone_rtg else None,
+            'left_str': f"{man_rtg['value']:.1f}" if man_rtg else '--',
+            'right_str': f"{zone_rtg['value']:.1f}" if zone_rtg else '--',
+        })
+    return rows
+
+
+def defense_alignment_allowed(defense_coverage_summary, slot_coverage, defense_team_pff):
+    """
+    Real targets/receptions/yards/TDs allowed, split Slot vs the rest of
+    the field ("Wide") - replaces a single yards-per-target rate (which
+    carries no sense of volume - the actual complaint that motivated this)
+    with the fuller allowed line.
+
+    PFF's slot_coverage export (pff['slot_cov']) is real, measured
+    slot-alignment defense. PFF has no equivalent outside/wide export, so
+    that side is computed the same way this app's Wide YPRR receiver-side
+    stat is: the defense's TOTAL coverage numbers (defense_coverage_summary,
+    every alignment, pff['cov_summary']) minus the real slot number. Same
+    caveat as that stat's docstring applies here too - a safety playing
+    middle-of-field zone isn't "outside" alignment either, so this is the
+    closest measured equivalent this app has, not a literal boundary-only
+    stat.
+
+    `defense_team_pff` must already be a PFF team code (abbr_to_pff_team),
+    same convention coverage_profile's own pff_coverage_scheme lookup uses.
+    """
+    empty = {'available': False, 'rows': []}
+    cov_cols = ['receptions', 'targets', 'yards', 'touchdowns']
+    if (defense_coverage_summary is None or defense_coverage_summary.empty
+            or 'team_name' not in defense_coverage_summary.columns
+            or not set(cov_cols).issubset(defense_coverage_summary.columns)):
+        return empty
+
+    total_src = defense_coverage_summary.copy()
+    for c in cov_cols:
+        total_src[c] = _numeric(total_src, c)
+    total = total_src.groupby('team_name')[cov_cols].sum()
+
+    if (slot_coverage is not None and not slot_coverage.empty
+            and 'team_name' in slot_coverage.columns and set(cov_cols).issubset(slot_coverage.columns)):
+        slot_src = slot_coverage.copy()
+        for c in cov_cols:
+            slot_src[c] = _numeric(slot_src, c)
+        slot = slot_src.groupby('team_name')[cov_cols].sum().reindex(total.index, fill_value=0.0)
+    else:
+        slot = pd.DataFrame(0.0, index=total.index, columns=cov_cols)
+
+    wide = (total - slot).clip(lower=0)
+    team = str(defense_team_pff).upper()
+    if team not in total.index:
+        return empty
+
+    def ypt(frame, idx):
+        t = float(frame.loc[idx, 'targets'])
+        return float(frame.loc[idx, 'yards']) / t if t > 0 else None
+
+    rows = []
+    for col, label in (('targets', 'Targets'), ('receptions', 'Rec'), ('yards', 'Yards'), ('touchdowns', 'TDs')):
+        slot_val, wide_val = float(slot.loc[team, col]), float(wide.loc[team, col])
+        rows.append({
+            'label': label,
+            'left': _percentile_of(slot_val, slot[col]), 'right': _percentile_of(wide_val, wide[col]),
+            'left_str': f"{slot_val:.0f}", 'right_str': f"{wide_val:.0f}",
+        })
+
+    slot_ypt_pool = pd.Series([ypt(slot, t) for t in slot.index if slot.loc[t, 'targets'] > 0], dtype='float64')
+    wide_ypt_pool = pd.Series([ypt(wide, t) for t in wide.index if wide.loc[t, 'targets'] > 0], dtype='float64')
+    slot_ypt_val, wide_ypt_val = ypt(slot, team), ypt(wide, team)
+    rows.append({
+        'label': 'Yds / Target',
+        'left': _percentile_of(slot_ypt_val, slot_ypt_pool) if slot_ypt_val is not None else None,
+        'right': _percentile_of(wide_ypt_val, wide_ypt_pool) if wide_ypt_val is not None else None,
+        'left_str': f"{slot_ypt_val:.1f}" if slot_ypt_val is not None else '--',
+        'right_str': f"{wide_ypt_val:.1f}" if wide_ypt_val is not None else '--',
+    })
+    return {'available': True, 'rows': rows}
+
+
+def defense_stat_rank(stats_df, defense_team, position, stat_col):
+    """
+    This defense's own per-game average of `stat_col` allowed to
+    `position`, plus its league percentile/rank among all 32 defenses - a
+    small headline indicator meant to sit above a week-by-week chart so the
+    season number has context before the trend line does.
+
+    Works for ANY stat_col, including 'fantasy_points' (which
+    ALLOWED_STAT_KEYS doesn't curate an entry for - defense_allowed_by_
+    position is restricted to that curated list; this isn't).
+    """
+    if stats_df.empty or 'opponent_team' not in stats_df.columns:
+        return None
+    rows = _played_weeks(stats_df[stats_df['position'].astype(str).str.upper() == str(position).upper()])
+    if rows.empty or stat_col not in rows.columns:
+        return None
+    per_team_game = rows.groupby(['opponent_team', 'week'])[stat_col].sum()
+    per_team = per_team_game.groupby('opponent_team').mean()
+    if str(defense_team) not in per_team.index:
+        return None
+    value = float(per_team.loc[str(defense_team)])
+    return {
+        'value': value, 'league_avg': float(per_team.mean()),
+        'pct': _percentile_of(value, per_team),
+        'rank': int((per_team > value).sum()) + 1, 'of': int(len(per_team)),
+    }
 
 
 def red_zone_defense(pbp_df, defense_team):

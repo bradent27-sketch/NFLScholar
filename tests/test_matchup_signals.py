@@ -373,6 +373,159 @@ def test_missing_columns_do_not_raise():
     assert ms.usage_and_role(pd.DataFrame(), 'name', 'A', 'KC')['available'] is False
 
 
+def test_usage_weekly_frame_carries_opponent_for_the_chart():
+    # The Usage & Role line chart needs a per-week opponent label for its
+    # tooltips/bar labels, same as the Game By Game chart - a regression
+    # guard for that column actually landing in the weekly frame.
+    df = weekly([
+        {'name': 'A', 'week': 1, 'team': 'KC', 'opponent_team': 'BUF', 'position': 'WR', 'targets': 5},
+        {'name': 'B', 'week': 1, 'team': 'KC', 'opponent_team': 'BUF', 'position': 'WR', 'targets': 5},
+    ])
+    usage = ms.usage_and_role(df, 'name', 'A', 'KC')
+    assert usage['available']
+    assert list(usage['weekly']['opponent']) == ['BUF']
+
+
+# --- Wide YPRR (calculated, not a PFF export column) --------------------
+
+def test_wide_yprr_is_the_rest_of_the_routes_once_slot_is_removed():
+    rec = pd.DataFrame({
+        'player': ['A'], 'position': ['WR'], 'routes': [100.0], 'yards': [500.0],
+    })
+    route_concept = pd.DataFrame({
+        'player': ['A'], 'slot_routes': [40.0], 'slot_yards': [150.0],
+    })
+    table = ms.build_wide_yprr_table(rec, route_concept)
+    row = table[table['player'] == 'A'].iloc[0]
+    # 60 non-slot routes, 350 non-slot yards -> 5.833 yards/route.
+    assert abs(row['wide_routes'] - 60.0) < 1e-9
+    assert abs(row['wide_yprr'] - (350.0 / 60.0)) < 1e-9
+    assert bool(row['includes_inline']) is False
+
+
+def test_wide_yprr_flags_a_te_as_including_inline_routes():
+    rec = pd.DataFrame({
+        'player': ['A'], 'position': ['TE'], 'routes': [100.0], 'yards': [500.0],
+    })
+    table = ms.build_wide_yprr_table(rec, pd.DataFrame())
+    # No route_concept data at all: the whole season counts as "non-slot",
+    # and a TE's non-slot bucket is flagged as mixing in in-line routes.
+    row = table[table['player'] == 'A'].iloc[0]
+    assert bool(row['includes_inline']) is True
+    assert abs(row['wide_routes'] - 100.0) < 1e-9
+
+
+def test_wide_yprr_entry_needs_a_real_qualifying_pool():
+    # Fewer than 10 players with enough wide routes to rank against -
+    # _percentile_of's own thin-pool guard should still apply here.
+    rec = pd.DataFrame({
+        'player': ['A', 'B'], 'position': ['WR', 'WR'],
+        'routes': [50.0, 50.0], 'yards': [250.0, 100.0],
+    })
+    entry = ms.wide_yprr_entry(rec, pd.DataFrame(), 'A')
+    assert entry is not None and entry['pct'] is None
+    assert abs(entry['value'] - 5.0) < 1e-9
+
+
+def test_wide_yprr_entry_missing_player_returns_none():
+    rec = pd.DataFrame({'player': ['A'], 'position': ['WR'], 'routes': [50.0], 'yards': [100.0]})
+    assert ms.wide_yprr_entry(rec, pd.DataFrame(), 'Nobody') is None
+
+
+# --- PFF blocking grade for a skill player -------------------------------
+
+def test_blocking_grade_is_ranked_within_its_own_position_only():
+    # offense_blocking.csv mixes O-line and skill positions - a WR's grade
+    # must be percentiled against other WRs, not against a guard.
+    block = pd.DataFrame({
+        'player': ['WR1', 'WR2', 'G1'],
+        'position': ['WR', 'WR', 'G'],
+        'grades_run_block': [40.0, 80.0, 95.0],
+    })
+    entry = ms.blocking_grade_entry(block, 'WR1', 'WR')
+    # WR1's 40 sits BELOW WR2's 80 within the WR-only pool - a small pool
+    # (n=2) is below _percentile_of's rank-10 floor, so pct is None, but the
+    # raw value must still be his own, not blended with the guard's.
+    assert entry is not None
+    assert abs(entry['value'] - 40.0) < 1e-9
+
+
+def test_blocking_grade_missing_position_column_returns_none():
+    assert ms.blocking_grade_entry(pd.DataFrame({'player': ['A']}), 'A', 'WR') is None
+
+
+# --- Man/Zone row assembly ------------------------------------------------
+
+def test_man_zone_grade_rows_puts_man_left_zone_right():
+    scheme = {'man_rate': 30.0, 'zone_rate': 65.0, 'man_pct': 20.0, 'zone_pct': 80.0}
+    pff_cov = {
+        'man_grade': {'value': 70.0, 'pct': 40.0}, 'zone_grade': {'value': 60.0, 'pct': 55.0},
+        'man_rating_allowed': {'value': 90.0, 'pct': 30.0}, 'zone_rating_allowed': {'value': 100.0, 'pct': 60.0},
+    }
+    rows = ms.man_zone_grade_rows(scheme, pff_cov)
+    assert [r['label'] for r in rows] == ['Rate', 'Coverage Grade', 'QB Rating Allowed']
+    rate_row = rows[0]
+    assert rate_row['left'] == 20.0 and rate_row['right'] == 80.0
+    assert rate_row['left_str'] == '30.0%' and rate_row['right_str'] == '65.0%'
+
+
+def test_man_zone_grade_rows_skips_a_row_with_neither_side():
+    rows = ms.man_zone_grade_rows({'man_rate': None, 'zone_rate': None}, {})
+    assert rows == []
+
+
+# --- Defense allowed by alignment (Slot vs "Wide") -----------------------
+
+def test_defense_alignment_allowed_wide_is_total_minus_real_slot():
+    cov_summary = pd.DataFrame({
+        'team_name': ['KC', 'BUF'],
+        'receptions': [200.0, 180.0], 'targets': [300.0, 260.0],
+        'yards': [2500.0, 2200.0], 'touchdowns': [15.0, 12.0],
+    })
+    slot_cov = pd.DataFrame({
+        'team_name': ['KC', 'BUF'],
+        'receptions': [80.0, 60.0], 'targets': [120.0, 90.0],
+        'yards': [700.0, 500.0], 'touchdowns': [5.0, 3.0],
+    })
+    out = ms.defense_alignment_allowed(cov_summary, slot_cov, 'KC')
+    assert out['available']
+    rec_row = next(r for r in out['rows'] if r['label'] == 'Rec')
+    # 200 total - 80 slot = 120 wide.
+    assert rec_row['left_str'] == '80' and rec_row['right_str'] == '120'
+    targets_row = next(r for r in out['rows'] if r['label'] == 'Targets')
+    assert targets_row['left_str'] == '120' and targets_row['right_str'] == '180'
+
+
+def test_defense_alignment_allowed_missing_team_is_unavailable():
+    cov_summary = pd.DataFrame({
+        'team_name': ['BUF'], 'receptions': [180.0], 'targets': [260.0],
+        'yards': [2200.0], 'touchdowns': [12.0],
+    })
+    out = ms.defense_alignment_allowed(cov_summary, pd.DataFrame(), 'KC')
+    assert out['available'] is False
+
+
+# --- Weekly stat rank indicator ------------------------------------------
+
+def test_defense_stat_rank_computes_per_game_average_and_rank():
+    rows = []
+    for team, weekly_vals in (('DEF', [100.0, 140.0]), ('OTHER', [50.0, 70.0])):
+        for wk, val in enumerate(weekly_vals, start=1):
+            rows.append({'name': f'{team}-{wk}', 'week': wk, 'opponent_team': team,
+                        'team': 'OFF', 'position': 'WR', 'receiving_yards': val})
+    out = ms.defense_stat_rank(weekly(rows), 'DEF', 'WR', 'receiving_yards')
+    assert out is not None
+    # DEF allowed (100+140)/2 = 120/game, the higher (softer) of the two.
+    assert abs(out['value'] - 120.0) < 1e-9
+    assert out['rank'] == 1 and out['of'] == 2
+
+
+def test_defense_stat_rank_missing_team_returns_none():
+    df = weekly([{'name': 'A', 'week': 1, 'opponent_team': 'BUF', 'team': 'OFF',
+                  'position': 'WR', 'receiving_yards': 50}])
+    assert ms.defense_stat_rank(df, 'NOTATEAM', 'WR', 'receiving_yards') is None
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith('test_') and callable(fn)]

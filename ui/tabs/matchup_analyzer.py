@@ -50,7 +50,7 @@ from ui.charts import (
 )
 from ui.components import (
     build_player_search_labels, compute_bye_weeks, render_back_button,
-    render_hero_tiles, render_stat_tiles, render_team_banner, skeleton_loader, switch_tab,
+    render_hero_tiles, render_percentile_metric_tiles, render_team_banner, skeleton_loader, switch_tab,
 )
 from ui.player_snapshot import build_player_snapshot
 from ui.styling import get_matchup_color, get_pff_color
@@ -247,12 +247,19 @@ def _scoring():
 
 def _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_name, position, pff):
     """
-    One percentile-bar chart per stat, in a fixed position-specific order,
-    reusing ui.player_snapshot.build_player_snapshot - the same builder
-    Player Search's matrix and Player Compare's chart both read. Sharing it
-    is the point: a player's ADOT percentile has to be the same number on
-    every tab, and three parallel implementations of "his percentile"
-    guarantees it eventually isn't.
+    One percentile-bar chart per stat, in a fixed position-specific order.
+
+    WR/TE goes through data.matchup_signals.receiver_tendency_entries - a
+    DELIBERATE FORK of ui.player_snapshot.build_player_snapshot's WR/TE
+    branch, not a change to it: that shared builder also feeds Player
+    Search's matrix table and Player Compare, both explicitly off-limits
+    (HANDOFF.md section 8), while this tab's receiver stat order/labels/
+    set is a request specific to Matchup Analyzer alone.
+
+    Every other position still reuses build_player_snapshot, same as
+    before - a player's ADOT percentile has to be the same number on every
+    tab, and three parallel implementations of "his percentile" guarantees
+    it eventually isn't.
     """
     _section("TENDENCY PROFILE")
     st.caption("Percentile vs. same-position players who actually play. Order is fixed — volume first, then efficiency, then role.")
@@ -260,17 +267,21 @@ def _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_n
     pct_row = percentiles[
         (percentiles[name_col].astype(str) == player_name) & (percentiles['position'] == position)
     ] if not percentiles.empty else pd.DataFrame()
-    grade = pff['pff_grades_map'].get(player_name.lower(), 0.0)
-    games = max(p_data['week'].nunique() if 'week' in p_data.columns else 1, 1)
-    entries = build_player_snapshot(
-        player_name, position, p_data, p_bio, pff, pct_row, games, grade,
-        get_pff_color(grade, raw_grade=True), season,
-    )
+
+    if position in ('WR', 'TE'):
+        entries = ms.receiver_tendency_entries(pff, player_name, position, pct_row)
+    else:
+        grade = pff['pff_grades_map'].get(player_name.lower(), 0.0)
+        games = max(p_data['week'].nunique() if 'week' in p_data.columns else 1, 1)
+        entries = build_player_snapshot(
+            player_name, position, p_data, p_bio, pff, pct_row, games, grade,
+            get_pff_color(grade, raw_grade=True), season,
+        )
     if not entries:
         st.caption("No percentile data for this player this season.")
         return
-    # sort=False: the order build_player_snapshot emits is itself the
-    # message, and re-sorting by percentile makes it look arbitrary.
+    # sort=False: the order is itself the message, and re-sorting by
+    # percentile makes it look arbitrary.
     render_percentile_bar_list(entries, sort=False)
 
 
@@ -286,13 +297,18 @@ def _render_route_efficiency(pff, player_name, position):
     if splits['alignment']:
         st.caption("Where he lines up and how efficient he is — percentile among receivers with 25+ routes.")
         render_percentile_bar_list(splits['alignment'], sort=False)
-        # No Wide YPRR alongside Slot YPRR above: PFF's route-concept
-        # exports break out Slot and Screen specifically, never Wide as its
-        # own concept, and receiving_summary's Wide rate (above) is a SHARE
-        # of snaps, not an efficiency number - there's no source in this app
-        # for it, so it's not shown rather than approximated.
-        if any(e['label'] == 'Slot YPRR' for e in splits['alignment']):
-            st.caption("No Wide YPRR shown: PFF's route-concept data splits out Slot and Screen specifically, never Wide as its own number.")
+        # Wide YPRR isn't a PFF export column - PFF's route-concept exports
+        # break out Slot specifically, never Wide as its own concept - so
+        # it's CALCULATED as "the rest of his routes" once real slot
+        # routes/yards are removed from the season total
+        # (data.matchup_signals.wide_yprr_entry). Shown as the smaller
+        # sub-bar under Wide rate, same as Slot YPRR sits under Slot rate.
+        if any(e['label'] == 'Wide YPRR' for e in splits['alignment']):
+            st.caption(
+                "Wide YPRR isn't published by PFF — calculated as the rest of his routes once real slot "
+                "routes/yards are removed from the season total. For a TE that also folds in in-line routes, "
+                "which PFF has no separate yardage split for."
+            )
     if splits['scheme']:
         st.caption("Same player, split by the coverage he faced. Bars are percentiles; the number is the raw value.")
         render_split_bars(splits['scheme'], 'vs Man', 'vs Zone')
@@ -303,24 +319,48 @@ def _render_route_efficiency(pff, player_name, position):
 
 
 def _render_usage_and_role(stats_df, name_col, team_col, player_name, offense_team):
+    """
+    Week-by-week share chart, one series at a time via a picker - same
+    chart shape as the player's own Game By Game section, per explicit
+    request, replacing three static season-average tiles that couldn't show
+    a trend at all. Catch rate is dropped from this section entirely (it's
+    an efficiency read, not a role/usage one, and was the odd one out among
+    three share metrics) - still computed by ms.usage_and_role for anything
+    else that wants it, just not displayed here.
+    """
     usage = ms.usage_and_role(stats_df, name_col, player_name, offense_team, team_col=team_col)
     if not usage['available']:
         return
     _section("USAGE & ROLE")
-    st.caption("Share of his own team's opportunities, averaged per game he played — not season total over season total, which halves a player who missed games.")
-    tiles = []
-    for label, key, fmt in (
-        ('Target share', 'target_share', '{:.1f}%'),
-        ('Carry share', 'carry_share', '{:.1f}%'),
-        ('Opportunity share', 'opportunity_share', '{:.1f}%'),
-        ('Catch rate', 'catch_rate', '{:.1f}%'),
-    ):
-        value = usage.get(key)
-        if value is None or pd.isna(value):
-            continue
-        tiles.append({'label': label, 'value_str': fmt.format(value), 'pct': None})
-    if tiles:
-        render_stat_tiles(tiles)
+    st.caption("Share of his own team's opportunities, week by week — not season total over season total, which halves a player who missed games.")
+
+    weekly = usage['weekly']
+    share_options = [
+        ('target_share', 'Target share'), ('carry_share', 'Carry share'),
+        ('opportunity_share', 'Opportunity share'),
+    ]
+    share_options = [(c, l) for c, l in share_options if c in weekly.columns and weekly[c].notna().any()]
+    if not share_options:
+        st.caption("No share data for this player this season.")
+        return
+    labels = [l for _, l in share_options]
+    choice = st.selectbox("Share type", labels, key="ma_usage_stat")
+    stat_col, stat_label = share_options[labels.index(choice)]
+
+    plot_df = weekly.dropna(subset=[stat_col]).sort_values('week')
+    if plot_df.empty:
+        st.caption(f"No {stat_label.lower()} data for this player yet.")
+        return
+    values = plot_df[stat_col].astype(float).tolist()
+    tooltips = [
+        f"Wk {int(r.week)} vs {r.opponent}: {getattr(r, stat_col):.1f}% {stat_label.lower()}"
+        for r in plot_df.itertuples()
+    ]
+    render_game_log_line(
+        values, tooltips, avg=usage.get(stat_col), avg_label='season avg',
+        bar_labels=[(str(r.opponent), f"W{int(r.week)}") for r in plot_df.itertuples()],
+    )
+    st.caption(f"{stat_label} per game he played, week by week. Dashed line = season average.")
 
     change = usage.get('role_change')
     if change:
@@ -480,14 +520,11 @@ def _render_positional_vulnerability(stats_df, points_allowed, defense_team, pos
 def _render_defense_weekly_detail(stats_df, defense_team, position):
     """
     One week-by-week chart for this defense, same shape as the player's own
-    Game By Game chart on the other side of the row - replaces what used to
-    be a "pick a position" selectbox that then stacked up to five separate
-    charts underneath it. Two tabs pick what the single chart shows: by
-    POSITION (pick the position, then which stat for it - the flow that was
-    already here) or by STAT directly (pick a stat first, from every
-    position at once - a faster way in when you already know you're
-    checking "receptions allowed" and don't want to detour through a
-    position picker to get there).
+    Game By Game chart on the other side of the row. Position and stat
+    pickers sit side by side (not stacked) to save vertical space, and this
+    is position-first only now - the old "By Stat" tab was a strictly
+    worse path to the same chart (same picker, just position-second) and
+    is gone per explicit request.
     """
     _section("WEEK BY WEEK DETAIL", "What this defense has allowed, game by game — not just the season number above.")
     positions = [p for p in ('QB', 'RB', 'WR', 'TE') if p in ms.ALLOWED_STAT_KEYS]
@@ -495,48 +532,22 @@ def _render_defense_weekly_detail(stats_df, defense_team, position):
         st.caption("No week-by-week data for this defense yet.")
         return
 
-    tab_pos, tab_stat = st.tabs(["By Position", "By Stat"])
-    with tab_pos:
+    c_pos, c_stat = st.columns(2)
+    with c_pos:
         default_idx = positions.index(position) if position in positions else 0
         pos_choice = st.selectbox(
             "Position", positions, index=default_idx, key=f"ma_wk_pos_{defense_team}",
         )
-        stat_opts = list(ms.ALLOWED_STAT_KEYS.get(pos_choice, [])) + [('fantasy_points', 'Fantasy Pts')]
-        labels = [label for _, label in stat_opts]
-        default_label = ms.MATCHUP_KEY.get(pos_choice, stat_opts[0])[1]
+    stat_opts = list(ms.ALLOWED_STAT_KEYS.get(pos_choice, [])) + [('fantasy_points', 'Fantasy Pts')]
+    labels = [label for _, label in stat_opts]
+    default_label = ms.MATCHUP_KEY.get(pos_choice, stat_opts[0])[1]
+    with c_stat:
         choice = st.selectbox(
             "Stat", labels, index=labels.index(default_label) if default_label in labels else 0,
             key=f"ma_wk_pos_stat_{defense_team}",
         )
-        stat_col, stat_label = stat_opts[labels.index(choice)]
-        _render_one_weekly_chart(stats_df, defense_team, pos_choice, stat_col, stat_label)
-
-    with tab_stat:
-        # A flat (position, stat) list across the whole defense, deduped -
-        # ALLOWED_STAT_KEYS aliases TE to WR's list and FB to RB's list (see
-        # its own definition), so iterating the dict directly would offer
-        # the same WR stats twice under two different position labels.
-        flat = []
-        seen = set()
-        for pos in ('QB', 'RB', 'WR', 'TE'):
-            for stat_col, stat_label in ms.ALLOWED_STAT_KEYS.get(pos, []):
-                key = (pos, stat_col)
-                if key in seen:
-                    continue
-                seen.add(key)
-                flat.append((pos, stat_col, f"{stat_label} ({pos})"))
-        stat_labels = [label for _, _, label in flat]
-        default_flat = ms.MATCHUP_KEY.get(position)
-        default_idx = next(
-            (i for i, (pos, col, _) in enumerate(flat) if pos == position and default_flat and col == default_flat[0]),
-            0,
-        )
-        choice = st.selectbox("Stat", stat_labels, index=default_idx, key=f"ma_wk_stat_{defense_team}")
-        pos2, col2, _ = flat[stat_labels.index(choice)]
-        # The chart's own title wants the bare stat name, not the "(POS)"
-        # suffix the picker above needed for disambiguation.
-        bare_label = next(l for c, l in ms.ALLOWED_STAT_KEYS.get(pos2, []) if c == col2)
-        _render_one_weekly_chart(stats_df, defense_team, pos2, col2, bare_label)
+    stat_col, stat_label = stat_opts[labels.index(choice)]
+    _render_one_weekly_chart(stats_df, defense_team, pos_choice, stat_col, stat_label)
 
 
 def _render_one_weekly_chart(stats_df, defense_team, pos, stat_col, stat_label):
@@ -545,6 +556,18 @@ def _render_one_weekly_chart(stats_df, defense_team, pos, stat_col, stat_label):
         st.caption(f"No week-by-week data for {pos}s allowed by this defense yet.")
         return
     values = weekly['value'].astype(float).tolist()
+
+    # A small headline indicator ahead of the trend line itself - the
+    # season number, its league rank and how it colors, so the chart below
+    # isn't the first place any context shows up.
+    rank_info = ms.defense_stat_rank(stats_df, defense_team, pos, stat_col)
+    if rank_info:
+        render_percentile_metric_tiles([{
+            'label': f"{stat_label} / game", 'value': f"{rank_info['value']:.1f}",
+            'sub': f"#{rank_info['rank']} of {rank_info['of']} · league avg {rank_info['league_avg']:.1f}",
+            'color': get_pff_color(rank_info['pct']) if rank_info['pct'] is not None else C['surface_container_high'],
+        }])
+
     # The reference line is the LEAGUE average allowed, not this defense's
     # own season average - explicit user request. A defense's own average
     # can only ever say "this week was a spike relative to itself"; the
@@ -569,48 +592,62 @@ def _render_one_weekly_chart(stats_df, defense_team, pos, stat_col, stat_label):
 
 
 def _render_coverage(defense_team, season):
+    pff = load_all_pff_data(season)
     profile = ms.coverage_profile(
         abbr_to_pff_team(defense_team), _team_label(defense_team),
         load_external_coverage_schemes(), load_sharp_positional_coverage(),
-        load_all_pff_data(season).get('def_coverage_scheme'),
+        pff.get('def_coverage_scheme'),
     )
     if not profile['available']:
         return
     _section("COVERAGE")
     scheme = profile['scheme']
-    if scheme.get('man_rate') is not None or scheme.get('zone_rate') is not None:
-        tiles = []
-        for label, key, fmt in (
-            ('Man rate', 'man_rate', '{:.1f}%'), ('Zone rate', 'zone_rate', '{:.1f}%'),
-            ('MOF closed', 'mof_closed', '{:.1f}%'), ('MOF open', 'mof_open', '{:.1f}%'),
-        ):
-            value = scheme.get(key)
-            if value is not None:
-                tiles.append({'label': label, 'value': fmt.format(value)})
-        render_hero_tiles(tiles)
-        st.caption("How often they play man vs zone, and how often the middle of the field is closed (two-high) vs open (single-high).")
-    # Yards per target allowed (by receiver type) lives on the Positional
-    # Vulnerability panel now, as a sub-stat directly under each position's
-    # bar - moved there on request so the "which position should I target"
-    # read carries its own efficiency number instead of living one section
-    # away from it.
-    if profile['alignment']:
-        render_split_bars(profile['alignment'], 'Outside', 'Slot')
-        st.caption("Same stat, split by where the receiver lined up.")
-    if profile['pff']:
-        pff_entries = []
-        for label, key, fmt in (
-            ('Man coverage grade', 'man_grade', '{:.1f}'), ('Zone coverage grade', 'zone_grade', '{:.1f}'),
-            ('QB rating allowed (man)', 'man_rating_allowed', '{:.1f}'),
-            ('QB rating allowed (zone)', 'zone_rating_allowed', '{:.1f}'),
-        ):
-            entry = profile['pff'].get(key)
-            if entry and entry.get('pct') is not None:
-                pff_entries.append({'label': label, 'value_str': fmt.format(entry['value']), 'pct': entry['pct']})
-        if pff_entries:
-            st.markdown("**Coverage players, snap-weighted**")
-            render_percentile_bar_list(pff_entries, sort=False)
-            st.caption("PFF's per-defender coverage grades weighted by each player's own coverage snaps, so a 40-snap backup doesn't count like a 600-snap starter. Higher percentile = softer matchup.")
+    # Man vs Zone, laid out exactly like the player side's own vs-Man/
+    # vs-Zone panel (two columns, Man left / Zone right, with the league-
+    # relative percentile driving the bar length and color) - per explicit
+    # request that the defense's man/zone read match the player's format
+    # instead of a flat row of hero tiles with no league context at all.
+    man_zone_rows = ms.man_zone_grade_rows(scheme, profile['pff'])
+    if man_zone_rows:
+        render_split_bars(man_zone_rows, 'Man', 'Zone')
+        st.caption("Rate is how often they play each shell; grade and QB rating allowed are PFF's per-defender numbers, snap-weighted. Bar length/color = league percentile.")
+
+    # Two-High / Single-High shell tendency, right below Man vs Zone per
+    # explicit request - renamed from "MOF Closed/Open" (middle-of-field
+    # closed = one deep safety = SINGLE-HIGH; middle-of-field open = two
+    # deep safeties = TWO-HIGH), with each rate's own league percentile so
+    # it reads relative to the rest of the league, not as a bare number.
+    mof_entries = []
+    if scheme.get('mof_open') is not None:
+        mof_entries.append({
+            'label': 'Two-High %', 'value_str': f"{scheme['mof_open']:.1f}%", 'pct': scheme.get('mof_open_pct'),
+        })
+    if scheme.get('mof_closed') is not None:
+        mof_entries.append({
+            'label': 'Single-High %', 'value_str': f"{scheme['mof_closed']:.1f}%", 'pct': scheme.get('mof_closed_pct'),
+        })
+    if mof_entries:
+        st.markdown("**Shell tendency**")
+        render_percentile_bar_list(mof_entries, sort=False)
+        st.caption("How often the middle of the field is split by two deep safeties (two-high) vs covered by one (single-high), vs the rest of the league.")
+
+    # Slot vs Wide allowed - receptions/targets/yards/TDs, not just a rate,
+    # per explicit request ("yds/target is not the whole story ... lacks
+    # amount of targets allowed there"). Real PFF slot-alignment defense on
+    # the left; "Wide" on the right is computed the same way this tab's Wide
+    # YPRR receiver-side stat is (total coverage numbers minus the real slot
+    # number) - see data.matchup_signals.defense_alignment_allowed.
+    alignment_allowed = ms.defense_alignment_allowed(
+        pff.get('cov_summary'), pff.get('slot_cov'), abbr_to_pff_team(defense_team),
+    )
+    if alignment_allowed['available']:
+        st.markdown("**Allowed by alignment**")
+        render_split_bars(alignment_allowed['rows'], 'Slot', 'Wide')
+        st.caption(
+            "Real, measured slot-coverage numbers on the left. \"Wide\" is the defense's total coverage line "
+            "minus that real slot number — PFF has no separate outside/wide export, so this is the closest "
+            "measured equivalent this app has, not a literal boundary-only stat."
+        )
 
 
 def _render_run_defense(defense_team, season):

@@ -602,7 +602,17 @@ def _rank_uncertainty(board, calibration=None):
     "high risk" purely for being late, which tells you nothing.
     """
     calibration = calibration or FALLBACK_RANK_SD
-    pos_rank = pd.to_numeric(board['Pos Rank'], errors='coerce').fillna(1).to_numpy(dtype=float)
+    # A missing Pos Rank falls to WORSE than the deepest real rank on the
+    # board, never to 1 (which used to make an unranked player look like a
+    # rock-solid RB1/WR1 - the tightest uncertainty band this formula can
+    # produce, the opposite of what "no real consensus rank" should mean).
+    # Same fix, same reasoning, as data.draft_projections.project_stat_lines'
+    # rank_idx - see that call site's comment for the confirmed real board
+    # this was caught on.
+    raw_rank = pd.to_numeric(board['Pos Rank'], errors='coerce')
+    worst_known = raw_rank.max()
+    fallback_rank = float(worst_known) + 1.0 if pd.notna(worst_known) else 1.0
+    pos_rank = raw_rank.fillna(fallback_rank).to_numpy(dtype=float)
     positions = board['Pos'].astype(str).str.upper().to_numpy()
 
     base = np.empty(len(board), dtype=float)

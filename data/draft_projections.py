@@ -838,7 +838,21 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
         depth = len(pos_curves.get('games', []))
         if depth == 0:
             continue
-        rank_idx = int(np.clip(int(row.get('Pos Rank') or 1) - 1, 0, depth - 1))
+        # A MISSING Pos Rank must fall to the WORST slot on the curve
+        # (depth - 1), never the best. `row.get('Pos Rank') or 1` (the
+        # previous version of this line) defaulted a missing/zero rank to
+        # 1 - the RB1/WR1 curve, ~380+ fantasy points - which is backwards:
+        # a player with no real consensus rank is the LEAST information
+        # this board has about him, not evidence he's elite. Confirmed real
+        # on a live board: several deep-bench/rookie names with a
+        # 0-or-missing ECR/ADP (see data.draft_sources._rank_or_unranked's
+        # docstring for where that 0 comes from) were rendering as the
+        # board's #1 overall values off this exact fallback.
+        raw_pos_rank = row.get('Pos Rank')
+        if raw_pos_rank is None or pd.isna(raw_pos_rank) or raw_pos_rank < 1:
+            rank_idx = depth - 1
+        else:
+            rank_idx = int(np.clip(int(raw_pos_rank) - 1, 0, depth - 1))
 
         # The curve's games figure is used ONLY to turn its season totals
         # back into per-game rates for the role-change comparison below,

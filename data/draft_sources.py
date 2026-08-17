@@ -1136,6 +1136,28 @@ _FP_WEEKLY_STAT_MAP = {
 _FP_WEEKLY_STAT_MAP['WR'] = _FP_WEEKLY_STAT_MAP['TE'] = _FP_WEEKLY_STAT_MAP['RB']
 
 
+def _first_stats_block(stats_field):
+    """
+    A player's projected-stats dict off the `/nfl/{season}/projections`
+    response, regardless of which shape FantasyPros actually sent.
+
+    THE OPENAPI SPEC SAYS `stats` IS AN ARRAY (`stats: [{...}]`), BUT A
+    LIVE RESPONSE SENT IT AS A PLAIN OBJECT INSTEAD (`stats: {...}`) -
+    confirmed by a real crash: indexing that dict with `[0]` raised
+    `KeyError: 0`, not the `IndexError` a genuinely empty/short list would
+    raise. Same class of spec-vs-reality gap as `public_api_limited`
+    elsewhere in this module - this endpoint's own docs aren't fully
+    trustworthy either. Handles both shapes rather than picking one, since
+    there's no way to know from here whether FantasyPros is inconsistent
+    across positions/weeks or simply changed the shape at some point.
+    """
+    if isinstance(stats_field, dict):
+        return stats_field
+    if isinstance(stats_field, list) and stats_field:
+        return stats_field[0]
+    return {}
+
+
 def _fetch_fantasypros_projections_one_position(api_key, season, week, position):
     """One /nfl/{season}/projections call for one position. `position` is a
     REQUIRED query param on this endpoint (confirmed in the OpenAPI spec -
@@ -1168,8 +1190,7 @@ def _fetch_fantasypros_projections_one_position(api_key, season, week, position)
     stat_map = _FP_WEEKLY_STAT_MAP.get(position, {})
     rows = []
     for player in payload.get('players', []) or []:
-        stat_blocks = player.get('stats') or []
-        stats = stat_blocks[0] if stat_blocks else {}
+        stats = _first_stats_block(player.get('stats'))
         row = {
             'Player': str(player.get('name') or '').strip(),
             'Pos': position,

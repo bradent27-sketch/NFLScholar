@@ -107,7 +107,7 @@ BOARD_COLUMNS = [
     'Player', 'Pos', 'Team', 'Age', 'Pos Rk', 'Tier', 'FP Tier', 'Auction $',
     'Proj Pts', 'Book Proj', 'Book Δ', 'VORP', 'VONA',
     'FFA Rank', 'ADP', 'ECR', 'Value vs ADP', 'Avail Next %', 'Ceiling', 'Floor',
-    'Risk', 'Health', 'Vegas PPG', 'SOS', 'Bye',
+    'Health', 'Vegas PPG', 'SOS', 'Bye',
 ]
 
 
@@ -550,9 +550,20 @@ def _render_settings_panel(cfg):
     Every widget reads its current value out of `cfg` and writes the new one
     straight back, so the dict is the single source of truth and the panel
     can disappear entirely between uses without losing anything.
+
+    Four groups, each under its own heading: League Settings (roster
+    construction - lineup, teams, draft type/slot), League Scoring
+    (everything that turns a stat line into points, yardage bonuses
+    included), Draft & Market Settings (ranking board, ADP/market blend,
+    tiers, and how simulated opponents draft - the things that shape the
+    BOARD rather than a real-world league rule), and Data imports at the
+    bottom, unchanged. Previously eight loosely-related columns in a row
+    with no grouping at all - this is a relabel/regroup of the same
+    widgets, not a behavior change.
     """
     with st.container(border=True):
-        c1, c2, c3, c4 = st.columns(4)
+        st.markdown("#### League Settings")
+        c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown("**League**")
             cfg['teams'] = st.number_input("Teams", 4, 32, int(cfg['teams']))
@@ -574,6 +585,10 @@ def _render_settings_panel(cfg):
             cfg['k'] = st.number_input("K", 0, 2, int(cfg['k']))
             cfg['dst'] = st.number_input("DST", 0, 2, int(cfg['dst']))
             cfg['bench'] = st.number_input("Bench spots", 0, 20, int(cfg['bench']))
+
+        st.markdown("---")
+        st.markdown("#### League Scoring")
+        c4, c5 = st.columns(2)
         with c4:
             st.markdown("**Scoring**")
             cfg['ppr'] = st.select_slider("PPR", options=[0.0, 0.25, 0.5, 0.75, 1.0, 1.5],
@@ -585,8 +600,17 @@ def _render_settings_panel(cfg):
             cfg['pass_yd'] = st.number_input("Pts/pass yd", 0.0, 0.2, float(cfg['pass_yd']),
                                              step=0.01, format="%.2f")
             cfg['ppc'] = st.number_input("Pts/carry", 0.0, 1.0, float(cfg['ppc']), step=0.05)
+        with c5:
+            st.markdown("**More scoring**")
+            cfg['rush_yd'] = st.number_input("Pts/rush yd", 0.0, 0.5, float(cfg['rush_yd']),
+                                             step=0.01, format="%.2f")
+            cfg['rec_yd'] = st.number_input("Pts/rec yd", 0.0, 0.5, float(cfg['rec_yd']),
+                                            step=0.01, format="%.2f")
+            cfg['rush_td'] = st.number_input("Rush TD", 0, 10, int(cfg['rush_td']))
+            cfg['rec_td'] = st.number_input("Rec TD", 0, 10, int(cfg['rec_td']))
+            cfg['int'] = st.number_input("INT thrown", -6, 0, int(cfg['int']))
+            cfg['fum'] = st.number_input("Fumble lost", -6, 0, int(cfg['fum']))
 
-        st.markdown("---")
         st.markdown("**Per-game yardage bonuses**")
         st.caption(
             "Points awarded in any single game clearing each threshold — leave at 0 if your "
@@ -623,18 +647,9 @@ def _render_settings_panel(cfg):
                                            float(cfg[key]), step=0.5)
 
         st.markdown("---")
-        c5, c6, c7 = st.columns(3)
-        with c5:
-            st.markdown("**More scoring**")
-            cfg['rush_yd'] = st.number_input("Pts/rush yd", 0.0, 0.5, float(cfg['rush_yd']),
-                                             step=0.01, format="%.2f")
-            cfg['rec_yd'] = st.number_input("Pts/rec yd", 0.0, 0.5, float(cfg['rec_yd']),
-                                            step=0.01, format="%.2f")
-            cfg['rush_td'] = st.number_input("Rush TD", 0, 10, int(cfg['rush_td']))
-            cfg['rec_td'] = st.number_input("Rec TD", 0, 10, int(cfg['rec_td']))
-            cfg['int'] = st.number_input("INT thrown", -6, 0, int(cfg['int']))
-            cfg['fum'] = st.number_input("Fumble lost", -6, 0, int(cfg['fum']))
-        with c6:
+        st.markdown("#### Draft & Market Settings")
+        d1, d2, d3 = st.columns(3)
+        with d1:
             st.markdown("**Board & market**")
             boards = list(ECR_BOARDS.keys())
             cfg['board_fmt'] = st.selectbox("Ranking board", boards,
@@ -661,36 +676,14 @@ def _render_settings_panel(cfg):
                 help="How much the board's ORDER defers to ADP. 0 = pure model, 100 = pure ADP. "
                      "VORP itself is never blended — only the ordering moves.",
             )
+            cfg['tiers'] = st.slider("Max tiers per position", 3, 12, int(cfg['tiers']))
             st.caption(
                 "Value-based drafting and the market disagree hardest at QB: with replacement "
                 "set at the last starting QB, the model prices an elite QB as a top-15 overall "
                 "pick in a 1QB league and real drafts take him ~20 picks later. This blend lets "
                 "you decide how much deference the market gets."
             )
-        with c7:
-            st.markdown("**Model**")
-            cfg['uncertainty'] = st.slider(
-                "Projection uncertainty", 0.5, 2.0, float(cfg['uncertainty']), 0.1,
-                help="Multiplier on the measured spread of where players actually finish "
-                     "relative to their consensus rank. 1.0 = use the measured value as-is.",
-            )
-            st.caption(
-                "The baseline is measured, not guessed: from your own weekly history, how far "
-                "players land from where they ranked, per position and rank. Top-6 QBs and TEs "
-                "come in around ±10 finish slots; RBs and WRs scatter more than twice as far. "
-                "This slider scales that. Higher widens Ceiling/Floor and flattens the board."
-            )
-            cfg['tiers'] = st.slider("Max tiers per position", 3, 12, int(cfg['tiers']))
-            seasons = AVAILABLE_SEASONS_WITH_UPCOMING[1:]
-            cfg['curve_season'] = st.selectbox(
-                "Projection baseline through", seasons,
-                index=_pick_index(seasons, cfg['curve_season']),
-                help="Last completed season used to build the usage curves and player rates.",
-            )
-
-        st.markdown("---")
-        s1, s2 = st.columns([1, 1])
-        with s1:
+        with d2:
             st.markdown("**How simulated opponents rank players**")
             st.caption(
                 "Mock-draft opponents order the board by a weighted blend of these three. Pure "
@@ -705,9 +698,8 @@ def _render_settings_panel(cfg):
             cfg['bot_ffa'] = st.slider(
                 "Weight on FFA rank", 0, 100, int(cfg['bot_ffa']), 5,
                 help="Only has an effect once an FFA export has been imported below.")
-        with s2:
-            # The three blend sliders stay here beside the bot-weight
-            # sliders they read alongside; every UPLOADER moved into
+        with d3:
+            # The three blend sliders stay here; every UPLOADER moved into
             # _render_imports_panel below, which is the whole point of that
             # section. A slider is a setting, a file is an import, and
             # mixing them is what made "did that import take?" unanswerable.
@@ -1098,12 +1090,23 @@ def _load_board(settings):
     # the same reason as the cheat sheet: it is annotation. Nothing in the
     # projection multiplies by it - that was measured and it made projections
     # worse (see data/odds_market.py).
-    from data.odds_market import team_scoring_environment, attach_team_environment
+    from data.odds_market import (
+        team_scoring_environment, attach_team_environment, estimate_full_season_scoring,
+    )
     environment, env_meta = team_scoring_environment(settings['adp_year'])
     status['vegas'] = env_meta
     if not environment.empty:
         board = attach_team_environment(board, environment)
         meta['vegas_environment'] = environment
+
+    # A matchup-adjusted fill-in for the games that don't have a posted line
+    # yet, so "Market lines vs this board" isn't judging every offense off
+    # however many (and whichever) games happen to have a number this early
+    # - see estimate_full_season_scoring's own docstring for the method.
+    full_env, full_env_meta = estimate_full_season_scoring(settings['adp_year'])
+    status['vegas_full_season'] = full_env_meta
+    if not full_env.empty:
+        meta['full_season_environment'] = full_env
     return board, meta, adp_df, adp_meta, status
 
 
@@ -1498,10 +1501,6 @@ def _render_board_grid(available, key_prefix, mode, next_pick=None, columns=None
             "Avail Next %", format="%d%%",
             help=f"Chance he lasts to your next pick (#{next_pick})" if next_pick else "No next pick",
         )
-    if 'Risk' in display.columns:
-        column_config['Risk'] = st.column_config.NumberColumn(
-            "Risk", format="%d%%",
-            help="Width of the ceiling-to-floor band as a share of the projection")
     if 'Health' in display.columns:
         column_config['Health'] = st.column_config.TextColumn(
             "Health",
@@ -1935,6 +1934,30 @@ def _render_market_comparison(board, settings, meta, status):
                      height=df_auto_height(10))
     elif vegas.get('error'):
         st.caption(f"Vegas game lines: {vegas['error']}")
+
+    full_env = (meta or {}).get('full_season_environment')
+    if full_env is not None and not full_env.empty:
+        thin = int((full_env['games_posted'] < full_env['games']).sum())
+        st.markdown("**Full-season estimate (posted lines + matchup-adjusted fill-in)**")
+        st.caption(
+            f"The table above can be a severely biased read of an offense this early — a team "
+            f"whose only posted games happen to be against two soft defenses reads as much "
+            f"better than a full slate would show. This fills every game WITHOUT a posted line "
+            f"using that team's own measured scoring level against its actual SCHEDULED "
+            f"opponent's measured defense that week (data.odds_market.estimate_full_season_scoring) "
+            f"— real posted lines are used as-is wherever they exist; only the gaps are modeled. "
+            f"{thin} of {len(full_env)} teams have at least one modeled game right now. "
+            "Still **context, not a projection input**, for the same measured reason as the table above."
+        )
+        show_cols = ['team', 'full_season_ppg', 'posted_ppg', 'games_posted', 'modeled_games']
+        st.dataframe(
+            full_env[[c for c in show_cols if c in full_env.columns]].rename(columns={
+                'team': 'Team', 'full_season_ppg': 'Full-Season Proj PPG',
+                'posted_ppg': 'Posted-Only PPG', 'games_posted': 'Games Posted',
+                'modeled_games': 'Games Modeled',
+            }).head(32),
+            width="stretch", hide_index=True, height=df_auto_height(10),
+        )
 
     st.markdown("**Season-long player props**")
     market_status = (status or {}).get('market') or {}
@@ -2764,16 +2787,22 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
         _render_roster_slots(settings, roster=dc['my_roster'])
         _render_roster_outlook(board, settings, dc)
 
-    with st.expander("📊 Pick odds & positional scarcity", expanded=False):
-        _render_pick_odds(board, settings, ctx, dc)
-        _render_positional_scarcity(dc['available'], settings)
-    with st.expander("💵 Market lines vs this board", expanded=False):
-        _render_market_comparison(board, settings, meta or {}, status or {})
-    if mode == "Live draft":
-        _render_live_sync(board)
-    else:
-        with st.expander("🔁 Run many mocks / compare slots", expanded=False):
-            _render_mock_tools(board, settings, ctx)
+        # These four used to run full-width below the whole draft room -
+        # moved under Your Roster on request, to make the overall page more
+        # compact rather than trailing off in a long stack of expanders
+        # below the fold. They're prep/reference panels, not the primary
+        # surface (the board on the left is), so a narrower column is the
+        # right tradeoff for keeping the page shorter.
+        with st.expander("📊 Pick odds & positional scarcity", expanded=False):
+            _render_pick_odds(board, settings, ctx, dc)
+            _render_positional_scarcity(dc['available'], settings)
+        with st.expander("💵 Market lines vs this board", expanded=False):
+            _render_market_comparison(board, settings, meta or {}, status or {})
+        if mode == "Live draft":
+            _render_live_sync(board)
+        else:
+            with st.expander("🔁 Run many mocks / compare slots", expanded=False):
+                _render_mock_tools(board, settings, ctx)
 
     # Last, and off the FULL board rather than the available pool - a player
     # you just watched go off the board is exactly the one you want to read

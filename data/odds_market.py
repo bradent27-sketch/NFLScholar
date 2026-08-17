@@ -217,6 +217,136 @@ def team_scoring_environment(season):
     }
 
 
+SCORING_MATCHUP_CLIP = (0.75, 1.3)
+# Games-count shrinkage constant for the offense/defense baselines below -
+# same role as data.weekly_projections.STAT_K, just one constant instead of
+# a per-stat dict since there's only one thing being shrunk here (points).
+# A team with 3 posted games should still lean heavily on the league
+# average; one with 10 should mostly trust its own measured number.
+BASELINE_SHRINK_K = 4
+
+
+def _shrunk_baseline(measured, games_posted, league_avg):
+    """weight = games / (games + K); blends `measured` toward `league_avg`
+    as `games_posted` grows - the same shrinkage pattern
+    data.weekly_projections._blended_rate uses for player rates, applied
+    here to a team's own scoring/allowed level."""
+    if league_avg is None or pd.isna(league_avg):
+        return measured
+    if measured is None or pd.isna(measured) or not games_posted:
+        return league_avg
+    w = games_posted / (games_posted + BASELINE_SHRINK_K)
+    return w * measured + (1 - w) * league_avg
+
+
+def estimate_full_season_scoring(season):
+    """
+    A fuller-season team-scoring estimate that fills in the games with NO
+    posted Vegas line using each team's own measured scoring level against
+    that specific week's SCHEDULED opponent's measured defense - not just
+    averaging whatever handful of games happen to have a market number.
+
+    WHY THIS EXISTS. team_scoring_environment's implied PPG is honest but
+    can be a thin, biased slice - in early August 2026 that was 3 games per
+    team, and which 3 is not representative of the other 14 (see that
+    function's own docstring). A team that happened to draw two soft
+    defenses in its first three posted games reads as a much better offense
+    than a full slate would show, and there is no way to tell from the
+    number alone. This fills the REST of the known schedule (every
+    matchup is set well before every line is posted) with a matchup-
+    adjusted estimate instead of silently omitting those games from the
+    average.
+
+    THE METHOD, deliberately the same shape as every other matchup
+    adjustment in this app (data.transforms.build_stat_allowed_matrix,
+    data.weekly_projections' opponent-allowed multiplier): a rate times an
+    opponent-allowed ratio versus league average, clipped so one extreme
+    defense can't blow the estimate out:
+
+        estimated_points(team, week) =
+            offense_baseline[team] * (defense_baseline[opponent] / league_avg_allowed)
+
+    Both baselines are the team's own posted-game average (from
+    team_scoring_environment), SHRUNK toward the league average by how many
+    games are actually posted (`_shrunk_baseline`) - a team with one posted
+    game leans almost entirely on the league average defense/offense level
+    rather than treating one data point as its whole identity.
+
+    For a game that DOES have a posted line, the market's own implied
+    points are used as-is - the model estimate never overrides a real
+    number, only fills the gap where one doesn't exist yet.
+
+    Returns (frame, meta). frame has one row per team: `posted_ppg` (market-
+    only average, same as team_scoring_environment's implied_ppg),
+    `games_posted`, `full_season_ppg` (blends real posted-line games with
+    the matchup estimate for the rest, across every scheduled game), and
+    `full_season_points` (that rate x 17). Never feeds a player
+    projection - same INFORMATION-ONLY convention as Vegas PPG, for the
+    same measured reason (module docstring).
+    """
+    games, meta = fetch_game_lines(season)
+    if meta.get('error'):
+        return pd.DataFrame(), meta
+    per_game = implied_team_points(games)
+    if per_game.empty:
+        return pd.DataFrame(), {**meta, 'error': f"No {season} games have lines posted yet."}
+
+    env = per_game.groupby('team').agg(
+        posted_ppg=('implied_points', 'mean'),
+        posted_allowed_ppg=('implied_allowed', 'mean'),
+        games_posted=('implied_points', 'size'),
+    )
+    league_avg_ppg = float(env['posted_ppg'].mean())
+    league_avg_allowed = float(env['posted_allowed_ppg'].mean())
+    env['off_baseline'] = env.apply(
+        lambda r: _shrunk_baseline(r['posted_ppg'], r['games_posted'], league_avg_ppg), axis=1)
+    env['def_baseline'] = env.apply(
+        lambda r: _shrunk_baseline(r['posted_allowed_ppg'], r['games_posted'], league_avg_allowed), axis=1)
+
+    lo, hi = SCORING_MATCHUP_CLIP
+    posted_teams = set(games.loc[games['total_line'].notna(), 'home_team']) | set(
+        games.loc[games['total_line'].notna(), 'away_team'])
+
+    def _est(offense, defense):
+        off_base = env['off_baseline'].get(offense, league_avg_ppg)
+        def_base = env['def_baseline'].get(defense, league_avg_allowed)
+        if league_avg_allowed <= 0:
+            return off_base
+        mult = min(max(def_base / league_avg_allowed, lo), hi)
+        return off_base * mult
+
+    rows = []
+    for _, g in games.iterrows():
+        has_line = pd.notna(g.get('total_line'))
+        home, away = g['home_team'], g['away_team']
+        home_pts = None
+        away_pts = None
+        if has_line:
+            total, spread = float(g['total_line']), float(g['spread_line'])
+            home_pts = total / 2 + spread / 2
+            away_pts = total / 2 - spread / 2
+        else:
+            home_pts = _est(home, away)
+            away_pts = _est(away, home)
+        rows.append({'team': home, 'points': home_pts, 'posted': has_line})
+        rows.append({'team': away, 'points': away_pts, 'posted': has_line})
+
+    full = pd.DataFrame(rows)
+    grouped = full.groupby('team').agg(
+        full_season_ppg=('points', 'mean'), games=('points', 'size')).reset_index()
+    grouped['full_season_points'] = (grouped['full_season_ppg'] * SEASON_GAMES).round(1)
+    grouped['full_season_ppg'] = grouped['full_season_ppg'].round(2)
+    grouped = grouped.merge(
+        env[['posted_ppg', 'games_posted']].reset_index().rename(columns={'posted_ppg': 'posted_ppg'}),
+        on='team', how='left')
+    grouped['posted_ppg'] = grouped['posted_ppg'].round(2)
+    grouped['games_posted'] = grouped['games_posted'].fillna(0).astype(int)
+    grouped['modeled_games'] = grouped['games'] - grouped['games_posted']
+    return grouped.sort_values('full_season_ppg', ascending=False).reset_index(drop=True), {
+        **meta, 'teams': int(len(grouped)), 'league_avg_ppg': round(league_avg_ppg, 2),
+    }
+
+
 def attach_team_environment(board, environment):
     """
     Add the market's implied scoring for each player's team to the board.

@@ -31,7 +31,7 @@ import streamlit as st
 
 from config import (
     AVAILABLE_SEASONS, MASTER_TEAMS_LIST, TEAM_CONFIG, THEME, abbr_to_pff_team,
-    get_position_color,
+    get_position_color, pff_team_to_abbr,
 )
 from data import matchup_signals as ms
 from data.loaders import (
@@ -169,6 +169,11 @@ def render():
 
     points_allowed = build_points_allowed_matrix(stats_df, season)
     softness_map = ms.defense_softness(points_allowed, position)
+    pff, pff_year = load_pff_data_with_fallback(season)
+    prowess_map = {
+        pff_team_to_abbr(k): v
+        for k, v in ms.team_defensive_prowess(pff.get('run_def'), pff.get('cov_summary')).items()
+    }
 
     col_player, col_defense = st.columns(2)
     with col_player:
@@ -176,13 +181,48 @@ def render():
             offense_team, title=player_name,
             subtitle=f"{position or '?'} · {_team_label(offense_team)} · {season}",
         )
-        selected_stat = _render_player_column(
-            season, stats_df, name_col, team_col, p_data, p_bio, player_name,
-            position, offense_team, defense_team, softness_map,
-        )
     with col_defense:
         render_team_banner(defense_team, subtitle=f"Defense · {season}")
-        _render_defense_column(season, stats_df, defense_team, position)
+    if pff_year != season:
+        st.caption(f"⚠️ Showing {pff_year} PFF grades — nothing uploaded for {season} yet.")
+
+    # Rows are laid out in matched pairs rather than as two independent
+    # top-to-bottom columns, so the two halves read as one comparison
+    # instead of two separately-scrolling reports: each row answers the
+    # SAME underlying question for the player and for the defense (his
+    # tendency profile next to what the defense gives up by position, his
+    # man/zone splits next to their man/zone scheme, his own usage next to
+    # how the front holds up, his game log next to their week-by-week
+    # allowed). Nothing here forces equal height per side - a short defense
+    # panel next to a tall player one is fine, it's the ORDER that has to
+    # line up, not the pixel count.
+    r1c1, r1c2 = st.columns(2)
+    with r1c1:
+        _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_name, position, pff)
+    with r1c2:
+        _render_positional_vulnerability(stats_df, points_allowed, defense_team, position)
+
+    r2c1, r2c2 = st.columns(2)
+    with r2c1:
+        _render_route_efficiency(pff, player_name, position)
+    with r2c2:
+        _render_coverage(defense_team, season)
+
+    r3c1, r3c2 = st.columns(2)
+    with r3c1:
+        _render_usage_and_role(stats_df, name_col, team_col, player_name, offense_team)
+    with r3c2:
+        _render_run_defense(defense_team, season)
+
+    r4c1, r4c2 = st.columns(2)
+    with r4c1:
+        selected_stat = _render_game_log_and_curves(
+            season, stats_df, name_col, player_name, position, offense_team, defense_team,
+            softness_map, prowess_map,
+        )
+    with r4c2:
+        _render_defense_weekly_detail(stats_df, defense_team, position)
+        _render_allowed_by_position(stats_df, defense_team, position)
 
     st.caption(
         "Everything above is measured season data. The two Matchup Curves are projections — "
@@ -204,20 +244,6 @@ def _scoring():
 # ---------------------------------------------------------------------------
 # Player column
 # ---------------------------------------------------------------------------
-
-def _render_player_column(season, stats_df, name_col, team_col, p_data, p_bio,
-                          player_name, position, offense_team, defense_team, softness_map):
-    pff, pff_year = load_pff_data_with_fallback(season)
-    if pff_year != season:
-        st.caption(f"⚠️ Showing {pff_year} PFF grades — nothing uploaded for {season} yet.")
-
-    _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_name, position, pff)
-    _render_route_efficiency(pff, player_name, position)
-    _render_usage_and_role(stats_df, name_col, team_col, player_name, offense_team)
-    return _render_game_log_and_curves(
-        season, stats_df, name_col, player_name, position, offense_team, defense_team, softness_map,
-    )
-
 
 def _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_name, position, pff):
     """
@@ -308,7 +334,7 @@ def _render_usage_and_role(stats_df, name_col, team_col, player_name, offense_te
 
 
 def _render_game_log_and_curves(season, stats_df, name_col, player_name, position,
-                                offense_team, defense_team, softness_map):
+                                offense_team, defense_team, softness_map, prowess_map):
     options = ms.GAME_LOG_STATS.get(position)
     if not options:
         st.caption(f"No curated game-log stats for position {position or '?'} yet.")
@@ -349,32 +375,50 @@ def _render_game_log_and_curves(season, stats_df, name_col, player_name, positio
     render_chart_click_overlay(positions, season, key_prefix="ma_game_pt")
     st.caption("Dashed line = season average. ★ = a top-quartile game for this player. Click a point to open that game's box score.")
 
-    _render_matchup_curves(series, softness_map, defense_team, stat_label, season, offense_team)
+    _render_matchup_curves(series, softness_map, prowess_map, defense_team, stat_label, season, offense_team)
     return stat_col, stat_label
 
 
-def _render_matchup_curves(series, softness_map, defense_team, stat_label, season, offense_team):
-    """Both curves plot whatever the stat picker above is set to, so all
-    three charts in this column always describe the same stat - reading two
-    charts with two different y-axes side by side is a tax paid on every
+def _render_matchup_curves(series, softness_map, prowess_map, defense_team, stat_label, season, offense_team):
+    """All three curves plot whatever the stat picker above is set to, so
+    every chart in this column always describes the same stat - reading
+    charts with different y-axes side by side is a tax paid on every
     glance."""
     _section("MATCHUP CURVES", f"Projections for {stat_label} — read off real games, not a forecast.")
 
-    elasticity = ms.efficiency_elasticity_curve(series, softness_map, defense_team, stat_label)
-    st.markdown("**Efficiency Elasticity** — does he need a soft matchup?")
-    if elasticity['available']:
+    tendency = ms.efficiency_elasticity_curve(series, softness_map, defense_team, stat_label)
+    st.markdown("**Defensive Tendency Elasticity** — does he need a matchup soft to HIS position?")
+    if tendency['available']:
         highlight = None
-        if elasticity['projection']:
-            highlight = {**elasticity['projection'], 'label': f"vs {defense_team}"}
+        if tendency['projection']:
+            highlight = {**tendency['projection'], 'label': f"vs {defense_team}"}
         render_tier_curve(
-            elasticity['tiers'], avg=elasticity['season_avg'], avg_label='season avg', highlight=highlight,
+            tendency['tiers'], avg=tendency['season_avg'], avg_label='season avg', highlight=highlight,
         )
         st.caption(
-            f"{stat_label} per game vs. how soft the opponent is to his position (0 = toughest, 100 = softest), "
-            f"across {elasticity['games']} games. Hover a point for its sample size."
+            f"{stat_label} per game vs. how soft the opponent is to HIS POSITION specifically (0 = "
+            f"toughest, 100 = softest), across {tendency['games']} games. Hover a point for its sample size."
         )
     else:
-        st.caption(elasticity.get('reason', 'Not enough data yet.'))
+        st.caption(tendency.get('reason', 'Not enough data yet.'))
+
+    prowess = ms.efficiency_elasticity_curve(series, prowess_map, defense_team, stat_label)
+    st.markdown("**Efficiency Elasticity** — does he need a bad defense, period?")
+    if prowess['available']:
+        highlight = None
+        if prowess['projection']:
+            highlight = {**prowess['projection'], 'label': f"vs {defense_team}"}
+        render_tier_curve(
+            prowess['tiers'], avg=prowess['season_avg'], avg_label='season avg', highlight=highlight,
+        )
+        st.caption(
+            f"{stat_label} per game vs. how weak the opponent's OVERALL defense is (PFF's snap-weighted "
+            f"team grade, position-independent — 0 = toughest defense in football, 100 = softest), across "
+            f"{prowess['games']} games. A defense can be excellent overall and still be this player's "
+            f"softest positional matchup (or the reverse) — that gap is why both curves are shown."
+        )
+    else:
+        st.caption(prowess.get('reason', 'Not enough data yet.'))
 
     schedule = load_schedule(season)
     script = ms.game_script_sensitivity_curve(series, schedule, offense_team, stat_label)
@@ -392,20 +436,13 @@ def _render_matchup_curves(series, softness_map, defense_team, stat_label, seaso
 # Defense column
 # ---------------------------------------------------------------------------
 
-def _render_defense_column(season, stats_df, defense_team, position):
-    points_allowed = build_points_allowed_matrix(stats_df, season)
-    _render_positional_vulnerability(stats_df, points_allowed, defense_team, position)
-    _render_coverage(defense_team, season)
-    _render_run_defense(defense_team, season)
-    _render_allowed_by_position(stats_df, defense_team, position)
-
-
 def _render_positional_vulnerability(stats_df, points_allowed, defense_team, position):
     _section("POSITIONAL VULNERABILITY", "Which position to actually target. Rank 1 = allows the MOST, i.e. the softest matchup.")
     rows = ms.positional_vulnerability(points_allowed, defense_team)
     if not rows:
         st.caption("No points-allowed data for this defense yet.")
         return
+    ypt = ms.ypt_allowed_for_team(load_sharp_positional_coverage(), _team_label(defense_team))
     cells = []
     for r in rows:
         is_subject = r['position'] == position
@@ -416,42 +453,119 @@ def _render_positional_vulnerability(stats_df, points_allowed, defense_team, pos
             'pct': r['pct'],
             'help': f"#{r['rank']} of {r['of']} in fantasy points allowed per game",
         })
+        # Yards per target allowed, as a smaller sub-bar right after its own
+        # position's row rather than a peer entry - moved up from the
+        # Coverage panel below on explicit request, since it's a per-
+        # position vulnerability read same as the bar above it. Labeled
+        # "YPRR" per that same request; the `help` text says what it
+        # actually measures for anyone who hovers it, since this app has no
+        # real defense-side yards-per-route-run source to compute a literal
+        # one from (see coverage_profile's own docstring on why yards per
+        # TARGET is the closest measured equivalent).
+        y = ypt.get(r['position'])
+        if y is not None and y.get('pct') is not None:
+            cells.append({
+                'label': 'YPRR', 'value_str': f"{y['value']:.1f}", 'pct': y['pct'], 'sub': True,
+                'help': "Yards per target allowed to this position (Sharp Football) — the closest "
+                        "measured equivalent this app has to a defense-side YPRR; there is no "
+                        "route-run-count data on the defense to compute a literal one.",
+            })
     render_percentile_bar_list(cells, sort=False)
-    st.caption("Fantasy points allowed per game. Green = soft, red = tough. ◀ marks the selected player's position.")
-
-    # What the bar above actually rolls up: the same defense's week-by-week
-    # numbers, per position - explicit user request ("I wanna see the week
-    # by week stats that lead to this calculation... can kinda show a change
-    # over time"). A season average can hide a defense that got torched in
-    # September and tightened up since, or one that's trending the other
-    # way - this is the same "trend vs. one blowup" check
-    # _render_allowed_by_position's own season bars already give a season
-    # total for, just spread across every week instead of collapsed to one
-    # number, and for every position, not just the analyzed player's own.
-    available_positions = [r['position'] for r in rows]
-    default_idx = available_positions.index(position) if position in available_positions else 0
-    detail_pos = st.selectbox(
-        "Week-by-week detail for", available_positions, index=default_idx,
-        key=f"ma_vuln_detail_pos_{defense_team}",
-        help="What this defense has allowed to this position, game by game - not just the season number above.",
+    st.caption(
+        "Fantasy points allowed per game, with yards-per-target allowed as the smaller bar under each "
+        "position. Green = soft, red = tough. ◀ marks the selected player's position."
     )
-    detail_stats = list(ms.ALLOWED_STAT_KEYS.get(detail_pos, [])) + [('fantasy_points', 'Fantasy Pts')]
-    any_shown = False
-    for stat_col, stat_label in detail_stats:
-        weekly = ms.defense_weekly_allowed(stats_df, defense_team, detail_pos, stat_col, last_n=None)
-        if weekly.empty:
-            continue
-        any_shown = True
-        st.markdown(f"**{stat_label} allowed to {detail_pos}s, by week**")
-        values = weekly['value'].astype(float).tolist()
-        render_game_log_line(
-            values,
-            [f"Wk {int(r.week)} vs {r.offense}: {r.value:.1f} {stat_label}" for r in weekly.itertuples()],
-            avg=sum(values) / len(values),
-            bar_labels=[(str(r.offense), f"W{int(r.week)}") for r in weekly.itertuples()],
+
+
+def _render_defense_weekly_detail(stats_df, defense_team, position):
+    """
+    One week-by-week chart for this defense, same shape as the player's own
+    Game By Game chart on the other side of the row - replaces what used to
+    be a "pick a position" selectbox that then stacked up to five separate
+    charts underneath it. Two tabs pick what the single chart shows: by
+    POSITION (pick the position, then which stat for it - the flow that was
+    already here) or by STAT directly (pick a stat first, from every
+    position at once - a faster way in when you already know you're
+    checking "receptions allowed" and don't want to detour through a
+    position picker to get there).
+    """
+    _section("WEEK BY WEEK DETAIL", "What this defense has allowed, game by game — not just the season number above.")
+    positions = [p for p in ('QB', 'RB', 'WR', 'TE') if p in ms.ALLOWED_STAT_KEYS]
+    if not positions:
+        st.caption("No week-by-week data for this defense yet.")
+        return
+
+    tab_pos, tab_stat = st.tabs(["By Position", "By Stat"])
+    with tab_pos:
+        default_idx = positions.index(position) if position in positions else 0
+        pos_choice = st.selectbox(
+            "Position", positions, index=default_idx, key=f"ma_wk_pos_{defense_team}",
         )
-    if not any_shown:
-        st.caption(f"No week-by-week data for {detail_pos}s allowed by this defense yet.")
+        stat_opts = list(ms.ALLOWED_STAT_KEYS.get(pos_choice, [])) + [('fantasy_points', 'Fantasy Pts')]
+        labels = [label for _, label in stat_opts]
+        default_label = ms.MATCHUP_KEY.get(pos_choice, stat_opts[0])[1]
+        choice = st.selectbox(
+            "Stat", labels, index=labels.index(default_label) if default_label in labels else 0,
+            key=f"ma_wk_pos_stat_{defense_team}",
+        )
+        stat_col, stat_label = stat_opts[labels.index(choice)]
+        _render_one_weekly_chart(stats_df, defense_team, pos_choice, stat_col, stat_label)
+
+    with tab_stat:
+        # A flat (position, stat) list across the whole defense, deduped -
+        # ALLOWED_STAT_KEYS aliases TE to WR's list and FB to RB's list (see
+        # its own definition), so iterating the dict directly would offer
+        # the same WR stats twice under two different position labels.
+        flat = []
+        seen = set()
+        for pos in ('QB', 'RB', 'WR', 'TE'):
+            for stat_col, stat_label in ms.ALLOWED_STAT_KEYS.get(pos, []):
+                key = (pos, stat_col)
+                if key in seen:
+                    continue
+                seen.add(key)
+                flat.append((pos, stat_col, f"{stat_label} ({pos})"))
+        stat_labels = [label for _, _, label in flat]
+        default_flat = ms.MATCHUP_KEY.get(position)
+        default_idx = next(
+            (i for i, (pos, col, _) in enumerate(flat) if pos == position and default_flat and col == default_flat[0]),
+            0,
+        )
+        choice = st.selectbox("Stat", stat_labels, index=default_idx, key=f"ma_wk_stat_{defense_team}")
+        pos2, col2, _ = flat[stat_labels.index(choice)]
+        # The chart's own title wants the bare stat name, not the "(POS)"
+        # suffix the picker above needed for disambiguation.
+        bare_label = next(l for c, l in ms.ALLOWED_STAT_KEYS.get(pos2, []) if c == col2)
+        _render_one_weekly_chart(stats_df, defense_team, pos2, col2, bare_label)
+
+
+def _render_one_weekly_chart(stats_df, defense_team, pos, stat_col, stat_label):
+    weekly = ms.defense_weekly_allowed(stats_df, defense_team, pos, stat_col, last_n=None)
+    if weekly.empty:
+        st.caption(f"No week-by-week data for {pos}s allowed by this defense yet.")
+        return
+    values = weekly['value'].astype(float).tolist()
+    # The reference line is the LEAGUE average allowed, not this defense's
+    # own season average - explicit user request. A defense's own average
+    # can only ever say "this week was a spike relative to itself"; the
+    # league average is what actually says whether the defense is soft or
+    # stout to begin with. Falls back to the own-season average only when
+    # there isn't enough of a league pool to compute one from (should not
+    # happen in practice - every defense in the same stats_df is the pool).
+    league_avg = ms.league_average_allowed(stats_df, pos, stat_col)
+    avg = league_avg if league_avg is not None else sum(values) / len(values)
+    avg_label = "league avg" if league_avg is not None else "season avg"
+    st.markdown(f"**{stat_label} allowed to {pos}s, by week**")
+    render_game_log_line(
+        values,
+        [f"Wk {int(r.week)} vs {r.offense}: {r.value:.1f} {stat_label}" for r in weekly.itertuples()],
+        avg=avg, avg_label=avg_label,
+        bar_labels=[(str(r.offense), f"W{int(r.week)}") for r in weekly.itertuples()],
+    )
+    if league_avg is not None:
+        st.caption("Dashed line = the league average allowed across all 32 defenses, not this team's own.")
+    else:
+        st.caption("Dashed line = this team's own season average (no league pool to compare against).")
 
 
 def _render_coverage(defense_team, season):
@@ -475,10 +589,11 @@ def _render_coverage(defense_team, season):
                 tiles.append({'label': label, 'value': fmt.format(value)})
         render_hero_tiles(tiles)
         st.caption("How often they play man vs zone, and how often the middle of the field is closed (two-high) vs open (single-high).")
-    if profile['allowed']:
-        st.markdown("**Yards per target allowed**")
-        render_percentile_bar_list(profile['allowed'], sort=False)
-        st.caption("Higher percentile = softer. By receiver type.")
+    # Yards per target allowed (by receiver type) lives on the Positional
+    # Vulnerability panel now, as a sub-stat directly under each position's
+    # bar - moved there on request so the "which position should I target"
+    # read carries its own efficiency number instead of living one section
+    # away from it.
     if profile['alignment']:
         render_split_bars(profile['alignment'], 'Outside', 'Slot')
         st.caption("Same stat, split by where the receiver lined up.")

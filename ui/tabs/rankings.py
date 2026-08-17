@@ -1,7 +1,8 @@
 """
 Weekly Rankings tab: this app's own week-by-week fantasy-points projection
 model (data.weekly_projections), FantasyPros' live weekly projection pulled
-straight from their API, this app's own recent-form ranking, and (still,
+straight from their API, a live player-prop-derived market projection
+(data.odds_weekly), this app's own L5 recent-form ranking, and (still,
 unchanged) an uploaded weekly-rankings export - all lined up on one table
 by player.
 
@@ -12,24 +13,45 @@ comparisons on separate tabs (rather than one tab trying to serve both)
 means each one's internal baseline actually matches what it's being
 compared against.
 
-The model, the live API pull, and the CSV upload are three INDEPENDENT
-sources shown side by side, never blended into one number - same
-"show market lines next to this board, don't merge them" convention Draft
-HQ already uses.
+The model, the live API pull, the live market projection, and the CSV
+upload are four INDEPENDENT sources shown side by side, never blended into
+one number - same "show market lines next to this board, don't merge them"
+convention Draft HQ already uses.
 """
 import pandas as pd
 import streamlit as st
 
 from config import AVAILABLE_SEASONS
+from data.draft_board import DEFAULT_SCORING, tier_by_position
 from data.transforms import load_and_merge_data, build_recent_form_rank
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
-from data.utils import clean_name_exact, clean_name_for_merge
+from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
 from data.weekly_projections import build_weekly_projections
+from data.odds_weekly import weekly_props, weekly_market_projection
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
 from ui.components import position_filter_multiselect, skeleton_loader, import_hint
 
 _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing_yards',
                     'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds']
+
+# The stat line the model projects, shown alongside Model Proj Pts instead
+# of just the point total - explicit request, so the number can be read
+# rather than taken on faith. Ordered pass -> rush -> catch, the same
+# volume-first sequencing the rest of the app's stat displays use. A
+# position that doesn't carry a given raw stat (a WR has no passing_yards)
+# just shows blank for it - the concat in build_weekly_projections already
+# unions every position's columns, so these exist on the merged frame
+# whenever ANY position projected that stat this week.
+_STAT_DISPLAY_COLS = [
+    ('passing_yards', 'Pass Yds'), ('passing_tds', 'Pass TDs'),
+    ('rushing_attempts', 'Rush Att'), ('rushing_yards', 'Rush Yds'), ('rushing_tds', 'Rush TDs'),
+    ('targets', 'Tgt'), ('receptions', 'Rec'), ('receiving_yards', 'Rec Yds'), ('receiving_tds', 'Rec TDs'),
+]
+
+# A fixed number of games, not a user-adjustable window - explicit request.
+# "Recent" reads consistently across positions and weeks only if everyone's
+# measured over the same trailing sample.
+RECENT_FORM_GAMES = 5
 
 
 def _week_options(year):
@@ -71,7 +93,13 @@ def _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring):
     anything for the selected week - week 1 is exactly the case where the
     model CAN'T project (see build_weekly_projections' docstring) and
     FantasyPros' own number is the one worth having.
+
+    Stamps a fetch time alongside the pull (`wr_fp_weekly_fetched_at`) so
+    the table below can show a real "current to Week N, pulled at TIME"
+    indicator instead of leaving whether the FantasyPros numbers are fresh
+    or a stale holdover from an earlier week/scoring choice unstated.
     """
+    import datetime
     from data.draft_sources import (
         get_fantasypros_api_key, save_fantasypros_api_key,
         fantasypros_api_calls_this_month, fantasypros_effective_limit,
@@ -109,6 +137,7 @@ def _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring):
             else:
                 st.session_state['wr_fp_weekly_df'] = df
                 st.session_state['wr_fp_weekly_meta'] = (wk_year, wk_week, wk_scoring)
+                st.session_state['wr_fp_weekly_fetched_at'] = datetime.datetime.now()
                 if meta.get('errors'):
                     st.warning(f"Some positions failed: {meta['errors']}")
                 st.success(f"Pulled {len(df):,} FantasyPros weekly projections for week {wk_week}.")
@@ -119,6 +148,82 @@ def _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring):
     if held is not None and not held.empty and held_meta == (wk_year, wk_week, wk_scoring):
         return held
     return None
+
+
+def _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring):
+    """The "has this actually been pulled, and when" indicator - explicit
+    request. Distinguishes a live pull FOR this exact year/week/scoring
+    selection from a held-over one for a different combination, since the
+    session can carry a stale pull from before the selectors above changed."""
+    held_meta = st.session_state.get('wr_fp_weekly_meta')
+    fetched_at = st.session_state.get('wr_fp_weekly_fetched_at')
+    if held_meta is None or fetched_at is None:
+        st.caption("📡 FantasyPros: not pulled this session — open the expander above to fetch it.")
+        return
+    if held_meta == (wk_year, wk_week, wk_scoring):
+        st.caption(
+            f"📡 FantasyPros projections current to **Week {wk_week}, {wk_year}** "
+            f"({wk_scoring}) — pulled {fetched_at:%b %d, %Y at %I:%M %p}."
+        )
+    else:
+        held_year, held_week, held_scoring = held_meta
+        st.caption(
+            f"📡 FantasyPros: last pull was for Week {held_week}, {held_year} ({held_scoring}) at "
+            f"{fetched_at:%b %d, %I:%M %p} — that doesn't match the selection above, so it isn't shown below. "
+            "Re-fetch to pull the current selection."
+        )
+
+
+def _scoring_dict(scoring_mode):
+    """This tab's simple 'Full PPR'/'Half-PPR'/'Standard' picker, expanded
+    into the full per-stat scoring dict data.draft_board.score_stats (and
+    therefore the market-projection path) needs. Every non-reception weight
+    here already matches what data.transforms.score_projected_stats hardcodes
+    for the model's own points, so this doesn't introduce a second scoring
+    opinion - it's the same rules in the dict shape the market side reads."""
+    rec = 1.0 if 'Full' in scoring_mode else (0.5 if 'Half' in scoring_mode else 0.0)
+    return {**DEFAULT_SCORING, 'rec': rec}
+
+
+def _render_weekly_market_pull(wk_scoring, name_pool):
+    """
+    Live player-prop lines -> a market-implied projected-points column,
+    from the SAME free weekly board (PrizePicks/Underdog/DraftKings - no
+    key, no quota) the Live Odds tab already pulls
+    (data.odds_weekly.weekly_props), scored the way Draft HQ scores a
+    season-long book line (data.odds_weekly.weekly_market_projection).
+
+    This is the live CURRENT slate - books post the coming weekend's board
+    Tuesday/Wednesday and there is no way to ask them for a past week's
+    lines, so unlike the model and the FantasyPros pull this can't be
+    retargeted at an arbitrary year/week from the selectors above. A
+    caption says so plainly rather than silently mismatching.
+    """
+    with st.expander("📈 Player prop lines → market projection (live)", expanded=False):
+        st.caption(
+            "PrizePicks, Underdog and DraftKings — no key, no quota. The same live weekly board "
+            "the Live Odds tab pulls, scored under the scoring mode selected above into a "
+            "projected-points column here instead of a raw line list. This is always the CURRENT "
+            "posted slate, not necessarily the season/week picked above."
+        )
+        force = st.button("🔄 Refresh player props", key="wr_market_refresh")
+        with skeleton_loader("table", n_rows=5, n_cols=4):
+            props, meta = weekly_props(force=force)
+        stamp = meta.get('fetched_at')
+        if stamp:
+            age_bits = [f"Pulled {stamp:%b %d, %Y at %I:%M %p}"]
+            if meta.get('stale'):
+                age_bits.append("stale — a fresh pull didn't return anything")
+            st.caption(" · ".join(age_bits))
+        if props.empty:
+            st.caption("No live player props available right now.")
+            return pd.DataFrame()
+        scored, mmeta = weekly_market_projection(props, _scoring_dict(wk_scoring), board=name_pool)
+        if scored.empty:
+            st.caption("Lines came back but none mapped to a stat this app scores.")
+            return pd.DataFrame()
+        st.success(f"{mmeta['players']} players priced from the live board.")
+        return scored.rename(columns={'player': 'Player'})
 
 
 def _attach_by_name(base_df, other_df, value_cols, prefix):
@@ -167,17 +272,17 @@ def render():
     wk_week = weeks[wk_week_idx]['week']
     with c3:
         wk_scoring = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="weekly_rank_scoring")
-    n_weeks = st.number_input("Recent-form window (games)", min_value=1, max_value=8, value=4,
-                              key="weekly_rank_window")
 
     with skeleton_loader("table", n_rows=10, n_cols=7):
         df_stats, t_col, n_col, _ = load_and_merge_data(wk_year, wk_scoring)
         model_df, model_meta = build_weekly_projections(wk_year, wk_week, wk_scoring)
 
-    form_df = build_recent_form_rank(df_stats, n_col, t_col, n_weeks=n_weeks)
+    form_df = build_recent_form_rank(df_stats, n_col, t_col, n_weeks=RECENT_FORM_GAMES)
 
     st.markdown("### This app's weekly model")
     fp_weekly = _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring)
+    market_df = _render_weekly_market_pull(wk_scoring, model_df[['Player']] if not model_df.empty else None)
+    _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring)
 
     if model_df.empty:
         st.info(f"This app's model has no projection for {wk_year} week {wk_week}: "
@@ -200,29 +305,61 @@ def render():
             src_col = 'FP ' + _fantasypros_points_column(wk_scoring)
             if src_col in merged_model.columns:
                 merged_model = merged_model.rename(columns={src_col: 'FantasyPros Proj Pts'})
+        if market_df is not None and not market_df.empty:
+            merged_model = _attach_by_name(merged_model, market_df, ['Market Pts', 'Coverage'], 'Mkt ')
+            merged_model = merged_model.rename(
+                columns={'Mkt Market Pts': 'Market Proj Pts', 'Mkt Coverage': 'Market Coverage'})
         if not form_df.empty:
             merged_model = _attach_by_name(merged_model, form_df, ['Recent Avg FPTS'], '')
+            merged_model = merged_model.rename(columns={'Recent Avg FPTS': 'L5 Avg FPTS'})
 
-        display_cols = ['Player', 'Pos', 'Team', 'Opponent', 'Model Proj Pts']
+        # Ranking column, directly after Opponent, colored by TIER rather
+        # than a continuous scale - explicit request. Tiers are clustered
+        # per position on Model Proj Pts wherever a significant cutoff
+        # actually falls (data.draft_board.tier_by_position, the same
+        # k-means-on-points technique Draft HQ's board tiers with), not a
+        # fixed players-per-tier bucket.
+        merged_model['_tier'] = tier_by_position(merged_model, 'Model Proj Pts', pos_col='Pos')
+        pos_rank = merged_model.groupby('Pos')['Model Proj Pts'].rank(ascending=False, method='first')
+        merged_model['Rank'] = merged_model['Pos'].astype(str) + pos_rank.astype('Int64').astype(str)
+        merged_model.loc[merged_model['Model Proj Pts'].isna(), 'Rank'] = None
+
+        display_cols = ['Player', 'Pos', 'Team', 'Opponent', 'Rank']
+        display_cols += [label for col, label in _STAT_DISPLAY_COLS if col in merged_model.columns]
+        merged_model = merged_model.rename(columns=dict(_STAT_DISPLAY_COLS))
+        display_cols.append('Model Proj Pts')
+        if 'Market Proj Pts' in merged_model.columns:
+            display_cols.append('Market Proj Pts')
         if 'FantasyPros Proj Pts' in merged_model.columns:
             display_cols.append('FantasyPros Proj Pts')
-        if 'Recent Avg FPTS' in merged_model.columns:
-            display_cols.append('Recent Avg FPTS')
-        display_cols += ['Games This Season', 'Role Confidence', 'Injury Status']
+        if 'L5 Avg FPTS' in merged_model.columns:
+            display_cols.append('L5 Avg FPTS')
+        display_cols.append('Injury Status')
 
-        display_df = position_filter_multiselect(
-            merged_model[[c for c in display_cols if c in merged_model.columns]],
-            key="weekly_rank_pos_filter")
+        keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier']
+        display_df = position_filter_multiselect(merged_model[keep_cols], key="weekly_rank_pos_filter")
+        tier_values = display_df['_tier'].tolist()
+        display_df = display_df.drop(columns=['_tier'])
         indexed = display_df.set_index('Player')
+
+        pct_cols = {}
+        for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts', 'L5 Avg FPTS'):
+            if c in indexed.columns and indexed[c].notna().any():
+                pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
         st.dataframe(
-            style_plain_dataframe(indexed), width="stretch", height=df_auto_height(min(len(display_df), 40)),
-            column_config=build_column_help_config(indexed, pinned_cols=['Team', 'Pos', 'Opponent']),
+            style_plain_dataframe(indexed, numeric_pct_cols=pct_cols, tier_cols={'Rank': tier_values}),
+            width="stretch", height=df_auto_height(min(len(display_df), 40)),
+            column_config=build_column_help_config(indexed, pinned_cols=['Team', 'Pos', 'Opponent', 'Rank']),
         )
         st.caption(
+            "**Rank** is positional rank (e.g. \"RB4\"), shaded by tier — a cluster break in "
+            "Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
             "**Model Proj Pts** is this app's own projection (usage blended toward the current "
             "season as it grows, opponent/pace/game-script adjusted - see "
-            "docs/weekly_projections_methodology.md). **FantasyPros Proj Pts** is their "
-            "analysts' number, pulled live above. Shown side by side, never blended."
+            "docs/weekly_projections_methodology.md), with the stat line it's built from shown "
+            "alongside it. **Market Proj Pts** is this week's live sportsbook player-prop lines "
+            "re-scored under this league's settings. **FantasyPros Proj Pts** is their analysts' "
+            "number, pulled live above. Three independent reads, shown side by side, never blended."
         )
 
     if form_df.empty:
@@ -247,6 +384,7 @@ def render():
     comparison = build_rankings_comparison(form_df, value_col='Recent Avg FPTS', rank_label='Form', fp_df=weekly_df)
     extra_cols = [c for c in comparison.columns if c not in ('Player', 'Pos', 'Team')]
     merged = form_df.merge(comparison[['Player'] + extra_cols], on='Player', how='left')
+    merged = merged.rename(columns={'Recent Avg FPTS': 'L5 Avg FPTS'})
 
     display_df = position_filter_multiselect(merged, key="weekly_rank_upload_pos_filter")
 

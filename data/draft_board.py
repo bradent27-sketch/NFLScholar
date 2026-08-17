@@ -1706,6 +1706,35 @@ def assign_tiers(board, tiers_per_position=8):
     return out
 
 
+def tier_by_position(df, value_col, pos_col='Pos', max_tiers=6):
+    """
+    Per-position tiers by clustering `value_col`, wherever a significant
+    cutoff actually occurs - the same `_kmeans_1d` clustering assign_tiers
+    uses for the draft board, generalized for any per-position points
+    table rather than one that also needs VORP/replacement-level filtering.
+
+    Unlike assign_tiers, every row with a real value participates (there is
+    no "below replacement" concept for a single week's projected pool - a
+    streaming DST or QB2 spot start is a legitimate tier, not noise to sweep
+    into a trailing bucket).
+
+    Returns a Series of tier ints aligned to df's index, NaN where `pos_col`
+    or `value_col` is missing for that row.
+    """
+    if df.empty or value_col not in df.columns or pos_col not in df.columns:
+        return pd.Series(np.nan, index=df.index)
+    out = pd.Series(np.nan, index=df.index)
+    pos_upper = df[pos_col].astype(str).str.upper()
+    for pos in pos_upper.unique():
+        mask = (pos_upper == pos) & df[value_col].notna()
+        if not mask.any():
+            continue
+        vals = df.loc[mask, value_col].to_numpy()
+        k = int(np.clip(len(vals) // 3, 1, max_tiers))
+        out.loc[mask] = _kmeans_1d(vals, k)
+    return out
+
+
 def attach_adp(board, adp_df, market_weight=0.0):
     """
     Join market ADP onto the board and derive the value gap.

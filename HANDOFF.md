@@ -56,6 +56,68 @@ This doc exists so a fresh session (human or AI) can orient without re-deriving 
 project's hard-won lessons. **The gotchas in section 5 are all real bugs that happened
 here — several more than once.** Read that section before changing anything.
 
+**August 2026 follow-up pass — Matchup Analyzer / Weekly Rankings / Draft HQ refinement.**
+Note: by this pass the tab list had already grown past the "9 tabs" described above in an
+earlier undocumented pass (Game Slate added first, Matchup Analyzer added after Player
+Compare, and Risers/Rookie Watch/Weekly Rankings merged into one "Weekly Fantasy" tab with
+sub-tabs) - section 1's tab list and tree above are stale against the current
+`config.TAB_LABELS` and should be re-verified rather than trusted verbatim. This pass didn't
+attempt a full doc reconciliation; it added the entries below for what it actually touched.
+
+- **Matchup Analyzer** (`ui/tabs/matchup_analyzer.py`, `data/matchup_signals.py`) - the
+  player/defense columns now render in matched ROW PAIRS (tendency profile next to
+  positional vulnerability, route efficiency next to coverage, usage&role next to run
+  defense, game log next to weekly detail) instead of two independently-stacked halves,
+  per explicit request that the two sides read as one comparison. The old "Efficiency
+  Elasticity" curve is now labeled "Defensive Tendency Elasticity" (soft to the player's
+  OWN position); a new "Efficiency Elasticity" curve buckets by
+  `data.matchup_signals.team_defensive_prowess` instead - PFF's snap-weighted overall team
+  defense grade (from `run_defense_summary` + `defense_coverage_summary`'s `grades_defense`,
+  the SAME number in both exports since it's not role-specific), not fantasy points allowed
+  - deliberately a different axis than the positional curve, since a defense can be
+  excellent overall and still be one player's softest positional matchup. The defense's
+  week-by-week detail collapsed from a position picker that stacked up to five charts into
+  ONE chart with By Position / By Stat tabs (`_render_defense_weekly_detail`), and its
+  reference line is now the LEAGUE average allowed
+  (`data.matchup_signals.league_average_allowed`), not that team's own season average.
+  Yards-per-target-allowed moved from the Coverage panel into Positional Vulnerability as a
+  smaller "YPRR"-labeled sub-bar directly under each position's row (per explicit naming
+  request - it's really YPT, the closest measured equivalent this app has; the sub-bar's
+  hover text says so) - `ui.charts.render_percentile_bar_list` gained a `'sub': True` entry
+  flag for this (shorter row, indented, muted).
+- **Weekly Rankings** (`ui/tabs/rankings.py`) - the FantasyPros pull now shows a "current
+  to Week N, pulled at TIME" caption instead of a bare number; the model's projected STAT
+  LINE is shown alongside Model Proj Pts (the columns were already being computed by
+  `build_weekly_projections`, just never displayed); recent-form window is fixed at L5
+  games (no more adjustable control); Games This Season / Role Confidence dropped from the
+  display; a new live-player-prop-derived "Market Proj Pts" column
+  (`data.odds_weekly.weekly_market_projection`, reusing the same free PrizePicks/Underdog/
+  DraftKings weekly board the Live Odds tab pulls and the same market-scoring arithmetic
+  Draft HQ uses for season-long book lines) sits beside the model and FantasyPros numbers,
+  never blended into either; a new "Rank" column (e.g. "RB4") sits right after Opponent,
+  shaded by tier (`data.draft_board.tier_by_position`, a generalized sibling of the draft
+  board's own `assign_tiers`/`_kmeans_1d` clustering, and `ui.styling.style_plain_dataframe`
+  gained a `tier_cols` param to shade an arbitrary column by an externally-computed tier
+  rather than only a literal `'Tier'` column). Live Odds tab is untouched.
+- **Draft HQ** (`ui/tabs/draft_hq.py`, `data/odds_market.py`) - League Settings dropped the
+  Projection Uncertainty slider and Projection Baseline Through selector (values now fixed
+  at their old defaults, no UI); the whole settings panel is regrouped into League Settings
+  / League Scoring / Draft & Market Settings / Data imports headings (same widgets, just
+  grouped - no behavior change); the Risk column is gone from the player table (the
+  underlying `Risk` computation in `data.draft_board.add_outcome_range_from_projections` is
+  untouched, just not displayed); "Market lines vs this board" gained a second table, a
+  matchup-adjusted full-season scoring estimate
+  (`data.odds_market.estimate_full_season_scoring`) that fills in every game WITHOUT a
+  posted Vegas line using that team's own measured scoring level against its actual
+  scheduled opponent's measured defense (games-count-shrunk baselines toward league
+  average, clipped 0.75-1.3x - same matchup-multiplier shape as everywhere else in this
+  app) - the existing posted-only table can be a badly biased read of an offense early in a
+  season when only a handful of (non-representative) games have a line; still
+  information-only, nothing feeds a projection, same as the table it sits beside. "Pick
+  odds & positional scarcity", "Market lines vs this board", "Run many mocks / compare
+  slots" (and live-sync in Live draft mode) moved from a full-width stack below the draft
+  room into the right column under Your Roster, to make the page more compact.
+
 ---
 
 ## 1. Architecture

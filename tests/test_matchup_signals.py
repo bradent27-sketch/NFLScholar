@@ -299,6 +299,73 @@ def test_a_thin_pool_gets_no_percentile_rather_than_a_made_up_one():
     assert ms._percentile_of(5.0, pd.Series(range(20), dtype='float64')) is not None
 
 
+# --- team_defensive_prowess / ypt_allowed_for_team / league_average_allowed
+
+def test_team_defensive_prowess_gives_the_worst_grade_the_highest_softness_pct():
+    run_def = pd.DataFrame({
+        'team_name': ['AAA', 'BBB', 'CCC'],
+        'grades_defense': [90.0, 60.0, 30.0],
+        'snap_counts_run': [500, 500, 500],
+    })
+    prowess = ms.team_defensive_prowess(run_def, pd.DataFrame())
+    # AAA has the best (highest) grade, so it should be the TOUGHEST matchup
+    # - the lowest softness percentile - and CCC (worst grade) the softest.
+    assert prowess['AAA'] < prowess['BBB'] < prowess['CCC']
+
+
+def test_team_defensive_prowess_combines_run_and_coverage_snaps():
+    # A pure pass-rusher (zero coverage snaps) should still get a real
+    # score off his run-defense snaps alone, and a player appearing in
+    # BOTH exports contributes his snap-weighted grade from each - summed
+    # weight, not double-counted as two separate players.
+    run_def = pd.DataFrame({
+        'team_name': ['AAA'], 'grades_defense': [80.0], 'snap_counts_run': [400],
+    })
+    cov = pd.DataFrame({
+        'team_name': ['AAA'], 'grades_defense': [80.0], 'snap_counts_coverage': [200],
+    })
+    only_run = ms.team_defensive_prowess(run_def, pd.DataFrame())
+    both = ms.team_defensive_prowess(run_def, cov)
+    assert 'AAA' in only_run and 'AAA' in both
+
+
+def test_team_defensive_prowess_empty_inputs_return_empty():
+    assert ms.team_defensive_prowess(pd.DataFrame(), pd.DataFrame()) == {}
+    assert ms.team_defensive_prowess(None, None) == {}
+
+
+def test_ypt_allowed_for_team_keys_by_position_and_matches_on_nickname():
+    coverage = pd.DataFrame({
+        'team': ['Chiefs', 'Eagles'],
+        'ypt_allowed_wr': [7.3, 6.1],
+        'ypt_allowed_te': [8.0, 7.0],
+        'ypt_allowed_rb': [5.8, 5.0],
+    })
+    out = ms.ypt_allowed_for_team(coverage, 'Kansas City Chiefs')
+    assert set(out.keys()) == {'WR', 'TE', 'RB'}
+    assert out['WR']['value'] == 7.3
+    assert ms.ypt_allowed_for_team(coverage, 'Some Team Nobody Has') == {}
+
+
+def test_league_average_allowed_averages_per_team_per_game_not_per_row():
+    # Two receivers on the SAME team in the SAME week must not double the
+    # week's total before it's averaged into the league figure.
+    df = weekly([
+        {'name': 'A', 'week': 1, 'opponent_team': 'BUF', 'team': 'KC', 'position': 'WR', 'receiving_yards': 60},
+        {'name': 'B', 'week': 1, 'opponent_team': 'BUF', 'team': 'KC', 'position': 'WR', 'receiving_yards': 40},
+        {'name': 'C', 'week': 1, 'opponent_team': 'DEN', 'team': 'NYJ', 'position': 'WR', 'receiving_yards': 50},
+    ])
+    avg = ms.league_average_allowed(df, 'WR', 'receiving_yards')
+    # BUF allowed 100 (60+40) in its one game, DEN allowed 50 in its one -
+    # average of the two GAME totals, (100+50)/2 = 75, not a per-row mean.
+    assert abs(avg - 75.0) < 1e-9
+
+
+def test_league_average_allowed_missing_column_returns_none():
+    df = weekly([{'name': 'A', 'week': 1, 'opponent_team': 'BUF', 'team': 'KC', 'position': 'WR'}])
+    assert ms.league_average_allowed(df, 'WR', 'not_a_real_column') is None
+
+
 def test_missing_columns_do_not_raise():
     bare = pd.DataFrame({'name': ['A'], 'week': [1], 'opponent_team': ['X']})
     assert ms.player_game_series(bare, 'name', 'A', 'nope_not_a_column')['value'].tolist() == [0.0]

@@ -392,9 +392,9 @@ def _render_fantasypros_api_import(cfg):
     does, with no separate code path downstream.
     """
     from data.draft_sources import (
-        load_saved_fantasypros_api_key, save_fantasypros_api_key,
+        get_fantasypros_api_key, save_fantasypros_api_key,
         fantasypros_api_calls_this_month, fetch_fantasypros_players,
-        FANTASYPROS_API_MONTHLY_LIMIT,
+        fantasypros_effective_limit, FANTASYPROS_API_MONTHLY_LIMIT,
     )
     st.caption(
         "**FantasyPros API** — one call pulls ECR *and* ADP for the whole player pool at "
@@ -403,26 +403,41 @@ def _render_fantasypros_api_import(cfg):
         "— the free tier is capped at 50 calls a month, so this is a manual refresh, not "
         "something the board pulls on its own."
     )
-    saved_key = load_saved_fantasypros_api_key()
-    api_key = st.text_input(
-        "FantasyPros API key", type="password", key="dhq_fp_api_key", value=saved_key,
-        help="Saved locally in .streamlit/fantasypros_api_key.txt so you don't re-enter it "
-             "every launch.",
-    )
-    if api_key and api_key != saved_key:
-        save_fantasypros_api_key(api_key)
+    secret_key, key_source = get_fantasypros_api_key()
+    if key_source == 'secrets':
+        st.caption("🔑 Using the key from `.streamlit/secrets.toml` — never shown in this UI.")
+        api_key = secret_key
+        with st.expander("Override with a different key"):
+            override = st.text_input("FantasyPros API key", type="password", key="dhq_fp_api_key")
+            if override:
+                api_key = override
+    else:
+        api_key = st.text_input(
+            "FantasyPros API key", type="password", key="dhq_fp_api_key", value=secret_key,
+            help="Saved locally in .streamlit/fantasypros_api_key.txt so you don't re-enter it "
+                 "every launch. Set FANTASYPROS_API_KEY in .streamlit/secrets.toml instead to "
+                 "skip pasting it into the UI at all — see .streamlit/secrets.toml.example.",
+        )
+        if api_key and api_key != secret_key:
+            save_fantasypros_api_key(api_key)
 
     used = fantasypros_api_calls_this_month()
-    remaining = FANTASYPROS_API_MONTHLY_LIMIT - used
-    st.caption(f"{used} of {FANTASYPROS_API_MONTHLY_LIMIT} calls used this month "
-               f"({max(remaining, 0)} left, resets on the 1st).")
+    limit = fantasypros_effective_limit()
+    if limit is None:
+        remaining = None
+        st.caption(f"{used} calls made this month — this key last reported a paid tier, so the "
+                   f"{FANTASYPROS_API_MONTHLY_LIMIT}/month free-tier cap isn't being enforced.")
+    else:
+        remaining = limit - used
+        st.caption(f"{used} of {limit} calls used this month "
+                   f"({max(remaining, 0)} left, resets on the 1st).")
 
     fetch = st.button("📡 Fetch ECR + ADP from FantasyPros API", key="dhq_fp_api_fetch",
-                      disabled=not api_key or remaining <= 0)
+                      disabled=not api_key or (remaining is not None and remaining <= 0))
     if not api_key:
         st.caption("Enter a key above to enable this.")
-    elif remaining <= 0:
-        st.warning("This month's 50 free calls are spent — resets on the 1st.")
+    elif remaining is not None and remaining <= 0:
+        st.warning(f"This month's {limit} calls are spent — resets on the 1st.")
     if fetch:
         scoring = ('Full PPR' if cfg['ppr'] >= 0.75 else 'Half-PPR'
                   if cfg['ppr'] >= 0.25 else 'Standard')

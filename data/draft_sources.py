@@ -827,6 +827,45 @@ def save_fantasypros_api_key(api_key):
         pass
 
 
+def get_fantasypros_api_key():
+    """
+    Resolve the FantasyPros API key, preferring Streamlit's own secrets
+    mechanism over the hand-pasted-into-a-text-box flow.
+
+    st.secrets reads .streamlit/secrets.toml locally, or - unchanged, same
+    file format - whatever Streamlit Community Cloud's Settings->Secrets
+    panel materializes server-side, so this one check covers both "runs on
+    my machine" and "deployed to Cloud" without branching on which. It's
+    the answer to "make sure this key is only used in my own app": a secret
+    in secrets.toml never round-trips through a widget, a session-state dict,
+    or anything a screen-share/screenshot of the running app could expose,
+    the way a `type="password"` text_input's saved value technically could
+    if the page were rendered unmasked.
+
+    st.secrets RAISES (not just returns falsy) when no secrets.toml exists
+    at all - the normal case for anyone who hasn't set one up - so this is
+    wrapped rather than called bare. Falls back to the existing
+    load_saved_fantasypros_api_key() file-based flow (today's manual
+    text-input-that-remembers-itself), so nothing breaks for a user who
+    never creates a secrets.toml.
+
+    Returns (key, source) where source is 'secrets', 'saved_file', or
+    None - callers use this to decide whether to show the manual entry
+    field at all (see ui.tabs.draft_hq._render_fantasypros_api_import).
+    """
+    try:
+        import streamlit as st
+        secret_key = st.secrets.get('FANTASYPROS_API_KEY')
+        if secret_key:
+            return str(secret_key).strip(), 'secrets'
+    except Exception:
+        pass
+    saved = load_saved_fantasypros_api_key()
+    if saved:
+        return saved, 'saved_file'
+    return '', None
+
+
 def _load_fantasypros_api_usage():
     import json
     try:
@@ -868,16 +907,62 @@ def _record_fantasypros_api_call():
     return usage[month_key]
 
 
+def _record_fantasypros_tier(tier):
+    """
+    Remember the account tier FantasyPros' own API reported on the last
+    successful call ('free', 'premium', ...) - not something this app can
+    know any other way, since the free tier ships no quota header to read
+    back. fantasypros_effective_limit() uses this to stop enforcing the
+    50/month FREE-TIER cap once a real response has actually shown this key
+    isn't on that tier, instead of guessing.
+    """
+    import json
+    usage = _load_fantasypros_api_usage()
+    usage['_last_tier'] = str(tier or '')
+    try:
+        os.makedirs('.streamlit', exist_ok=True)
+        with open(FANTASYPROS_API_USAGE_FILE, 'w', encoding='utf-8') as fh:
+            json.dump(usage, fh)
+    except Exception:
+        pass
+
+
+def fantasypros_last_known_tier():
+    """The tier string from the last successful API response, or '' if none yet."""
+    return str(_load_fantasypros_api_usage().get('_last_tier', ''))
+
+
+def fantasypros_effective_limit():
+    """
+    The call-budget cap the UI should actually enforce.
+
+    FANTASYPROS_API_MONTHLY_LIMIT (50) is the FREE tier's documented cap.
+    Once a real response has told us this key reports a non-free tier (e.g.
+    'premium' - confirmed live: a paid key returns the full player pool in
+    one call with no 10-row preview truncation), continuing to hard-block
+    fetches at 50/month would be enforcing a limit that key isn't actually
+    on, off nothing but an unverified guess. There's still no quota header
+    on this API to read a real paid-tier cap back from, so this doesn't
+    invent a specific higher number - it just stops blocking, and the call
+    counter above keeps counting so the usage caption stays honest either way.
+    """
+    tier = fantasypros_last_known_tier()
+    if tier and tier.lower() != 'free':
+        return None  # no enforced cap - unlimited so far as this app knows
+    return FANTASYPROS_API_MONTHLY_LIMIT
+
+
 def fetch_fantasypros_players(api_key, scoring='Full PPR'):
     """
     ECR + ADP for the whole NFL player pool from FantasyPros' own API.
 
     One request, GET /nfl/players?ecr=included&show=pos_rank, which returns
-    both a standard-scoring rank (rank_ecr/rank_adp) and a PPR-scoring rank
-    (rank_ecr_ppr/rank_adp_ppr) per player. There's no half-PPR variant on
-    this endpoint, so 'Half-PPR' and 'Full PPR' both read the PPR columns -
-    closer to a half-PPR market than the standard numbers would be, but
-    worth knowing if the two look identical for a half-PPR league.
+    a standard-scoring rank (rank_ecr/rank_adp), a PPR-scoring rank
+    (rank_ecr_ppr/rank_adp_ppr), AND a half-PPR ECR (rank_ecr_half) per
+    player - confirmed present in a live response. ADP has no half-PPR
+    variant on this endpoint, so 'Half-PPR' reads rank_ecr_half for ECR but
+    still falls back to the PPR column for ADP (closer to a half-PPR market
+    than the standard number would be).
 
     Returns (ecr_df, adp_df, meta). The two frames are shaped exactly like
     parse_ecr_upload's and parse_adp_upload's output (Player/Pos/Team/ECR/
@@ -894,8 +979,10 @@ def fetch_fantasypros_players(api_key, scoring='Full PPR'):
     every real request (including one that comes back an error - a 401 or a
     parse failure still spent a call against FantasyPros' quota, even though
     nothing useful came back). Callers gate this behind an explicit button
-    and check fantasypros_api_calls_this_month() first so a call that would
-    push past FANTASYPROS_API_MONTHLY_LIMIT never fires.
+    and check fantasypros_api_calls_this_month() against
+    fantasypros_effective_limit() first so a call that would push past the
+    enforced budget never fires - see that function's docstring for why the
+    enforced number isn't always the free tier's 50.
     """
     if not api_key:
         return pd.DataFrame(), pd.DataFrame(), {'error': 'no API key set'}
@@ -944,29 +1031,43 @@ def fetch_fantasypros_players(api_key, scoring='Full PPR'):
     # 'free', and 'count' reporting the REAL pool size, e.g. 503, while
     # 'players' holds only the first 10 of it). This is undocumented in the
     # spec (no offset/page parameter exists to page through the rest) and
-    # was only found by testing a live key. Refusing outright rather than
-    # returning a 10-row "board": ECR_UPLOAD_KEY/ADP_UPLOAD_KEY are trusted
-    # overrides that WIN over the live full-field mirror - silently handing
-    # back 10 team defenses as "your ECR board" would have collapsed the
-    # whole draft board down to 10 rows the moment someone clicked the
-    # button, which is worse than the feature simply not working.
-    if payload.get('public_api_limited') or (
-            isinstance(payload.get('count'), (int, str)) and
-            int(payload.get('count') or 0) > len(players) + 5):
-        real_count = payload.get('count', '?')
+    # was only found by testing a live key.
+    #
+    # 'public_api_limited' ALONE IS NOT A TRUNCATION SIGNAL - confirmed live
+    # on a premium key: that response also carries 'public_api_limited':
+    # true, but 'players' holds the REAL, complete pool (count == 503,
+    # len(players) == 503) and there is no 'limit' key at all. The flag
+    # apparently just means "this hit the public API", not "this response
+    # was cut short" - it's true on premium responses too. Trusting it alone
+    # (the previous version of this check) meant a paid key's board refresh
+    # was being rejected here on every single call. The real signal is a
+    # genuine shortfall: 'limit' present, or 'count' reporting meaningfully
+    # more players than actually came back.
+    real_count = payload.get('count')
+    actually_truncated = ('limit' in payload) or (
+        isinstance(real_count, (int, str)) and int(real_count or 0) > len(players) + 5)
+    if actually_truncated:
         return pd.DataFrame(), pd.DataFrame(), {
             'error': f"this key's tier only returns a {len(players)}-player preview per call "
-                     f"(FantasyPros reports {real_count} players exist) - there's no "
-                     "documented way to page through the rest on the free tier, so this can't "
-                     "refresh a full board. Left your current ECR/ADP untouched."}
+                     f"(FantasyPros reports {real_count if real_count is not None else '?'} "
+                     "players exist) - there's no documented way to page through the rest on "
+                     "the free tier, so this can't refresh a full board. Left your current "
+                     "ECR/ADP untouched."}
+    _record_fantasypros_tier(payload.get('tier'))
 
     df = pd.DataFrame(players)
     name = df.get('player_name', pd.Series(dtype=str)).astype(str).str.strip()
     pos = df.get('position_id', pd.Series(dtype=str)).astype(str).str.upper().str.strip()
     team = df.get('team_id', pd.Series(dtype=str)).astype(str).str.strip()
-    use_ppr = scoring != 'Standard'
-    ecr_rank = df.get('rank_ecr_ppr') if use_ppr else df.get('rank_ecr')
-    adp_rank = df.get('rank_adp_ppr') if use_ppr else df.get('rank_adp')
+    if scoring == 'Standard':
+        ecr_rank, adp_rank = df.get('rank_ecr'), df.get('rank_adp')
+    elif scoring == 'Half-PPR':
+        # rank_ecr_half exists on this endpoint; ADP has no half-PPR
+        # variant, so it still reads the PPR column (closer to a half-PPR
+        # market than the standard number).
+        ecr_rank, adp_rank = df.get('rank_ecr_half'), df.get('rank_adp_ppr')
+    else:
+        ecr_rank, adp_rank = df.get('rank_ecr_ppr'), df.get('rank_adp_ppr')
 
     ecr = pd.DataFrame({
         'Player': name, 'Pos': pos, 'Team': team,
@@ -992,6 +1093,118 @@ def fetch_fantasypros_players(api_key, scoring='Full PPR'):
     meta = {'error': None, 'players': int(len(df)), 'ecr_rows': int(len(ecr)),
             'adp_rows': int(len(adp)), 'scoring': scoring}
     return ecr, adp, meta
+
+
+# Which raw stat fields to pull off each position's projection object
+# (NFLQBPlayerProjections / NFLRBWRTEPlayerProjections in the OpenAPI spec -
+# verified against a real schema dump, not guessed) into a flat column name
+# this app's own stat vocabulary already uses elsewhere (passing_yards,
+# rushing_attempts, etc. - see OFFENSE_PROJECTION_STATS in data.transforms),
+# so a caller can line this frame up against this app's own model without a
+# second translation table.
+_FP_WEEKLY_STAT_MAP = {
+    'QB': {
+        'pass_att': 'passing_attempts', 'pass_cmp': 'passing_completions',
+        'pass_yds': 'passing_yards', 'pass_tds': 'passing_tds', 'pass_ints': 'passing_interceptions',
+        'rush_att': 'rushing_attempts', 'rush_yds': 'rushing_yards', 'rush_tds': 'rushing_tds',
+    },
+    'RB': {
+        'rush_att': 'rushing_attempts', 'rush_yds': 'rushing_yards', 'rush_tds': 'rushing_tds',
+        'rec_rec': 'receptions', 'rec_yds': 'receiving_yards', 'rec_tds': 'receiving_tds',
+    },
+}
+_FP_WEEKLY_STAT_MAP['WR'] = _FP_WEEKLY_STAT_MAP['TE'] = _FP_WEEKLY_STAT_MAP['RB']
+
+
+def _fetch_fantasypros_projections_one_position(api_key, season, week, position):
+    """One /nfl/{season}/projections call for one position. `position` is a
+    REQUIRED query param on this endpoint (confirmed in the OpenAPI spec -
+    there is no documented way to request several positions in one call
+    despite the separate `positions` colon-filter also existing on it), so
+    fetch_fantasypros_weekly_projections always costs one call per position
+    requested, not one call total. Returns (rows: list[dict], error|None)."""
+    _record_fantasypros_api_call()
+    try:
+        resp = requests.get(
+            f"{FANTASYPROS_API_BASE}/nfl/{season}/projections",
+            params={'position': position, 'week': week},
+            headers={**_REQUEST_HEADERS, 'x-api-key': api_key},
+            timeout=25,
+        )
+    except Exception as exc:
+        return [], f"{type(exc).__name__}: {exc}"
+    if resp.status_code == 401:
+        return [], 'API key rejected (401)'
+    if resp.status_code == 403:
+        return [], f"not authorized for {position} weekly projections (403)"
+    if resp.status_code == 429:
+        return [], 'rate limited (429) - call budget likely exhausted'
+    if resp.status_code != 200:
+        return [], f'HTTP {resp.status_code}: {resp.text[:200]}'
+    try:
+        payload = resp.json()
+    except Exception as exc:
+        return [], f'parse failed: {exc}'
+    stat_map = _FP_WEEKLY_STAT_MAP.get(position, {})
+    rows = []
+    for player in payload.get('players', []) or []:
+        stat_blocks = player.get('stats') or []
+        stats = stat_blocks[0] if stat_blocks else {}
+        row = {
+            'Player': str(player.get('name') or '').strip(),
+            'Pos': position,
+            'Team': str(player.get('team_id') or '').strip(),
+            'FP Proj Pts': stats.get('points'),
+            'FP Proj Pts PPR': stats.get('points_ppr'),
+            'FP Proj Pts Half': stats.get('points_half'),
+        }
+        for src_col, out_col in stat_map.items():
+            row[out_col] = stats.get(src_col)
+        rows.append(row)
+    return rows, None
+
+
+def fetch_fantasypros_weekly_projections(api_key, season, week, positions=('QB', 'RB', 'WR', 'TE')):
+    """
+    FantasyPros' own weekly projected stat line - carries/targets/yards/TDs,
+    not just a bare points number - for one week, straight from their API.
+
+    This is FantasyPros' projection, surfaced for side-by-side comparison
+    against this app's own weekly model (data.weekly_projections) the same
+    way Draft HQ already shows market lines next to its own board - never
+    blended into this app's own numbers.
+
+    One call PER POSITION (see _fetch_fantasypros_projections_one_position's
+    docstring for why `positions` can't collapse this to one request), so a
+    4-position pull (QB/RB/WR/TE, the default and the set this app scores)
+    spends 4 calls, not 1. Callers should gate this behind the same explicit
+    button + budget check as fetch_fantasypros_players.
+
+    Returns (df, meta). A position that errors is skipped with its error
+    recorded in meta['errors'] rather than failing the whole pull - a
+    dead 403 on one position shouldn't blank out the other three.
+    """
+    if not api_key:
+        return pd.DataFrame(), {'error': 'no API key set'}
+    all_rows = []
+    errors = {}
+    for position in positions:
+        rows, err = _fetch_fantasypros_projections_one_position(api_key, season, week, position)
+        if err:
+            errors[position] = err
+        all_rows.extend(rows)
+    if not all_rows:
+        return pd.DataFrame(), {'error': errors or 'no players in response', 'errors': errors}
+
+    df = pd.DataFrame(all_rows)
+    df = df[df['Player'].ne('') & df['Player'].str.lower().ne('nan')]
+    for col in ('FP Proj Pts', 'FP Proj Pts PPR', 'FP Proj Pts Half'):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    df = df.drop_duplicates(subset=['Player'], keep='first').reset_index(drop=True)
+    meta = {'error': None, 'errors': errors or None, 'season': season, 'week': week,
+            'positions': list(positions), 'rows': int(len(df))}
+    return df, meta
 
 
 def ecr_age_days(ecr_raw):

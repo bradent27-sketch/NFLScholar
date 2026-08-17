@@ -10,6 +10,14 @@
 .streamlit/fantasypros_api_key.txt
 .streamlit/fantasypros_api_usage.json
 
+# Streamlit's own secrets mechanism (st.secrets) - same file format Streamlit
+# Community Cloud's Settings->Secrets panel writes server-side, so this one
+# file works unchanged whether run locally or deployed there. Real API keys
+# live here now (data.draft_sources.get_fantasypros_api_key checks this
+# first); .streamlit/secrets.toml.example is the committed template showing
+# the expected shape with no real key in it.
+.streamlit/secrets.toml
+
 # Imported Fantasy Football Advice data. This is paid subscription content
 # belonging to FFA, imported for personal use via tools/har_extract.py +
 # data/ffa_import.py - it should live on your machine, not in a git repo.

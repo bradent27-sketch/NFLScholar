@@ -939,6 +939,27 @@ def fetch_fantasypros_players(api_key, scoring='Full PPR'):
     if not players:
         return pd.DataFrame(), pd.DataFrame(), {'error': 'no players in response'}
 
+    # THE FREE TIER TRUNCATES TO A 10-PLAYER PREVIEW - confirmed live
+    # (payload carries 'public_api_limited': true, 'limit': 10, 'tier':
+    # 'free', and 'count' reporting the REAL pool size, e.g. 503, while
+    # 'players' holds only the first 10 of it). This is undocumented in the
+    # spec (no offset/page parameter exists to page through the rest) and
+    # was only found by testing a live key. Refusing outright rather than
+    # returning a 10-row "board": ECR_UPLOAD_KEY/ADP_UPLOAD_KEY are trusted
+    # overrides that WIN over the live full-field mirror - silently handing
+    # back 10 team defenses as "your ECR board" would have collapsed the
+    # whole draft board down to 10 rows the moment someone clicked the
+    # button, which is worse than the feature simply not working.
+    if payload.get('public_api_limited') or (
+            isinstance(payload.get('count'), (int, str)) and
+            int(payload.get('count') or 0) > len(players) + 5):
+        real_count = payload.get('count', '?')
+        return pd.DataFrame(), pd.DataFrame(), {
+            'error': f"this key's tier only returns a {len(players)}-player preview per call "
+                     f"(FantasyPros reports {real_count} players exist) - there's no "
+                     "documented way to page through the rest on the free tier, so this can't "
+                     "refresh a full board. Left your current ECR/ADP untouched."}
+
     df = pd.DataFrame(players)
     name = df.get('player_name', pd.Series(dtype=str)).astype(str).str.strip()
     pos = df.get('position_id', pd.Series(dtype=str)).astype(str).str.upper().str.strip()

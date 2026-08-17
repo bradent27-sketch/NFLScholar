@@ -486,6 +486,123 @@ def defense_weekly_allowed(stats_df, defense_team, position, stat_col, last_n=6)
     return (grouped if last_n is None else grouped.tail(last_n)).reset_index(drop=True)
 
 
+def league_average_allowed(stats_df, position, stat_col):
+    """
+    The per-game league average of `stat_col` allowed to `position`, across
+    every one of the 32 defenses - the reference line for a WEEK-BY-WEEK
+    "what this defense has allowed" chart.
+
+    Deliberately NOT that one defense's own season average (what
+    `defense_weekly_allowed`'s caller used to draw as the dashed line): the
+    question a week-by-week chart answers is "is this defense soft", and a
+    defense's own average can only ever tell you whether one of its games
+    was a spike relative to ITSELF - never whether the whole team is soft to
+    begin with. A defense that allows 30 fantasy points a week, every week,
+    draws a perfectly flat line against its own average and would look
+    exactly like a stout unit that also allows 30 a week, every week -
+    the league average is what actually separates those two.
+
+    Returns None when there's nothing to average against (a position this
+    matrix doesn't track, or a season with no weekly rows yet).
+    """
+    if stats_df.empty or 'opponent_team' not in stats_df.columns:
+        return None
+    rows = _played_weeks(stats_df[stats_df['position'].astype(str).str.upper() == str(position).upper()])
+    if rows.empty or stat_col not in rows.columns:
+        return None
+    per_team_game = rows.groupby(['opponent_team', 'week'])[stat_col].sum()
+    if per_team_game.empty:
+        return None
+    return float(per_team_game.mean())
+
+
+def team_defensive_prowess(run_def, cov_summary):
+    """
+    team -> 0-100 where HIGHER MEANS SOFTER (a weaker overall defense),
+    same direction convention as defense_softness above - but built from
+    PFF's overall per-player defensive grade (`grades_defense` - one number
+    per player-season, not role-specific, which is why it shows up
+    identically in both run_defense_summary AND defense_coverage_summary)
+    rather than fantasy points allowed to one position.
+
+    This is deliberately a DIFFERENT axis than defense_softness /
+    positional_vulnerability: those are both "how many fantasy points does
+    this defense give up AT THIS POSITION", which is exactly the number the
+    Defensive Tendency Elasticity curve already buckets against. A second
+    curve built from the same points-allowed number wouldn't be measuring
+    anything new - it would just be positional softness relabeled. PFF's
+    grade is a scouted, position-independent read on the defense itself
+    (scheme execution, tackling, coverage technique), which is what "is
+    this defense just plain GOOD" is actually asking - a defense can be
+    excellent overall and still be the softest matchup for one specific
+    position (a great front seven with a beat-up secondary), and that
+    distinction is the whole point of offering both curves side by side.
+
+    Snap-weighted per team ACROSS both exports (a run-stuffing lineman's
+    run-defense snaps and a slot corner's coverage snaps both count, added
+    rather than averaged together first) so a package player who barely
+    plays isn't weighted like a three-down starter, and a pure edge rusher
+    isn't penalized for having zero coverage snaps to his name.
+    """
+    frames = []
+    if (run_def is not None and not run_def.empty
+            and {'team_name', 'grades_defense', 'snap_counts_run'}.issubset(run_def.columns)):
+        frames.append(run_def[['team_name', 'grades_defense', 'snap_counts_run']]
+                      .rename(columns={'snap_counts_run': 'snaps'}))
+    if (cov_summary is not None and not cov_summary.empty
+            and {'team_name', 'grades_defense', 'snap_counts_coverage'}.issubset(cov_summary.columns)):
+        frames.append(cov_summary[['team_name', 'grades_defense', 'snap_counts_coverage']]
+                      .rename(columns={'snap_counts_coverage': 'snaps'}))
+    if not frames:
+        return {}
+    pool = pd.concat(frames, ignore_index=True)
+    pool['grades_defense'] = _numeric(pool, 'grades_defense')
+    pool['snaps'] = _numeric(pool, 'snaps').fillna(0)
+    pool = pool[pool['grades_defense'].notna() & (pool['snaps'] > 0)]
+    if pool.empty:
+        return {}
+
+    weighted = pool.groupby('team_name').apply(
+        lambda g: float((g['grades_defense'] * g['snaps']).sum() / g['snaps'].sum()))
+    grades = pd.DataFrame({'team_name': weighted.index, 'grade': weighted.to_numpy()})
+    # Ascending on the raw grade (higher grade -> higher raw percentile),
+    # then inverted - a LOWER grade is a WEAKER defense, which should read
+    # as a HIGHER softness percentile. Same "compute ascending, then flip
+    # for a higher-is-better raw stat" convention run_defense_profile
+    # already uses for its own grade columns.
+    raw_pct = calculate_percentile(grades, 'grade', ascending=True)
+    softness_pct = 100.0 - raw_pct
+    return dict(zip(grades['team_name'].astype(str), softness_pct.astype(float)))
+
+
+def ypt_allowed_for_team(positional_coverage, team_name):
+    """
+    {'WR': {'value', 'pct'}, 'TE': {...}, 'RB': {...}} - yards per target
+    allowed to each receiver type, from Sharp's positional coverage export,
+    percentiled in the same "higher = softer" direction as everything else
+    on this tab.
+
+    Split out from coverage_profile() (which bundles this together with two
+    other independent sources behind one shared 'available' flag) because
+    Positional Vulnerability wants ONLY this piece, keyed by position rather
+    than by coverage_profile's fixed 'vs WR'/'vs TE'/'vs RB' label list.
+    """
+    out = {}
+    if positional_coverage is None or positional_coverage.empty or 'team' not in positional_coverage.columns:
+        return out
+    nickname = str(team_name).split()[-1] if team_name else ''
+    row = positional_coverage[positional_coverage['team'].astype(str).str.lower() == nickname.lower()]
+    if row.empty:
+        return out
+    r = row.iloc[0]
+    for pos, col in (('WR', 'ypt_allowed_wr'), ('TE', 'ypt_allowed_te'), ('RB', 'ypt_allowed_rb')):
+        value = _float_or_none(r.get(col))
+        if value is None:
+            continue
+        out[pos] = {'value': value, 'pct': _percentile_of(value, _numeric(positional_coverage, col).dropna())}
+    return out
+
+
 def coverage_profile(defense_team, team_name, scheme_rates, positional_coverage, pff_coverage_scheme=None):
     """
     What this defense actually plays, and what it gives up doing it.

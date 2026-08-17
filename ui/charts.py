@@ -303,7 +303,7 @@ def render_chart_click_overlay(entries, season, key_prefix):
                     )
 
 
-def render_percentile_bar_list(entries, row_h=42, sort=True):
+def render_percentile_bar_list(entries, row_h=42, sort=True, sub_row_h=28):
     """
     One full-width horizontal percentile bar per row, coloured on the app's
     standard grade scale (ui.styling.get_pff_color).
@@ -323,6 +323,16 @@ def render_percentile_bar_list(entries, row_h=42, sort=True):
     Profile needs: its sequence (volume -> efficiency -> role) is itself
     meaningful, and re-sorting by percentile scrambles it into something
     that looks arbitrary from one player to the next.
+
+    An entry with `'sub': True` renders as a shorter, indented, smaller-font
+    row directly under whatever came before it - a companion stat that
+    belongs WITH the row above rather than as a peer of its own (e.g. a
+    position's YPT-allowed sitting right under that position's fantasy-
+    points-allowed bar in Matchup Analyzer's Positional Vulnerability list).
+    `sort` only ever reorders entries within their own kind's relative
+    order is undefined across a sub-row boundary, so callers that mix
+    sub-rows in should always pass `sort=False` - the same convention the
+    Tendency Profile already follows for its own ordering.
     """
     plotted = [e for e in entries if e.get('pct') is not None]
     if not plotted:
@@ -335,39 +345,49 @@ def render_percentile_bar_list(entries, row_h=42, sort=True):
     # case, which is where this chart actually lives.
     W, LABEL_W, VAL_W = 860, 250, 140
     BAR_H, LABEL_FS, VAL_FS = 22, 15, 13.5
+    SUB_INDENT, SUB_SCALE = 20, 0.72
     bar_max = W - LABEL_W - VAL_W - 20
-    H = row_h * len(plotted) + 8
+    heights = [sub_row_h if e.get('sub') else row_h for e in plotted]
+    H = sum(heights) + 8
     parts = [
         f"<svg viewBox='0 0 {W} {H}' xmlns='http://www.w3.org/2000/svg' "
         f"style='width:100%; height:auto; font-family:{_BODY_FONT};'>"
     ]
     y = 4
-    for e in plotted:
+    for e, h in zip(plotted, heights):
+        is_sub = bool(e.get('sub'))
         pct = float(e['pct'])
-        cy = y + row_h / 2
-        bar_len = max(3.0, bar_max * pct / 100.0)
+        cy = y + h / 2
+        label_x = LABEL_W - 12 - (SUB_INDENT if is_sub else 0)
+        bar_x = LABEL_W + (SUB_INDENT if is_sub else 0)
+        row_bar_max = bar_max - (SUB_INDENT if is_sub else 0)
+        bar_h = BAR_H * (SUB_SCALE if is_sub else 1.0)
+        label_fs = LABEL_FS * (SUB_SCALE if is_sub else 1.0)
+        val_fs = VAL_FS * (SUB_SCALE if is_sub else 1.0)
+        bar_len = max(3.0, row_bar_max * pct / 100.0)
         color = get_pff_color(pct)
         label, value_str = _esc(e['label']), _esc(e.get('value_str', '--'))
         tip = f"{label}: {value_str} — {pct:.0f}th percentile"
         if e.get('help'):
             tip += f" · {_esc(e['help'])}"
         parts.append(
-            f"<text x='{LABEL_W - 12}' y='{cy + LABEL_FS * 0.36:.1f}' text-anchor='end' font-size='{LABEL_FS}' "
-            f"font-weight='600' fill='{C['on_surface']}'>{label}<title>{tip}</title></text>"
+            f"<text x='{label_x:.1f}' y='{cy + label_fs * 0.36:.1f}' text-anchor='end' font-size='{label_fs:.1f}' "
+            f"font-weight='{500 if is_sub else 600}' fill='{C['on_surface_variant'] if is_sub else C['on_surface']}'>"
+            f"{label}<title>{tip}</title></text>"
         )
         parts.append(
-            f"<rect x='{LABEL_W}' y='{cy - BAR_H / 2:.1f}' width='{bar_max:.1f}' height='{BAR_H}' rx='4' "
+            f"<rect x='{bar_x}' y='{cy - bar_h / 2:.1f}' width='{row_bar_max:.1f}' height='{bar_h:.1f}' rx='4' "
             f"fill='{C['surface_container_high']}' opacity='0.5'/>"
         )
         parts.append(
-            f"<rect x='{LABEL_W}' y='{cy - BAR_H / 2:.1f}' width='{bar_len:.1f}' height='{BAR_H}' rx='4' "
-            f"fill='{color}'><title>{tip}</title></rect>"
+            f"<rect x='{bar_x}' y='{cy - bar_h / 2:.1f}' width='{bar_len:.1f}' height='{bar_h:.1f}' rx='4' "
+            f"fill='{color}' opacity='{0.85 if is_sub else 1.0}'><title>{tip}</title></rect>"
         )
         parts.append(
-            f"<text x='{LABEL_W + bar_max + 14}' y='{cy + VAL_FS * 0.36:.1f}' font-size='{VAL_FS}' "
-            f"font-family='{_MONO_FONT}' fill='{C['on_surface']}'>{value_str}</text>"
+            f"<text x='{LABEL_W + bar_max + 14}' y='{cy + val_fs * 0.36:.1f}' font-size='{val_fs:.1f}' "
+            f"font-family='{_MONO_FONT}' fill='{C['on_surface_variant'] if is_sub else C['on_surface']}'>{value_str}</text>"
         )
-        y += row_h
+        y += h
     parts.append("</svg>")
     st.markdown("".join(parts), unsafe_allow_html=True)
 

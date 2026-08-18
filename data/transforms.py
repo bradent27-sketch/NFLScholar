@@ -799,6 +799,51 @@ def build_recent_trend(_stats_df, name_col, metric='fantasy_points', n_weeks=5):
     return trend
 
 
+def build_form_series(_stats_df, name_col, metric='fantasy_points', n_weeks=5, before_week=None):
+    """
+    Per player: (last n_weeks values oldest->newest, SEASON average over
+    every game in scope, the week numbers behind those values).
+
+    The richer sibling of build_recent_trend, for a sparkline that draws a
+    reference line as well as a trend - the season average has to come from
+    the same filtered population the trend does, or the dotted line sits at
+    a level the visible points were never measured against.
+
+    `before_week` gates BOTH halves to games strictly earlier than that week
+    - the whole point of a "recent form" column on a WEEK N projection table
+    is what was known going into week N. Without it, selecting an early week
+    of a completed season shows that player's last five games of the SEASON
+    (December form next to a week-4 projection), which is not a subtle
+    inaccuracy: it is the wrong five games entirely.
+
+    Returns {} for a frame with no weekly rows at all (a roster-only season,
+    HANDOFF.md gotcha #6) rather than a dict of empty series, so a caller
+    can tell "no weekly data exists" from "this player has none".
+    """
+    if _stats_df.empty or 'week' not in _stats_df.columns or metric not in _stats_df.columns:
+        return {}
+    weeks = pd.to_numeric(_stats_df['week'], errors='coerce')
+    keep = weeks.fillna(0) > 0
+    if before_week is not None:
+        keep &= weeks < before_week
+    df = _stats_df[keep].copy()
+    if df.empty:
+        return {}
+    df['week'] = pd.to_numeric(df['week'], errors='coerce')
+    df['_val'] = pd.to_numeric(df[metric], errors='coerce').fillna(0.0)
+    df = df.sort_values('week')
+
+    out = {}
+    for name, g in df.groupby(name_col, observed=True):
+        vals = g['_val'].tolist()
+        if not vals:
+            continue
+        out[name] = (g['_val'].tail(n_weeks).tolist(),
+                     float(sum(vals) / len(vals)),
+                     g['week'].tail(n_weeks).tolist())
+    return out
+
+
 def build_recent_form_rank(_stats_df, name_col, team_col, n_weeks=4):
     """
     Recent-form fantasy output per player - average fantasy points over

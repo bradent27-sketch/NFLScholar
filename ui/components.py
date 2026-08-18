@@ -853,6 +853,80 @@ def render_sticky_game_log(log_df_view, avg_source_df, log_cols, header_map, scr
 
 POSITION_FILTER_OPTIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'FLEX (RB/WR/TE)']
 
+# Lineup-slot groups, not bare position codes - a weekly start/sit table is
+# read by SLOT ("who do I put in my flex"), and RB/WR/TE selected together
+# is a different question than the three of them read one at a time. SUPER
+# FLEX is every position this app's weekly model projects, so it doubles as
+# the "show everything" default without needing a separate All button.
+POSITION_GROUPS = [
+    ('QB', ['QB']),
+    ('RB', ['RB']),
+    ('WR', ['WR']),
+    ('TE', ['TE']),
+    ('FLEX', ['RB', 'WR', 'TE']),
+    ('SUPERFLEX', ['QB', 'RB', 'WR', 'TE']),
+]
+POSITION_GROUP_KEY_PREFIX = 'posgrp_'
+POSITION_GROUP_HELP = {
+    'QB': 'Quarterbacks only',
+    'RB': 'Running backs only',
+    'WR': 'Wide receivers only',
+    'TE': 'Tight ends only',
+    'FLEX': 'Flex-eligible: RB, WR and TE together',
+    'SUPERFLEX': 'Superflex: QB, RB, WR and TE together',
+}
+
+
+def position_group_buttons(key, default='SUPERFLEX', groups=POSITION_GROUPS):
+    """
+    A row of lineup-slot buttons (QB / RB / WR / TE / FLEX / SUPERFLEX)
+    instead of a multiselect - explicit request, and the same reasoning
+    Draft HQ's own button row already documents: a dropdown costs a click to
+    open, a read to find the option and a click to choose, three actions to
+    answer "show me receivers".
+
+    Styled to read like this app's tabs rather than like its pill buttons -
+    the CSS lives in ui.styling.inject_theme, scoped to the `st-key-...`
+    wrapper class Streamlit puts on every keyed widget (the same scoping
+    trick Game Slate's card buttons already use), so nothing else in the app
+    picks up tab styling on its buttons.
+
+    Returns (positions, label). `positions` is the list to filter a Pos
+    column against.
+    """
+    state_key = f'{key}_group'
+    current = st.session_state.get(state_key, default)
+    labels = [lbl for lbl, _ in groups]
+    if current not in labels:
+        current = default
+    # Weighted by label length, plus a trailing spacer, so the row reads as
+    # a compact group of pills against the left edge rather than six
+    # equal-width slabs spread across the page. width="content" (not
+    # "stretch") is what actually keeps each pill the size of its own label
+    # - a stretched button fills its whole column and the pill stops looking
+    # like a pill.
+    weights = [max(2.0, len(lbl) * 0.75) for lbl, _p in groups]
+    cols = st.columns(weights + [sum(weights) * 0.6], gap="small")
+    for col, (label, _positions) in zip(cols, groups):
+        with col:
+            # Key prefix is fixed (not caller-controlled) so ONE CSS rule in
+            # inject_theme can style every position-group row in the app -
+            # Streamlit stamps `st-key-<key>` onto each widget's container,
+            # and that class is the only hook page CSS gets on a button.
+            if st.button(label, key=f'{POSITION_GROUP_KEY_PREFIX}{key}_{label}', width="content",
+                         help=POSITION_GROUP_HELP.get(label),
+                         type="primary" if current == label else "secondary"):
+                st.session_state[state_key] = label
+                st.rerun()
+    return dict(groups).get(current, []), current
+
+
+def apply_position_group(df, positions, pos_col='Pos'):
+    """Filter to a position group; an empty/None group means no filtering."""
+    if not positions or df.empty or pos_col not in df.columns:
+        return df
+    return df[df[pos_col].astype(str).str.upper().isin(positions)]
+
 
 def import_hint(*keys, expanded=None):
     """

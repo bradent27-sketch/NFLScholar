@@ -99,7 +99,12 @@ COLUMN_HELP = {
     'VORP vs FantasyPros': "Positive means this app's VORP model ranks the player higher (better) than FantasyPros does",
     'VORP vs Custom': "Positive means this app's VORP model ranks the player higher (better) than your uploaded ranking does",
     'Proj Pts (17-gm pace)': "Last season's per-game pace stretched to a 17-game season - a volume-based stand-in, not a real projection",
-    'Rank': "Positional rank for the selected week (e.g. \"RB4\"), shaded by tier - a cluster break in Model Proj Pts at that position, not a fixed players-per-tier cutoff",
+    'Rank': "The table's default order: FantasyPros' positional rank when their weekly projection has been pulled, this app's model rank otherwise. Sorts WOVEN (QB1, RB1, WR1, TE1, QB2, ...) so no one position sweeps the top; an unranked player shows an em dash and sorts to the bottom",
+    'Model Rank': "This app's own positional rank for the selected week (e.g. \"RB4\"), shaded by tier - a cluster break in Model Proj Pts at that position, not a fixed players-per-tier cutoff",
+    'Market Rank': "Positional rank derived from this week's live sportsbook player-prop lines. An em dash means the books posted no line this app scores for that player",
+    'FantasyPros Rank': "Positional rank derived from FantasyPros' own weekly points projection. An em dash means their pull didn't cover that player",
+    'Last 5 Weeks': "Fantasy points over the last 5 games played (teal line), with the dotted line at that season's average - above the dots is a hot stretch, below it a cold one",
+    'Injury Status': "Out/Doubtful flags a player the injury report discounts or zeroes in Model Proj Pts",
     'Market Proj Pts': "This week's live sportsbook player-prop lines, re-scored under this league's scoring settings - independent of this app's own model",
     'Market Coverage': "Share of a typical week's fantasy points the market's posted lines actually covered for this player",
     'L5 Avg FPTS': "Average fantasy points over the player's last 5 games played, not a season-long or extrapolated number",
@@ -1177,6 +1182,65 @@ def inject_theme():
         div[class*="st-key-gs_card_"] .stButton button:disabled {{
             opacity: 0.4 !important;
         }}
+
+        /* ---- POSITION-GROUP BUTTONS (Weekly Rankings' QB/RB/WR/TE/FLEX/
+           SUPERFLEX row, ui.components.position_group_buttons) -------------
+           Explicit request: these should read like this app's TABS, not
+           like its pill buttons - a slot filter is a view switcher, the same
+           kind of control a tab is, and the row sits directly under the real
+           sub-tabs. So the rules below deliberately mirror the
+           [data-testid="stTab"] block near the top of this file (full-radius
+           pill, muted display-font label, translucent-white hover, cyan-tint
+           + cyan-text for the selected one) rather than inheriting the solid
+           cyan fill .stButton button[kind="primary"] would otherwise give
+           the active button.
+
+           Scoped to the `st-key-posgrp_` prefix
+           (ui.components.POSITION_GROUP_KEY_PREFIX), same containment trick
+           as the Game Slate cards above - Streamlit stamps `st-key-<key>`
+           on every keyed widget's container and that class is the only hook
+           page CSS gets on a button. Descendant selector and !important for
+           the same two reasons documented on the Game Slate rules. */
+        div[class*="st-key-posgrp_"] .stButton button {{
+            background: transparent !important;
+            border: 1px solid transparent !important;
+            border-radius: {R['full']} !important;
+            color: {C['on_surface_variant']} !important;
+            font-family: {F['display']};
+            font-size: 11px !important;
+            font-weight: 600 !important;
+            letter-spacing: 0;
+            padding: 5px 10px !important;
+            min-height: 0 !important;
+            box-shadow: none !important;
+        }}
+        div[class*="st-key-posgrp_"] .stButton button p {{
+            font-size: 11px !important;
+            font-weight: 600 !important;
+        }}
+        div[class*="st-key-posgrp_"] .stButton button:hover:not(:disabled) {{
+            background: rgba(255, 255, 255, 0.05) !important;
+            border-color: transparent !important;
+            color: {C['on_surface']} !important;
+            transform: translateY(-1px);
+            box-shadow: none !important;
+        }}
+        div[class*="st-key-posgrp_"] .stButton button:active {{
+            transform: scale(0.96) !important;
+        }}
+        div[class*="st-key-posgrp_"] .stButton button[kind="primary"] {{
+            background: rgba(0, 255, 249, 0.10) !important;
+            color: {C['primary']} !important;
+            border: 1px solid rgba(0, 255, 249, 0.28) !important;
+            filter: none !important;
+        }}
+        div[class*="st-key-posgrp_"] .stButton button[kind="primary"] p {{
+            color: {C['primary']} !important;
+        }}
+        div[class*="st-key-posgrp_"] .stButton button[kind="primary"]:hover {{
+            background: rgba(0, 255, 249, 0.17) !important;
+            box-shadow: 0 3px 12px rgba(0, 255, 249, 0.18) !important;
+        }}
         </style>
     """, unsafe_allow_html=True)
 
@@ -1406,7 +1470,8 @@ def get_tier_color(tier):
     return TIER_COLORS[min(index, len(TIER_COLORS) - 1)]
 
 
-def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None, tier_cols=None):
+def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None, tier_cols=None,
+                          label_cols=None):
     """
     Sortable Styler for st.dataframe (historical totals, risers, rookie
     watch, rankings, VORP sheet, odds tables, coverage scheme tendencies).
@@ -1451,6 +1516,19 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     alongside it. Takes precedence over everything else, since a caller that
     passes this has already decided tier is the right read for that column.
 
+    label_cols: dict of {column_name: {raw_value: display_text}} - keeps a
+    column's UNDERLYING values numeric while showing text in the cell (e.g.
+    Weekly Rankings' rank columns, which store a sortable number and display
+    "RB4"). This is not cosmetic sugar: st.dataframe's grid sorts on the raw
+    Arrow value and only DISPLAYS the Styler's formatted string (confirmed
+    by reading the frontend's own sort comparator - a text column is sorted
+    with localeCompare, which puts "QB10" between "QB1" and "QB2", and a
+    null/None sorts to the TOP of an ascending sort rather than the bottom).
+    Storing a number and labelling it here is what makes a rank column sort
+    the way a rank column should. Any value not in the mapping falls back to
+    the em-dash blank, which is how a sentinel "this source didn't rank him"
+    value renders without pretending to be a real rank.
+
     Every numeric column also gets an explicit, auto-detected decimal count
     (see the loop below) - without it, whatever raw float precision the
     underlying dtype happens to carry gets displayed as-is: a float32
@@ -1464,6 +1542,7 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     diverging_cols = diverging_cols or {}
     matchup_pct_cols = matchup_pct_cols or {}
     tier_cols = tier_cols or {}
+    label_cols = label_cols or {}
     pct_arrays = {col: list(vals) for col, vals in numeric_pct_cols.items()}
     matchup_arrays = {col: list(vals) for col, vals in matchup_pct_cols.items()}
     tier_arrays = {col: list(vals) for col, vals in tier_cols.items()}
@@ -1547,6 +1626,13 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
 
     fmt = {}
     for col in df.columns:
+        # A labelled column is formatted from its own value->text mapping
+        # and never falls through to the numeric-decimal logic below, which
+        # would otherwise print the sortable raw number instead of the label.
+        if col in label_cols:
+            mapping = label_cols[col]
+            fmt[col] = lambda v, _m=mapping: _m.get(v, '\u2014')
+            continue
         # Booleans are numeric as far as pandas is concerned, and a
         # "{:.0f}" on one turns a checkbox column's True into a literal "1".
         # They carry no decimals to decide on, so they're skipped outright.

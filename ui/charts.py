@@ -585,3 +585,91 @@ def render_split_bars(rows, left_label, right_label):
         y += row_h
     parts.append("</svg>")
     st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
+# In-cell sparkline (st.dataframe), as a self-contained SVG data URI.
+#
+# WHY THIS EXISTS RATHER THAN st.column_config.LineChartColumn. That native
+# column is what Rookie Watch / Risers already use and it draws exactly the
+# teal trend line wanted here - but it draws ONLY that line. Its whole cell
+# payload is {values, yAxis, color, graphKind}; there is no reference-line
+# option anywhere in it (verified by reading the rendered sparkline cell in
+# Streamlit's own frontend bundle, not by guessing from the docs), so a
+# dotted "season average" line next to the trend is not expressible through
+# it at all.
+#
+# st.column_config.ImageColumn, by contrast, accepts a data URI per cell and
+# draws it into the cell scaled to the row height, which makes an inline SVG
+# the one way to get BOTH lines in one column. The SVG is base64-encoded
+# rather than pasted raw into the URI: an un-encoded '#' (every colour here
+# is a hex literal) starts a URI fragment and silently truncates the image.
+# ---------------------------------------------------------------------------
+# Aspect ratio matters more than absolute size here: the grid draws an image
+# cell scaled to the ROW height and takes the width from the aspect ratio, so
+# a too-wide SVG overflows a "small" column and gets clipped by the next one.
+# 88x34 lands at roughly 70px wide against a 42px row, which fits.
+_SPARK_W, _SPARK_H = 88, 34
+
+
+def sparkline_data_uri(values, avg=None, line_color=None, width=_SPARK_W, height=_SPARK_H):
+    """
+    A tiny trend sparkline as a `data:image/svg+xml;base64,...` string, for
+    an st.column_config.ImageColumn cell.
+
+    `values`   - the per-game series, oldest to newest (the teal line).
+    `avg`      - optional reference level drawn as a DOTTED horizontal line
+                 (this app's existing dashed-average convention, see
+                 render_game_log_line above - same `stroke-dasharray` idea,
+                 tightened to a dot pattern at this size because a 5,5 dash
+                 reads as a solid line across 130px).
+
+    Y-scale is 0..max(series, avg) with a little headroom rather than
+    LineChartColumn's own min..max auto-normalisation: zero is a real,
+    meaningful floor for fantasy points, and an average line drawn against a
+    min-normalised axis would sit at an arbitrary height that doesn't mean
+    what it looks like it means.
+
+    Returns None for an empty series, so a caller can leave the cell blank
+    instead of drawing a chart of nothing.
+    """
+    import base64
+
+    vals = [float(v) for v in (values or []) if v is not None]
+    if not vals:
+        return None
+    if len(vals) == 1:
+        vals = [vals[0], vals[0]]
+    color = line_color or C['primary']
+    pad_x, pad_y = 3.0, 4.0
+    plot_w, plot_h = width - 2 * pad_x, height - 2 * pad_y
+    top = max(max(vals), float(avg) if avg is not None else 0.0)
+    top = top * 1.12 if top > 0 else 1.0
+
+    def y_at(v):
+        return pad_y + plot_h - plot_h * (max(0.0, float(v)) / top)
+
+    step = plot_w / (len(vals) - 1)
+    pts = [(pad_x + step * i, y_at(v)) for i, v in enumerate(vals)]
+    line = "M" + " L".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+
+    parts = [
+        f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' "
+        f"viewBox='0 0 {width} {height}'>"
+    ]
+    if avg is not None and float(avg) >= 0:
+        ay = y_at(avg)
+        parts.append(
+            f"<line x1='{pad_x:.1f}' y1='{ay:.1f}' x2='{width - pad_x:.1f}' y2='{ay:.1f}' "
+            f"stroke='{C['on_surface_variant']}' stroke-width='1.1' stroke-dasharray='2,2' opacity='0.85'/>"
+        )
+    parts.append(
+        f"<path d='{line}' fill='none' stroke='{color}' stroke-width='1.8' "
+        f"stroke-linecap='round' stroke-linejoin='round'/>"
+    )
+    parts.append(
+        f"<circle cx='{pts[-1][0]:.1f}' cy='{pts[-1][1]:.1f}' r='2.1' fill='{color}'/>"
+    )
+    parts.append("</svg>")
+    svg = "".join(parts)
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode('utf-8')).decode('ascii')

@@ -23,13 +23,15 @@ import streamlit as st
 
 from config import AVAILABLE_SEASONS_WITH_UPCOMING
 from data.draft_board import DEFAULT_SCORING, tier_by_position
-from data.transforms import load_and_merge_data, build_recent_form_rank, build_recent_trend
+from data.transforms import load_and_merge_data, build_recent_form_rank, build_form_series
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
 from data.weekly_projections import build_weekly_projections
 from data.odds_weekly import weekly_props, weekly_market_projection
+from ui.charts import sparkline_data_uri
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
-from ui.components import position_filter_multiselect, skeleton_loader, import_hint
+from ui.components import (position_group_buttons, apply_position_group, skeleton_loader,
+                           import_hint)
 
 _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing_yards',
                     'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds']
@@ -272,22 +274,79 @@ def _fantasypros_points_column(scoring_mode):
            'Standard': 'FP Proj Pts'}[scoring_mode]
 
 
-def _positional_rank_col(df, value_col):
+def _form_entry(form_series, name):
+    """(values, season average) for one player's sparkline, or ([], None)
+    when this season has nothing for him - a rookie, or anyone who hasn't
+    played yet. Split out so the list comprehension that builds the column
+    stays readable."""
+    entry = form_series.get(name)
+    if not entry:
+        return [], None
+    values, season_avg, _weeks = entry
+    return values, season_avg
+
+
+# Position slot order inside one woven rank value (see _woven_rank below).
+# Any position not listed shares the last slot - the model only ever emits
+# QB/RB/WR/TE, the rest are here so the encoding survives a future caller.
+_RANK_POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DST']
+_RANK_SLOTS = 10
+
+
+def _woven_rank(df, value_col, pos_col='Pos'):
     """
     A positional rank column ('RB4' style, matching the app's existing
     convention) from any points column - one per projection SOURCE (model,
-    market, FantasyPros), so the three can be read and compared side by
-    side rather than only this app's own model carrying a rank at all.
+    market, FantasyPros), so the three can be read and compared side by side
+    rather than only this app's own model carrying a rank at all.
 
-    Sentinel-safe the same way every other rank column in this app is
-    (HANDOFF.md gotcha #5): a player this source has no number for gets a
-    real blank, not a NaN that could sort to the top of the grid.
+    Returns (int64 Series, {value: display label}). The column that goes
+    into the grid is a NUMBER; the label is applied by
+    ui.styling.style_plain_dataframe's `label_cols` at render time. That
+    split is the whole point of this function, and it fixes three separate
+    real complaints about the old string-valued version at once:
+
+      1. A string rank column sorts with localeCompare in the grid, so
+         "QB10" lands between "QB1" and "QB2" - a rank column that doesn't
+         sort in rank order.
+      2. A string rank column also sorts every QB above every RB above every
+         WR (alphabetical on the position prefix), so "sort by rank" buried
+         every other position under the quarterbacks instead of showing the
+         positions WOVEN together.
+      3. A missing rank (a source that doesn't carry this player) sorted to
+         the TOP of an ascending sort, not the bottom - the grid reads a
+         null cell as an empty string and an empty string compares below
+         every number (HANDOFF.md gotcha #5, confirmed here by reading the
+         frontend's own comparator).
+
+    The encoding is `rank * _RANK_SLOTS + position_slot`, so ascending order
+    is QB1, RB1, WR1, TE1, QB2, RB2, ... - every position's Nth-best player
+    sitting together, which is what "ranked together" means for a start/sit
+    table. Unranked players get `(worst_rank + 1) * _RANK_SLOTS + slot`, a
+    real number worse than every real rank (so it sorts last, in either
+    direction, deterministically) that labels as an em dash rather than
+    pretending to be a rank.
     """
-    if value_col not in df.columns or 'Pos' not in df.columns:
-        return pd.Series([None] * len(df), index=df.index, dtype=object)
-    pos_rank = df.groupby('Pos')[value_col].rank(ascending=False, method='first')
-    out = df['Pos'].astype(str) + pos_rank.astype('Int64').astype(str)
-    return out.where(df[value_col].notna(), None)
+    empty = (None, {})
+    if value_col not in df.columns or pos_col not in df.columns or df.empty:
+        return empty
+    values = pd.to_numeric(df[value_col], errors='coerce')
+    if not values.notna().any():
+        return empty
+
+    positions = df[pos_col].astype(str).str.upper()
+    ranks = pd.DataFrame({'_v': values, '_p': positions}).groupby('_p')['_v'].rank(
+        ascending=False, method='first')
+    slots = positions.map(
+        lambda p: _RANK_POSITION_ORDER.index(p) if p in _RANK_POSITION_ORDER else len(_RANK_POSITION_ORDER))
+    sentinel_rank = int(ranks.max()) + 1
+    filled = ranks.fillna(sentinel_rank).astype(int)
+    encoded = (filled * _RANK_SLOTS + slots).astype('int64')
+
+    labels = {}
+    for enc, pos, rank, is_real in zip(encoded, positions, filled, ranks.notna()):
+        labels[int(enc)] = f'{pos}{int(rank)}' if is_real else '—'
+    return encoded, labels
 
 
 def render():
@@ -345,8 +404,9 @@ def render():
             st.caption("Showing FantasyPros' live weekly projection instead:")
             fp_pts_col = _fantasypros_points_column(wk_scoring)
             cols = ['Player', 'Pos', 'Team'] + ([fp_pts_col] if fp_pts_col in fp_weekly.columns else [])
-            display_df = position_filter_multiselect(fp_weekly[cols].rename(
-                columns={fp_pts_col: 'FantasyPros Proj Pts'}), key="weekly_rank_pos_filter")
+            fp_only = fp_weekly[cols].rename(columns={fp_pts_col: 'FantasyPros Proj Pts'})
+            fp_positions, _fp_group = position_group_buttons('wrfp', default='SUPERFLEX')
+            display_df = apply_position_group(fp_only, fp_positions, pos_col='Pos')
             display_df = _limit_rows(display_df, key="weekly_rank_show_n")
             indexed = display_df.set_index('Player')
             st.dataframe(style_plain_dataframe(indexed), width="stretch",
@@ -375,26 +435,53 @@ def render():
                 # number, not a broken one.
                 merged_model['Market Coverage'] = merged_model['Market Coverage'].map(
                     lambda v: f"{v * 100:.0f}%" if pd.notna(v) else None)
-        if not form_df.empty:
-            merged_model = _attach_by_name(merged_model, form_df, ['Recent Avg FPTS'], '')
-            merged_model = merged_model.rename(columns={'Recent Avg FPTS': 'L5 Avg FPTS'})
-
         # Ranking column, directly after Opponent, colored by TIER rather
         # than a continuous scale - explicit request. Tiers are clustered
         # per position on Model Proj Pts wherever a significant cutoff
         # actually falls (data.draft_board.tier_by_position, the same
         # k-means-on-points technique Draft HQ's board tiers with), not a
         # fixed players-per-tier bucket.
+        # Tier shading for the model's own rank column - explicit request.
+        # Tiers are clustered per position on Model Proj Pts wherever a
+        # significant cutoff actually falls (data.draft_board.tier_by_position,
+        # the same k-means-on-points technique Draft HQ's board tiers with),
+        # not a fixed players-per-tier bucket.
         merged_model['_tier'] = tier_by_position(merged_model, 'Model Proj Pts', pos_col='Pos')
-        merged_model['Model Rank'] = _positional_rank_col(merged_model, 'Model Proj Pts')
+
         # One rank column per projection SOURCE, not just this app's own
-        # model - explicit request. Same positional-rank shape as Model
-        # Rank so the three read consistently side by side; only shown when
-        # that source actually produced a points column to rank.
-        if 'Market Proj Pts' in merged_model.columns:
-            merged_model['Market Rank'] = _positional_rank_col(merged_model, 'Market Proj Pts')
-        if 'FantasyPros Proj Pts' in merged_model.columns:
-            merged_model['FantasyPros Rank'] = _positional_rank_col(merged_model, 'FantasyPros Proj Pts')
+        # model - explicit request. Each is a sortable NUMBER carrying a
+        # "RB4" label (see _woven_rank for why that split exists and which
+        # three sorting bugs it fixes); only built when that source actually
+        # produced a points column to rank. Computed on the FULL pool, before
+        # the position filter and row limit below, so "RB4" always means
+        # fourth among every RB rather than fourth among what's on screen.
+        rank_labels = {}
+        for rank_col, points_col in (('Model Rank', 'Model Proj Pts'),
+                                     ('Market Rank', 'Market Proj Pts'),
+                                     ('FantasyPros Rank', 'FantasyPros Proj Pts')):
+            if points_col not in merged_model.columns:
+                continue
+            values, labels = _woven_rank(merged_model, points_col)
+            if values is None:
+                continue
+            merged_model[rank_col] = values
+            rank_labels[rank_col] = labels
+
+        # The leading "Rank" column is the table's scan anchor and its
+        # default sort - FantasyPros' rank when their projection has actually
+        # been pulled this session, this app's model rank otherwise. It
+        # deliberately repeats one of the three source ranks at the far right
+        # rather than being a fourth, separate ranking: the requested layout
+        # puts a rank first (what am I looking at) and the full three-source
+        # comparison last (who disagrees with whom).
+        primary_rank = next((c for c in ('FantasyPros Rank', 'Model Rank') if c in rank_labels), None)
+        if primary_rank:
+            merged_model['Rank'] = merged_model[primary_rank]
+            rank_labels['Rank'] = rank_labels[primary_rank]
+            # Woven order by construction (QB1, RB1, WR1, TE1, QB2, ...), the
+            # ordering the whole encoding exists to produce - so the table
+            # OPENS in it instead of only reaching it after a header click.
+            merged_model = merged_model.sort_values('Rank', kind='mergesort').reset_index(drop=True)
 
         # Does our model's rank actually MATCH FantasyPros' own published
         # consensus rank (their real ECR, not the positional rank derived
@@ -424,62 +511,104 @@ def render():
                        if c in ecr_comparison.columns]
                 merged_model = merged_model.merge(ecr_comparison[keep], on='Player', how='left')
 
-        display_cols = ['Player', 'Pos', 'Team', 'Opponent', 'Model Rank']
-        if 'Market Rank' in merged_model.columns:
-            display_cols.append('Market Rank')
-        if 'FantasyPros Rank' in merged_model.columns:
-            display_cols.append('FantasyPros Rank')
-        if 'FantasyPros ECR' in merged_model.columns:
-            display_cols += ['FantasyPros ECR', 'Model vs FantasyPros ECR']
-        display_cols += [label for col, label in _STAT_DISPLAY_COLS if col in merged_model.columns]
+        merged_model = merged_model.rename(columns={'Pos': 'Position'})
         merged_model = merged_model.rename(columns=dict(_STAT_DISPLAY_COLS))
-        display_cols.append('Model Proj Pts')
-        if 'Market Proj Pts' in merged_model.columns:
-            display_cols.append('Market Proj Pts')
-        if 'Market Coverage' in merged_model.columns:
-            display_cols.append('Market Coverage')
-        if 'FantasyPros Proj Pts' in merged_model.columns:
-            display_cols.append('FantasyPros Proj Pts')
-        if 'L5 Avg FPTS' in merged_model.columns:
-            display_cols.append('L5 Avg FPTS')
-        display_cols.append('Injury Status')
 
+        # Explicit column order, per request: identity first, then the three
+        # projections side by side, then the stat line behind this app's own
+        # number, then the context columns, then the three source ranks
+        # together as a comparison block at the end.
+        display_cols = ['Rank', 'Player', 'Position', 'Team', 'Opponent',
+                        'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts']
+        display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
+        display_cols += ['Market Coverage', 'Injury Status', 'Last 5 Weeks',
+                        'FantasyPros Rank', 'Model Rank', 'Market Rank',
+                        'FantasyPros ECR', 'Model vs FantasyPros ECR']
+
+        # 'Last 5 Weeks' is built per-displayed-row further down, so it isn't
+        # a real column yet at slicing time.
         keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier']
-        filtered_df = position_filter_multiselect(merged_model[keep_cols], key="weekly_rank_pos_filter")
+        positions, group_label = position_group_buttons('wr', default='SUPERFLEX')
+        filtered_df = apply_position_group(merged_model[keep_cols], positions, pos_col='Position')
         total_filtered = len(filtered_df)
         display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
         tier_values = display_df['_tier'].tolist()
         display_df = display_df.drop(columns=['_tier'])
         indexed = display_df.set_index('Player')
 
-        # A sparkline next to the bare L5 average - same in-house pattern
-        # Risers/Waiver Wire already uses (data.transforms.build_recent_trend
-        # + st.column_config.LineChartColumn), reused rather than reinvented
-        # so a real per-week trend is visible without opening Player Search.
-        trend_map = build_recent_trend(df_stats, n_col, metric='fantasy_points', n_weeks=RECENT_FORM_GAMES)
-        indexed['Last 5 Wks'] = [trend_map.get(name, []) for name in indexed.index]
+        # Recent-form sparkline: the last five games' fantasy points as a
+        # line, with the player's SEASON average as a dotted reference line
+        # under it - explicit request, and the reason this is an inline SVG
+        # in an ImageColumn rather than the st.column_config.LineChartColumn
+        # Rookie Watch/Risers use (that column can draw the line and nothing
+        # else - see ui.charts.sparkline_data_uri).
+        #
+        # Gated to games BEFORE the selected week, which is also the fix for
+        # "Last 5 Weeks doesn't currently show anything": this tab opens on
+        # the UPCOMING season/week, and an upcoming season has no weekly stat
+        # rows at all, so every cell was correctly-but-uselessly empty. When
+        # that happens the series falls back to the prior season, captioned,
+        # the same "based on last season" fallback the model itself already
+        # makes for a cold-start week (see build_weekly_projections).
+        form_series = build_form_series(df_stats, n_col, metric='fantasy_points',
+                                        n_weeks=RECENT_FORM_GAMES, before_week=wk_week)
+        form_source_year = wk_year
+        if not form_series:
+            try:
+                prior_stats, _pt, _pn, _ = load_and_merge_data(wk_year - 1, wk_scoring)
+                form_series = build_form_series(prior_stats, _pn, metric='fantasy_points',
+                                                n_weeks=RECENT_FORM_GAMES)
+                form_source_year = wk_year - 1
+            except Exception:
+                form_series = {}
+        indexed['Last 5 Weeks'] = [
+            sparkline_data_uri(*_form_entry(form_series, name)) for name in indexed.index
+        ]
+        # Re-apply the requested order now that Last 5 Weeks exists - it has
+        # to be built per DISPLAYED row (one SVG each), which is after the
+        # slice above, so it lands on the end of the frame rather than in
+        # its requested slot between Injury Status and the rank block.
+        indexed = indexed[[c for c in display_cols if c in indexed.columns]]
 
         pct_cols = {}
-        for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts', 'L5 Avg FPTS'):
+        for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
             if c in indexed.columns and indexed[c].notna().any():
                 pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
-        column_config = build_column_help_config(indexed, pinned_cols=['Team', 'Pos', 'Opponent', 'Model Rank'])
-        column_config['Last 5 Wks'] = st.column_config.LineChartColumn(
-            help="Fantasy points trend over this player's last 5 games played", width="small",
+        column_config = build_column_help_config(
+            indexed, pinned_cols=['Rank', 'Team', 'Position', 'Opponent'])
+        column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
+            help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
+                  f"({form_source_year}), with the dotted line at that season's average"),
+            width="small",
         )
         st.dataframe(
-            style_plain_dataframe(indexed, numeric_pct_cols=pct_cols, tier_cols={'Model Rank': tier_values}),
-            width="stretch", height=df_auto_height(min(len(display_df), 40)),
-            column_config=column_config,
+            style_plain_dataframe(indexed, numeric_pct_cols=pct_cols,
+                                  tier_cols={'Model Rank': tier_values} if 'Model Rank' in indexed.columns else None,
+                                  label_cols={c: labels for c, labels in rank_labels.items()
+                                              if c in indexed.columns}),
+            width="stretch", height=df_auto_height(min(len(display_df), 40), row_px=42),
+            row_height=42, column_config=column_config,
         )
+        shown_note = f"Showing {len(display_df)} of {total_filtered} {group_label} players"
         if total_filtered > len(display_df):
-            st.caption(f"Showing {len(display_df)} of {total_filtered} players — widen \"Show\" above to see more.")
+            st.caption(f"{shown_note} — widen \"Show\" above to see more.")
+        else:
+            st.caption(f"{shown_note}.")
+        if form_source_year != wk_year:
+            st.caption(
+                f"↩︎ **Last 5 Weeks** falls back to {form_source_year} — {wk_year} has no played "
+                "games before the selected week to chart yet."
+            )
         st.caption(
-            "**Model Rank** / **Market Rank** / **FantasyPros Rank** are each source's own "
-            "positional rank (e.g. \"RB4\"), so the three can be read side by side rather than "
-            "only this app's model carrying a rank at all — Model Rank is shaded by tier, a "
-            "cluster break in Model Proj Pts at that position, not a fixed players-per-tier "
-            "cutoff. **FantasyPros ECR** (when a weekly FantasyPros export is uploaded below) is "
+            "**Rank** is the table's default order and its scan anchor — FantasyPros' positional "
+            "rank when their projection has been pulled above, this app's model rank otherwise. "
+            "Every rank column sorts WOVEN (QB1, RB1, WR1, TE1, QB2, …) rather than alphabetically, "
+            "so no single position sweeps the top of the table, and a player a source doesn't rank "
+            "shows \"—\" and sorts to the bottom instead of the top. "
+            "**FantasyPros Rank** / **Model Rank** / **Market Rank** at the right are each source's "
+            "own positional rank, side by side — Model Rank is shaded by tier, a cluster break in "
+            "Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
+            "**FantasyPros ECR** (when a weekly FantasyPros export is uploaded below) is "
             "their own REAL published consensus rank, not derived from the points projection above "
             "it — **Model vs FantasyPros ECR** shows how far apart the two actually are, which is "
             "not always the same story a proj-pts comparison alone would tell, since a published "
@@ -529,7 +658,8 @@ def render():
     merged = form_df.merge(comparison[['Player'] + extra_cols], on='Player', how='left')
     merged = merged.rename(columns={'Recent Avg FPTS': 'L5 Avg FPTS'})
 
-    display_df = position_filter_multiselect(merged, key="weekly_rank_upload_pos_filter")
+    upload_positions, _upload_group = position_group_buttons('wrup', default='SUPERFLEX')
+    display_df = apply_position_group(merged, upload_positions, pos_col='Pos')
     display_df = _limit_rows(display_df, key="weekly_rank_upload_show_n")
 
     diverging_cols = {}

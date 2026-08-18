@@ -41,6 +41,7 @@ from data.draft_sim import (
     run_many_drafts, pick_slot_comparison, optimal_lineup_points,
 )
 from data.draft_projections import build_projected_board
+import data.draft_big_plays as draft_big_plays
 from data.draft_sos import build_team_sos, attach_sos_to_board, adp_quartiles, WEEK_PRESETS
 from data.draft_season_sim import grade_roster_wins, simulate_seasons
 from data.draft_intel import (
@@ -216,6 +217,11 @@ def _cfg():
         cfg.setdefault(key, value)
     if cfg.get('sos_window') not in WEEK_PRESETS:
         cfg['sos_window'] = list(WEEK_PRESETS.keys())[0]
+    # NOT folded into SETTING_DEFAULTS - a list value there would be ONE
+    # object shared by reference into every session's cfg via setdefault(),
+    # so a later in-place mutation on one session's rules could leak into
+    # another's. A fresh [] literal here every call sidesteps that entirely.
+    cfg.setdefault('big_play_bonuses', [])
     return cfg
 
 
@@ -646,6 +652,49 @@ def _render_settings_panel(cfg):
                 cfg[key] = st.number_input(f"{threshold}+ pass yds", 0.0, 20.0,
                                            float(cfg[key]), step=0.5)
 
+        st.markdown("**Big-play bonuses**")
+        st.caption(
+            "Points for a single PLAY crossing a yard threshold - e.g. +2 points for any "
+            "reception of 40+ yards. Different from the per-game bonuses above, which look "
+            "at a whole game's total yardage; this looks at one play. Add as many rules as "
+            "your league runs and remove any of them - use the blank bottom row to add one, "
+            "select a row's checkbox and press delete to remove it. Priced from each "
+            "player's own recent history of that exact play length, blended toward his "
+            "position's typical rate so a thin sample doesn't read as an established skill."
+        )
+        _bp_edit_df = pd.DataFrame([
+            {'Play type': draft_big_plays.CATEGORY_LABELS.get(r.get('category'), r.get('category')),
+             'Yards ≥': r.get('threshold'), 'Points': r.get('points')}
+            for r in (cfg.get('big_play_bonuses') or [])
+        ])
+        if _bp_edit_df.empty:
+            _bp_edit_df = pd.DataFrame({
+                'Play type': pd.Series(dtype='object'),
+                'Yards ≥': pd.Series(dtype='float'),
+                'Points': pd.Series(dtype='float'),
+            })
+        _bp_edited = st.data_editor(
+            _bp_edit_df, num_rows="dynamic", hide_index=True, width='stretch',
+            key='dhq_big_play_editor',
+            column_config={
+                'Play type': st.column_config.SelectboxColumn(
+                    options=list(draft_big_plays.CATEGORY_LABELS.values()), required=True),
+                'Yards ≥': st.column_config.NumberColumn(min_value=1, max_value=99, step=1,
+                                                              required=True),
+                'Points': st.column_config.NumberColumn(min_value=-10.0, max_value=10.0,
+                                                        step=0.5, required=True),
+            },
+        )
+        _bp_rules = []
+        for _, _row in _bp_edited.iterrows():
+            _category = draft_big_plays.LABEL_TO_CATEGORY.get(_row.get('Play type'))
+            _threshold = pd.to_numeric(_row.get('Yards ≥'), errors='coerce')
+            _points = pd.to_numeric(_row.get('Points'), errors='coerce')
+            if _category and pd.notna(_threshold) and pd.notna(_points):
+                _bp_rules.append({'category': _category, 'threshold': float(_threshold),
+                                  'points': float(_points)})
+        cfg['big_play_bonuses'] = _bp_rules
+
         st.markdown("---")
         st.markdown("#### Draft & Market Settings")
         d1, d2, d3 = st.columns(3)
@@ -666,6 +715,7 @@ def _render_settings_panel(cfg):
                      "comes from free mock drafts on its own site and slides tight ends and "
                      "quarterbacks well past where real leagues take them.",
             )
+            st.caption(_ecr_adp_disclosure_note(cfg))
             windows = list(WEEK_PRESETS.keys())
             cfg['sos_window'] = st.selectbox(
                 "Schedule window", windows, index=_pick_index(windows, cfg['sos_window']),
@@ -729,6 +779,44 @@ def _render_settings_panel(cfg):
     return ffa_upload
 
 
+def _ecr_adp_disclosure_note(cfg):
+    """
+    What the pulled ECR and ADP actually reflect right now - so if a future
+    pull looks like it "changed for no reason," the reason is visible here
+    instead of requiring a source-code read.
+
+    ECR (data.draft_sources.build_ecr_board, from the DynastyProcess mirror
+    of FantasyPros) is NOT scoring-adjusted at all - it varies only by the
+    draft-format board picked just above (Redraft 1QB / Superflex / Best
+    Ball / Dynasty variants), never by this league's PPR / Half-PPR /
+    Standard / TE-premium settings. The one exception is the FantasyPros API
+    button under Data imports below, which IS scoring-aware (Standard/Half/
+    Full PPR) but locked to Redraft 1QB only - it can't honor a Superflex or
+    Dynasty board pick.
+
+    ADP (data.draft_sources.fetch_adp) DOES follow the PPR slider (bucketed
+    into Standard / Half-PPR / Full PPR) and whether Superflex is on - but
+    Superflex collapses every scoring level onto the SAME one 'superflex'
+    page, because FantasyPros doesn't publish a scoring-split superflex ADP.
+    Team count only matters on the Fantasy Football Calculator source
+    (manual-only, see the ADP source help above) - every other source is one
+    consensus regardless of league size.
+    """
+    scoring_label = ('Full PPR' if cfg['ppr'] >= 0.75 else 'Half-PPR'
+                     if cfg['ppr'] >= 0.25 else 'Standard')
+    superflex = int(cfg.get('superflex', 0)) > 0
+    adp_bit = (f"ADP reflects **{scoring_label}** scoring"
+              + (", collapsed to FantasyPros' one Superflex page (no PPR split there)"
+                 if superflex else "") + ".")
+    return (
+        f"📌 **What's actually pulled in:** ECR reflects only the **{cfg['board_fmt']}** "
+        f"format above - FantasyPros' free feed isn't split by PPR/Half-PPR/Standard or TE "
+        f"premium, so it won't move if you change League Scoring (the FantasyPros API pull "
+        f"under Data imports below is scoring-aware but locked to Redraft 1QB). {adp_bit} "
+        f"Team count only affects ADP if the source below is Fantasy Football Calculator."
+    )
+
+
 def _settings_from_cfg(cfg, ffa_upload=None):
     """Turn the stored configuration into the dict the whole engine keys off."""
     scoring = dict(DEFAULT_SCORING)
@@ -742,6 +830,9 @@ def _settings_from_cfg(cfg, ffa_upload=None):
     })
     scoring.update({k: float(v) for k, v in cfg.items() if k.startswith('bonus_')
                     and k != 'bonus_mode'})
+    # A list of rule dicts, not a scalar - kept out of the generic
+    # 'bonus_' prefix scan above (which does float(v) on every match).
+    scoring['big_play_bonuses'] = list(cfg.get('big_play_bonuses') or [])
     roster = dict(DEFAULT_ROSTER)
     roster.update({'QB': int(cfg['qb']), 'RB': int(cfg['rb']), 'WR': int(cfg['wr']),
                    'TE': int(cfg['te']), 'K': int(cfg['k']), 'DST': int(cfg['dst']),

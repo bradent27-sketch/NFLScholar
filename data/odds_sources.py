@@ -1752,6 +1752,37 @@ SAVED_PAYLOADS = {
 # places, which is three chances to add a book that silently never loads.
 BOOKS = ('Underdog', 'PrizePicks', 'DraftKings', 'FanDuel', 'Pinnacle')
 
+# USER-SET RELIABILITY WEIGHTS for blending several books' lines on the same
+# stat into one consensus number (data.odds_projections.market_stat_lines).
+# Real sportsbooks (DraftKings, FanDuel, Pinnacle) price a line with their own
+# money behind it and are generally the sharper number; the DFS pick'em
+# products (PrizePicks, Underdog) are included at real but lower weight so the
+# consensus isn't just the three-book average with two data points ignored.
+# Pinnacle carries the most weight of any single book - it is a professional/
+# sharp-market book with historically the lowest margins in the industry, the
+# reference point the rest of this weighting scheme is built around.
+#
+# These are RELATIVE, not a strict 0-100 split (they sum to 100 anyway, which
+# is a coincidence of these five numbers, not a requirement) - a player priced
+# by only two of the five still gets a sensible answer because the weights
+# used are renormalized over whichever books actually posted a line for that
+# stat. See BOOK_WEIGHT_FALLBACK below for what happens when NONE of the
+# providers for a given (player, stat) is in this table.
+BOOK_WEIGHTS = {
+    'DraftKings': 20,
+    'FanDuel': 20,
+    'Pinnacle': 25,
+    'PrizePicks': 20,
+    'Underdog': 15,
+}
+
+# A provider string outside BOOK_WEIGHTS (e.g. a future book added to BOOKS
+# before its weight is set, or a raw 'The Odds API: <bookmaker>' label that
+# slipped through somehow) gets this weight instead of being silently
+# excluded - a plain equal-weight vote, so an unweighted book still counts
+# rather than vanishing from the consensus entirely.
+BOOK_WEIGHT_FALLBACK = 10
+
 # DraftKings serves one stat per call, so its saved import is a LIST of
 # responses rather than one. Uploading them one at a time has to accumulate
 # instead of overwrite, or dropping in Receptions would silently delete

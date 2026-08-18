@@ -21,9 +21,9 @@ convention Draft HQ already uses.
 import pandas as pd
 import streamlit as st
 
-from config import AVAILABLE_SEASONS
+from config import AVAILABLE_SEASONS_WITH_UPCOMING
 from data.draft_board import DEFAULT_SCORING, tier_by_position
-from data.transforms import load_and_merge_data, build_recent_form_rank
+from data.transforms import load_and_merge_data, build_recent_form_rank, build_recent_trend
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
 from data.weekly_projections import build_weekly_projections
@@ -52,6 +52,20 @@ _STAT_DISPLAY_COLS = [
 # "Recent" reads consistently across positions and weeks only if everyone's
 # measured over the same trailing sample.
 RECENT_FORM_GAMES = 5
+
+# Rendering every skill-position player with a projection (300+ rows, each
+# with several percentile-heatmapped columns) was the actual source of a
+# real reported slowdown - the Styler recomputes its per-column heatmap over
+# every visible row on every rerun. Defaulting to the top 50 (already-sorted
+# order, so "top 50" means the 50 most relevant to whatever's currently
+# filtered) with a dropdown to widen it keeps the common case fast without
+# hiding the full pool from anyone who wants it.
+_SHOW_N_OPTIONS = [25, 50, 100, 200, "All"]
+
+
+def _limit_rows(df, key):
+    choice = st.selectbox("Show", _SHOW_N_OPTIONS, index=1, key=key)
+    return df if choice == "All" or len(df) <= choice else df.head(choice)
 
 
 def _week_options(year):
@@ -263,13 +277,22 @@ def render():
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        wk_year = st.selectbox("Season", AVAILABLE_SEASONS, index=0, key="weekly_rank_year")
+        # WITH_UPCOMING (not AVAILABLE_SEASONS) so the season about to start
+        # is selectable and defaults FIRST (index=0) - unlike the tabs that
+        # default to index=1 to skip a season with no weekly stats yet
+        # (Player Search, Depth Charts, ...), this tab's whole job is "what
+        # should I do this week", so once the new season's schedule is live
+        # the always-useful default is the CURRENT/upcoming week, not a
+        # stale prior season's final week (see _default_week_index below -
+        # a season with no games played yet opens on its Week 1).
+        wk_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=0, key="weekly_rank_year")
     weeks = _week_options(wk_year)
     week_labels = [w['label'] for w in weeks]
     with c2:
         wk_week_idx = st.selectbox("Week", range(len(weeks)), index=_default_week_index(weeks),
                                    format_func=lambda i: week_labels[i], key="weekly_rank_week")
     wk_week = weeks[wk_week_idx]['week']
+    wk_week_completed = bool(weeks[wk_week_idx].get('completed')) if weeks else False
     with c3:
         wk_scoring = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="weekly_rank_scoring")
 
@@ -281,7 +304,20 @@ def render():
 
     st.markdown("### This app's weekly model")
     fp_weekly = _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring)
-    market_df = _render_weekly_market_pull(wk_scoring, model_df[['Player']] if not model_df.empty else None)
+    # Sportsbooks only ever post the CURRENT live slate (see odds_weekly's
+    # module docstring - there is no way to ask a book for a past week's
+    # lines), so pulling it for an ALREADY-PLAYED week would silently
+    # attach this week's live board to a table of players from a different
+    # week entirely - the exact "totally looks off" mismatch reported
+    # against this column. Only offered for the upcoming/in-progress week.
+    if wk_week_completed:
+        market_df = None
+        st.caption(
+            f"📈 Market Proj Pts isn't shown for {wk_year} Week {wk_week} — that week is already "
+            "played, and sportsbooks only post the current live slate. Pick the upcoming week to see it."
+        )
+    else:
+        market_df = _render_weekly_market_pull(wk_scoring, model_df[['Player']] if not model_df.empty else None)
     _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring)
 
     if model_df.empty:
@@ -293,6 +329,7 @@ def render():
             cols = ['Player', 'Pos', 'Team'] + ([fp_pts_col] if fp_pts_col in fp_weekly.columns else [])
             display_df = position_filter_multiselect(fp_weekly[cols].rename(
                 columns={fp_pts_col: 'FantasyPros Proj Pts'}), key="weekly_rank_pos_filter")
+            display_df = _limit_rows(display_df, key="weekly_rank_show_n")
             indexed = display_df.set_index('Player')
             st.dataframe(style_plain_dataframe(indexed), width="stretch",
                         height=df_auto_height(min(len(display_df), 40)))
@@ -309,6 +346,17 @@ def render():
             merged_model = _attach_by_name(merged_model, market_df, ['Market Pts', 'Coverage'], 'Mkt ')
             merged_model = merged_model.rename(
                 columns={'Mkt Market Pts': 'Market Proj Pts', 'Mkt Coverage': 'Market Coverage'})
+            if 'Market Coverage' in merged_model.columns:
+                # Missing stats price as ZERO in Market Proj Pts by design
+                # (data.odds_projections.score_market_lines' own docstring -
+                # keeping the market number independent of this app's model
+                # means a gap can't be filled in), which is exactly why a
+                # partial line reads "very low" with no explanation unless
+                # this rides right alongside it - a book that only posted a
+                # receptions prop for someone shows a real but partial
+                # number, not a broken one.
+                merged_model['Market Coverage'] = merged_model['Market Coverage'].map(
+                    lambda v: f"{v * 100:.0f}%" if pd.notna(v) else None)
         if not form_df.empty:
             merged_model = _attach_by_name(merged_model, form_df, ['Recent Avg FPTS'], '')
             merged_model = merged_model.rename(columns={'Recent Avg FPTS': 'L5 Avg FPTS'})
@@ -330,6 +378,8 @@ def render():
         display_cols.append('Model Proj Pts')
         if 'Market Proj Pts' in merged_model.columns:
             display_cols.append('Market Proj Pts')
+        if 'Market Coverage' in merged_model.columns:
+            display_cols.append('Market Coverage')
         if 'FantasyPros Proj Pts' in merged_model.columns:
             display_cols.append('FantasyPros Proj Pts')
         if 'L5 Avg FPTS' in merged_model.columns:
@@ -337,20 +387,35 @@ def render():
         display_cols.append('Injury Status')
 
         keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier']
-        display_df = position_filter_multiselect(merged_model[keep_cols], key="weekly_rank_pos_filter")
+        filtered_df = position_filter_multiselect(merged_model[keep_cols], key="weekly_rank_pos_filter")
+        total_filtered = len(filtered_df)
+        display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
         tier_values = display_df['_tier'].tolist()
         display_df = display_df.drop(columns=['_tier'])
         indexed = display_df.set_index('Player')
+
+        # A sparkline next to the bare L5 average - same in-house pattern
+        # Risers/Waiver Wire already uses (data.transforms.build_recent_trend
+        # + st.column_config.LineChartColumn), reused rather than reinvented
+        # so a real per-week trend is visible without opening Player Search.
+        trend_map = build_recent_trend(df_stats, n_col, metric='fantasy_points', n_weeks=RECENT_FORM_GAMES)
+        indexed['Last 5 Wks'] = [trend_map.get(name, []) for name in indexed.index]
 
         pct_cols = {}
         for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts', 'L5 Avg FPTS'):
             if c in indexed.columns and indexed[c].notna().any():
                 pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
+        column_config = build_column_help_config(indexed, pinned_cols=['Team', 'Pos', 'Opponent', 'Rank'])
+        column_config['Last 5 Wks'] = st.column_config.LineChartColumn(
+            help="Fantasy points trend over this player's last 5 games played", width="small",
+        )
         st.dataframe(
             style_plain_dataframe(indexed, numeric_pct_cols=pct_cols, tier_cols={'Rank': tier_values}),
             width="stretch", height=df_auto_height(min(len(display_df), 40)),
-            column_config=build_column_help_config(indexed, pinned_cols=['Team', 'Pos', 'Opponent', 'Rank']),
+            column_config=column_config,
         )
+        if total_filtered > len(display_df):
+            st.caption(f"Showing {len(display_df)} of {total_filtered} players — widen \"Show\" above to see more.")
         st.caption(
             "**Rank** is positional rank (e.g. \"RB4\"), shaded by tier — a cluster break in "
             "Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
@@ -358,8 +423,11 @@ def render():
             "season as it grows, opponent/pace/game-script adjusted - see "
             "docs/weekly_projections_methodology.md), with the stat line it's built from shown "
             "alongside it. **Market Proj Pts** is this week's live sportsbook player-prop lines "
-            "re-scored under this league's settings. **FantasyPros Proj Pts** is their analysts' "
-            "number, pulled live above. Three independent reads, shown side by side, never blended."
+            "re-scored under this league's settings — missing stats price as zero, so **Market "
+            "Coverage** shows how much of a typical week's points the posted lines actually cover; "
+            "a low number means a partial line, not a bad projection. **FantasyPros Proj Pts** is "
+            "their analysts' number, pulled live above. Three independent reads, shown side by "
+            "side, never blended."
         )
 
     if form_df.empty:
@@ -387,6 +455,7 @@ def render():
     merged = merged.rename(columns={'Recent Avg FPTS': 'L5 Avg FPTS'})
 
     display_df = position_filter_multiselect(merged, key="weekly_rank_upload_pos_filter")
+    display_df = _limit_rows(display_df, key="weekly_rank_upload_show_n")
 
     diverging_cols = {}
     delta_col = 'Form vs FantasyPros'

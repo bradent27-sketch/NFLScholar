@@ -18,8 +18,8 @@ import streamlit as st
 
 from ui.tabs import risers, rookie_watch, rankings
 
-_SUB_LABELS = ["Risers / Waiver Wire", "Rookie Watch", "Weekly Rankings"]
-_SUB_MODULES = [risers, rookie_watch, rankings]
+_SUB_LABELS = ["Weekly Rankings", "Risers / Waiver Wire", "Rookie Watch"]
+_SUB_MODULES = [rankings, risers, rookie_watch]
 
 
 def render():

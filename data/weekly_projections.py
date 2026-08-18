@@ -371,14 +371,23 @@ def _week_opponents(schedule_df, week):
     return out
 
 
-def _injury_multipliers(year):
-    """{player: multiplier} from the current injury report - Out/IR/
+def _injury_multipliers(year, week):
+    """{player: multiplier} from the injury report AS OF `week` - Out/IR/
     Suspended zero the projection out, Doubtful/Questionable discount it.
     Best-effort: an unreachable feed just means no discount is applied,
-    same degrade-gracefully convention as every other live source here."""
+    same degrade-gracefully convention as every other live source here.
+
+    Passing `week` (not just `year`) matters for anything other than the
+    live current week: fetch_injury_report defaults to each player's LATEST
+    designation for the whole season, which for a PAST week is that
+    player's end-of-season status, not his status that week - a receiver
+    who tore an ACL in week 15 would show 'Out' (and get zeroed) on a week
+    3 projection otherwise. Harmless for the live/current week (there's no
+    future data to exclude either way).
+    """
     try:
         from data.draft_sources import fetch_injury_report
-        injuries, _err = fetch_injury_report(year)
+        injuries, _err = fetch_injury_report(year, as_of_week=week)
     except Exception:
         return {}
     if injuries is None or injuries.empty:
@@ -458,7 +467,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     schedule_df = load_schedule(year)
     opponents = _week_opponents(schedule_df, week)
     target_margins = _target_margins_by_team(year, week)
-    injury_mult = _injury_multipliers(year) if apply_injury else {}
+    injury_mult = _injury_multipliers(year, week) if apply_injury else {}
     pff_rec = _load_pff_receiving(year)
     pace = load_team_pace(year)
     league_pace = pace['def_pace'].mean() if pace is not None and not pace.empty and 'def_pace' in pace.columns else None

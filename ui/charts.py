@@ -129,13 +129,22 @@ def render_game_log_bars(values, tooltips, highlight=None, avg=None, avg_label="
     st.markdown("".join(parts), unsafe_allow_html=True)
 
 
-def render_game_log_line(values, tooltips, highlight=None, avg=None, avg_label="season avg", bar_labels=None):
+def render_game_log_line(values, tooltips, highlight=None, avg=None, avg_label="season avg", bar_labels=None,
+                         avg2=None, avg2_label="avg", avg2_color=None):
     """
     Line-chart twin of render_game_log_bars - same slot layout, same average
     reference line, same per-point value label and week/opponent caption,
     just a smoothed curve THROUGH the points instead of a bar per game. Per
     explicit feedback that a line reads better for a season trend than a bar
     strip does.
+
+    `avg2` is an optional SECOND dashed reference line (e.g. Matchup
+    Analyzer's Defense Week By Week Detail chart: `avg` is the league
+    average allowed, `avg2` is this defense's own season average, drawn in
+    its team color via `avg2_color` so the two lines read as "league" vs
+    "this team" without a legend). Its label anchors on the LEFT edge
+    (`avg`'s stays on the right) so the two labels don't collide when both
+    lines land at a similar height.
 
     Points sit at the CENTER of the same equal-width per-game "slot" the bar
     chart divides the width into (`slot*i + slot/2`), not spread edge-to-edge
@@ -159,7 +168,7 @@ def render_game_log_line(values, tooltips, highlight=None, avg=None, avg_label="
     plot_h = H - MB - MT
     n = len(values)
     slot = W / n
-    vmax = max(max(values), (avg or 0)) or 1
+    vmax = max(max(values), (avg or 0), (avg2 or 0)) or 1
 
     def x_at(i):
         return slot * i + slot / 2
@@ -183,6 +192,17 @@ def render_game_log_line(values, tooltips, highlight=None, avg=None, avg_label="
         parts.append(
             f"<text x='{W - 4}' y='{ay - 5:.1f}' text-anchor='end' font-size='10' font-family='{_MONO_FONT}' "
             f"fill='{C['on_surface_variant']}'>{_esc(avg_label)} {avg:.1f}</text>"
+        )
+    if avg2 is not None and vmax:
+        a2_color = avg2_color or C['primary']
+        a2y = MT + plot_h - plot_h * float(avg2) / vmax
+        parts.append(
+            f"<line x1='0' y1='{a2y:.1f}' x2='{W}' y2='{a2y:.1f}' stroke='{a2_color}' "
+            f"stroke-width='1.4' stroke-dasharray='5,5' opacity='0.9'/>"
+        )
+        parts.append(
+            f"<text x='4' y='{a2y - 5:.1f}' text-anchor='start' font-size='10' font-family='{_MONO_FONT}' "
+            f"fill='{a2_color}'>{_esc(avg2_label)} {avg2:.1f}</text>"
         )
     area_path = f"{line_path} L{pts[-1][0]:.1f},{MT + plot_h:.1f} L{pts[0][0]:.1f},{MT + plot_h:.1f} Z"
     parts.append(f"<path d='{area_path}' fill='{C['secondary']}' opacity='0.08'/>")

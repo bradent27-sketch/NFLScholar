@@ -242,7 +242,7 @@ def _mean_or_none(series):
     return float(clean.mean()) if len(clean) else None
 
 
-def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, route_concept=None):
+def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, route_concept=None, position=None):
     """
     A receiver's efficiency broken out two independent ways: by ALIGNMENT
     (how often he lines up slot vs wide, from PFF's receiving_summary) and
@@ -257,8 +257,11 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, ro
     reason.
 
     Percentiles are computed against every qualifying receiver in the same
-    export (25+ routes), so "68th percentile YPRR vs man" means among real
-    route-runners, not among everyone with a single snap.
+    export (25+ routes) AT THE SAME POSITION (`position`, when given) -
+    a WR's YPRR percentile shouldn't be diluted by every pass-catching RB
+    and blocking-first TE in the same file (see _pos_pool). "68th percentile
+    YPRR vs man" means among real route-runners at his own position, not
+    among everyone with a single snap at any position.
 
     `route_concept` (PFF's receiving_concept export, `pff['route_concept']`)
     adds Slot YPRR - a THIRD, independent file from the two above, which is
@@ -279,7 +282,8 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, ro
     if receiving_summary is not None and not receiving_summary.empty and 'player' in receiving_summary.columns:
         pool = receiving_summary.copy()
         pool['_key'] = clean_name_exact(pool['player'])
-        qualified = pool[_numeric(pool, 'routes').fillna(0) >= 25]
+        pos_pool = _pos_pool(pool, position) if position else pool
+        qualified = pos_pool[_numeric(pos_pool, 'routes').fillna(0) >= 25]
         row = pool[pool['_key'] == key]
         if not row.empty:
             r = row.iloc[0]
@@ -292,13 +296,14 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, ro
             if route_concept is not None and not route_concept.empty and 'player' in route_concept.columns:
                 rc_pool = route_concept.copy()
                 rc_pool['_key'] = clean_name_exact(rc_pool['player'])
+                rc_pos_pool = _pos_pool(rc_pool, position) if position else rc_pool
                 rc_row = rc_pool[rc_pool['_key'] == key]
                 if not rc_row.empty:
-                    entry = _pct_entry('Slot YPRR', rc_row.iloc[0], 'slot_yprr', rc_pool, '{:.2f}')
+                    entry = _pct_entry('Slot YPRR', rc_row.iloc[0], 'slot_yprr', rc_pos_pool, '{:.2f}')
                     if entry:
                         entry['sub'] = True
                         slot_yprr_entry = entry
-            wide = wide_yprr_entry(receiving_summary, route_concept, player_name)
+            wide = wide_yprr_entry(receiving_summary, route_concept, player_name, position=position)
             wide_yprr_row = None
             if wide:
                 help_text = (
@@ -324,6 +329,7 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, ro
     if receiving_scheme is not None and not receiving_scheme.empty and 'player' in receiving_scheme.columns:
         pool = receiving_scheme.copy()
         pool['_key'] = clean_name_exact(pool['player'])
+        scheme_pos_pool = _pos_pool(pool, position) if position else pool
         row = pool[pool['_key'] == key]
         if not row.empty:
             r = row.iloc[0]
@@ -335,8 +341,8 @@ def route_efficiency_splits(receiving_summary, receiving_scheme, player_name, ro
                 ('ADOT', 'man_avg_depth_of_target', 'zone_avg_depth_of_target', '{:.1f}'),
                 ('Target %', 'man_targets_percent', 'zone_targets_percent', '{:.1f}%'),
             ):
-                man_pool = _numeric(pool, man_col).dropna()
-                zone_pool = _numeric(pool, zone_col).dropna()
+                man_pool = _numeric(scheme_pos_pool, man_col).dropna()
+                zone_pool = _numeric(scheme_pos_pool, zone_col).dropna()
                 man_val, zone_val = _float_or_none(r.get(man_col)), _float_or_none(r.get(zone_col))
                 if man_val is None and zone_val is None:
                     continue
@@ -374,6 +380,40 @@ def _pct_entry(label, row, col, pool_df, fmt):
         'label': label, 'value_str': fmt.format(value),
         'pct': _percentile_of(value, _numeric(pool_df, col).dropna()),
     }
+
+
+# PFF labels running backs "HB" (halfback) in every export this app reads
+# (rushing_summary, receiving_summary, offense_blocking - confirmed by
+# direct inspection of all three files) - never "RB", which is what this
+# app's OWN position column (from nflverse, via stats_df/roster data) uses
+# everywhere else. A position filter against a raw PFF export has to
+# translate through this alias or it silently matches zero rows and
+# produces an empty percentile pool with no error - exactly the class of
+# bug HANDOFF.md gotcha #7 warns about ("Silent empty-DataFrame
+# fallthrough"). WR/TE need no translation - PFF uses the same letters this
+# app does for both.
+_PFF_POSITION_ALIAS = {'RB': 'HB'}
+
+
+def _pff_position(position):
+    return _PFF_POSITION_ALIAS.get(str(position).upper(), str(position).upper())
+
+
+def _pos_pool(df, position, pos_col='position'):
+    """
+    Filter a PFF export down to one position before it's used as a
+    percentile reference pool - every player-side percentile on this tab is
+    ranked against same-position players only, never a blended WR/TE/RB
+    pool (a TE's blocking grade against a receiving back's route rate isn't
+    a fair comparison - they're different jobs). `blocking_grade_entry`
+    established the pattern; this is the shared version every other
+    player-side percentile pool here goes through too. Returns the frame
+    unfiltered if it has no position column to filter on, rather than
+    dropping everything.
+    """
+    if df is None or df.empty or pos_col not in df.columns:
+        return df
+    return df[df[pos_col].astype(str).str.upper() == _pff_position(position)]
 
 
 # ---------------------------------------------------------------------------
@@ -430,14 +470,15 @@ def build_wide_yprr_table(receiving_summary, route_concept):
     return base
 
 
-def wide_yprr_entry(receiving_summary, route_concept, player_name, min_routes=10):
+def wide_yprr_entry(receiving_summary, route_concept, player_name, min_routes=10, position=None):
     """
     One player's calculated Wide YPRR plus its league percentile, ranked
-    against every other player with at least `min_routes` estimated wide
-    routes - a lower bar than route_efficiency_splits' 25+ routes
-    qualification since this is already a subset of a subset for a
-    slot-heavy player. Returns None when there's nothing to compute or too
-    thin a pool to rank against (see _percentile_of).
+    against every other player AT HIS OWN POSITION (`position`, when given -
+    see _pos_pool) with at least `min_routes` estimated wide routes - a
+    lower bar than route_efficiency_splits' 25+ routes qualification since
+    this is already a subset of a subset for a slot-heavy player. Returns
+    None when there's nothing to compute or too thin a pool to rank against
+    (see _percentile_of).
     """
     table = build_wide_yprr_table(receiving_summary, route_concept)
     if table.empty:
@@ -452,7 +493,8 @@ def wide_yprr_entry(receiving_summary, route_concept, player_name, min_routes=10
     value = _float_or_none(r['wide_yprr'])
     if value is None:
         return None
-    qualified = table[table['wide_routes'] >= min_routes]
+    pos_table = _pos_pool(table, position) if position else table
+    qualified = pos_table[pos_table['wide_routes'] >= min_routes]
     return {
         'value': value,
         'pct': _percentile_of(value, _numeric(qualified, 'wide_yprr').dropna()),
@@ -463,18 +505,21 @@ def wide_yprr_entry(receiving_summary, route_concept, player_name, min_routes=10
 
 def blocking_grade_entry(block_df, player_name, position):
     """
-    A WR/TE's own run-blocking grade, from PFF's offense_blocking export
-    (pff['block']) - the same file data.loaders._build_master_pff_grades
+    A skill player's own run-blocking grade, from PFF's offense_blocking
+    export (pff['block']) - the same file data.loaders._build_master_pff_grades
     already reads league-wide, just not previously surfaced per-player for
     a skill position. Percentiled within his OWN position only:
     offense_blocking.csv also carries guards/tackles/centers, and ranking a
-    receiver's blocking grade against a starting guard's would bottom out
-    almost every skill player for no real reason.
+    receiver's or back's blocking grade against a starting guard's would
+    bottom out almost every skill player for no real reason.
+
+    `position` is translated through `_pff_position` before matching - PFF's
+    own position column says "HB" for a running back, never "RB".
     """
     if (block_df is None or block_df.empty or 'player' not in block_df.columns
             or 'position' not in block_df.columns or 'grades_run_block' not in block_df.columns):
         return None
-    pool = block_df[block_df['position'].astype(str).str.upper() == str(position).upper()]
+    pool = block_df[block_df['position'].astype(str).str.upper() == _pff_position(position)]
     if pool.empty:
         return None
     key = clean_name_exact(pd.Series([player_name])).iloc[0]
@@ -502,11 +547,19 @@ def receiver_tendency_entries(pff, player_name, position, pct_row):
     filtered to this player+position by the caller - the same source
     Targets/G and Rec/G always read from.
 
-    Order: PFF Rec Grade, PFF Blocking Grade, Targets/G, Rec/G, RecYd/G,
-    [TE only: Inline%], Slot% (+ Slot YPRR / Slot Rec Grade sub-rows),
-    Wide% (+ calculated Wide YPRR sub-row), EPA/Target, Success Rate, ADOT,
-    YPRR, Drop Rate. Slot Route %/Screen Route %/Screen YPRR from the old
-    shared branch are deliberately absent here, per explicit request.
+    Order: PFF Rec Grade, Targets/G, Rec/G, RecYd/G, [TE only: Inline%],
+    Slot% (+ Slot YPRR / Slot Rec Grade sub-rows), Wide% (+ calculated Wide
+    YPRR sub-row), EPA/Target, Success Rate, ADOT, YPRR, Drop Rate, PFF
+    Blocking Grade LAST (moved to the bottom per explicit request - it's a
+    secondary/situational stat for a skill player, not a headline one, and
+    reads oddly sitting second right under his receiving grade). Slot Route
+    %/Screen Route %/Screen YPRR from the old shared branch are deliberately
+    absent here, per explicit request.
+
+    Every percentile here is ranked within `position` ONLY (`_pos_pool`) -
+    receiving_summary/receiving_concept carry WR, TE and pass-catching RBs
+    in one file, and ranking a TE's blocking grade or ADOT against a slot
+    WR's (or vice versa) isn't a fair comparison; they're different jobs.
     """
     position = str(position).upper()
     entries = []
@@ -520,18 +573,23 @@ def receiver_tendency_entries(pff, player_name, position, pct_row):
         entries.append(e)
 
     rec = pff.get('rec')
+    rec_pos_pool = _pos_pool(rec, position) if rec is not None else rec
     row = None
     if rec is not None and not rec.empty and 'player' in rec.columns:
         match = rec[rec['player'].str.lower() == str(player_name).lower()]
         if not match.empty:
             row = match.iloc[0]
 
-    if row is not None:
-        add('PFF Rec Grade', get_val(row, 'grades_pass_route', "{:.1f}"), row.get('grades_pass_route_pct', 0))
+    def rec_pct(col, ascending=True):
+        if row is None:
+            return None
+        value = _float_or_none(row.get(col))
+        pool = _numeric(rec_pos_pool, col).dropna()
+        return _percentile_of(value, pool) if ascending else (
+            None if (p := _percentile_of(value, pool)) is None else 100.0 - p)
 
-    block_entry = blocking_grade_entry(pff.get('block'), player_name, position)
-    if block_entry:
-        add('PFF Blocking Grade', f"{block_entry['value']:.1f}", block_entry['pct'])
+    if row is not None:
+        add('PFF Rec Grade', get_val(row, 'grades_pass_route', "{:.1f}"), rec_pct('grades_pass_route'))
 
     if pct_row is not None and not pct_row.empty:
         pr = pct_row.iloc[0]
@@ -543,9 +601,10 @@ def receiver_tendency_entries(pff, player_name, position, pct_row):
             add('RecYd/G', f"{pr['receiving_yards_mean']:.1f}", pr.get('receiving_yards_mean_pct'))
 
     if position == 'TE' and row is not None:
-        add('Inline%', get_val(row, 'inline_rate', "{:.1f}%"), row.get('inline_rate_pct', 0))
+        add('Inline%', get_val(row, 'inline_rate', "{:.1f}%"), rec_pct('inline_rate'))
 
     route_concept = pff.get('route_concept')
+    rc_pos_pool = _pos_pool(route_concept, position) if route_concept is not None else route_concept
     rc_row = None
     if route_concept is not None and not route_concept.empty and 'player' in route_concept.columns:
         match = route_concept[route_concept['player'].str.lower() == str(player_name).lower()]
@@ -553,18 +612,20 @@ def receiver_tendency_entries(pff, player_name, position, pct_row):
             rc_row = match.iloc[0]
 
     if row is not None:
-        add('Slot%', get_val(row, 'slot_rate', "{:.1f}%"), row.get('slot_rate_pct', 0))
+        add('Slot%', get_val(row, 'slot_rate', "{:.1f}%"), rec_pct('slot_rate'))
     if rc_row is not None:
         if 'slot_yprr' in route_concept.columns:
             add('Slot YPRR', get_val(rc_row, 'slot_yprr', "{:.2f}"),
-                calculate_percentile(route_concept, 'slot_yprr').loc[rc_row.name], sub=True)
+                _percentile_of(_float_or_none(rc_row.get('slot_yprr')),
+                               _numeric(rc_pos_pool, 'slot_yprr').dropna()), sub=True)
         if 'slot_grades_pass_route' in route_concept.columns:
             add('Slot Rec Grade', get_val(rc_row, 'slot_grades_pass_route', "{:.1f}"),
-                calculate_percentile(route_concept, 'slot_grades_pass_route').loc[rc_row.name], sub=True)
+                _percentile_of(_float_or_none(rc_row.get('slot_grades_pass_route')),
+                               _numeric(rc_pos_pool, 'slot_grades_pass_route').dropna()), sub=True)
 
     if row is not None:
-        add('Wide%', get_val(row, 'wide_rate', "{:.1f}%"), row.get('wide_rate_pct', 0))
-    wide = wide_yprr_entry(rec, route_concept, player_name)
+        add('Wide%', get_val(row, 'wide_rate', "{:.1f}%"), rec_pct('wide_rate'))
+    wide = wide_yprr_entry(rec, route_concept, player_name, position=position)
     if wide:
         wide_help = ("Not published by PFF - calculated as (season yards minus real slot yards) / "
                      "(season routes minus real slot routes).")
@@ -580,9 +641,17 @@ def receiver_tendency_entries(pff, player_name, position, pct_row):
             add('Success Rate', f"{pr['success_rate_rec'] * 100:.1f}%", pr.get('success_rate_rec_pct'))
 
     if row is not None:
-        add('ADOT', get_val(row, 'avg_depth_of_target', "{:.1f}"), row.get('adot_pct', 0))
-        add('YPRR', get_val(row, 'yprr', "{:.2f}"), row.get('yprr_pct', 0))
-        add('Drop Rate', get_val(row, 'drop_rate', "{:.1f}%"), row.get('drop_pct', 0))
+        add('ADOT', get_val(row, 'avg_depth_of_target', "{:.1f}"), rec_pct('avg_depth_of_target'))
+        add('YPRR', get_val(row, 'yprr', "{:.2f}"), rec_pct('yprr'))
+        add('Drop Rate', get_val(row, 'drop_rate', "{:.1f}%"), rec_pct('drop_rate', ascending=False))
+
+    # PFF Blocking Grade last - see docstring. Percentiled within his own
+    # position already (blocking_grade_entry filters offense_blocking.csv to
+    # `position` before ranking, same _pos_pool convention as everything
+    # else above).
+    block_entry = blocking_grade_entry(pff.get('block'), player_name, position)
+    if block_entry:
+        add('PFF Blocking Grade', f"{block_entry['value']:.1f}", block_entry['pct'])
 
     return entries
 

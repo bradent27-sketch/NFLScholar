@@ -1260,9 +1260,10 @@ def ecr_age_days(ecr_raw):
 
 
 @st.cache_data(ttl=60 * 20, show_spinner=False)
-def fetch_injury_report(year):
+def fetch_injury_report(year, as_of_week=None):
     """
-    Current injury designations from nflverse.
+    Injury designations from nflverse - the CURRENT designation by default,
+    or the designation AS OF a given week when `as_of_week` is passed.
 
     Deliberately TTL'd far shorter than the market data: a Wednesday
     practice report or a Saturday IR move is exactly the sort of thing that
@@ -1275,6 +1276,16 @@ def fetch_injury_report(year):
     "Season must be between 2009 and 2025" every single time. Last season's
     designations are stale for lineup decisions but still tell you who ended
     the year hurt, which is exactly the draft-relevant question.
+
+    `as_of_week=None` (the default, and what every current-week caller
+    wants) takes each player's LATEST report for the season - correct for
+    "who's hurt right now". A caller looking at an ALREADY-PLAYED week of a
+    PAST season (Weekly Rankings, browsing back through last season) wants
+    the designation as it stood THAT week instead - without this, every
+    past week showed the same end-of-season snapshot (often 'Out' from a
+    season-ending injury reported in week 15), which reads as "this guy was
+    hurt all year" even when checking week 3. Passing `as_of_week` filters
+    to reports at or before that week before taking the latest one.
     """
     attempted = []
     for candidate in (int(year), int(year) - 1, int(year) - 2):
@@ -1296,6 +1307,10 @@ def fetch_injury_report(year):
     # week, and a September board wants the current designation, not a
     # player's whole injury history stacked into the board.
     if 'week' in df.columns:
+        if as_of_week is not None:
+            df = df[pd.to_numeric(df['week'], errors='coerce') <= as_of_week]
+            if df.empty:
+                return pd.DataFrame(), None
         df = df.sort_values('week').groupby(name_col, as_index=False).last()
     out = pd.DataFrame({
         'Player': df[name_col].astype(str).str.strip(),

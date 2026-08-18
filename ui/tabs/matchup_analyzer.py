@@ -50,7 +50,7 @@ from ui.charts import (
 )
 from ui.components import (
     build_player_search_labels, compute_bye_weeks, render_back_button,
-    render_hero_tiles, render_percentile_metric_tiles, render_team_banner, skeleton_loader, switch_tab,
+    render_hero_tiles, render_team_banner, skeleton_loader, switch_tab,
 )
 from ui.player_snapshot import build_player_snapshot
 from ui.styling import get_matchup_color, get_pff_color
@@ -277,6 +277,19 @@ def _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_n
             player_name, position, p_data, p_bio, pff, pct_row, games, grade,
             get_pff_color(grade, raw_grade=True), season,
         )
+        # PFF Blocking Grade, appended at the bottom for RBs too - not part
+        # of the shared build_player_snapshot branch (Player Search/Player
+        # Compare are off-limits, HANDOFF.md section 8), so this tab appends
+        # it onto that function's output rather than editing it, same
+        # fork-not-edit pattern the WR/TE branch above already uses.
+        if position == 'RB':
+            block_entry = ms.blocking_grade_entry(pff.get('block'), player_name, position)
+            if block_entry:
+                entries = list(entries) + [{
+                    'label': 'PFF Blocking Grade',
+                    'value_str': f"{block_entry['value']:.1f}",
+                    'pct': block_entry['pct'],
+                }]
     if not entries:
         st.caption("No percentile data for this player this season.")
         return
@@ -290,6 +303,7 @@ def _render_route_efficiency(pff, player_name, position):
         return
     splits = ms.route_efficiency_splits(
         pff.get('rec'), pff.get('rec_scheme'), player_name, route_concept=pff.get('route_concept'),
+        position=position,
     )
     if not splits['available']:
         return
@@ -526,7 +540,7 @@ def _render_defense_weekly_detail(stats_df, defense_team, position):
     worse path to the same chart (same picker, just position-second) and
     is gone per explicit request.
     """
-    _section("WEEK BY WEEK DETAIL", "What this defense has allowed, game by game — not just the season number above.")
+    _section("WEEK BY WEEK DETAIL")
     positions = [p for p in ('QB', 'RB', 'WR', 'TE') if p in ms.ALLOWED_STAT_KEYS]
     if not positions:
         st.caption("No week-by-week data for this defense yet.")
@@ -556,39 +570,27 @@ def _render_one_weekly_chart(stats_df, defense_team, pos, stat_col, stat_label):
         st.caption(f"No week-by-week data for {pos}s allowed by this defense yet.")
         return
     values = weekly['value'].astype(float).tolist()
+    team_avg = sum(values) / len(values)
 
-    # A small headline indicator ahead of the trend line itself - the
-    # season number, its league rank and how it colors, so the chart below
-    # isn't the first place any context shows up.
-    rank_info = ms.defense_stat_rank(stats_df, defense_team, pos, stat_col)
-    if rank_info:
-        render_percentile_metric_tiles([{
-            'label': f"{stat_label} / game", 'value': f"{rank_info['value']:.1f}",
-            'sub': f"#{rank_info['rank']} of {rank_info['of']} · league avg {rank_info['league_avg']:.1f}",
-            'color': get_pff_color(rank_info['pct']) if rank_info['pct'] is not None else C['surface_container_high'],
-        }])
-
-    # The reference line is the LEAGUE average allowed, not this defense's
-    # own season average - explicit user request. A defense's own average
-    # can only ever say "this week was a spike relative to itself"; the
-    # league average is what actually says whether the defense is soft or
-    # stout to begin with. Falls back to the own-season average only when
-    # there isn't enough of a league pool to compute one from (should not
-    # happen in practice - every defense in the same stats_df is the pool).
+    # Both reference lines live ON the chart now, not one of them in a
+    # metric tile above it (the season-number-plus-rank tile that used to
+    # sit here is gone per explicit request) - the neutral dashed line is
+    # the LEAGUE average allowed across all 32 defenses, the second dashed
+    # line in the DEFENSE'S OWN team color is this team's own season
+    # average, same "saving the number and rank out of the league" info the
+    # old tile carried, just read off the chart instead of a separate tile.
     league_avg = ms.league_average_allowed(stats_df, pos, stat_col)
-    avg = league_avg if league_avg is not None else sum(values) / len(values)
-    avg_label = "league avg" if league_avg is not None else "season avg"
+    team_color = TEAM_CONFIG.get(defense_team, {}).get('color') or C['primary']
     st.markdown(f"**{stat_label} allowed to {pos}s, by week**")
     render_game_log_line(
         values,
         [f"Wk {int(r.week)} vs {r.offense}: {r.value:.1f} {stat_label}" for r in weekly.itertuples()],
-        avg=avg, avg_label=avg_label,
+        avg=league_avg, avg_label="league avg",
+        avg2=team_avg, avg2_label=f"{defense_team} avg", avg2_color=team_color,
         bar_labels=[(str(r.offense), f"W{int(r.week)}") for r in weekly.itertuples()],
     )
-    if league_avg is not None:
-        st.caption("Dashed line = the league average allowed across all 32 defenses, not this team's own.")
-    else:
-        st.caption("Dashed line = this team's own season average (no league pool to compare against).")
+    if league_avg is None:
+        st.caption(f"No league pool to compare against — dashed line is {defense_team}'s own season average only.")
 
 
 def _render_coverage(defense_team, season):

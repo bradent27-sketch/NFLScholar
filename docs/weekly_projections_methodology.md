@@ -98,6 +98,253 @@ adding `apply_injury=False` to `build_weekly_projections` for backtesting
 only — the live app (and the Weekly Rankings tab) always calls with
 `apply_injury=True`, where "most recent designation" is exactly right.
 
+## August 2026 pass — the components, and what each one measured
+
+Every change in this pass is a named, individually switchable component
+(`data.weekly_projections.MODEL_FEATURES`) evaluated with
+`scripts/eval_weekly_model.py` on **2024 and 2025, weeks 5-17, 8,107 paired
+player-weeks**. "Paired" is load-bearing: per week, every variant is scored
+on the intersection of the player pools all variants produced, so a
+component that merely drops a few hard-to-project players can't look like an
+improvement. Injuries are off in every run (`apply_injury=False`) for the
+reason in the section above.
+
+Three of the six shipped. The other three are still in the code, still
+switchable, and are documented here with the numbers that kept them off —
+same discipline `docs/draft_hq_methodology.md` applies to the three changes
+it built, measured and rejected.
+
+### Headline: before this pass vs. what ships now
+
+```
+                        n      MAE     RMSE     bias   rank-corr   weeks won
+before (Aug 2026)     8107    4.710    6.440   +0.176    0.654
+AFTER                 8107    4.422    6.292   -0.640    0.689       26 / 26
+naive trailing-4      8107    4.615    6.508   -0.126    0.668
+
+by position (MAE / rank-corr):
+  QB   6.759 -> 6.357    0.433 -> 0.476     22-4
+  RB   4.687 -> 4.340    0.690 -> 0.727     26-0
+  WR   4.691 -> 4.380    0.616 -> 0.643     26-0
+  TE   3.717 -> 3.605    0.602 -> 0.622     24-2
+```
+
+The most important line is the third one. Before this pass the model was
+**behind** a naive trailing-4-game average on both MAE and rank correlation
+— the previous pass's own write-up says so, and flagged it as unexplained.
+It is now ahead of that baseline on both, at every position, and it beat the
+previous model in every single one of the 26 weeks tested.
+
+### `role_volume` — SHIPPED, and it is essentially the whole improvement
+
+The measured failure it fixes: of the 25 largest upgrades the old model made
+over a trailing-average baseline, **sixteen were backup quarterbacks** — Joe
+Milton, Joshua Dobbs, Kedon Slovis, Jalen Milroe, Tyson Bagent, Taylor
+Heinicke — projected 12 to 17 points for a week they spent holding a
+clipboard. The mechanism was subtle and entirely structural: a backup's
+per-GAME rate is computed over the games he actually appeared in, which are
+garbage-time drives where he really did throw the ball, so his rate looks
+like a starter's on a small sample; every shrinkage path then pulls that
+small sample toward the POSITION's average per-game production, which is a
+starter's workload. Nothing in the model could tell the two apart.
+
+Snap share tells them apart cleanly and without a judgment call. The
+component re-denominates the position baseline from "per game played" to
+"per FULL-SNAP game" and gives each player his own expected share of one
+(`expected_snap_share`), and scales a prior-season per-game rate by the
+change in his role since (`ROLE_VOLUME_CLIP`). It also catches the opposite
+case for free, which is the one worth getting right: Tyler Shough went 4% ->
+54% -> 90% -> 82% -> 95% -> 99% of snaps over six weeks of 2025, and a
+four-appearance window reads him as a starter three weeks before a season
+average would.
+
+```
+                        MAE      rank-corr    weeks won
+role_volume vs base   -0.212      +0.035        26 / 26
+```
+
+**One real design decision inside it, settled by measurement.** The first
+version averaged snap share over the player's TEAM's last four games,
+scoring a week he missed as a zero. That reads a backup correctly and a
+returning starter completely wrong — a back who missed two weeks came back
+projected at a third of his role, and the startable-RB pool got materially
+worse (MAE +0.28, rank-corr -0.09, losing 19 of 26 weeks). Averaging over
+his last four APPEARANCES answers the question a start/sit call actually
+asks — how big is his role when he is out there — and leaves "is he playing
+at all" to the injury feed, which is the input that knows. Both readings
+still separate the backups: over their last four appearances Joe Milton sits
+at 21% of snaps and Joshua Dobbs at 18%, against 100% for a starter.
+
+**Two bugs it exposed, both caught on real data rather than by inspection**,
+both in the same place — what to do with a player who has no measured role
+at all:
+
+- `np.nan_to_num(share, nan=1.0)` treats "no snap data" as "every snap",
+  which put three undrafted rookie running backs at the very top of a week-1
+  board (Jacory Croskey-Merritt at 24.7 projected points). The position's
+  own median share is the honest stand-in.
+- In a cold start the share has to be read off the prior season, and reading
+  it as "share when he appeared" hands a mop-up QB3 a starter's baseline off
+  three blowouts — it put a third-string quarterback at QB5 overall on the
+  2026 week-1 board. A cold start has no injury feed answer to "is he the
+  starter", so it uses share of the whole team season instead (see
+  `season_snap_share`'s two modes).
+
+### `role_matchup` — SHIPPED, measured NEUTRAL, kept because it was the ask
+
+This is the requested mechanism, made concrete: "a defense soft to a
+possession receiver and airtight deep", "a receiving back vs. a high-volume
+runner", "a high-completion QB vs. a high-ADOT low-completion QB" are all
+one question — how good is this defense against a player who does THIS for a
+living — and one mechanism answers all of them. Every player gets a role
+label from his own measured season-to-date profile (never a hand-assigned
+list, which goes stale the week a role changes); the defense gets a separate
+rating per role; a player is priced against the rating for players like him,
+shrunk toward the defense's overall rating by how much role-specific
+evidence exists. Labels are TERCILES of the qualifying pool, not fixed
+thresholds, so "downfield relative to his peers" means the same thing in a
+season whose league-wide ADOT has moved.
+
+It assigns roles correctly on real data — Chase, Nacua, St. Brown and
+Flowers land as short/possession receivers, Tyreek Hill as deep; McCaffrey,
+Achane and Bijan Robinson as receiving backs against Henry and Taylor as
+rushers; Goff and Herbert as quick passers against Mayfield and Mahomes as
+downfield ones.
+
+It does not measurably help.
+
+```
+                                        MAE     rank-corr   weeks won
+role_matchup on top of role_volume    +0.000     -0.001       12 / 26
+   (at ROLE_MATCHUP_K = 4, the first try)  +0.006  -0.002     12 / 26
+```
+
+Kept, at `ROLE_MATCHUP_K = 10`, on the same grounds `HISTORY_MATCHUP_CLIP`
+was kept in the previous pass: it is exactly the mechanism that was asked
+for, it is measurably harmless (RMSE is a hair better, 6.378 -> 6.369; WR
+and RB MAE a hair better, QB and TE a hair worse), and it makes the model's
+matchup read legible. It is **not** claimed as an improvement. The honest
+read on why it doesn't move anything: a defense plays ~9 games, splitting
+those three ways leaves 2-4 observations per bucket, and the shrinkage that
+keeps that from being noise also keeps it from being signal.
+
+### `calibration` — SHIPPED
+
+A projection should be a conditional expectation: among every player
+projected for 20 points, the average one should score 20. This model's
+wasn't. The top 15% of each position came in **+2.6 (QB), +2.0 (RB), +2.3
+(WR), +0.5 (TE)** above what they actually scored, and regressing actual on
+projected gave a slope well under 1 at every position — over-dispersion, not
+bias. That is what selection always produces: the players a noisy projection
+ranks highest are disproportionately the ones its own noise pushed up.
+
+The correction is a per-position line, `actual ~ a + b * projected`,
+**fitted on 2021-2023** — deliberately outside the 2024-2025 evaluation
+window, so it is a measurement rather than a curve fitted to its own test
+(`scripts/fit_weekly_calibration.py`).
+
+Two things about how it is applied were settled by measurement, not taste:
+
+- **Fitted on the whole pool, not the startable pool.** Fitting only on the
+  top 40 per position produced slopes of 0.58-0.65 with intercepts of
+  3.4-6.1 — a fine description of the top of a position and a transform that
+  turns a 2-point bench receiver into a 5-point one.
+- **Applied one-sided**, `min(projection, line(projection))`. The whole-pool
+  line crosses the identity around 13/10/8/7 points (QB/RB/WR/TE), so it
+  shrinks above that and *inflates* below — and the bulk does not need
+  inflating. The two-sided version bought every startable gain and cost
+  +0.116 whole-pool MAE, winning 1 week of 26, entirely from lifting several
+  hundred near-zero bench rows. Clipping it to the shrink half keeps the
+  correction where the defect is.
+
+```
+                                       MAE     RMSE   rank-corr   weeks won
+calibration on top of the above       -0.076   -0.077   +0.000      24 / 26
+startable-pool MAE:  QB -0.069   RB -0.202   WR -0.289   TE -0.109
+startable bias:      +0.80 -> -0.81 (QB), +0.81 -> -0.09 (RB), +0.87 -> -0.38 (WR)
+```
+
+It is a monotone transform inside a position, so it **cannot** change who is
+ranked above whom and does not pretend to. What it changes is the level —
+which is what a projected point total is read for when it sits next to
+FantasyPros' and the market's numbers on the same row.
+
+### `teammate_vacancy` — SHIPPED, but unmeasured, and flagged as such
+
+When a team's WR1 is ruled out his targets do not evaporate; they go to the
+other receivers, and a model built on games he played in cannot know that.
+This redistributes a sidelined player's projected targets and carries onto
+his healthy teammates in proportion to their own volume, then scales the
+stats that ride on that volume, capped (`VACANCY_ABSORB = 0.75`,
+`VACANCY_MAX_GROWTH = 1.40`).
+
+**It is not measured and cannot be by this harness.** It fires only off the
+live injury feed, and the backtest runs with injuries off, so it is inert in
+every number above — the shipping model's measured results are identical
+with it on or off. It ships anyway as a judgment call: a receiver's targets
+demonstrably do not disappear when he is inactive, so ignoring it is
+knowably wrong rather than merely unmeasured. The constants are conservative
+for exactly that reason.
+
+A real bug in it was caught by a unit test rather than by inspection: the
+first version recovered a sidelined player's vacated volume as
+`projection / injury_multiplier`, and a player ruled Out has a multiplier of
+exactly 0.0 — so his projection is 0 and there is nothing to divide back
+out. It silently redistributed zero for every Out player, which is the only
+case that matters. The pre-injury volume is now stashed by the position loop.
+
+### `volume_efficiency` — BUILT, MEASURED, REJECTED
+
+The industry-standard layering: project OPPORTUNITY first (attempts,
+carries, targets), then apply a per-opportunity efficiency to it, with
+efficiency evidence counted in opportunities rather than games and shrunk on
+published stabilization ranges. The motivation was real and measured — the
+old model over-projected the top 15% of every position on every counting
+stat at once, WR targets +11% / receptions +16% / receiving yards +18%,
+which is the signature of yardage being modelled as its own independent
+per-game rate rather than as opportunities × efficiency.
+
+```
+                                       MAE     rank-corr   weeks won
+volume_efficiency on top of role_volume  +0.051   -0.005     5 / 26
+```
+
+Rejected. The diagnosis was right and the fix did not follow from it: the
+shrinkage target for a top player's efficiency is his own prior-season
+efficiency, which is also high, so the layer didn't pull down the players
+that were over-projected. `calibration` addresses the same defect directly
+and does work. The code stays, off, with this note.
+
+### `game_env` — BUILT, MEASURED, REJECTED
+
+Market-implied team total plus venue, with the elasticities measured on
+**2019-2023** (21,330 player-games, outside the evaluation window): log-log
+elasticity of a player's own game-to-season ratio against his team's implied
+points is QB 0.416, TE 0.301, RB 0.168, WR 0.140, and indoor/outdoor is
+QB 1.070, TE 1.052, WR 1.040, RB 1.001.
+
+```
+                                     MAE     rank-corr   weeks won
+game_env at measured elasticity     +0.012    -0.000     11 / 26
+game_env at half elasticity         +0.006    -0.000     10 / 26
+```
+
+Rejected at both strengths. QB rank-corr does improve (+0.013 at full
+strength, and +0.034 on the startable-QB pool) which is not nothing given QB
+is the model's weakest position — but it is one position moving inside noise
+against a whole-pool cost, and that is not enough to ship on.
+
+**The largest effect measured in that study is deliberately unused.** Wind,
+in outdoor games at 15+ mph: QB 0.880 against 1.017 in calm air, TE 0.907,
+WR 0.895, and RB unaffected at 0.965 — teams run more into a wind, which is
+exactly the right shape for the effect to be real. nflverse populates `wind`
+and `temp` AFTER a game is played, not when the schedule is published, so a
+backtest would happily consume it and report an improvement the live model
+could never reproduce: on the Thursday you actually set a lineup that column
+is empty. Recorded so the next person to spot the wind column knows it was
+measured, and why it was left out anyway. A real forecast feed would make
+this the most valuable single addition available to this model.
+
 ## Backtest — one honest pass, not an iterated one
 
 `scripts/validate_weekly_projections.py`. Every week in 2025 weeks 5–17,
@@ -127,10 +374,13 @@ Model by position:
   TE   n=880   MAE=3.743   bias=−0.174   rank_corr=0.601
 ```
 
-**Read honestly**: the model is essentially at parity with a simple
-trailing-average baseline on this one-season backtest (MAE within 1.5%,
-rank correlation within 1.2%), not a decisive improvement on either metric.
-It is not overclaimed as one. What it adds over the naive baseline isn't
+**Read honestly** (this paragraph describes the model as it stood BEFORE the
+August 2026 component pass documented above — the table it refers to is the
+pre-pass one; see the headline table in that section for where it stands
+now): the model is essentially at parity with a simple trailing-average
+baseline on this one-season backtest (MAE within 1.5%, rank correlation
+within 1.2%), not a decisive improvement on either metric. It is not
+overclaimed as one. What it adds over the naive baseline isn't
 visible in these two numbers: a real prior-season floor for players with a
 thin current-season sample (a naive trailing average has nothing to fall
 back on for a player's first few games — this model does), explicit
@@ -145,11 +395,31 @@ model captures.
 
 ## Known limitations
 
-- **Week 1 can't be projected at all** — the player pool itself is read
-  off the current season's own games. See `build_weekly_projections`'s
-  docstring. FantasyPros' own weekly projection
-  (`data.draft_sources.fetch_fantasypros_weekly_projections`, wired into
-  the Weekly Rankings tab) is the right tool for the season opener instead.
+- **Week 1 is a cold start, not a blank** — it falls back entirely to
+  prior-season rates and a prior-season defensive matchup matrix (see
+  `build_weekly_projections`'s COLD START section). It is a real projection
+  and a deliberately weak one: a whole offseason has happened since the
+  numbers behind it. FantasyPros' own weekly projection
+  (`data.draft_sources.fetch_fantasypros_weekly_projections`, wired into the
+  Weekly Rankings tab) has season-opener-specific analyst input this app
+  does not and remains the better source for the opener where it's available.
+- **Residual calibration error at QB and TE.** The calibration line is
+  fitted on 2021-2023 and transfers imperfectly: on 2024-2025 it takes the
+  startable-QB bias from +0.80 to **-0.81** and startable TE from -0.05 to
+  **-0.87** — i.e. it now under-projects the top of those two positions by
+  about as much as it used to over-project them. RB (-0.09) and WR (-0.38)
+  land close to centred. Not tuned away, because tuning it against
+  2024-2025 is exactly the thing the out-of-sample fit exists to avoid;
+  re-fitting on a wider window is the honest fix when more seasons are
+  available.
+- **Startable rank correlation is barely moved by any of this.** Whole-pool
+  rank correlation is up meaningfully (0.654 -> 0.689), but inside the
+  startable tier it is roughly flat and slightly down at QB (-0.021), WR
+  (-0.011) and TE (-0.053). Everything shipped in this pass fixes LEVEL
+  errors — who is a starter at all, how big the top of a position should
+  read. None of it is new information about which of two comparable
+  starters will out-score the other, which remains the hardest and least
+  solved part of the problem.
 - **Pace uses the full season's team stats, not an as-of-week-filtered
   cut** — `data.loaders.load_team_pace` isn't parameterized for a cutoff.
   A minor, accepted leak for the backtest (pace is a slow-moving signal

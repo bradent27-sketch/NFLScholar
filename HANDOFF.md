@@ -473,6 +473,107 @@ call sites, hover language already consistent app-wide (one shared
 
 ---
 
+**August 2026 pass — WEEKLY RANKINGS TAB + WEEKLY MODEL COMPONENT OVERHAUL.**
+Two halves, both scoped to the Weekly Rankings sub-tab and the model behind
+it.
+
+**UI half** (`ui/tabs/rankings.py`, plus small additions to `ui/charts.py`,
+`ui/components.py`, `ui/styling.py`, `data/transforms.py`) - five reported
+problems, each fixed at the level it actually lives at:
+
+- **Rank columns are a sortable NUMBER carrying a "RB4" label**
+  (`ui.tabs.rankings._woven_rank` + a new `label_cols` param on
+  `ui.styling.style_plain_dataframe`). st.dataframe's grid sorts on the raw
+  Arrow value and only DISPLAYS the Styler's formatted string - confirmed by
+  reading the frontend bundle's own sort comparator, not guessed. A string
+  rank column therefore sorted "QB10" between "QB1" and "QB2", sorted every
+  QB above every RB above every WR, and sorted a MISSING rank to the TOP of
+  an ascending sort (the grid reads a null cell as an empty string, and an
+  empty string compares below every number - gotcha #5, now confirmed at
+  source). All three complaints were one root cause. The encoding is
+  `rank * 10 + position_slot`, so ascending order is WOVEN - QB1, RB1, WR1,
+  TE1, QB2, ... - and unranked players get a sentinel worse than every real
+  rank that renders as an em dash. The table now also OPENS in that order.
+- **Position filter is a row of lineup-SLOT buttons** - QB/RB/WR/TE/FLEX/
+  SUPERFLEX (`ui.components.position_group_buttons`), styled to read like
+  this app's TABS rather than its pill buttons (a slot filter is a view
+  switcher, and it sits directly under the real sub-tabs). CSS is scoped to
+  the `st-key-posgrp_` prefix, the same containment trick the Game Slate
+  cards use. Replaces the multiselect on all three tables on the tab.
+- **Column order** per request: Rank, Player, Position, Team, Opponent, the
+  three projections side by side, the model's stat line, Market Coverage,
+  Injury Status, Last 5 Weeks, then the three source ranks as a comparison
+  block. The leading Rank is FantasyPros' when their projection has been
+  pulled, the model's otherwise. `L5 Avg FPTS` was dropped from this table
+  (superseded by the sparkline; still on the upload-comparison table below).
+- **Last 5 Weeks now populates**, and draws a dotted season-average
+  reference line under the trend (`ui.charts.sparkline_data_uri`, an inline
+  SVG in an `st.column_config.ImageColumn`). It showed nothing because the
+  tab opens on the UPCOMING season, which has no weekly stat rows at all;
+  the series is now gated to games before the selected week
+  (`data.transforms.build_form_series`) and falls back to the prior season,
+  captioned. **`st.column_config.LineChartColumn` cannot do this** - its
+  whole cell payload is `{values, yAxis, color, graphKind}`, with no
+  reference-line option anywhere (verified in the frontend bundle). An
+  ImageColumn cell is drawn scaled to the ROW height with width from the
+  aspect ratio, so a too-wide SVG silently overflows a "small" column and is
+  clipped by the next one - `_SPARK_W/_SPARK_H` are set for that fit.
+- Streamlit renders a null numeric cell as a grey literal **"None"** in this
+  version - app-wide, including a bare `st.dataframe(df)`, nothing to do
+  with the Styler (its display value really is "--"; the grid draws its own
+  missing-value placeholder over it). Pre-existing, not from this pass, and
+  it is why QB rows show "None" under Tgt/Rec.
+
+**Model half** (`data/weekly_projections.py`, `scripts/eval_weekly_model.py`
+and `scripts/fit_weekly_calibration.py`, both new) - full detail and every
+number in **`docs/weekly_projections_methodology.md`**, which is the file to
+read before touching this model. Orientation only here:
+
+- The model is now a set of **named, individually switchable components**
+  (`MODEL_FEATURES` / `DEFAULT_FEATURES`), and every one was accepted or
+  rejected on a paired 2024+2025 backtest (8,107 player-weeks). Three
+  shipped, three did not. **A component that can't be turned off can't be
+  shown to help** - that is the whole point of the switch.
+- **Headline, measured**: MAE 4.710 -> 4.422, rank-corr 0.654 -> 0.689,
+  better in **26 of 26 weeks**, and it now beats the naive trailing-4-game
+  baseline (4.615 / 0.668) that the previous pass honestly reported it was
+  BEHIND. Every position improves on both metrics.
+- **Essentially all of that is one component, `role_volume`**: the old model
+  had no way to tell a backup from a starter, because a backup's per-GAME
+  rate is computed over garbage-time appearances and then shrunk toward the
+  POSITION's per-game average, which is a starter's workload. Sixteen of the
+  25 biggest upgrades it made over a trailing average were backup QBs
+  projected 12-17 points. Snap share separates them. Read
+  `expected_snap_share`'s docstring before changing anything here - the
+  choice between "share of team weeks" and "share when active" is a real
+  decision that was settled by measurement, and the wrong one materially
+  hurts returning starters.
+- **Rejected, with numbers**: `volume_efficiency` (+0.051 MAE, 5 of 26
+  weeks), `game_env` (+0.012 at the measured elasticity, +0.006 at half).
+  `role_matchup` - the requested slot-vs-wide / receiving-back / QB-ADOT
+  role-conditioned matchup - measured exactly NEUTRAL and ships anyway, on
+  the same grounds `HISTORY_MATCHUP_CLIP` was kept: it is the mechanism that
+  was asked for and it measurably does not hurt. It is not claimed as a win.
+- **Wind is the biggest measured effect in the whole study and is
+  deliberately unused** (QB 0.880 vs 1.017 at 15+ mph outdoors). nflverse
+  populates `wind`/`temp` AFTER a game, not when the schedule publishes, so
+  a backtest would consume information the live model can never have. Don't
+  "fix" this by wiring the column in.
+- `_vectorized_game_script_multiplier` was ~73% of the entire model build
+  (3.2s of 4.4s) - it was rebuilt once per position AND per stat, and looped
+  a pandas groupby per player. Hoisted and pivoted to numpy: warm build
+  2.2s -> 0.9s, byte-identical output. That is what made iterating on the
+  components affordable.
+
+Verification: 241 tests pass (13 new), an AppTest sweep of all 9 tabs raises
+nothing, cold start (2026 wk1, 915 players), synthetic cold start, in-season
+and a 2019 nflreadpy-fallback season all produce sane boards with no
+negative stats, and a real headless-Chromium session against a live server
+confirmed the woven ordering, the button hover/selected states and both
+sparkline lines rendering.
+
+---
+
 ## 1. Architecture
 
 ```
@@ -1409,6 +1510,54 @@ depth-chart over-spreading bug, both fixed), and the remaining book-confirmed ga
     converts a real missing value to the three-character string `"nan"`,
     which is not null, so bye-week rows stopped being dropped. Order matters:
     filter on real nullness FIRST, cast to string only after.
+
+36. **`st.dataframe`'s grid sorts on the RAW Arrow value and only DISPLAYS
+    the Styler's formatted string - and a null sorts to the TOP, not the
+    bottom.** Confirmed at source this time, by reading Streamlit's own
+    frontend bundle rather than inferring from behavior: a Number cell's
+    sort key is `cell.data?.toString() ?? ''`, so a missing value becomes an
+    empty string, and the comparator's number-vs-string branch puts a string
+    below every number in an ascending sort. A TEXT column is sorted with
+    `localeCompare`, which is why "QB10" sorts between "QB1" and "QB2". Both
+    facts together mean a rank column must store a NUMBER (with a real
+    sentinel for missing, gotcha #5) and get its "RB4" text from the
+    Styler's formatter - `ui.styling.style_plain_dataframe`'s `label_cols`
+    param exists for exactly this, and `ui.tabs.rankings._woven_rank` is the
+    worked example. The Styler display value is only honored for Text/Number/
+    Uri cells and only when no explicit `format` is set in that column's
+    `column_config`.
+
+37. **`st.column_config.LineChartColumn` can draw the line and NOTHING
+    else.** Its whole cell payload is `{values, yAxis, color, graphKind}` -
+    there is no reference-line, threshold or annotation option anywhere in
+    it. A sparkline that needs a second line (e.g. Weekly Rankings' dotted
+    season average under the last-5-games trend) has to be an inline SVG in
+    an `ImageColumn` instead (`ui.charts.sparkline_data_uri`). Two things
+    bite there: the SVG must be base64-encoded, because an un-encoded `#`
+    (every colour is a hex literal) starts a URI fragment and silently
+    truncates the image; and the grid draws an image scaled to the ROW
+    height with its width taken from the aspect ratio, so a too-wide SVG
+    overflows a "small" column and is clipped by the next one rather than
+    being scaled down to fit.
+
+38. **A "vacated usage" calculation cannot recover a sidelined player's
+    volume by dividing his projection by his own injury multiplier - the
+    multiplier for a player ruled Out is exactly 0.0.** His projection is
+    therefore 0, there is nothing to divide back out, and the redistribution
+    silently moves nothing for precisely the case it exists to handle
+    (`data.weekly_projections.redistribute_vacated_usage`). The pre-injury
+    volume has to be stashed before the discount is applied. Caught by a
+    unit test asserting a teammate actually gained targets, not by reading
+    the code - the code looks completely correct, and every player who is
+    merely Doubtful (0.4) works fine.
+
+39. **"No snap data" is not "every snap".** `np.nan_to_num(share, nan=1.0)`
+    on a player with no measured role gives him a full-time starter's
+    baseline, which put three undrafted rookie running backs at the top of a
+    real week-1 board (Jacory Croskey-Merritt, 24.7 projected points). The
+    position's own median share is the honest default. Same class of bug as
+    gotcha #30 (`if x:` on a NaN): a missing value silently reading as the
+    most favourable possible value rather than as missing.
 
 35. **A column name being the SAME on two DataFrames doesn't mean the join is
     safe - it can genuinely not exist on one side at all.** Wiring the weekly

@@ -111,7 +111,7 @@ def test_weighted_player_rates_weighs_recent_games_more():
         {'name': 'A', 'week': 1, 'position': 'WR', 'opponent_team': 'KC', 'targets': 2},
         {'name': 'A', 'week': 6, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 10},
     ])
-    out = wp._weighted_player_rates(df, 'name', ['targets'], as_of_week=7,
+    out, _totals = wp._weighted_player_rates(df, 'name', ['targets'], as_of_week=7,
                                     matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'MIA'})
     flat_avg = 6.0
     assert out.loc['A', 'targets'] > flat_avg
@@ -125,7 +125,7 @@ def test_weighted_player_rates_upweights_a_rematch_game():
         {'name': 'A', 'week': 5, 'position': 'WR', 'opponent_team': 'KC', 'targets': 10},
         {'name': 'A', 'week': 4, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 2},
     ])
-    with_rematch = wp._weighted_player_rates(
+    with_rematch, _ = wp._weighted_player_rates(
         df_rematch, 'name', ['targets'], as_of_week=6,
         matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'KC'})
 
@@ -133,7 +133,7 @@ def test_weighted_player_rates_upweights_a_rematch_game():
         {'name': 'A', 'week': 5, 'position': 'WR', 'opponent_team': 'SEA', 'targets': 10},
         {'name': 'A', 'week': 4, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 2},
     ])
-    without_rematch = wp._weighted_player_rates(
+    without_rematch, _ = wp._weighted_player_rates(
         df_no_rematch, 'name', ['targets'], as_of_week=6,
         matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'KC'})
 
@@ -141,8 +141,11 @@ def test_weighted_player_rates_upweights_a_rematch_game():
 
 
 def test_weighted_player_rates_empty_input_returns_empty():
-    assert wp._weighted_player_rates(weekly([]), 'name', ['targets'], as_of_week=2,
-                                     matchup_matrix=pd.DataFrame(), upcoming_opponent={}).empty
+    # Returns (rates, weighted totals) - the totals ride along so an
+    # efficiency RATIO can be formed from two weighted sums.
+    rates, totals = wp._weighted_player_rates(weekly([]), 'name', ['targets'], as_of_week=2,
+                                              matchup_matrix=pd.DataFrame(), upcoming_opponent={})
+    assert rates.empty and totals.empty
 
 
 # --- shrinkage --------------------------------------------------------------
@@ -231,6 +234,183 @@ def test_role_confidence_handles_no_snap_column_gracefully():
     df = pd.DataFrame({'name': ['A'], 'week': [1], 'position': ['WR']})
     out = wp._role_confidence(df, 'name', as_of_week=2, pos='WR', pff_rec=pd.DataFrame())
     assert out.empty
+
+
+# --- expected snap share / role volume ---------------------------------------
+
+def test_expected_snap_share_separates_a_backup_from_a_starter():
+    # The measured failure this exists for: a backup's PER-GAME rate looks
+    # like a starter's on a small sample, and only snap share separates them.
+    df = weekly([
+        {'name': 'Starter', 'week': w, 'position': 'QB', 'team': 'KC',
+         'opponent_team': 'DEN', 'weekly_snap_pct': 100.0} for w in (1, 2, 3, 4, 5)
+    ] + [
+        {'name': 'Backup', 'week': w, 'position': 'QB', 'team': 'KC',
+         'opponent_team': 'DEN', 'weekly_snap_pct': 12.0} for w in (2, 5)
+    ])
+    share = wp.expected_snap_share(df, 'name', 'team', as_of_week=6)
+    assert share['Starter'] == 1.0
+    assert 0.0 < share['Backup'] < 0.2
+
+
+def test_expected_snap_share_reads_a_role_takeover_from_recent_games_only():
+    # Tyler Shough's real 2025 shape: 4% -> 54% -> 90% -> 95%. A season
+    # average would still call him a backup; a four-appearance window
+    # shouldn't.
+    df = weekly([
+        {'name': 'Riser', 'week': 1, 'position': 'QB', 'team': 'NO',
+         'opponent_team': 'ATL', 'weekly_snap_pct': 4.0},
+        {'name': 'Riser', 'week': 2, 'position': 'QB', 'team': 'NO',
+         'opponent_team': 'ATL', 'weekly_snap_pct': 54.0},
+        {'name': 'Riser', 'week': 3, 'position': 'QB', 'team': 'NO',
+         'opponent_team': 'ATL', 'weekly_snap_pct': 90.0},
+        {'name': 'Riser', 'week': 4, 'position': 'QB', 'team': 'NO',
+         'opponent_team': 'ATL', 'weekly_snap_pct': 95.0},
+        {'name': 'Riser', 'week': 5, 'position': 'QB', 'team': 'NO',
+         'opponent_team': 'ATL', 'weekly_snap_pct': 99.0},
+    ])
+    share = wp.expected_snap_share(df, 'name', 'team', as_of_week=6, lookback=4)
+    assert share['Riser'] > 0.8  # weeks 2-5, not weeks 1-5
+
+
+def test_expected_snap_share_does_not_punish_a_returning_starter():
+    # Measured regression the team-weeks version caused: a starter who
+    # missed two weeks must not read as a part-time player on his return.
+    df = weekly([
+        # 'Hurt' misses weeks 3-4 entirely; 'Healthy' plays all four.
+        {'name': 'Hurt', 'week': 1, 'position': 'RB', 'team': 'SF',
+         'opponent_team': 'LA', 'weekly_snap_pct': 85.0},
+        {'name': 'Hurt', 'week': 2, 'position': 'RB', 'team': 'SF',
+         'opponent_team': 'LA', 'weekly_snap_pct': 88.0},
+    ] + [
+        {'name': 'Healthy', 'week': w, 'position': 'RB', 'team': 'SF',
+         'opponent_team': 'LA', 'weekly_snap_pct': 86.0} for w in (1, 2, 3, 4)
+    ])
+    share = wp.expected_snap_share(df, 'name', 'team', as_of_week=5)
+    assert share['Hurt'] > 0.8
+    assert abs(share['Hurt'] - share['Healthy']) < 0.06
+
+
+# --- roles / role-conditioned matchup ----------------------------------------
+
+def test_player_roles_split_receivers_by_depth_of_target():
+    rows = []
+    for i in range(12):
+        # 12 receivers on an evenly-spread ADOT ladder from 4 to 15 yards
+        adot = 4 + i
+        rows.append({'name': f'W{i}', 'week': 1, 'position': 'WR', 'team': 'KC',
+                     'opponent_team': 'DEN', 'targets': 30,
+                     'receiving_air_yards': 30 * adot})
+    roles = wp.build_player_roles(weekly(rows), 'name', 'WR')
+    assert roles['W0'] == 'WR_SHORT'
+    assert roles['W11'] == 'WR_DEEP'
+    assert roles['W5'] in ('WR_SHORT', 'WR_MID')
+
+
+def test_player_roles_park_a_thin_sample_in_the_middle_bucket():
+    # Two targets is not a measured role, whatever the ADOT says.
+    rows = [{'name': f'W{i}', 'week': 1, 'position': 'WR', 'team': 'KC',
+             'opponent_team': 'DEN', 'targets': 30, 'receiving_air_yards': 30 * (4 + i)}
+            for i in range(12)]
+    rows.append({'name': 'Thin', 'week': 1, 'position': 'WR', 'team': 'KC',
+                 'opponent_team': 'DEN', 'targets': 2, 'receiving_air_yards': 80})
+    roles = wp.build_player_roles(weekly(rows), 'name', 'WR')
+    assert roles['Thin'] == 'WR_MID'
+
+
+def test_role_matchup_blend_shrinks_toward_the_overall_rating():
+    overall = pd.DataFrame({'targets': [1.0]}, index=['DEN'])
+    role_tables = {'WR_DEEP': pd.DataFrame({'targets': [1.4]}, index=['DEN'])}
+    opponents = np.array(['DEN'])
+    roles = np.array(['WR_DEEP'])
+    thin = wp._role_adjusted_multiplier(overall, role_tables, {('DEN', 'WR_DEEP'): 1.0},
+                                        opponents, roles, 'targets')
+    thick = wp._role_adjusted_multiplier(overall, role_tables, {('DEN', 'WR_DEEP'): 40.0},
+                                         opponents, roles, 'targets')
+    # More role-specific evidence -> closer to the role rating, never past it.
+    assert 1.0 < thin[0] < thick[0] <= 1.4
+
+
+def test_role_matchup_falls_back_when_the_defense_never_faced_that_role():
+    overall = pd.DataFrame({'targets': [1.2]}, index=['DEN'])
+    out = wp._role_adjusted_multiplier(overall, {'WR_DEEP': pd.DataFrame()}, {},
+                                       np.array(['DEN']), np.array(['WR_SHORT']), 'targets')
+    assert abs(out[0] - 1.2) < 1e-9
+
+
+# --- game environment ---------------------------------------------------------
+
+def test_game_environment_sign_convention_favours_the_home_team():
+    # spread_line is POSITIVE when the HOME team is favored - the one thing
+    # that silently inverts this whole component if it's read backwards.
+    sched = pd.DataFrame({'week': [1], 'home_team': ['KC'], 'away_team': ['DEN'],
+                          'total_line': [46.0], 'spread_line': [7.0], 'roof': ['outdoors']})
+    env = wp.game_environment(sched, 1)
+    assert env['KC']['implied'] == 26.5
+    assert env['DEN']['implied'] == 19.5
+    assert env['KC']['indoor'] is False
+
+
+def test_game_environment_multiplier_is_neutral_without_a_posted_line():
+    sched = pd.DataFrame({'week': [1], 'home_team': ['KC'], 'away_team': ['DEN'],
+                          'total_line': [np.nan], 'spread_line': [np.nan], 'roof': ['dome']})
+    env = wp.game_environment(sched, 1)
+    out = wp._game_env_multiplier(env, np.array(['KC']), 'QB', league_implied=22.0)
+    # Venue still applies; the total does not, because there isn't one.
+    assert abs(out[0] - wp.VENUE_MULT['QB']['indoor']) < 1e-9
+
+
+# --- calibration --------------------------------------------------------------
+
+def test_calibration_is_one_sided():
+    slope, intercept = wp.WEEKLY_CALIBRATION['WR']
+    crossover = intercept / (1 - slope)
+    high, low = crossover + 10, crossover - 5
+    assert min(high, intercept + slope * high) < high      # the top is shrunk
+    assert min(low, intercept + slope * low) == low        # the bottom is left alone
+
+
+# --- teammate vacancy ---------------------------------------------------------
+
+def test_vacated_targets_move_to_healthy_teammates_in_proportion():
+    frame = pd.DataFrame({
+        'Player': ['Out', 'Big', 'Small', 'OtherTeam'],
+        'Pos': ['WR', 'WR', 'WR', 'WR'],
+        'Team': ['KC', 'KC', 'KC', 'DEN'],
+        'targets': [0.0, 8.0, 4.0, 8.0],
+        'receiving_yards': [0.0, 80.0, 40.0, 80.0],
+    })
+    # `_full_targets` is what the position loop stashes before the injury
+    # discount zeroes an Out player's own line - without it there is nothing
+    # left to redistribute, which is the whole point of carrying it.
+    frame['_full_targets'] = [9.0, 8.0, 4.0, 8.0]
+    out, n = wp.redistribute_vacated_usage(frame, {'Out': 0.0})
+    assert n == 2
+    # 9 vacated targets, 75% of them re-used, split 2:1 by existing usage.
+    assert out.loc[1, 'targets'] > out.loc[2, 'targets']
+    assert out.loc[1, 'targets'] > 8.0 and out.loc[2, 'targets'] > 4.0
+    assert out.loc[3, 'targets'] == 8.0          # a different team is untouched
+    # Dependent stats ride the same factor, so yards per target is unchanged.
+    assert abs(out.loc[1, 'receiving_yards'] / out.loc[1, 'targets'] - 10.0) < 1e-6
+
+
+def test_vacancy_growth_is_capped():
+    frame = pd.DataFrame({
+        'Player': ['Out', 'Only'],
+        'Pos': ['RB', 'RB'],
+        'Team': ['KC', 'KC'],
+        'rushing_attempts': [20.0, 4.0],
+        'rushing_yards': [80.0, 16.0],
+    })
+    frame['_full_rushing_attempts'] = [50.0, 4.0]
+    out, _n = wp.redistribute_vacated_usage(frame, {'Out': 0.4})
+    assert out.loc[1, 'rushing_attempts'] <= 4.0 * wp.VACANCY_MAX_GROWTH + 1e-9
+
+
+def test_vacancy_is_a_no_op_with_nobody_out():
+    frame = pd.DataFrame({'Player': ['A'], 'Pos': ['WR'], 'Team': ['KC'], 'targets': [6.0]})
+    out, n = wp.redistribute_vacated_usage(frame, {'A': 1.0})
+    assert n == 0 and out.loc[0, 'targets'] == 6.0
 
 
 def main():

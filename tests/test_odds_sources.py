@@ -29,7 +29,7 @@ from data.odds_sources import (  # noqa: E402
     odds_api_bookmakers, PROP_COLUMNS, prizepicks_leagues,
     implausible_period_rows, parse_fanduel_payload, parse_pinnacle_payload,
     devig_two_way, american_to_decimal, parse_draftkings_payload,
-    parse_draftkings_payloads,
+    parse_draftkings_payloads, BOOK_WEIGHTS,
 )
 from data.odds_projections import (  # noqa: E402
     market_stat_lines, score_market_lines, compare_to_board,
@@ -212,19 +212,25 @@ def test_market_projection_scores_and_measures_coverage():
     assert not rows.empty
 
     jj = rows[rows['player_key'] == 'justinjefferson'].iloc[0]
-    # Two providers priced the same receiver; the median of the two is taken
-    # rather than either one alone.
-    assert float(jj['receiving_yards']) == (1275.5 + 1240.5) / 2
-    assert float(jj['receptions']) == (92.5 + 90.5) / 2
+    # Two providers priced the same receiver; a RELIABILITY-WEIGHTED average
+    # of the two is taken (data.odds_sources.BOOK_WEIGHTS: Underdog 15,
+    # PrizePicks 20), not a plain average/median of either one alone.
+    ud_w, pp_w = BOOK_WEIGHTS['Underdog'], BOOK_WEIGHTS['PrizePicks']
+
+    def _weighted(ud_val, pp_val):
+        return (ud_w * ud_val + pp_w * pp_val) / (ud_w + pp_w)
+
+    assert abs(float(jj['receiving_yards']) - _weighted(1275.5, 1240.5)) < 1e-9
+    assert abs(float(jj['receptions']) - _weighted(92.5, 90.5)) < 1e-9
     assert 'Underdog' in jj['providers'] and 'PrizePicks' in jj['providers']
 
     scored = score_market_lines(rows, SCORING)
     jj_scored = scored[scored['player_key'] == 'justinjefferson'].iloc[0]
     assert float(jj_scored['Coverage']) == 1.0, "all three WR key stats priced"
 
-    yards = (1275.5 + 1240.5) / 2
-    recs = (92.5 + 90.5) / 2
-    tds = (8.5 + 9.5) / 2 * 1.05          # median-to-mean bump on TDs
+    yards = _weighted(1275.5, 1240.5)
+    recs = _weighted(92.5, 90.5)
+    tds = _weighted(8.5, 9.5) * 1.05          # median-to-mean bump on TDs
     expected = round(yards * 0.1 + recs * 1.0 + tds * 6, 1)
     assert abs(float(jj_scored['Market Pts']) - expected) < 0.15, (
         f"{jj_scored['Market Pts']} vs {expected}")
@@ -638,7 +644,11 @@ def test_two_books_average_per_stat_not_per_projection():
     rows = market_stat_lines(combine_props(ud, pp), season_only=True)
 
     jj = rows[rows['player_key'] == 'justinjefferson'].iloc[0]
-    assert float(jj['receiving_yards']) == (1275.5 + 1375.5) / 2, "two books -> midpoint"
+    # Reliability-weighted (BOOK_WEIGHTS: Underdog 15, PrizePicks 20), not a
+    # plain midpoint - see BOOK_WEIGHTS' own docstring.
+    ud_w, pp_w = BOOK_WEIGHTS['Underdog'], BOOK_WEIGHTS['PrizePicks']
+    expected = (ud_w * 1275.5 + pp_w * 1375.5) / (ud_w + pp_w)
+    assert abs(float(jj['receiving_yards']) - expected) < 1e-9, "two books -> weighted average"
     assert int(jj['Books']) == 2
     assert 'Underdog' in jj['providers'] and 'PrizePicks' in jj['providers']
 
@@ -731,7 +741,9 @@ def test_two_books_spelling_one_player_differently_become_one_row():
     row = rows.iloc[0]
     assert row['player'] == 'James Cook III', "canonicalised to the board's spelling"
     assert int(row['Books']) == 2
-    assert float(row['rushing_yards']) == (1000.5 + 1100.5) / 2, "and they average"
+    ud_w, pp_w = BOOK_WEIGHTS['Underdog'], BOOK_WEIGHTS['PrizePicks']
+    expected = (ud_w * 1000.5 + pp_w * 1100.5) / (ud_w + pp_w)
+    assert abs(float(row['rushing_yards']) - expected) < 1e-9, "and they weighted-average"
 
 
 def test_canonicalisation_still_refuses_two_genuinely_different_players():

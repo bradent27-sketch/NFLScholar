@@ -15,8 +15,6 @@ form/season-average blend times a matchup multiplier.
 DELIBERATELY BUILT BY COMPOSITION, NOT FROM SCRATCH. Every external signal
 here reuses a primitive this app already has, tested and in production
 elsewhere, rather than re-deriving it:
-  - opponent-allowed rates: data.transforms.build_stat_allowed_matrix (the
-    same matchup engine build_player_projection already uses)
   - pace: data.loaders.load_team_pace (same source)
   - game script: the SAME bucket edges data.matchup_signals.
     game_script_sensitivity_curve uses (Trailed big / Lost close / Won
@@ -72,6 +70,35 @@ a thin, uncertain role gets MORE. That is what "informs the model" means
 here - it changes how much weight the model puts on a player's own numbers,
 not a bolt-on adjustment layered on top of an unrelated calculation.
 
+THIS SEASON'S OWN GAME LOG IS ITSELF RECENCY- AND MATCHUP-WEIGHTED, not a
+flat season-to-date average feeding the shrinkage above
+(`build_quality_adjusted_matchup` / `_weighted_player_rates`, replacing an
+earlier flat 60% trailing-4-game / 40% season-average split). Three stacked
+adjustments on every past game, per explicit request:
+
+  1. RECENCY - most recent game weight 1.0, decaying by RECENCY_DECAY per
+     game back, a smooth curve rather than a hard 4-game cutoff.
+  2. MATCHUP STRENGTH - a big game against a bad defense is scaled DOWN
+     before it's averaged into the player's rate, and a quiet game against
+     a good defense is scaled UP - so a huge day against a defense that
+     gives that up to everyone doesn't inflate a player's real level, and a
+     quiet day against a tough defense doesn't understate it. The defense
+     rating used for this is ITSELF quality-adjusted and recency-weighted -
+     see build_quality_adjusted_matchup's own docstring for the "Baltimore
+     vs. a good slot receiver" reasoning this exists to capture, on both
+     the offense side (here) and the defense side (the same matrix is what
+     prices the upcoming opponent's matchup_mult below).
+  3. REMATCH - a past game against the SAME opponent the player faces again
+     this week gets its weight multiplied up further (REMATCH_WEIGHT_MULT)
+     - not overriding everything else, but a real rematch is the best
+     single data point available for what's about to happen.
+
+This mechanically pushes the model toward USAGE AND EFFICIENCY over bare
+box-score totals, which was also asked for directly: a raw counting stat is
+now never averaged on its own terms, only after being leveled for who it
+came against and how long ago - a talent/usage read, not a highlight-reel
+average.
+
 NEVER LEAKS THE TARGET WEEK'S OWN RESULT. Every input (usage rates,
 opponent-allowed matrix, snap trend, game-script buckets) is computed off
 games with week < as_of_week (defaults to the target week itself). This is
@@ -83,10 +110,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from data.transforms import (
-    load_and_merge_data, OFFENSE_PROJECTION_STATS, build_stat_allowed_matrix,
-    score_projected_stats,
-)
+from data.transforms import load_and_merge_data, OFFENSE_PROJECTION_STATS, score_projected_stats
 from data.loaders import load_team_pace, load_schedule
 from data.utils import clean_name_exact
 
@@ -112,7 +136,52 @@ STAT_K = {
 # it's a nudge on top of sample size, not a replacement for it.
 K_EFFECTIVE_RANGE = (0.7, 1.3)
 
+# Per-game recency decay for a player's OWN within-season history (see the
+# module docstring's "THIS SEASON'S OWN GAME LOG..." section) - most recent
+# played game weight 1.0, each game further back multiplied by this again.
+# 0.85 means a game 8 weeks back (games_ago=8) carries 0.85**7 =~ 0.32x a
+# just-played game's weight, and one 14 weeks back carries =~0.11x - still
+# present, never dominant. Chosen to be gentler than a hard cutoff (the old
+# 60/40 trailing-4/season split effectively zeroed anything before game 5)
+# while still making "recent weeks count more" true of every game, not just
+# a binary in/out of a fixed window. Also used, identically, to recency-
+# weight a DEFENSE's own matchup history in build_quality_adjusted_matchup -
+# one constant, one meaning ("how fast does old evidence fade"), reused for
+# both sides of the same idea per explicit request ("implement this for the
+# defense as well").
+RECENCY_DECAY = 0.85
+
+# Extra weight multiplier on a past game whose opponent is the SAME team a
+# player faces again this week, stacked on top of its ordinary recency
+# weight - "there should be some weight allocated to it (not too much but a
+# decent amount)" per explicit request. 1.6x a same-recency ordinary game:
+# enough to matter (a recent rematch data point can materially move a rate)
+# without letting one game override the rest of a season's evidence, which
+# is what an override (rather than a weight bump) would risk on a small
+# sample.
+REMATCH_WEIGHT_MULT = 1.6
+
 MATCHUP_CLIP = (0.75, 1.3)
+# Narrower than MATCHUP_CLIP - used only to retroactively adjust a single
+# PAST game's value in _weighted_player_rates, not the forward-looking
+# projection multiplier. A one-game matchup rating is a noisier estimate
+# than the blended rate it feeds into, so a per-game correction is damped
+# relative to the multiplier applied once to the whole projection.
+# MEASURED, HONESTLY: scripts/validate_weekly_projections.py (2025 weeks
+# 5-17) puts this whole recency/matchup/rematch reweighting within noise of
+# the pre-existing flat 60/40 trailing-4/season split it replaced - overall
+# rank-corr 0.655 either way, MAE 4.65-4.67 across every variant tried
+# (MATCHUP_CLIP here, no adjustment at all, this narrower clip). QB and TE
+# improved a little, RB and WR moved a little the other way, none of it
+# outside what looks like backtest noise at n=300-350/week. This constant
+# is the best of the variants actually tried, not a constant validated to
+# clearly help - kept because the mechanism is directly what was asked for
+# (matchup context on both sides, recency, same-opponent rematches) and
+# measurably does not hurt, not because it moved the aggregate numbers on
+# its own. Don't read a future small backtest delta on this range as
+# meaningful without a bigger sample (see the same season's naive baseline
+# sitting inside the same noise band as this whole family of variants).
+HISTORY_MATCHUP_CLIP = (0.85, 1.15)
 PACE_CLIP = (0.85, 1.15)
 SCRIPT_CLIP = (0.85, 1.15)
 # Which raw stats the game-script read applies to - VOLUME only. Touchdowns
@@ -166,43 +235,142 @@ def _season_totals(stats_df, name_col, team_col, pos, stats):
     return grouped
 
 
-def _recent_rate(stats_df, name_col, pos, stats, n=4):
+def build_quality_adjusted_matchup(hist_pos, name_col, stats, as_of_week):
     """
-    Per-player trailing-N-games mean for one position's stat list - the
-    WITHIN-season half of the current-season rate (see _in_season_rate).
-    One groupby.tail(n), not a per-player loop.
+    Recency-weighted, OPPONENT-QUALITY-ADJUSTED defensive matchup rating for
+    one position: how much MORE or LESS than a typical opponent's own normal
+    level a defense allowed - not how many raw yards/catches/etc it allowed.
+
+    WHY THIS EXISTS, PER EXPLICIT REQUEST. A flat "average stat allowed per
+    game" gives a defense identical blame for 130 yards allowed to an elite
+    target and 130 allowed to a fringe roster player, and those are not the
+    same signal about the defense at all: if Baltimore gives up 130 yards to
+    a receiver who does that to everyone (a strong slot target like Amon-Ra
+    St. Brown), that's barely below his normal level and shouldn't hurt
+    Baltimore's rating much; the same 130 to a WR3 who usually does 40 is a
+    real breakdown. This compares what each opponent did against a defense
+    to what that SAME PLAYER does on average against everyone, then averages
+    THAT ratio per defense - a measure of the defense specifically, with the
+    opposing talent leveled out.
+
+    Recency-weighted the same way the offense side of this module is (see
+    RECENCY_DECAY): a defense's more recent matchups count more, same
+    principle applied to both sides of the same idea per explicit request
+    ("implement this for the defense as well").
+
+    Returns a DataFrame indexed by opponent_team, one column per stat, values
+    centered near 1.0 (a league-average defense reads 1.0; >1 allows more
+    than a typical opponent's own level, <1 allows less) - drop-in compatible
+    with the same MATCHUP_CLIP scale build_stat_allowed_matrix's ratio used.
+
+    APPROXIMATION, NOTED HONESTLY: a player's own baseline is his mean
+    INCLUDING the very game being compared (no leave-one-out split) - a
+    small self-inclusion bias that mutes the signal slightly (an outlier
+    game pulls its own baseline toward itself), accepted the same way this
+    app already accepts "season total / games" as a baseline everywhere
+    else rather than a leave-one-out estimator. There's also an inherent,
+    accepted circularity in any single-pass strength-of-schedule adjustment
+    like this one: a player's baseline here isn't itself matchup-adjusted.
+    A fully rigorous version would iterate offense and defense ratings
+    against each other to convergence; one pass is the standard practical
+    approximation and what every other adjustment in this app already uses.
     """
-    rows = stats_df[stats_df['position'].astype(str).str.upper() == pos]
-    if rows.empty:
-        return pd.DataFrame(columns=[name_col] + list(stats))
-    recent = rows.sort_values('week').groupby(name_col).tail(n)
-    return recent.groupby(name_col, as_index=False)[list(stats)].mean()
+    if hist_pos.empty or 'opponent_team' not in hist_pos.columns:
+        return pd.DataFrame()
+    stats = [s for s in stats if s in hist_pos.columns]
+    if not stats:
+        return pd.DataFrame()
+    df = hist_pos.copy()
+    weeks = pd.to_numeric(df['week'], errors='coerce')
+    games_ago = (as_of_week - weeks).clip(lower=1)
+    w = RECENCY_DECAY ** (games_ago - 1)
+
+    baseline = df.groupby(name_col)[stats].transform('mean').replace(0, np.nan)
+    ratio = df[stats].div(baseline)
+    valid = ratio.notna()
+    num = ratio.fillna(0.0).mul(w, axis=0)
+    den = valid.astype(float).mul(w, axis=0)
+    # .astype(str) - opponent_team is categorical upstream (see HANDOFF.md
+    # gotcha #10) and a categorical groupby key/lookup silently propagates
+    # the categorical dtype through .map() into places (.clip() below,
+    # cur['Opponent'].map(...) at the call site) that then raise on an
+    # unordered-categorical comparison. Every opponent-keyed lookup in this
+    # function and _weighted_player_rates casts to plain str for this
+    # reason - never index by the raw categorical column.
+    num['_opponent'] = df['opponent_team'].astype(str).to_numpy()
+    den['_opponent'] = df['opponent_team'].astype(str).to_numpy()
+
+    num_sum = num.groupby('_opponent')[stats].sum()
+    den_sum = den.groupby('_opponent')[stats].sum()
+    result = num_sum.div(den_sum.replace(0, np.nan))
+
+    # Re-center so the league-average defense reads 1.0 - a player's own
+    # mean-of-his-games baseline is unbiased in expectation but a finite
+    # sample of defenses won't average to exactly 1.0 by chance, and every
+    # multiplier downstream (MATCHUP_CLIP etc.) assumes 1.0 = average.
+    league_mean = result.mean()
+    return result.div(league_mean.replace(0, np.nan))
 
 
-def _in_season_rate(cur_total, cur_games, recent_avg):
+def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent):
     """
-    This season's per-game rate, recency-weighted WITHIN the season -
-    60% trailing-4-game average / 40% full-season average, same split
-    data.transforms.build_player_projection already uses for its own
-    next-game projection (reused rather than invented, so the two models
-    agree on how much a hot/cold streak should matter).
+    Per player, per stat: a recency-weighted, opponent-quality-adjusted rate
+    - the WITHIN-season half of the cross-season blend (see _blended_rate),
+    replacing an earlier flat 60% trailing-4-game / 40% season-average
+    split with the three stacked adjustments the module docstring's "THIS
+    SEASON'S OWN GAME LOG..." section describes (recency, matchup strength,
+    rematch).
 
-    Why this exists as its own step rather than a flat season total/games:
-    a straight season-to-date average is exactly what's biased low for
-    almost every player still worth projecting by mid-season - the players
-    who remain fantasy-relevant in week 10 are disproportionately ones
-    whose ROLE GREW as the season went on (an early-season committee back
-    who won the job outright by October, a rookie whose snaps climbed every
-    week), and averaging that early, smaller-role stretch in with the rest
-    at equal weight understates what he's actually doing now. A backtest
-    without this step (season-to-date rate only) showed exactly that: a
-    consistent several-point-per-player UNDER-projection across every
-    position - see docs/weekly_projections_methodology.md.
+    `matchup_matrix` is build_quality_adjusted_matchup's output - the SAME
+    defense ratings used to price the upcoming opponent below, applied
+    retroactively to the player's own past games instead of only forward.
+    `upcoming_opponent` is {player: this week's opponent}, for the rematch
+    weight bump.
+
+    Returns a DataFrame indexed by name_col: one '{stat}' rate column per
+    stat, plus 'weight_sum' - NOT plugged into _blended_rate's games-played
+    shrinkage (that stays the RAW game count, unchanged, so the existing
+    current-vs-prior-season trust calibration isn't disturbed by this
+    change) - kept only in case a caller wants the effective sample size.
     """
-    season_avg = np.divide(cur_total, np.maximum(cur_games, 1),
-                           out=np.zeros_like(cur_total, dtype=float), where=cur_games > 0)
-    recent = np.where(np.isnan(recent_avg), season_avg, recent_avg)
-    return 0.6 * recent + 0.4 * season_avg
+    if hist_pos.empty:
+        return pd.DataFrame()
+    stats = [s for s in stats if s in hist_pos.columns]
+    if not stats:
+        return pd.DataFrame()
+    df = hist_pos.copy()
+    weeks = pd.to_numeric(df['week'], errors='coerce')
+    games_ago = (as_of_week - weeks).clip(lower=1)
+    w = RECENCY_DECAY ** (games_ago - 1)
+
+    # .astype(str) - see build_quality_adjusted_matchup's comment on why a
+    # raw categorical opponent_team can't be used for a downstream
+    # .map()/.clip() chain.
+    opponent = (df['opponent_team'].astype(str) if 'opponent_team' in df.columns
+               else pd.Series('', index=df.index))
+    is_rematch = opponent.eq(df[name_col].map(upcoming_opponent))
+    w = w * np.where(is_rematch, REMATCH_WEIGHT_MULT, 1.0)
+    df['_w'] = w
+
+    num_cols = []
+    for stat in stats:
+        raw = pd.to_numeric(df[stat], errors='coerce').fillna(0.0)
+        mult = pd.Series(1.0, index=df.index)
+        if matchup_matrix is not None and not matchup_matrix.empty and stat in matchup_matrix.columns:
+            looked_up = opponent.map(matchup_matrix[stat])
+            mult = looked_up.fillna(1.0).clip(*HISTORY_MATCHUP_CLIP)
+        col = f'_num_{stat}'
+        df[col] = (raw / mult) * df['_w']
+        num_cols.append(col)
+
+    agg = {c: (c, 'sum') for c in num_cols}
+    agg['weight_sum'] = ('_w', 'sum')
+    grouped = df.groupby(name_col).agg(**agg)
+    weight_sum = grouped['weight_sum'].replace(0, np.nan)
+    rates = grouped[num_cols].div(weight_sum, axis=0)
+    rates.columns = [c[len('_num_'):] for c in rates.columns]
+    rates['weight_sum'] = grouped['weight_sum']
+    return rates
 
 
 def _blended_rate(cur_rate, cur_games, prior_rate, pos_rate, stat, role_confidence):
@@ -397,6 +565,44 @@ def _injury_multipliers(year, week):
     return dict(zip(injuries['Player'], mult.dropna()))
 
 
+def _cold_start_pool(stats_df, name_col, team_col, as_of_week):
+    """
+    Player identity (name/team/position) for a COLD START - projecting a
+    week with zero real games played this season yet to compare against
+    (week 1, or the whole preseason before a weekly stats file exists at
+    all), where the normal player pool (built off this season's own played
+    games) has nothing to read.
+
+    TWO DIFFERENT KINDS OF "NOTHING TO READ" HERE, AND THEY GET DIFFERENT
+    TREATMENT so team/position is never accidentally read from a LATER week
+    than the one being projected:
+
+      - No 'week' column at all (e.g. 2026 before kickoff) - load_year_data's
+        roster-only fallback (HANDOFF.md gotcha #6) still carries this
+        season's real team/position from the roster file (offseason trades,
+        cuts, depth-chart moves already reflected), just zero real stat
+        rows. Every row here IS the current snapshot - nothing to leak.
+      - A 'week' column exists (a real, possibly-already-played season) but
+        `as_of_week` itself has no rows yet (the live "haven't kicked off
+        week 1" case, or testing as_of_week=1 against a completed season).
+        Using the UNFILTERED stats_df for team/position here would pull in
+        a later week's post-trade team and leak it backward into what's
+        supposed to be a week-1-only read - so this reads ONLY rows from
+        `as_of_week` itself when they exist, and only falls back to the
+        unfiltered frame when even those don't exist yet (nothing legitimate
+        to leak in that case either - the season hasn't started).
+    """
+    if stats_df.empty or name_col not in stats_df.columns:
+        return pd.DataFrame(columns=[name_col, team_col, 'position'])
+    cols = [c for c in (name_col, team_col, 'position') if c in stats_df.columns]
+    if 'week' in stats_df.columns:
+        this_week = stats_df[pd.to_numeric(stats_df['week'], errors='coerce') == as_of_week]
+        pool = this_week[cols] if not this_week.empty else stats_df[cols]
+    else:
+        pool = stats_df[cols]
+    return pool.dropna(subset=[name_col]).drop_duplicates(subset=[name_col])
+
+
 def _load_pff_receiving(year):
     try:
         from data.loaders import load_pff_data_with_fallback
@@ -431,32 +637,42 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     this model's apparent bias before it was isolated - see
     docs/weekly_projections_methodology.md.
 
-    Returns (DataFrame, meta). Empty DataFrame with meta['reason'] set
-    rather than raising when there isn't enough of a current season yet
-    (week 1, or a season with no weekly file at all) - same "not enough
-    data" convention as build_player_projection.
+    Returns (DataFrame, meta). Empty DataFrame with meta['reason'] set only
+    when there is truly nothing anywhere to build even a cold-start
+    projection from (see COLD START below) - meta['cold_start'] is True
+    when the returned board leans entirely on prior-season data because
+    this season has no games played yet.
 
-    KNOWN GAP: WEEK 1 CAN'T BE PROJECTED BY THIS MODEL. The player pool
-    itself (who's on which team, in what role) is read off THIS season's
-    own games, same as every other input - with zero of those played yet,
-    there's no way to tell a returning starter from someone who lost his
-    job in camp. This isn't a threshold that could be tuned lower; it's
-    structural. Week 1 (and the preseason generally) is exactly where
-    FantasyPros' own weekly projection (data.draft_sources.
-    fetch_fantasypros_weekly_projections) is the right tool instead - their
-    analysts have a season-opener number, this model doesn't.
+    COLD START: WEEK 1 (OR A SEASON WITH NO WEEKLY FILE YET) FALLS BACK TO
+    PRIOR-SEASON DATA RATHER THAN PROJECTING NOTHING. The player pool
+    (who's on which team) still has to come from somewhere real for THIS
+    season - see _cold_start_pool - but every rate in the projection itself
+    already had a well-defined answer for a player with zero current-season
+    games: _blended_rate's own cross-season shrinkage (w_current =
+    games/(games+K)) already lands ENTIRELY on the prior-season rate when
+    games=0, which is exactly "based on past season stats" for the offense
+    side. The one piece that previously had no prior-season equivalent was
+    the DEFENSE side - the opponent-allowed matchup multiplier normally
+    read off THIS season's own games - so a cold start computes
+    build_quality_adjusted_matchup off last season's full year instead,
+    anchored so last season's FINAL week reads as "most recent" (see the
+    cold-start branch below). This is deliberately not a good projection -
+    a whole season has changed since the numbers it's built from - but it
+    is a real one, which is the ask: "albeit the projection won't be great"
+    beats no projection at all. FantasyPros' own weekly projection
+    (data.draft_sources.fetch_fantasypros_weekly_projections) still has
+    real season-opener-specific analyst input this app doesn't and remains
+    the better source where it's available; this is the fallback for when
+    it isn't, or for seeing this app's own read.
     """
     if as_of_week is None:
         as_of_week = week
     stats_df, team_col, name_col, _ = load_and_merge_data(year, scoring_mode)
-    if stats_df.empty or 'week' not in stats_df.columns:
-        return pd.DataFrame(), {'reason': f'No weekly data for {year} yet.'}
-    hist = _played_weeks_before(stats_df, as_of_week)
-    if hist.empty:
-        return pd.DataFrame(), {'reason': f'Week {as_of_week} of {year} has no earlier games this '
-                                          'season to project from yet (see this function\'s '
-                                          'docstring - week 1 needs FantasyPros\' own weekly '
-                                          'projection instead).'}
+    if stats_df.empty:
+        return pd.DataFrame(), {'reason': f'No roster or weekly data for {year} yet.'}
+
+    hist = _played_weeks_before(stats_df, as_of_week) if 'week' in stats_df.columns else stats_df.iloc[0:0]
+    cold_start = hist.empty
 
     prior_stats, prior_team_col, prior_name_col, _ = pd.DataFrame(), team_col, name_col, None
     try:
@@ -464,42 +680,110 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     except Exception:
         prior_stats = pd.DataFrame()
 
+    if cold_start and (prior_stats is None or prior_stats.empty):
+        return pd.DataFrame(), {'reason': f'Week {as_of_week} of {year} has no games played yet this '
+                                          f'season, and {year - 1} has no data to fall back on either - '
+                                          'nothing to build even a rough cold-start projection from.'}
+
     schedule_df = load_schedule(year)
     opponents = _week_opponents(schedule_df, week)
     target_margins = _target_margins_by_team(year, week)
     injury_mult = _injury_multipliers(year, week) if apply_injury else {}
     pff_rec = _load_pff_receiving(year)
     pace = load_team_pace(year)
+    if cold_start and (pace is None or pace.empty):
+        # This season's own pace data doesn't exist yet either (same reason
+        # as everything else in a cold start) - last season's team pace is
+        # a far better estimate of week 1 than the neutral 1.0 fallback
+        # below would be.
+        pace = load_team_pace(year - 1)
     league_pace = pace['def_pace'].mean() if pace is not None and not pace.empty and 'def_pace' in pace.columns else None
+
+    cold_pool = _cold_start_pool(stats_df, name_col, team_col, as_of_week) if cold_start else pd.DataFrame()
+    prior_played = _all_played_weeks(prior_stats)
+    prior_max_week = None
+    if cold_start and not prior_played.empty:
+        prior_weeks_numeric = pd.to_numeric(prior_played['week'], errors='coerce')
+        prior_max_week = prior_weeks_numeric.max() if prior_weeks_numeric.notna().any() else None
 
     all_rows = []
     for pos in DRAFTABLE_POSITIONS:
         stats = OFFENSE_PROJECTION_STATS[pos]
-        cur = _season_totals(hist, name_col, team_col, pos, stats)
-        if cur.empty:
-            continue
-        prior = (_season_totals(_all_played_weeks(prior_stats), prior_name_col, prior_team_col, pos, stats)
+        if cold_start:
+            pool_pos = cold_pool[cold_pool['position'].astype(str).str.upper() == pos] if not cold_pool.empty else cold_pool
+            if pool_pos.empty:
+                continue
+            cur = pool_pos[[name_col, team_col]].rename(columns={team_col: 'Team'}).drop_duplicates(subset=[name_col])
+            cur['Games'] = 0
+            for stat in stats:
+                cur[stat] = 0.0
+        else:
+            cur = _season_totals(hist, name_col, team_col, pos, stats)
+            if cur.empty:
+                continue
+        prior = (_season_totals(prior_played, prior_name_col, prior_team_col, pos, stats)
                  if not prior_stats.empty else pd.DataFrame())
         prior_rates = pd.DataFrame({s: prior[s] / prior['Games'].replace(0, 1) for s in stats}) if not prior.empty else pd.DataFrame()
         if not prior.empty:
-            prior_rates[name_col] = prior[name_col].values
-
-        recent = _recent_rate(hist, name_col, pos, stats, n=4).rename(
-            columns={s: f'{s}__recent' for s in stats})
-        cur = cur.merge(recent, on=name_col, how='left')
+            # Keyed by clean_name_exact, not a raw column-name/value match -
+            # `prior_name_col` isn't even guaranteed to be a real column in
+            # THIS season's frame (a roster-only current season uses
+            # 'player_name', a real prior season uses 'player_display_name'
+            # - different column AND, on other year pairs, potentially
+            # different formatting of the same name), so joining on the
+            # literal column name silently KeyErrors or joins nothing.
+            prior_rates['_key'] = clean_name_exact(prior[prior_name_col])
 
         role_conf = _role_confidence(stats_df, name_col, as_of_week, pos, pff_rec)
         cur = cur.merge(role_conf.rename('role_confidence'), left_on=name_col, right_index=True, how='left')
         cur['role_confidence'] = cur['role_confidence'].fillna(0.5)
 
-        allowed_matrix = build_stat_allowed_matrix(hist, position_filter=[pos])
-        league_means = allowed_matrix.mean() if not allowed_matrix.empty else pd.Series(dtype=float)
-
         cur['Opponent'] = cur['Team'].map(opponents)
         cur = cur[cur['Opponent'].notna()].copy()  # bye-week teams drop out entirely
         if cur.empty:
             continue
+        # .astype(str) AFTER the notna() filter above, never before - Team
+        # can be categorical upstream (HANDOFF.md gotcha #10) and casting a
+        # real NaN to str first turns it into the literal string "nan",
+        # which then survives a .notna() bye-week filter it should have
+        # been dropped by. Needed downstream for a clean .map() against
+        # matchup_matrix's plain-str index (build_quality_adjusted_matchup).
+        cur['Opponent'] = cur['Opponent'].astype(str)
         cur['target_margin'] = cur['Team'].map(target_margins)
+
+        # Recency + matchup-strength + rematch weighted own-history rate,
+        # and the SAME defense ratings reused below to price the upcoming
+        # matchup - see build_quality_adjusted_matchup's docstring and the
+        # module docstring's "THIS SEASON'S OWN GAME LOG..." section.
+        if cold_start:
+            # No games THIS season to build a matchup rating from - fall
+            # back to PRIOR season's full year, anchored so its FINAL week
+            # reads as "most recent" (prior_max_week + 1 -> games_ago=1 for
+            # that week), so the recency decay within last season is still
+            # real (its second half predicts this year's week 1 better than
+            # its opener does) even though the whole thing is a year old.
+            # The offense side needs no equivalent override: _blended_rate's
+            # own w_current=0 (cur_games=0 here) already lands entirely on
+            # prior_rate below without any extra machinery.
+            prior_pos_rows = (prior_played[prior_played['position'].astype(str).str.upper() == pos]
+                              if not prior_played.empty else prior_played)
+            matchup_matrix = (build_quality_adjusted_matchup(
+                                  prior_pos_rows, prior_name_col, stats, prior_max_week + 1)
+                              if prior_max_week is not None and not pd.isna(prior_max_week)
+                              else pd.DataFrame())
+        else:
+            pos_rows = hist[hist['position'].astype(str).str.upper() == pos]
+            upcoming_opponent_map = dict(zip(cur[name_col], cur['Opponent']))
+            matchup_matrix = build_quality_adjusted_matchup(pos_rows, name_col, stats, as_of_week)
+            weighted_rates = _weighted_player_rates(
+                pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map)
+        if cold_start:
+            # No current-season rows to weight at all - every player's
+            # in_season_rate below falls through to its own season_avg
+            # fallback (0/0=0 for a cold-start cur), which is fine: cur_games
+            # is 0 for everyone here too, so _blended_rate ignores it anyway
+            # and lands entirely on prior_rate.
+            weighted_rates = pd.DataFrame()
 
         proj_cols = {}
         for stat in stats:
@@ -507,13 +791,21 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 continue
             cur_total = cur[stat].to_numpy(dtype=float)
             cur_games = cur['Games'].to_numpy(dtype=float)
-            recent_avg = (cur[f'{stat}__recent'].to_numpy(dtype=float)
-                         if f'{stat}__recent' in cur.columns else np.full(len(cur), np.nan))
-            in_season_rate = _in_season_rate(cur_total, cur_games, recent_avg)
+            # The season-long flat average is kept only as a FALLBACK for a
+            # player weighted_rates has no usable row for (e.g. every one of
+            # his historical games had an unratable opponent) - the primary
+            # value is the recency/matchup/rematch-weighted rate above it.
+            season_avg = np.divide(cur_total, np.maximum(cur_games, 1),
+                                   out=np.zeros_like(cur_total, dtype=float), where=cur_games > 0)
+            if stat in weighted_rates.columns:
+                in_season_rate = cur[name_col].map(weighted_rates[stat]).to_numpy(dtype=float)
+            else:
+                in_season_rate = np.full(len(cur), np.nan)
+            in_season_rate = np.where(np.isnan(in_season_rate), season_avg, in_season_rate)
 
             if not prior_rates.empty and stat in prior_rates.columns:
-                prior_map = pd.Series(prior_rates[stat].to_numpy(), index=prior_rates[name_col])
-                prior_rate = cur[name_col].map(prior_map).to_numpy(dtype=float)
+                prior_map = pd.Series(prior_rates[stat].to_numpy(), index=prior_rates['_key'])
+                prior_rate = clean_name_exact(cur[name_col]).map(prior_map).to_numpy(dtype=float)
             else:
                 prior_rate = np.full(len(cur), np.nan)
             # Games-weighted, not a plain mean of each player's own rate - a
@@ -521,17 +813,32 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # as a nine-game starter's rate in setting the rookie/no-prior
             # baseline, which understates it (confirmed real in the backtest
             # write-up in docs/weekly_projections_methodology.md).
-            games_total = cur_games.sum()
-            pos_rate = float(cur_total.sum() / games_total) if games_total > 0 else 0.0
+            #
+            # cur_total/cur_games are all zero for everyone in a cold start
+            # (Games=0 by construction) - the position average has to come
+            # from PRIOR season's totals instead, or a rookie with zero
+            # career history (prior_rate also NaN) would fall through to a
+            # bare 0.0 baseline instead of "what a typical player at this
+            # position does," the same fallback he'd get in-season.
+            if cold_start and not prior.empty and stat in prior.columns:
+                prior_games_total = prior['Games'].sum()
+                pos_rate = float(prior[stat].sum() / prior_games_total) if prior_games_total > 0 else 0.0
+            else:
+                games_total = cur_games.sum()
+                pos_rate = float(cur_total.sum() / games_total) if games_total > 0 else 0.0
             pos_rate_arr = np.full(len(cur), pos_rate)
 
+            # cur_games (RAW game count, not the recency-weighted
+            # weight_sum) still drives the current-vs-prior-season shrinkage
+            # below, deliberately - see _weighted_player_rates' docstring on
+            # why that calibration is left undisturbed by this change.
             blended = _blended_rate(in_season_rate, cur_games, prior_rate, pos_rate_arr, stat,
                                     cur['role_confidence'].to_numpy(dtype=float))
 
             matchup_mult = np.ones(len(cur))
-            if stat in league_means.index and league_means[stat] > 0:
-                opp_allowed = cur['Opponent'].map(allowed_matrix[stat]).fillna(league_means[stat])
-                matchup_mult = np.clip(opp_allowed.to_numpy(dtype=float) / league_means[stat], *MATCHUP_CLIP)
+            if matchup_matrix is not None and not matchup_matrix.empty and stat in matchup_matrix.columns:
+                opp_val = cur['Opponent'].map(matchup_matrix[stat])
+                matchup_mult = np.clip(opp_val.fillna(1.0).to_numpy(dtype=float), *MATCHUP_CLIP)
 
             script_mult = np.ones(len(cur))
             if stat in SCRIPT_ELIGIBLE_STATS:
@@ -550,7 +857,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         inj_mult = cur[name_col].map(injury_mult).fillna(1.0)
 
         for stat in proj_cols:
-            proj_cols[stat] = proj_cols[stat] * pace_mult.to_numpy() * inj_mult.to_numpy()
+            # Floored at zero - every one of these is a real-world COUNT
+            # (yards, attempts, catches) and none are physically negative,
+            # even though a single past GAME legitimately can be (a kneel-
+            # heavy or stuffed rushing line). A negative blended rate only
+            # shows up for a low-volume player whose weighted history
+            # happens to be dominated by one such game - same class of
+            # small-sample artifact already floored in data/draft_projections.py
+            # (see that file's matching comment), applied here too.
+            proj_cols[stat] = np.clip(
+                proj_cols[stat] * pace_mult.to_numpy() * inj_mult.to_numpy(), 0.0, None)
 
         out = pd.DataFrame({
             'Player': cur[name_col], 'Pos': pos, 'Team': cur['Team'], 'Opponent': cur['Opponent'],
@@ -560,7 +876,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         for stat, values in proj_cols.items():
             out[stat] = np.round(values, 2)
         proj_dicts = out[[s for s in stats if s in out.columns]].to_dict('records')
-        out['Model Proj Pts'] = [score_projected_stats(d, scoring_mode) for d in proj_dicts]
+        # Floored at zero, same reasoning as the raw per-stat floor above -
+        # a projection is an expectation, and no real player has a negative
+        # one. Score_projected_stats subtracts for interceptions, so a
+        # near-zero-volume passer (a WR/RB with a trace INT rate and
+        # otherwise nothing projected) can otherwise net a small negative
+        # total even with every raw stat already non-negative.
+        out['Model Proj Pts'] = [max(0.0, score_projected_stats(d, scoring_mode)) for d in proj_dicts]
         out['Injury Status'] = out['Player'].map(lambda p: 'Out/Doubtful' if injury_mult.get(p, 1.0) < 0.9 else '')
         all_rows.append(out)
 
@@ -568,5 +890,5 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         return pd.DataFrame(), {'reason': f'No projectable players found for week {week}.'}
     result = pd.concat(all_rows, ignore_index=True).sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
     meta = {'reason': None, 'year': year, 'week': week, 'as_of_week': as_of_week,
-            'players': int(len(result)), 'scoring': scoring_mode}
+            'players': int(len(result)), 'scoring': scoring_mode, 'cold_start': cold_start}
     return result, meta

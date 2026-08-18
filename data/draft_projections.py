@@ -993,7 +993,17 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
                 value = weight * own_total + (1 - weight) * curve_total
             else:
                 value = curve_total
-            out.at[idx, stat] = round(value, 2)
+            # Every PROJECTED_STATS column is a real-world COUNT (yards,
+            # attempts, TDs, INTs thrown, fumbles lost, FG makes) - none of
+            # them are physically negative, even though INTs/fumbles score
+            # negative POINTS via the scoring dict. A negative blended value
+            # only ever shows up for a near-zero-volume player whose own
+            # historical rate happens to be negative (e.g. one game with a
+            # kneel-heavy/loss-yardage rushing line as his only carry) -
+            # same class of small-sample artifact gotcha #23 already floors
+            # Proj Pts against, just one level lower: at the stat line
+            # itself rather than only the points total built on top of it.
+            out.at[idx, stat] = round(max(0.0, value), 2)
 
     # A readable form of last season's availability. A veteran whose
     # projection came down should be able to say why on the row itself -
@@ -1009,7 +1019,7 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
     return out
 
 
-def score_projected_lines(board, scoring):
+def score_projected_lines(board, scoring, latest_season=None):
     """
     Points from the projected stat line under this league's scoring.
 
@@ -1026,6 +1036,10 @@ def score_projected_lines(board, scoring):
     per GAME PLAYED, so a back who is projected for 1,200 yards across 14
     games clears 100 in a week far more often than one who takes 17 to get
     there, and dividing both by a flat 17 would price them identically.
+
+    `latest_season` is only needed for BIG-PLAY bonuses (below) - the
+    per-game yardage bonuses above need no season at all, they run purely
+    off the already-projected stat line.
     """
     if board.empty:
         return board
@@ -1070,6 +1084,17 @@ def score_projected_lines(board, scoring):
                 prev_prob = prob if prev_prob is None else np.maximum(prev_prob, prob)
         out['Proj Pts'] = (out['Proj Pts'] + bonus_total).round(1)
         out['Bonus Pts'] = bonus_total.round(1)
+
+    # Per-PLAY big-play bonuses (user-defined, unbounded list) - a different
+    # mechanism from the per-GAME yardage milestones just above (see
+    # data.draft_big_plays' module docstring for why the two can't share
+    # machinery), so a separate column and a separate addition into Proj Pts
+    # rather than folded into bonus_total above.
+    from data.draft_big_plays import has_big_play_bonuses, project_big_play_points
+    if latest_season is not None and has_big_play_bonuses(scoring):
+        big_play_total, _detail = project_big_play_points(out, scoring, latest_season)
+        out['Proj Pts'] = (out['Proj Pts'] + big_play_total).round(1)
+        out['Big Play Pts'] = big_play_total.round(1)
     return out
 
 
@@ -1166,7 +1191,7 @@ def build_projected_board(ecr_board, scoring, latest_season=2025, n_seasons=CURV
         return ecr_board, {'volume_projections': False}
     rates = build_player_rates(latest_season, n_seasons)
     board = project_stat_lines(ecr_board, curves, rates, latest_season=latest_season)
-    board = score_projected_lines(board, scoring)
+    board = score_projected_lines(board, scoring, latest_season=latest_season)
 
     # Team defenses have no player stat line to project - they don't appear
     # in player-level data at all - so they come through the volume path with

@@ -84,30 +84,68 @@ def test_season_totals_uses_most_recent_team_after_a_trade():
     assert out.iloc[0]['Team'] == 'BUF'
 
 
-def test_recent_rate_is_the_mean_of_the_trailing_window_only():
-    df = weekly([{'name': 'A', 'week': w, 'team': 'KC', 'position': 'WR', 'targets': v}
-                for w, v in zip(range(1, 6), [2, 4, 6, 8, 10])])
-    out = wp._recent_rate(df, 'name', 'WR', ['targets'], n=2)
-    # Trailing 2 games of a player with 5 games played (weeks 4,5 -> 8,10) -> mean 9.
-    assert out.iloc[0]['targets'] == 9.0
+# --- quality-adjusted matchup / weighted own-history rate -----------------
+
+def test_quality_adjusted_matchup_centers_on_one_and_favors_the_tougher_defense():
+    # Player A faces KC (allows him half his normal level) and BUF (allows
+    # him his normal level) once each; a league-average defense should read
+    # 1.0 and KC (the tougher matchup) should read below BUF.
+    df = weekly([
+        {'name': 'A', 'week': 1, 'position': 'WR', 'opponent_team': 'KC', 'receiving_yards': 40},
+        {'name': 'A', 'week': 2, 'position': 'WR', 'opponent_team': 'BUF', 'receiving_yards': 80},
+        {'name': 'A', 'week': 3, 'position': 'WR', 'opponent_team': 'BUF', 'receiving_yards': 80},
+    ])
+    out = wp.build_quality_adjusted_matchup(df, 'name', ['receiving_yards'], as_of_week=4)
+    assert out.loc['KC', 'receiving_yards'] < out.loc['BUF', 'receiving_yards']
 
 
-# --- in-season rate / shrinkage -------------------------------------------
-
-def test_in_season_rate_blends_recent_and_season_60_40():
-    cur_total = np.array([40.0])
-    cur_games = np.array([4.0])       # season avg = 10
-    recent_avg = np.array([20.0])
-    out = wp._in_season_rate(cur_total, cur_games, recent_avg)
-    assert abs(out[0] - (0.6 * 20 + 0.4 * 10)) < 1e-9
+def test_quality_adjusted_matchup_empty_without_opponent_column():
+    df = weekly([{'name': 'A', 'week': 1, 'position': 'WR', 'receiving_yards': 40}])
+    assert wp.build_quality_adjusted_matchup(df, 'name', ['receiving_yards'], as_of_week=2).empty
 
 
-def test_in_season_rate_falls_back_to_season_avg_when_no_recent_window():
-    cur_total = np.array([40.0])
-    cur_games = np.array([4.0])
-    recent_avg = np.array([np.nan])
-    out = wp._in_season_rate(cur_total, cur_games, recent_avg)
-    assert abs(out[0] - 10.0) < 1e-9
+def test_weighted_player_rates_weighs_recent_games_more():
+    # Same player, an old low game and a recent high game - the weighted
+    # rate should sit closer to the RECENT value than a flat average would.
+    df = weekly([
+        {'name': 'A', 'week': 1, 'position': 'WR', 'opponent_team': 'KC', 'targets': 2},
+        {'name': 'A', 'week': 6, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 10},
+    ])
+    out = wp._weighted_player_rates(df, 'name', ['targets'], as_of_week=7,
+                                    matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'MIA'})
+    flat_avg = 6.0
+    assert out.loc['A', 'targets'] > flat_avg
+
+
+def test_weighted_player_rates_upweights_a_rematch_game():
+    # Two otherwise-identical-recency games at different values; the one
+    # against the SAME team as the upcoming opponent should pull the rate
+    # toward itself more than an ordinary equally-recent game would.
+    df_rematch = weekly([
+        {'name': 'A', 'week': 5, 'position': 'WR', 'opponent_team': 'KC', 'targets': 10},
+        {'name': 'A', 'week': 4, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 2},
+    ])
+    with_rematch = wp._weighted_player_rates(
+        df_rematch, 'name', ['targets'], as_of_week=6,
+        matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'KC'})
+
+    df_no_rematch = weekly([
+        {'name': 'A', 'week': 5, 'position': 'WR', 'opponent_team': 'SEA', 'targets': 10},
+        {'name': 'A', 'week': 4, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 2},
+    ])
+    without_rematch = wp._weighted_player_rates(
+        df_no_rematch, 'name', ['targets'], as_of_week=6,
+        matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'KC'})
+
+    assert with_rematch.loc['A', 'targets'] > without_rematch.loc['A', 'targets']
+
+
+def test_weighted_player_rates_empty_input_returns_empty():
+    assert wp._weighted_player_rates(weekly([]), 'name', ['targets'], as_of_week=2,
+                                     matchup_matrix=pd.DataFrame(), upcoming_opponent={}).empty
+
+
+# --- shrinkage --------------------------------------------------------------
 
 
 def test_blended_rate_leans_on_prior_with_zero_games():

@@ -195,6 +195,219 @@ see below for how that constraint was honored).
   `.metric-tile` also picked up the same lift/border-glow card-hover token
   `.stat-tile`/`.hero-tile` already had (it never got it when those did).
 
+---
+
+**August 2026 pass — Draft HQ big-play bonuses/book weighting, weekly model
+matchup+recency overhaul, 2026 season coverage.** A broad pass across three
+areas per explicit request: user-configurable big-play scoring in Draft HQ,
+a reliability-weighted multi-book consensus, and a materially deeper
+Weekly Rankings model (matchup-quality-adjusted history on both sides of
+the ball, plus a real week-1/cold-start fallback). Full detail below;
+HANDOFF's own "measure, don't eyeball" discipline (section 6) was followed
+throughout - `scripts/validate_weekly_projections.py` and the new
+`scripts/audit_book_vs_model.py` back every claim made here.
+
+- **Draft HQ: user-defined big-play bonuses** (`data/draft_big_plays.py`,
+  new module; hooked into `data.draft_projections.score_projected_lines`
+  via a new `latest_season` param) - "+2 points for any reception of 40+
+  yards"-style rules, ADD/REMOVE ANY NUMBER of them live via a
+  `st.data_editor(num_rows="dynamic")` grid in Draft HQ's League Scoring
+  panel (`ui.tabs.draft_hq`'s "Big-play bonuses" section) - this codebase's
+  first use of that widget anywhere (the existing per-game yardage bonuses,
+  `data.draft_board.YARDAGE_BONUSES`, are a fixed hardcoded list of twelve
+  thresholds and were NOT generalized into this, deliberately - a big play
+  is an event on ONE PLAY, not a threshold on a game's summed yardage, and
+  needs a genuinely different distributional model).
+  - Priced from real per-play NFL play-by-play (`data.loaders.load_pbp`,
+    the first consumer of it in the draft stack - previously only
+    `data.transforms.build_redzone_usage`/`build_epa_efficiency` touched
+    it), never touched by `PROJECTED_STATS` before this. Each player's own
+    recency-weighted (`SEASON_RECENCY_WEIGHTS`, same ladder
+    `build_player_rates` uses) big-play RATE is blended toward his
+    position's rate with his own qualifying-touch count as evidence
+    (`FULL_TRUST_TOUCHES=300`, `BIG_PLAY_SELF_WEIGHT=0.45` - same
+    `weight = evidence * self_weight` shape as `STAT_SELF_WEIGHT`
+    elsewhere), so a rookie or a thin sample doesn't read a single lucky
+    play as an established skill. A name/team not found in the rate table
+    (a rookie with no NFL history) falls back to the POSITION's baseline
+    rate, never to zero.
+  - **Real bug caught and fixed before shipping**: the first version
+    counted a pass-completion rule's rate denominator as "completed passes
+    only" while multiplying it against the board's PROJECTED ATTEMPTS
+    (all attempts, complete or not) - silently inflating every QB's
+    big-play bonus by roughly 1/completion-rate (measured: Josh Allen's
+    three-rule total dropped from 12.6 to 8.6 points once fixed). Fixed by
+    carrying a `complete` flag through the shared per-play frame so the
+    denominator (all non-sack attempts) and the hit condition (completed
+    AND long enough) are counted separately - see
+    `data.draft_big_plays._big_play_history`'s docstring.
+  - Adds a `Big Play Pts` column to the board (same "computed, not shown by
+    default" convention the existing `Bonus Pts` column already uses -
+    folded into `Proj Pts`, inspectable but not forced into `BOARD_COLUMNS`).
+- **Draft HQ: ECR/ADP settings disclosure** (`ui.tabs.draft_hq._ecr_adp_
+  disclosure_note`) - a caption next to the ADP source picker stating
+  exactly what's actually pulled: ECR reflects ONLY the chosen draft format
+  (Redraft 1QB/Superflex/Best Ball/Dynasty variants) and is NOT
+  scoring-adjusted at all (FantasyPros' free feed has no PPR/Half-PPR/
+  Standard split), unlike ADP, which DOES follow the PPR slider (bucketed
+  Standard/Half-PPR/Full PPR) but collapses onto one Superflex page
+  regardless of PPR when Superflex is on. Also added as `COLUMN_HELP`
+  hover-tooltip entries (`ui/styling.py`) on the `ECR`/`ADP` board columns
+  themselves. A LIVE per-week ECR pull was investigated (FantasyPros' API
+  does have `/rankings`/`/consensus-rankings` endpoints - see
+  `data/draft_sources.py`'s existing note on them) but NOT shipped - no
+  verified real response to build a parser against in this environment, and
+  a wrong guess would silently spend the 50-call/month budget on garbage.
+  The reliable substitute (a real FantasyPros weekly CSV export) already
+  works and now also feeds the Weekly Rankings comparison below.
+- **Draft HQ: weighted book consensus** (`data.odds_sources.BOOK_WEIGHTS` -
+  DraftKings 20 / FanDuel 20 / Pinnacle 25 / PrizePicks 20 / Underdog 15,
+  user-set) replaces `data.odds_projections.market_stat_lines`'s old plain
+  MEDIAN-across-providers with a weighted mean, vectorized (weight*line
+  summed per (player, stat) group over the summed weight of whichever
+  books actually posted a line - no per-group Python loop). A book that
+  didn't price a stat is simply not in the group, so it can never drag the
+  consensus down - confirmed on real data (Ja'Marr Chase's 5-book
+  `receiving_yards` consensus computed to exactly the hand-verified
+  weighted figure; a 2-book case, e.g. Mahomes with only DraftKings +
+  PrizePicks, renormalizes over just those two). An unrecognized provider
+  gets `BOOK_WEIGHT_FALLBACK=10` (equal-weight vote) rather than being
+  silently excluded.
+  - **`scripts/audit_book_vs_model.py`** (new, reusable) - builds the board
+    at Half-PPR and Full PPR, joins the weighted book consensus, and
+    reports rank-correlation/bias/a receptions-specific comparison plus the
+    section-6 sanity block. Measured result (Aug 2026, 5 real book
+    payloads): rank-corr 0.93-0.96 vs Book Proj at both PPR levels, median
+    bias -3 to -5 points (model slightly under book), reception deltas
+    mostly under 2 catches (biggest outlier a rookie WR with no own
+    history, Emeka Egbuka at -7.4 - the "market knows something the model
+    can't" case `data/odds_projections.py`'s own docstring already
+    describes as the common one) - close enough that no model recalibration
+    was made off this audit, just the weighting change itself.
+- **Weekly model: matchup-quality-adjusted, recency-weighted history on
+  BOTH sides of the ball** (`data/weekly_projections.py` -
+  `build_quality_adjusted_matchup`, `_weighted_player_rates`, replacing an
+  earlier flat 60%-trailing-4-game/40%-season-average split) - per explicit
+  request, three stacked adjustments on every past game feeding a player's
+  own rate:
+  1. RECENCY - continuous per-game decay (`RECENCY_DECAY=0.85`), not a
+     hard 4-game cutoff.
+  2. MATCHUP STRENGTH - a big game against a bad defense is scaled DOWN
+     before averaging (divided by that defense's rating), a quiet game
+     against a good defense scaled UP - `HISTORY_MATCHUP_CLIP=(0.85,1.15)`,
+     narrower than the forward-looking `MATCHUP_CLIP=(0.75,1.3)` used for
+     the upcoming opponent, since a single retroactive game correction is a
+     noisier estimate than the multiplier applied once to a whole
+     projection (measured - a wider clip here tested net-neutral to
+     slightly worse).
+  3. REMATCH - a past game against the SAME team faced again this week
+     gets extra weight (`REMATCH_WEIGHT_MULT=1.6`) on top of its ordinary
+     recency weight.
+  - The DEFENSE side's matchup rating (`build_quality_adjusted_matchup`)
+    is the "Baltimore vs. a good slot receiver" ask made concrete: instead
+    of a flat "average stat allowed per game" (blind to who it was
+    allowed to), every opposing player's game against a defense is
+    compared to THAT PLAYER'S OWN season baseline first, and the
+    (recency-weighted) average of those ratios is the defense's rating -
+    a defense that allows a normal day to an elite target isn't penalized
+    the way it would be for the same production against a bench player.
+    Centered so a league-average defense reads 1.0. Same recency-weighted
+    machinery is reused for BOTH the offense-side retroactive adjustment
+    and the forward-looking upcoming-matchup multiplier - one function,
+    one meaning, not two parallel implementations.
+  - **Honest measured result, not a claimed win**: this whole reweighting
+    is within noise of the flat split it replaced on
+    `scripts/validate_weekly_projections.py` (2025 & 2024, weeks 5-17) -
+    rank-corr 0.655/0.654 either way, MAE within ~0.02-0.1 across every
+    variant tried. QB and TE improved a little, RB and WR moved a little
+    the other way. Kept because it's exactly the mechanism asked for and
+    measurably doesn't hurt, not because it moved the aggregate numbers -
+    see the `HISTORY_MATCHUP_CLIP` constant's own comment for the full
+    tuning note. Also notable and NOT investigated further (out of scope
+    this pass, flagged for later): the model was already sitting within
+    noise of - and on raw MAE/rank-corr, slightly behind - a naive
+    trailing-4-game recent-form baseline BEFORE this pass, on both
+    seasons tested.
+  - Usage/efficiency emphasis (the other half of this request) falls out
+    of the same change: a raw box-score total is never averaged on its own
+    terms anymore, only after being leveled for opponent quality and
+    recency - a talent/usage read rather than a highlight-reel average.
+- **Weekly model: week-1/cold-start fallback to prior-season data**
+  (`build_weekly_projections`'s `cold_start` branch, `_cold_start_pool`) -
+  previously hard-bailed with "not enough data" the moment `hist` (this
+  season's played weeks before the target week) was empty, which is ALWAYS
+  true for week 1 and was the literal reported symptom ("weekly fantasy
+  doesn't populate for week 1 of 2026"). Now: the player pool (who's on
+  which team) comes from the target week's own roster rows when they exist
+  or the roster-only fallback frame when they don't (never the whole
+  unfiltered season, which would leak a later week's post-trade team
+  backward into a week-1-only read); every rate falls through to
+  `_blended_rate`'s existing prior-season branch (`cur_games=0` already
+  meant `w_current=0` even before this pass - the ACTUAL gap was never
+  having a player pool to run that math for at all); the defense-matchup
+  matrix is rebuilt off PRIOR season's full year, anchored so its FINAL
+  week reads as "most recent" (`prior_max_week + 1`); team pace falls back
+  to the prior season too if the current one has none yet. `meta['cold_start']`
+  flags the result so a caller can show "based on last season" - the
+  Weekly Rankings tab doesn't consume that flag yet, a small follow-up if
+  wanted. **Real bug caught and fixed before shipping**: a name-column
+  mismatch (`year - 1`'s frame uses `player_display_name`, a roster-only
+  current year uses `player_name`) raised a bare `KeyError` the moment this
+  path was actually exercised against real 2026 data - existing code
+  had never reached this line because of the old hard bail-out. Fixed by
+  keying the cross-season rate lookup on `clean_name_exact`, not a shared
+  raw column name. Verified end to end against real 2026 rosters (915
+  players projected for week 1, Christian McCaffrey/Puka Nacua/Patrick
+  Mahomes at the top, no NaN, no negative stat lines) and, as a second
+  no-network-dependency check, by treating `as_of_week=1` of the completed
+  2025 season as a synthetic cold start (354 players, using real 2024 rates).
+- **Individual projected stat lines floored at zero** in both
+  `data/draft_projections.py` (`project_stat_lines`) and
+  `data/weekly_projections.py` (the final per-stat multiply, and
+  `Model Proj Pts` itself) - gotcha #23 already floored the POINTS total;
+  this pass's audit (`scripts/audit_book_vs_model.py`'s sanity block)
+  found individual raw stat columns (`rushing_yards`, `receiving_yards`,
+  `passing_yards`) still going negative for near-zero-volume players (34/15/2
+  rows on a real board) and `weekly_projections.Model Proj Pts` going
+  slightly negative for a near-zero-volume passer whose small INT-rate
+  subtraction outweighed an otherwise-empty line. Same class of small-sample
+  artifact, same fix, one level lower than before.
+- **Weekly Rankings: a rank column per projection source** (`ui.tabs.
+  rankings._positional_rank_col`) - Model Rank/Market Rank/FantasyPros Rank
+  (all positional, "RB4"-style) sit side by side now, not just the model's
+  own rank as before. Also, when a real FantasyPros weekly CSV export has
+  been uploaded this session, the table gains **FantasyPros ECR** (their
+  actual published consensus rank, via the existing `parse_fantasypros_
+  upload` -> `build_rankings_comparison` path, re-ranked within the matched
+  subset the same way the VORP-vs-FantasyPros comparison elsewhere in this
+  app already works) and **Model vs FantasyPros ECR** (the delta) - "does
+  our derived rank actually match FantasyPros' real rank," which is a
+  different question than "does it match a rank WE derived from their own
+  points projection," since a published ECR folds in analyst judgment a
+  bare stat-line projection doesn't capture. Read via an early
+  `st.session_state.get(...)` on the uploader's key so an upload from
+  earlier in the session is picked up without moving the uploader widget
+  itself (reading, not assigning, a keyed widget's session-state value
+  before it's instantiated this run is always legal - see gotcha #1).
+- **2026 selectable everywhere a season selector exists** - two remaining
+  gaps found and fixed: `ui/tabs/matchup_analyzer.py` and
+  `ui/tabs/risers.py` were still importing the season list WITHOUT the
+  upcoming year (`config.AVAILABLE_SEASONS`, not `_WITH_UPCOMING`) and
+  defaulted to index 0 on that shorter list - swapped to
+  `AVAILABLE_SEASONS_WITH_UPCOMING` with `index=1` (not 0) to keep the same
+  effective default (the most recent COMPLETED season), matching the
+  convention every other season-gated tab already uses. Both tabs already
+  had a graceful `if ...empty: st.info(...)` fallback for a season with no
+  real data, so no new empty-state handling was needed - verified live
+  (Matchup Analyzer resolves to "Pick a player above to build the
+  matchup," Risers/Waiver Wire to "Not enough weekly data yet this season,"
+  neither crashes) once 2026 became selectable. Every other season-gated
+  tab (Depth Charts, Defensive Yield, Player Search, Player Compare, Draft
+  HQ, Game Slate, Rookie Watch, Weekly Rankings) already used the
+  `_WITH_UPCOMING` list; Live Odds has no season concept at all.
+
+---
+
 ## 1. Architecture
 
 ```
@@ -1094,6 +1307,61 @@ depth-chart over-spreading bug, both fixed), and the remaining book-confirmed ga
     4th-string bodies behind the real handcuff — a McCaffrey backup and San
     Francisco's fullback landed within 5 points of each other. Fixed by restricting
     to the single next-best player by projection, not the whole remaining group.
+
+32. **A rate's denominator has to be the SAME population as whatever it gets
+    multiplied against, not just "the same category of thing."** Building the
+    big-play bonus model (`data.draft_big_plays`), the first version counted a
+    pass-completion rule's historical rate over COMPLETED passes only, then
+    multiplied that rate against the board's PROJECTED ATTEMPTS (all attempts,
+    complete or not) - silently inflating every QB's big-play bonus by roughly
+    1/completion-rate (measured: ~30% high before the fix). Both sides looked
+    individually reasonable in isolation (a completion-rate-conditioned "how
+    often does a completion go 40+ yards" is a perfectly sensible number on its
+    own); the bug was only visible by checking that the numerator and
+    denominator of a rate agree on what population they're counting BEFORE
+    checking whether the rate itself looks plausible.
+
+33. **A categorical column silently propagates its dtype through `.map()`,
+    and `.clip()` doesn't support comparison on an unordered categorical.**
+    `data.weekly_projections`'s new matchup functions read `opponent_team`
+    straight off the merged stats frame - categorical upstream (gotcha #10) -
+    and `TypeError: Unordered Categoricals can only compare equality or not`
+    only fired inside `_weighted_player_rates`' `.clip()` call, several
+    function-calls away from where the categorical value was actually read.
+    `python -m py_compile` and a read of the logic both looked fine; only
+    running it against a real (not hand-built fixture) DataFrame surfaced it,
+    since the unit-test fixtures in `tests/test_weekly_projections.py` build
+    plain-object-dtype columns by hand. Fixed by `.astype(str)`-ing every
+    opponent-team value at the point it's read, before it's used as a `.map()`
+    key or a `.clip()` input anywhere downstream - see the comment on
+    `build_quality_adjusted_matchup`'s `_opponent` column for the specifics.
+
+34. **`.astype(str)` on a column BEFORE a `.notna()` filter turns real NaNs
+    into the literal string `"nan"`, which then survives that filter.** A
+    defensive cast added to fix gotcha #33 above was first placed right after
+    `cur['Opponent'] = cur['Team'].map(opponents)`, ahead of the very next
+    line's `cur[cur['Opponent'].notna()]` bye-week filter - `.astype(str)`
+    converts a real missing value to the three-character string `"nan"`,
+    which is not null, so bye-week rows stopped being dropped. Order matters:
+    filter on real nullness FIRST, cast to string only after.
+
+35. **A column name being the SAME on two DataFrames doesn't mean the join is
+    safe - it can genuinely not exist on one side at all.** Wiring the weekly
+    model's cold-start fallback (`build_weekly_projections`), `prior_rates
+    [name_col] = prior[name_col].values` assumed the CURRENT season's name
+    column (`name_col`) was also a real column on the PRIOR season's frame.
+    True whenever both seasons have a real weekly stats file
+    (`player_display_name` both times) - false the moment the current season
+    is roster-only (`load_year_data`'s fallback names its column `player_name`
+    instead), which is exactly the case this fallback exists to handle. Raised
+    a bare `KeyError: 'player_name'` the first time this path was actually
+    exercised against real data - every earlier test had used two seasons
+    with real weekly files, and the code this replaced had never reached this
+    line at all for a true cold start (it hard-bailed before this point).
+    Fixed by keying the cross-season lookup on `clean_name_exact(...)` instead
+    of a shared literal column name, which happens to also make the join
+    robust to real spelling differences between two sources, not just naming
+    differences.
 
 ## 6. Verification workflow (what "done" means here)
 

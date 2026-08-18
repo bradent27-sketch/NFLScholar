@@ -39,6 +39,7 @@ import pandas as pd
 
 from data.draft_board import score_stats
 from data.draft_projections import PROJECTED_STATS
+from data.odds_sources import BOOK_WEIGHTS, BOOK_WEIGHT_FALLBACK
 
 # Stats that carry most of a season projection, per position, with a typical
 # per-season quantity for each. The quantities turn coverage into a
@@ -86,13 +87,35 @@ MEDIAN_TO_MEAN = {
 }
 
 
+def _book_weight(provider):
+    """A provider label -> its reliability weight (data.odds_sources.BOOK_WEIGHTS).
+
+    Split on ' (' first because a non-standard-shaded row's label carries a
+    suffix ('PrizePicks (demon)') - those are already filtered out upstream
+    (scorable=False), but this keeps the lookup correct even if a future
+    caller passes season_only=False or otherwise skips that filter.
+    """
+    base = str(provider).split(' (')[0]
+    return BOOK_WEIGHTS.get(base, BOOK_WEIGHT_FALLBACK)
+
+
 def market_stat_lines(props, season_only=True, board=None):
     """
     Normalized props -> one row per player carrying his scorable stats.
 
-    Takes the MEDIAN line where a player has several for the same stat (two
-    books, or a line that moved and was re-posted). Median rather than mean
-    because a single stale or mistyped line shouldn't drag the number.
+    Blends several books' lines for the same stat into a WEIGHTED CONSENSUS
+    (data.odds_sources.BOOK_WEIGHTS) rather than a plain median or mean.
+    Real sportsbooks price a line with their own money on it and are weighted
+    higher (DraftKings 20 / FanDuel 20 / Pinnacle 25) than the DFS pick'em
+    products (PrizePicks 20 / Underdog 15) - the user's own read on which
+    numbers to trust more, while still keeping every book in the average
+    rather than picking one.
+
+    A BOOK THAT DIDN'T PRICE A STAT SIMPLY ISN'T IN THE GROUP, so it can
+    never drag the consensus toward zero or toward some other book's number -
+    the weights are renormalized over whichever subset of the five actually
+    posted a line for that (player, stat). A player with only one book's line
+    on a stat gets exactly that book's number, same as before.
     """
     if props is None or props.empty:
         return pd.DataFrame()
@@ -106,14 +129,29 @@ def market_stat_lines(props, season_only=True, board=None):
     if df.empty:
         return pd.DataFrame()
 
-    # MEDIAN ACROSS PROVIDERS, PER STAT - which is where the multi-book
-    # averaging actually happens, and it happens at the STAT level rather
-    # than the projection level on purpose. If Underdog prices receiving
-    # yards and PrizePicks prices receptions, this keeps BOTH: the player
-    # ends up with more of his line coming from the market instead of from
-    # us. Averaging two finished projections would have thrown that away.
-    # With two books the median is the mean; with one, it is that book.
-    wide = (df.groupby(['player_key', 'market'])['line'].median().unstack('market'))
+    # WEIGHTED CONSENSUS, PER (player, stat) - the multi-book blend happens
+    # at the STAT level rather than the projection level on purpose. If
+    # Underdog prices receiving yards and PrizePicks prices receptions, this
+    # keeps BOTH: the player ends up with more of his line coming from the
+    # market instead of from us. Blending two already-finished projections
+    # would have thrown that away.
+    #
+    # Vectorized rather than a per-group Python loop (this runs on every
+    # board rebuild) - weight * line summed per group, divided by the summed
+    # weight of whichever books actually reported. Falls back to the plain
+    # (unweighted) mean only for the pathological case where every provider
+    # in a group is unrecognized (weight 0 is impossible via
+    # BOOK_WEIGHT_FALLBACK, so this only fires on an all-NaN weight column,
+    # which normalize_stat_for's callers never produce - kept as a guard
+    # rather than an assumption).
+    weight = df['provider'].map(_book_weight).astype(float)
+    line = pd.to_numeric(df['line'], errors='coerce')
+    grouped = pd.DataFrame({'player_key': df['player_key'], 'market': df['market'],
+                            'w': weight, 'wl': weight * line, 'line': line})
+    g = grouped.groupby(['player_key', 'market'])
+    weight_sum = g['w'].sum()
+    consensus = (g['wl'].sum() / weight_sum).where(weight_sum > 0, g['line'].mean())
+    wide = consensus.unstack('market')
     meta = (df.sort_values('provider')
               .groupby('player_key')
               .agg(player=('player', 'first'), team=('team', 'first'),

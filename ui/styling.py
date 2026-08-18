@@ -103,6 +103,8 @@ COLUMN_HELP = {
     'Market Proj Pts': "This week's live sportsbook player-prop lines, re-scored under this league's scoring settings - independent of this app's own model",
     'Market Coverage': "Share of a typical week's fantasy points the market's posted lines actually covered for this player",
     'L5 Avg FPTS': "Average fantasy points over the player's last 5 games played, not a season-long or extrapolated number",
+    'ECR': "FantasyPros consensus rank for the chosen draft FORMAT only (Redraft/Superflex/Dynasty/Best Ball) - not adjusted for your league's PPR/Half-PPR/Standard or TE-premium settings unless pulled via the FantasyPros API",
+    'ADP': "Average Draft Position, matched to your Standard/Half-PPR/Full PPR setting (collapses to one Superflex page regardless of PPR if Superflex is on) - not adjusted for your exact team count unless the source is Fantasy Football Calculator",
 }
 for _pos in ['QB', 'RB', 'WR', 'TE']:
     COLUMN_HELP[f'{_pos} SOS'] = f"Strength of schedule for {_pos}s - average fantasy points allowed per game by teams left on the schedule (higher = softer matchups)"

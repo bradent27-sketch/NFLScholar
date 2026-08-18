@@ -30,7 +30,7 @@ import pandas as pd
 import streamlit as st
 
 from config import (
-    AVAILABLE_SEASONS, MASTER_TEAMS_LIST, TEAM_CONFIG, THEME, abbr_to_pff_team,
+    AVAILABLE_SEASONS_WITH_UPCOMING, MASTER_TEAMS_LIST, TEAM_CONFIG, THEME, abbr_to_pff_team,
     get_position_color, pff_team_to_abbr,
 )
 from data import matchup_signals as ms
@@ -87,17 +87,22 @@ def render():
     # one live caller today) can request a season - must land in
     # session_state BEFORE the season selectbox below is instantiated this
     # pass, same widget-state-ordering rule every other cross-tab trigger in
-    # this app follows. Guarded on membership: Game Slate's own season list
-    # (AVAILABLE_SEASONS_WITH_UPCOMING) includes an upcoming season with no
-    # played games yet, which this tab's own list doesn't carry - seeding an
-    # unlisted value would make the selectbox raise.
+    # this app follows. Guarded on membership so an unlisted value from a
+    # future caller can't make the selectbox raise - now the SAME list
+    # Game Slate itself uses (AVAILABLE_SEASONS_WITH_UPCOMING), including
+    # the upcoming season even before it has any played games (see the
+    # stats_df.empty guard right below the selectbox, which already handles
+    # that gracefully).
     jump_season = st.session_state.pop('ma_jump_season', None)
-    if jump_season in AVAILABLE_SEASONS and st.session_state.get('ma_season') != jump_season:
+    if jump_season in AVAILABLE_SEASONS_WITH_UPCOMING and st.session_state.get('ma_season') != jump_season:
         st.session_state['ma_season'] = jump_season
 
     c_season, c_team, c_player, c_defense = st.columns([1, 1.3, 1.7, 1.4])
     with c_season:
-        season = st.selectbox("Season", AVAILABLE_SEASONS, index=0, key="ma_season")
+        # index=1, not 0 - same convention as Depth Charts/Player Search/
+        # Player Compare: the upcoming season is selectable but isn't the
+        # default landing view while it has no played games yet.
+        season = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="ma_season")
 
     with skeleton_loader("tiles", n=8):
         stats_df, team_col, name_col, _ = load_and_merge_data(season, _scoring())

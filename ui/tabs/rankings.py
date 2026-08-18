@@ -272,6 +272,24 @@ def _fantasypros_points_column(scoring_mode):
            'Standard': 'FP Proj Pts'}[scoring_mode]
 
 
+def _positional_rank_col(df, value_col):
+    """
+    A positional rank column ('RB4' style, matching the app's existing
+    convention) from any points column - one per projection SOURCE (model,
+    market, FantasyPros), so the three can be read and compared side by
+    side rather than only this app's own model carrying a rank at all.
+
+    Sentinel-safe the same way every other rank column in this app is
+    (HANDOFF.md gotcha #5): a player this source has no number for gets a
+    real blank, not a NaN that could sort to the top of the grid.
+    """
+    if value_col not in df.columns or 'Pos' not in df.columns:
+        return pd.Series([None] * len(df), index=df.index, dtype=object)
+    pos_rank = df.groupby('Pos')[value_col].rank(ascending=False, method='first')
+    out = df['Pos'].astype(str) + pos_rank.astype('Int64').astype(str)
+    return out.where(df[value_col].notna(), None)
+
+
 def render():
     st.markdown("<div class='custom-section-header'>WEEKLY RANKINGS</div>", unsafe_allow_html=True)
 
@@ -368,11 +386,51 @@ def render():
         # k-means-on-points technique Draft HQ's board tiers with), not a
         # fixed players-per-tier bucket.
         merged_model['_tier'] = tier_by_position(merged_model, 'Model Proj Pts', pos_col='Pos')
-        pos_rank = merged_model.groupby('Pos')['Model Proj Pts'].rank(ascending=False, method='first')
-        merged_model['Rank'] = merged_model['Pos'].astype(str) + pos_rank.astype('Int64').astype(str)
-        merged_model.loc[merged_model['Model Proj Pts'].isna(), 'Rank'] = None
+        merged_model['Model Rank'] = _positional_rank_col(merged_model, 'Model Proj Pts')
+        # One rank column per projection SOURCE, not just this app's own
+        # model - explicit request. Same positional-rank shape as Model
+        # Rank so the three read consistently side by side; only shown when
+        # that source actually produced a points column to rank.
+        if 'Market Proj Pts' in merged_model.columns:
+            merged_model['Market Rank'] = _positional_rank_col(merged_model, 'Market Proj Pts')
+        if 'FantasyPros Proj Pts' in merged_model.columns:
+            merged_model['FantasyPros Rank'] = _positional_rank_col(merged_model, 'FantasyPros Proj Pts')
 
-        display_cols = ['Player', 'Pos', 'Team', 'Opponent', 'Rank']
+        # Does our model's rank actually MATCH FantasyPros' own published
+        # consensus rank (their real ECR, not the positional rank derived
+        # above from their points projection - the two aren't guaranteed to
+        # agree, since a projection reflects only the stat line while a
+        # published ECR also folds in analyst judgment calls a raw point
+        # total won't capture) - explicit request. Reads whatever weekly
+        # FantasyPros export is already sitting in this session's uploader
+        # (below) without requiring it to be re-uploaded once it's there;
+        # see that uploader's own docstring for why a live per-week ECR
+        # pull isn't wired in here (that endpoint exists on FantasyPros'
+        # API - see draft_sources.py's "/rankings or /consensus-rankings"
+        # note - but is unverified against a real response in this app and
+        # a wrong guess would silently spend the call budget on garbage;
+        # the CSV export is the same real ECR with zero guessing involved).
+        _weekly_ecr_df = st.session_state.get('_weekly_rank_ecr_df')
+        if _weekly_ecr_df is not None and not _weekly_ecr_df.empty:
+            ecr_comparison = build_rankings_comparison(
+                merged_model, value_col='Model Proj Pts', rank_label='Model Overall',
+                fp_df=_weekly_ecr_df)
+            if not ecr_comparison.empty and 'FantasyPros Rank' in ecr_comparison.columns:
+                ecr_comparison = ecr_comparison.rename(columns={
+                    'FantasyPros Rank': 'FantasyPros ECR',
+                    'Model Overall vs FantasyPros': 'Model vs FantasyPros ECR',
+                })
+                keep = [c for c in ('Player', 'FantasyPros ECR', 'Model vs FantasyPros ECR')
+                       if c in ecr_comparison.columns]
+                merged_model = merged_model.merge(ecr_comparison[keep], on='Player', how='left')
+
+        display_cols = ['Player', 'Pos', 'Team', 'Opponent', 'Model Rank']
+        if 'Market Rank' in merged_model.columns:
+            display_cols.append('Market Rank')
+        if 'FantasyPros Rank' in merged_model.columns:
+            display_cols.append('FantasyPros Rank')
+        if 'FantasyPros ECR' in merged_model.columns:
+            display_cols += ['FantasyPros ECR', 'Model vs FantasyPros ECR']
         display_cols += [label for col, label in _STAT_DISPLAY_COLS if col in merged_model.columns]
         merged_model = merged_model.rename(columns=dict(_STAT_DISPLAY_COLS))
         display_cols.append('Model Proj Pts')
@@ -405,20 +463,27 @@ def render():
         for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts', 'L5 Avg FPTS'):
             if c in indexed.columns and indexed[c].notna().any():
                 pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
-        column_config = build_column_help_config(indexed, pinned_cols=['Team', 'Pos', 'Opponent', 'Rank'])
+        column_config = build_column_help_config(indexed, pinned_cols=['Team', 'Pos', 'Opponent', 'Model Rank'])
         column_config['Last 5 Wks'] = st.column_config.LineChartColumn(
             help="Fantasy points trend over this player's last 5 games played", width="small",
         )
         st.dataframe(
-            style_plain_dataframe(indexed, numeric_pct_cols=pct_cols, tier_cols={'Rank': tier_values}),
+            style_plain_dataframe(indexed, numeric_pct_cols=pct_cols, tier_cols={'Model Rank': tier_values}),
             width="stretch", height=df_auto_height(min(len(display_df), 40)),
             column_config=column_config,
         )
         if total_filtered > len(display_df):
             st.caption(f"Showing {len(display_df)} of {total_filtered} players — widen \"Show\" above to see more.")
         st.caption(
-            "**Rank** is positional rank (e.g. \"RB4\"), shaded by tier — a cluster break in "
-            "Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
+            "**Model Rank** / **Market Rank** / **FantasyPros Rank** are each source's own "
+            "positional rank (e.g. \"RB4\"), so the three can be read side by side rather than "
+            "only this app's model carrying a rank at all — Model Rank is shaded by tier, a "
+            "cluster break in Model Proj Pts at that position, not a fixed players-per-tier "
+            "cutoff. **FantasyPros ECR** (when a weekly FantasyPros export is uploaded below) is "
+            "their own REAL published consensus rank, not derived from the points projection above "
+            "it — **Model vs FantasyPros ECR** shows how far apart the two actually are, which is "
+            "not always the same story a proj-pts comparison alone would tell, since a published "
+            "ECR also folds in analyst judgment a raw stat-line projection doesn't capture. "
             "**Model Proj Pts** is this app's own projection (usage blended toward the current "
             "season as it grows, opponent/pace/game-script adjusted - see "
             "docs/weekly_projections_methodology.md), with the stat line it's built from shown "
@@ -426,8 +491,8 @@ def render():
             "re-scored under this league's settings — missing stats price as zero, so **Market "
             "Coverage** shows how much of a typical week's points the posted lines actually cover; "
             "a low number means a partial line, not a bad projection. **FantasyPros Proj Pts** is "
-            "their analysts' number, pulled live above. Three independent reads, shown side by "
-            "side, never blended."
+            "their analysts' number, pulled live above. Independent reads, shown side by side, "
+            "never blended."
         )
 
     if form_df.empty:
@@ -436,11 +501,21 @@ def render():
 
     st.markdown("---")
     st.markdown("**Upload a weekly rankings export** (FantasyPros weekly export, or any CSV with a player-name column)")
+    st.caption(
+        "A real FantasyPros weekly export (not a custom one) also feeds the **FantasyPros ECR** / "
+        "**Model vs FantasyPros ECR** columns in the model table above, on the NEXT rerun after "
+        "uploading — their actual published rank, not one derived from a points projection."
+    )
     import_hint('fantasypros_weekly')
     weekly_upload = st.file_uploader("Weekly rankings CSV", type=["csv"], key="weekly_rank_upload")
     weekly_df = None
     if weekly_upload is not None:
         weekly_df = parse_fantasypros_upload(weekly_upload)
+        # Only a REAL FantasyPros-shaped export counts as "ECR" for the top
+        # table's comparison - a generic custom upload (parsed below as a
+        # fallback) could be anyone's ranking, and labelling that "FantasyPros
+        # ECR" would just be wrong.
+        st.session_state['_weekly_rank_ecr_df'] = weekly_df if not weekly_df.empty else None
         if weekly_df.empty:
             weekly_df = parse_custom_rankings(weekly_upload)
         if weekly_df is None or weekly_df.empty:

@@ -407,6 +407,21 @@ def test_vacancy_growth_is_capped():
     assert out.loc[1, 'rushing_attempts'] <= 4.0 * wp.VACANCY_MAX_GROWTH + 1e-9
 
 
+def test_scoring_a_cross_position_frame_survives_missing_stat_columns():
+    # Regression: the assembled frame is the UNION of four positions' stat
+    # lists, so a receiver's row carries NaN for every passing stat.
+    # score_projected_stats reads with .get(stat, 0), which returns the NaN
+    # for a key that exists and is NaN - and max(0.0, nan) is 0.0, so a
+    # whole position silently projected exactly zero points while showing a
+    # sensible stat line. Anything re-scoring a mixed frame must fill first.
+    from data.transforms import score_projected_stats
+    row = {'receiving_yards': 80.0, 'receptions': 6.0, 'receiving_tds': 0.5,
+           'passing_yards': float('nan'), 'passing_tds': float('nan')}
+    assert np.isnan(score_projected_stats(row, 'Full PPR'))
+    filled = {k: (0.0 if v != v else v) for k, v in row.items()}
+    assert score_projected_stats(filled, 'Full PPR') > 10
+
+
 def test_vacancy_is_a_no_op_with_nobody_out():
     frame = pd.DataFrame({'Player': ['A'], 'Pos': ['WR'], 'Team': ['KC'], 'targets': [6.0]})
     out, n = wp.redistribute_vacated_usage(frame, {'A': 1.0})

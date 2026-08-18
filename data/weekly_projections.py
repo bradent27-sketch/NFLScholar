@@ -1870,9 +1870,23 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         result, vacancy_adjusted = redistribute_vacated_usage(result, injury_mult)
         result = result.drop(columns=[c for c in result.columns if c.startswith('_full_')])
         if vacancy_adjusted:
+            # .fillna(0.0) IS THE LOAD-BEARING PART OF THIS LINE. Re-scoring
+            # happens on the ASSEMBLED frame, whose columns are the union of
+            # four positions' stat lists - so a receiver's row carries NaN
+            # for every passing stat and a quarterback's carries NaN for
+            # every receiving one. score_projected_stats reads its inputs
+            # with `proj.get(stat, 0)`, which returns the NaN for a key that
+            # EXISTS and is NaN, so the whole sum goes NaN - and
+            # `max(0.0, nan)` is 0.0, not nan, so it doesn't even look like
+            # an error downstream. Confirmed live before this fix: every
+            # RB, WR and TE on a real 2026 week-1 board projected exactly
+            # 0.00 points while carrying a perfectly sensible stat line, and
+            # the position-rank column duly labelled a 0.0-point player
+            # "RB1". The per-position scoring above is unaffected because it
+            # only ever passes that position's own stat list.
             stat_cols = [c for c in _ALL_PROJECTION_STATS if c in result.columns]
             recomputed = [max(0.0, score_projected_stats(d, scoring_mode))
-                          for d in result[stat_cols].to_dict('records')]
+                          for d in result[stat_cols].fillna(0.0).to_dict('records')]
             if 'calibration' in feats:
                 slopes = result['Pos'].map(lambda p: WEEKLY_CALIBRATION.get(p, (1.0, 0.0)))
                 recomputed = [min(v, sl * v + ic) for v, (sl, ic) in zip(recomputed, slopes)]

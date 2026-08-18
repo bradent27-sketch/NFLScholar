@@ -1511,6 +1511,25 @@ depth-chart over-spreading bug, both fixed), and the remaining book-confirmed ga
     which is not null, so bye-week rows stopped being dropped. Order matters:
     filter on real nullness FIRST, cast to string only after.
 
+40. **`score_projected_stats` reads its inputs with `proj.get(stat, 0)`,
+    which returns the NaN for a key that EXISTS and is NaN - and
+    `max(0.0, nan)` is `0.0`, not `nan`.** So a projection scored off the
+    ASSEMBLED whole-league frame (whose columns are the union of four
+    positions' stat lists, meaning a receiver's row carries NaN for every
+    passing stat) comes out as exactly 0.0 points next to a completely
+    sensible stat line, with nothing anywhere that looks like an error.
+    Confirmed live: every RB, WR and TE on a real 2026 week-1 board showed
+    0.00 projected points while displaying real targets and yards, and the
+    positional-rank column duly labelled a 0.0-point player "RB1". The
+    per-position scoring inside `build_weekly_projections`' own loop is
+    safe because it only ever passes that position's own stat list; the
+    post-loop `teammate_vacancy` re-score is not, and has to `.fillna(0.0)`
+    first. **Neither `python -m py_compile`, the 241-test suite, nor an
+    AppTest sweep of all nine tabs caught this** - AppTest checks that a tab
+    renders without raising, and a table full of zeros renders perfectly.
+    Only looking at the actual numbers in a browser did. Check VALUES, not
+    just that the page came up.
+
 36. **`st.dataframe`'s grid sorts on the RAW Arrow value and only DISPLAYS
     the Styler's formatted string - and a null sorts to the TOP, not the
     bottom.** Confirmed at source this time, by reading Streamlit's own

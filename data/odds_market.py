@@ -193,6 +193,15 @@ def team_scoring_environment(season):
     `vs_league` is the ratio to the league average, which is the readable form
     - 1.14 means the market prices this offense 14% above average. It is
     displayed, never multiplied into a projection (see the module docstring).
+
+    NOT `@st.cache_data` despite `fetch_game_lines` underneath already being
+    cached: this groupby/shrinkage layer is cheap (~11ms) and, more
+    importantly, tests monkeypatch `fetch_game_lines` directly to exercise
+    different scenarios under the same `season` value - caching on `season`
+    alone would silently serve one test's monkeypatched result to the next
+    (the exact class of bug HANDOFF gotcha #2 warns about: a real dependency
+    hidden from the cache key). Tried and reverted - see
+    estimate_full_season_scoring's docstring for the measured failure.
     """
     games, meta = fetch_game_lines(season)
     if meta.get('error'):
@@ -275,6 +284,18 @@ def estimate_full_season_scoring(season):
     For a game that DOES have a posted line, the market's own implied
     points are used as-is - the model estimate never overrides a real
     number, only fills the gap where one doesn't exist yet.
+
+    NOT `@st.cache_data`: tried it (only `season`, a plain int, as the real
+    param) to shave the ~54ms this per-game apply()/iterrows() pass costs on
+    every Draft HQ rerun. Reverted - `tests/test_odds_market.py` monkeypatches
+    `fetch_game_lines` to feed different scenarios through this SAME
+    `season=2025`, and caching on `season` alone silently served one test's
+    result to the next (`estimate_full_season_scoring`'s real dependency,
+    the monkeypatched fetch, isn't in the cache key - the same class of bug
+    HANDOFF gotcha #2 describes for underscore-prefixed params, just via a
+    mocked global instead). Safe to revisit if this function's own real
+    inputs are ever made explicit instead of reached through a module-level
+    fetch.
 
     Returns (frame, meta). frame has one row per team: `posted_ppg` (market-
     only average, same as team_scoring_environment's implied_ppg),

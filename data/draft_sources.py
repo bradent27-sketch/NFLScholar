@@ -324,6 +324,7 @@ def parse_ecr_upload(uploaded_file):
     return out.reset_index(drop=True), None
 
 
+@st.cache_data(show_spinner=False)
 def build_ecr_board(ecr_raw, board='Redraft 1QB', include_positional_depth=True):
     """
     One clean board out of the stacked ECR table: consensus rank, the spread
@@ -337,6 +338,15 @@ def build_ecr_board(ecr_raw, board='Redraft 1QB', include_positional_depth=True)
     Upside/Bust/Risk downstream in data.draft_board - carried through rather
     than collapsed into a single number, so the board can show WHY a player
     is volatile, not just that he is.
+
+    Cached on `ecr_raw` itself (a real, hashed param - not underscore-
+    prefixed, so this is safe against gotcha #2: the cache key IS the real
+    input, nothing is hidden from it). Measured at ~117ms per call - seven
+    filter passes plus concats/groupbys over the stacked ECR table, redone
+    from scratch on every Draft HQ rerun before this fix (every button
+    click, filter toggle, or pick commit, since `render()` calls
+    `_load_board` -> this on every script run). `load_ecr_raw()` underneath
+    is already cached, so this was pure repeated work on unchanged data.
     """
     if ecr_raw is None or ecr_raw.empty or 'page_type' not in ecr_raw.columns:
         return pd.DataFrame()

@@ -408,6 +408,71 @@ throughout - `scripts/validate_weekly_projections.py` and the new
 
 ---
 
+**August 2026 pass — full-app QA sweep (Draft HQ rerun cost, verification).**
+Not a feature pass: worked through every tab checking calculations, UI/hover
+consistency, rough/placeholder text, and crash safety, per an explicit
+"make sure nothing crashes" request. Verification used every layer this repo's
+own section 6 describes - `pytest tests/` (228 tests), a `streamlit.testing.v1
+.AppTest` sweep of all 9 tabs (zero exceptions), and a real headless-Chromium
+Playwright session against a live `streamlit run` server exercising an actual
+mock draft (mode switch, `New mock`, four `Auto-pick` commits) with console/
+page-error capture. Result: no rough/unfinished-looking UI text, no bare
+`except:` or unguarded `.iloc[0]` patterns found outside already-guarded
+call sites, hover language already consistent app-wide (one shared
+`inject_theme()`), and zero crashes anywhere in the sweep.
+
+- **Found and fixed the real cause of "Draft HQ feels slow to click around
+  in, and making a pick has a long load"** - measured, not eyeballed.
+  `ui.tabs.draft_hq.render()` calls `_load_board(settings)` on EVERY rerun
+  (every button, every position-filter click, every pick commit - the
+  comment above that call already says so). The big assembled board
+  (`_cached_board`) really was cache-fast, but `_load_board` also calls
+  `data.draft_sources.build_ecr_board(ecr_raw, board_format)` directly,
+  UNCACHED, every single time - seven filter passes plus concats/groupbys
+  over the stacked FantasyPros ECR table, measured at **~117ms per call**
+  on real data, on top of `load_ecr_raw()` (which WAS already cached).
+  Added `@st.cache_data` to `build_ecr_board` - safe because `ecr_raw` is a
+  real, hashed parameter (not underscore-prefixed), so a genuinely different
+  input still correctly busts the cache; verified against
+  `tests/test_draft_sources.py` and the full suite. Measured effect:
+  117ms -> 12-20ms per call, `_load_board`'s warm-path rerun cost down from
+  125-180ms to 85-105ms. Also tried caching `data.odds_market
+  .team_scoring_environment`/`estimate_full_season_scoring` the same way
+  (11ms and 54-117ms respectively, same "redone every rerun for no reason"
+  shape) and **reverted both** - `tests/test_odds_market.py` monkeypatches
+  `fetch_game_lines` to exercise different scenarios under the same
+  `season=2025`, and caching on `season` alone silently served one test's
+  monkeypatched result to the next. Same class of bug as gotcha #2
+  (a real dependency hidden from the cache key), just via a mocked global
+  instead of an underscore-prefixed param - caught by the full test suite
+  going 3 red before this was caught and reverted, not by inspection. See
+  each function's own docstring for the specifics.
+- **The "switching Live/Mock draft mode navigates away from the tab" scare
+  was a false alarm from `streamlit.testing.v1.AppTest`, not a real bug** -
+  worth recording since it cost real time to run down. AppTest's bare-script
+  reruns showed the top-level active tab reverting to Game Slate after
+  setting the mode radio's value; a real Playwright browser against a live
+  server, clicking the actual rendered label rather than driving the widget
+  through AppTest's API, stayed on Draft HQ every time. Trust the live
+  browser over AppTest for anything involving nested `st.tabs()` state -
+  HANDOFF's own section 6 already says as much for glide-data-grid clicks,
+  and this is the same lesson for a different widget.
+- **Also chased down what looked like a "pick didn't save to my roster"
+  bug and it wasn't one.** Firing `Auto-pick` four times back-to-back in a
+  paced ("Fast 0.25s") mock left the roster panel empty in one Playwright
+  run - alarming, since that would mean picks silently not counting. Root
+  cause was the test script, not the app: `_tick_mock_draft` correctly
+  gates the bot ticker on `dc['on_clock_me']` and stops exactly on the
+  user's turn (`ui.tabs.draft_hq` line ~2608), so clicking `Auto-pick`
+  while it ISN'T actually your turn is a correct, silent no-op
+  (`autopick_for_user` returns `None`) - my rapid clicks were mostly
+  landing in those no-op windows. A slower, deliberate re-run (one click,
+  wait for the room to resettle, screenshot) showed the pick landing in the
+  roster correctly every time. Recorded so a future session doesn't
+  re-chase the same false lead.
+
+---
+
 ## 1. Architecture
 
 ```

@@ -56,13 +56,18 @@ This doc exists so a fresh session (human or AI) can orient without re-deriving 
 project's hard-won lessons. **The gotchas in section 5 are all real bugs that happened
 here — several more than once.** Read that section before changing anything.
 
+**Active planned work — Weekly Projection Model V2.** Before making any change to Weekly
+Fantasy / Weekly Rankings projection logic, read
+`docs/weekly_projection_model_v2_build_handoff.md` in full. It is the approved V2 build
+contract: phased scope, data-cutoff rules, model decisions, feature-gating requirements,
+validation gates, and the required user review before any GitHub push or merge.
+
 **August 2026 follow-up pass — Matchup Analyzer / Weekly Rankings / Draft HQ refinement.**
-Note: by this pass the tab list had already grown past the "9 tabs" described above in an
-earlier undocumented pass (Game Slate added first, Matchup Analyzer added after Player
+Note: the app remains at nine top-level tabs, but its structure changed after an earlier
+undocumented pass: Game Slate was added first, Matchup Analyzer was added after Player
 Compare, and Risers/Rookie Watch/Weekly Rankings merged into one "Weekly Fantasy" tab with
-sub-tabs) - section 1's tab list and tree above are stale against the current
-`config.TAB_LABELS` and should be re-verified rather than trusted verbatim. This pass didn't
-attempt a full doc reconciliation; it added the entries below for what it actually touched.
+sub-tabs. Section 1 now reflects the current `config.TAB_LABELS`; keep it synchronized when
+tab wiring changes.
 
 - **Matchup Analyzer** (`ui/tabs/matchup_analyzer.py`, `data/matchup_signals.py`) - the
   player/defense columns now render in matched ROW PAIRS (tendency profile next to
@@ -123,9 +128,10 @@ attempt a full doc reconciliation; it added the entries below for what it actual
 **August 2026 pass — Matchup Analyzer bolstering (receiver alignment stats,
 defense coverage overhaul, usage trend chart).** Scoped entirely to
 `ui/tabs/matchup_analyzer.py` / `data/matchup_signals.py` per explicit
-request; Player Search and its shared `ui/player_snapshot.py` builder are
-untouched (HANDOFF.md section 8's "don't change Player Search" still holds -
-see below for how that constraint was honored).
+request; Player Search and its shared `ui/player_snapshot.py` builder were
+left untouched to limit the scope of that pass. This is historical scope, not
+a standing prohibition: section 8 now permits Player Search changes with
+targeted regression coverage.
 
 - **Calculated Wide YPRR** (`data.matchup_signals.build_wide_yprr_table` /
   `wide_yprr_entry`) - PFF's route-concept export breaks out Slot specifically
@@ -286,7 +292,7 @@ throughout - `scripts/validate_weekly_projections.py` and the new
     was made off this audit, just the weighting change itself.
 - **Weekly model: matchup-quality-adjusted, recency-weighted history on
   BOTH sides of the ball** (`data/weekly_projections.py` -
-  `build_quality_adjusted_matchup`, `_weighted_player_rates`, replacing an
+  `build_team_game_quality_adjusted_matchup`, `_weighted_player_rates`, replacing an
   earlier flat 60%-trailing-4-game/40%-season-average split) - per explicit
   request, three stacked adjustments on every past game feeding a player's
   own rate:
@@ -303,18 +309,30 @@ throughout - `scripts/validate_weekly_projections.py` and the new
   3. REMATCH - a past game against the SAME team faced again this week
      gets extra weight (`REMATCH_WEIGHT_MULT=1.6`) on top of its ordinary
      recency weight.
-  - The DEFENSE side's matchup rating (`build_quality_adjusted_matchup`)
-    is the "Baltimore vs. a good slot receiver" ask made concrete: instead
-    of a flat "average stat allowed per game" (blind to who it was
-    allowed to), every opposing player's game against a defense is
-    compared to THAT PLAYER'S OWN season baseline first, and the
-    (recency-weighted) average of those ratios is the defense's rating -
-    a defense that allows a normal day to an elite target isn't penalized
-    the way it would be for the same production against a bench player.
-    Centered so a league-average defense reads 1.0. Same recency-weighted
-    machinery is reused for BOTH the offense-side retroactive adjustment
-    and the forward-looking upcoming-matchup multiplier - one function,
-    one meaning, not two parallel implementations.
+  - The DEFENSE side's matchup rating is now an **offense-position team-game
+    profile** (`build_team_game_quality_adjusted_matchup`), not an average of
+    individual player/season ratios. For each QB, RB, WR, or TE channel, all
+    same-position player rows are summed into one offense-versus-defense
+    game, compared with that offense's own normal positional output, then
+    estimated as a recency-weighted pooled observed/expected ratio. Four
+    league-average neutral games shrink sparse channels (especially TD/INT
+    counts) toward 1.0 before league re-centering. This means a replacement,
+    injury fill-in, or one statless relief appearance cannot manufacture a
+    2–3x defense signal from a tiny personal denominator or count as another
+    independent game. QB rushing, RB rushing, RB receiving, WR receiving,
+    and TE receiving remain independent channels.
+  - Historical team identity is immutable for this calculation:
+    `data.loaders.load_year_data` preserves raw weekly `game_team` before a
+    roster merge replaces visible `team` with the player's latest team. Use
+    `game_team` for historical team-game math; never substitute the current
+    roster team after a trade. A `game_id` fallback exists only for older
+    cached frames with no `game_team` field.
+  - Role-conditioned tables use the same team-game grain for players whose
+    measured role was present in that game, and remain shrunk toward the
+    broad profile. QB passing bypasses role overlays entirely because its
+    one-QB team-game profile is the relevant evidence. The obsolete
+    player-row helper is retained only as a regression-test counterexample,
+    never as a Weekly Rankings production input.
   - **Honest measured result, not a claimed win**: this whole reweighting
     is within noise of the flat split it replaced on
     `scripts/validate_weekly_projections.py` (2025 & 2024, weeks 5-17) -
@@ -616,8 +634,10 @@ data/
                     legality rules, autopick, lineup optimizer, draft grading.
   draft_sos.py      Positional strength of schedule over a selectable week
                     range, from fantasy points allowed by defense.
-  ffa_import.py     Reads a Fantasy Football Advice player export the USER
-                    supplies. No network calls, by design (section 8).
+  ffa_import.py     Normalizes a Fantasy Football Advice player payload into
+                    the app's import format. The current entrypoint reads a
+                    local JSON file; a future authenticated source adapter is
+                    permitted by policy but not implemented yet (section 8).
 ui/
   styling.py        Theme CSS injection + every table Styler (percentile heatmap,
                     matchup colors, depth chart cells, sticky game log HTML).
@@ -638,9 +658,9 @@ docs/
   draft_hq_methodology.md   Full derivation reference for Draft HQ.
 ```
 
-**Tabs** (order = `config.TAB_LABELS`): Player Search, NFL Depth Charts,
-Defensive Yield Schemes, Risers/Waiver Wire, Rookie Watch, Weekly Rankings, Live Odds,
-Player Compare, **Draft HQ**.
+**Tabs** (order = `config.TAB_LABELS`): Game Slate, Player Search, NFL Depth Charts,
+Defensive Yield Schemes, Live Odds, Player Compare, Matchup Analyzer, Weekly Fantasy
+(Risers/Waiver Wire, Rookie Watch, and Weekly Rankings sub-tabs), **Draft HQ**.
 
 Nine tabs, not ten. **VORP Draft Sheet was deleted** (August 2026) once Draft HQ made it
 redundant - it computed replacement-level VORP off last season's per-game pace × 17,
@@ -696,8 +716,116 @@ the dict of all frames + precomputed percentile columns; `year` is its cache key
 The `receiving_concept` duplicate pairs within a folder are byte-identical (verified) —
 only one is loaded.
 
-To add a new season: create `pff_imports/{year}/`, drop the same ~16 exports in, add the
-year to `config.AVAILABLE_SEASONS*`. That's it.
+**License and ingestion guardrail:** treat these as licensed subscription exports, not
+automatically redistributable project data. Do not scrape a signed-in PFF session, reuse
+cookies/tokens, call undocumented export endpoints, or automate downloads. If the
+applicable PFF agreement explicitly permits the intended local use and AI-assisted
+development, use the product's normal manual export workflow, keep a provenance manifest
+(season, regular/postseason filter, covered weeks, export date, source, and checksum), and
+confirm distribution rights before adding raw files to Git. This warning does not make
+already tracked exports safe to publish and does not authorize deleting them; raise that
+question before any public push.
+
+For a new **locally permitted** season, create `pff_imports/{year}/`, add the reviewed
+exports, and add the year to `config.AVAILABLE_SEASONS*`. Prefer regular-season-only,
+season-to-date exports for live work. PFF season totals cannot be used as an as-of-week
+historical feature without a dated weekly/game-level source.
+
+#### Time-safe weekly alignment archive
+
+`data.pff_alignment` supports a separate local archive for weekly slot/non-slot work:
+
+```text
+pff_imports/{year}/weekly/{week}/receiving_summary.csv
+pff_imports/{year}/weekly/{week}/receiving_concept.csv
+pff_imports/{year}/weekly/manifest.csv
+```
+
+One summary and one concept report cover the league's WR/TE/HB/FB rows; do **not**
+download per-position reports. `manifest.csv` is optional but strongly recommended: record
+`week`, regular-season status, export date, schema-valid state, and source confidence.
+The loader accepts only `week < as_of_week`, rejects incomplete/non-regular manifest rows,
+and never treats a missing value as a 0% alignment role. Existing full-season exports may
+seed a live Week 1 player prior only with a reviewed `season_manifest.csv` confirming
+regular-season-only and time-valid status; the current postseason-contaminated totals stay
+neutral.
+
+The defense foundation aggregates the **offensive** weekly reports by
+offense → scheduled opponent → defense × position × slot/non-slot × event. It does not use
+PFF's defender-level `slot_coverage` table (a different measurement) and exposes only a
+neutral/audit preview until a predeclared out-of-sample backtest authorizes a scoring effect.
+Weekly raw PFF reports are Git-ignored; do not stage them with a public push.
+
+### Expected QB1 selection for weekly projections
+`data/qb1_overrides.csv` is the explicit, user-maintained expected-QB1 input for the
+weekly model. It uses `year,team,player` rows and is managed from the Depth Charts tab's
+**Weekly projection QB1 selection** panel. It is deliberately separate from the generated
+Depth Charts display: that display is a useful roster heuristic, but does not choose the
+model's QB1.
+
+#### Local Ourlads preseason import
+`data.ourlads_depth_charts` can normalize printer-friendly Ourlads pages that the user has
+already saved locally. It is deliberately a local-file importer, **not** a live fetcher,
+scraper, browser automation, or login integration. The Depth Charts tab accepts one or more
+saved `.mhtml`/`.mht`/`.html` pages and writes only a derived snapshot to
+`external_data/ourlads_depth_charts.csv`; the raw pages, normalized snapshot, and optional
+source-key note are ignored by Git. Re-import after replacing a source page so the app clears
+the weekly-projection cache.
+
+The parser retains source team, raw formation label (`LWR`/`RWR`/`SWR`/`TE`/`QB`/`RB`),
+row/slot, source player id, timestamp, and Ourlads status class. In V2, `lc_red` is retained as
+an unconfirmed source warning rather than treated as a medical fact: it does not erase a matched
+player's literal rank or conditional role. Only the target-week availability layer (manual override
+first, then the current injury report) can zero a player; V1 preserves its earlier red-row control
+behavior. Other source classes are provenance only. A currently loaded 2026 snapshot may be incomplete; the import
+panel shows missing teams rather than silently inventing chart evidence.
+
+For a live preseason cold start only, a uniquely matched Ourlads QB order can resolve QB1 after
+a manual override and before the prior-season-incumbent fallback, unless the current availability
+layer marks that QB out. It never affects historical
+backtests or in-season QB selection, where observed current-season snaps remain the source.
+For RB/WR/TE, chart order is intentionally only a conservative floor for a player with thin
+or no usable role evidence who is new to the team. It cannot lower an established model role,
+does not assign 100% snaps, and does not make three listed wide-receiver formation starters
+equal-workload players. V2's RB allocator now handles the fuller preseason role problem: it
+reconciles team core-RB snaps, carries, and targets separately; uses ID-first identity and literal
+chart order; applies incumbent and interrupted-season safeguards; and excludes functional fullbacks
+from the RB vacancy/allocation pool. This is a guardrail for missing preseason context, not an
+automatic depth-chart workload assignment.
+
+For a confirmed target-week availability call, create the local ignored file
+`data/availability_overrides.csv` with columns
+`year,week,team,player,status,plays_probability,workload_if_active,note`.
+Manual target-week entries outrank the current injury-report feed; never use
+an Ourlads colour as a substitute. The resolver matches stable ID first,
+then exact normalized name, reviewed alias, and only then a unique
+suffix-stripped full name. It records a warning instead of guessing on a
+collision.
+
+A valid manual row has first priority for any upcoming week. At a cold start,
+`data.weekly_projections.resolve_preseason_qb1s` can otherwise select a lone same-team QB
+with at least 65% prior-season team-week participation. In season,
+`resolve_inseason_qb1s` selects only a QB who was recently active for that team and whose
+most recent eligible game was a clear full-snap starter role; an old starter cannot win on
+stale full-snap appearances after another QB has taken the recent starts. Ambiguous rooms
+remain visibly `selection_required`; do not solve them by setting every QB to 100% snaps.
+Exactly one selected QB receives normal projected QB volume; every nonstarter has passing
+and rushing volume explicitly zeroed, so a relief-game per-appearance rate cannot muddy the
+rankings board. The initial 2026 manual rows are reviewable preseason assumptions seeded
+from the supplied Week 1 ECR and the user's explicit Dart/Watson choices; the weekly model
+does **not** load or blend ECR as an input. Revise a row through the UI when the expected
+starter changes.
+
+### Partial-game player-history screen for weekly projections
+Historical weekly box scores have measured snap shares but no trustworthy timestamped
+injury/exit field. Do **not** infer an injury from a low fantasy line or discard ordinary
+lower-workload games. `annotate_player_history_participation` excludes a player-game from
+that player's rate, evidence, role, and expected-snap inputs only with real matched snap
+data and a narrow, auditable signature: QB split/relief snaps, an abrupt <=50% drop after an
+established role, a paired low-history replacement after that teammate's exit, or sharply
+reduced work in a 28+ point winning blowout. Missing/zero snap data remains eligible. Keep
+the raw history for team-game defense profiles: the defense still faced the full offense and
+must not lose that evidence. Popup traces expose excluded sample counts and reasons.
 
 ### nflreadpy (live pulls, all cached)
 nflreadpy is set to FILESYSTEM cache mode at import time in data/loaders.py
@@ -779,14 +907,19 @@ the same filenames. Weekly rankings are uploaded per-session via the Weekly Rank
   specifically). Every consumer treats an empty return as "no news column", never an
   error.
 
-### Fantasy Football Advice import (`data/ffa_import.py`) — USER-SUPPLIED, no network
-The user has an FFA subscription. Their payload carries things this app can't derive:
-`ffaValue`, `adpComposite`, Elo ratings, analyst stat lines, and a hand-written scouting
-note per player. **Nothing in this repo talks to their servers, polls their API, or
-automates a login** — `save_ffa_import` reads a file the user hands over, once.
+### Fantasy Football Advice data (`data/ffa_import.py`) — curated and source-controlled
+FFA payloads carry things this app can't derive: `ffaValue`, `adpComposite`, Elo ratings,
+analyst stat lines, and a hand-written scouting note per player. The project policy now
+permits a reviewed, sanitized snapshot at `external_data/ffa_players.json` to be committed,
+and permits a future authenticated source adapter. The current code still reads a local JSON
+payload (via upload or by placing the file on disk); it does **not** fetch FFA data yet.
 
-- Lives at `external_data/ffa_players.json`, **gitignored** (this repo is public — see
-  section 8). Dropping the file there by hand works exactly as well as uploading it.
+- A future FFA adapter must use a local or hosted secret for authentication, identify itself
+  honestly, and retain the same normalization/validation path as a committed snapshot. Never
+  commit an API key, password, cookie, browser session, raw request header, or raw HAR file.
+- Validate a source-controlled snapshot for malformed or stale data before updating it. Its
+  origin and refresh date should be recorded alongside the data or in the release notes, so
+  users can distinguish a fresh feed from an older snapshot.
 - **The STAT LINE is imported, not the point total.** Their `proj` is half-PPR, so
   reading it straight would be silently wrong in full-PPR/TE-premium and badly wrong once
   yardage bonuses are on. `merge_ffa_into_board` blends their stat line against this
@@ -796,11 +929,10 @@ automates a login** — `save_ffa_import` reads a file the user hands over, once
   `index.json` (the HAR manifest) instead of `api/players.json`; the importer correctly
   rejected it and said nothing useful, so it looked like the upload feature was broken.
   It now names the specific file you actually want.
-- `tools/har_extract.py` is how the payload got here: the user captured a HAR in their
-  browser, ran the script locally, and sent the unpacked `api/` folder. The script strips
-  all headers/cookies, redacts credential query params, field-redacts POST bodies, and
-  skips auth endpoints whole. **`*.har` is gitignored** — a raw HAR contains live session
-  cookies.
+- `tools/har_extract.py` can produce a candidate payload from a browser HAR. It strips
+  headers/cookies, redacts credential query params, field-redacts POST bodies, and skips auth
+  endpoints whole. **`*.har` remains gitignored** because a raw HAR can contain live session
+  cookies; only a separately reviewed, sanitized data snapshot may be versioned.
 
 ## 3. Key computed systems
 
@@ -1500,7 +1632,7 @@ depth-chart over-spreading bug, both fixed), and the remaining book-confirmed ga
     plain-object-dtype columns by hand. Fixed by `.astype(str)`-ing every
     opponent-team value at the point it's read, before it's used as a `.map()`
     key or a `.clip()` input anywhere downstream - see the comment on
-    `build_quality_adjusted_matchup`'s `_opponent` column for the specifics.
+    `_position_team_games` and `_weighted_player_rates` for the specifics.
 
 34. **`.astype(str)` on a column BEFORE a `.notna()` filter turns real NaNs
     into the literal string `"nan"`, which then survives that filter.** A
@@ -1626,10 +1758,9 @@ per-player durability games, and a symmetric young-player age boost. If a change
 improve agreement, it doesn't ship, and the rejection gets written down next to the
 constant so nobody tries it again.
 
-Also worth knowing: in a sandboxed environment the ADP column reads empty, because
-`external_data/ffa_players.json` is gitignored (so absent) and Fantasy Football
-Calculator is network-blocked. That is expected, not a bug — ADP falls back to the ECR
-estimate and the source label says so.
+Also worth knowing: in a sandboxed environment the ADP column can read empty when no
+versioned FFA snapshot is present and Fantasy Football Calculator is network-blocked. That is
+expected, not a bug — ADP falls back to the ECR estimate and the source label says so.
 
 ## 7. Deliberately NOT done / parked
 
@@ -1689,12 +1820,14 @@ estimate and the source label says so.
 - No new paid data sources or heavyweight dependencies. **No scipy** — the draft engine
   needs a gamma distribution and a normal survival function and implements both directly
   (`_gammq`, `math.erfc`) rather than pulling the dependency in.
-- **This repo is PUBLIC and the user is fine with that.** The condition is that FFA's paid
-  data is upload-only and never committed: `external_data/ffa_players.json` and `*.har`
-  are gitignored and must stay that way. No code may fetch from FFA's servers.
-- **Don't change the Player Search tab.** Direct user instruction. Draft HQ links INTO it
-  (`switch_tab(TAB_PLAYER_SEARCH, jump_to_player=...)`) and consumes its existing context
-  keys; it does not modify it.
+- **FFA data may be committed or fetched.** A reviewed, sanitized snapshot at
+  `external_data/ffa_players.json` may be source-controlled, and a future authenticated FFA
+  adapter is allowed. `.streamlit/secrets.toml`, raw HAR files, browser cookies, credentials,
+  tokens, and passwords must remain untracked. Preserve source attribution and refresh-date
+  context for any versioned or fetched FFA payload.
+- **Player Search is a protected core flow, not a frozen tab.** Changes are allowed, but must
+  preserve cross-tab navigation and selected-player state, retain an honest no-data state for
+  roster-only seasons, and receive targeted functional and visual regression verification.
 - **Don't touch externally-sourced stats.** FFA Value, FFA ADP, FFA projections,
   FantasyPros ECR, dynasty values, injury designations and news are displayed exactly as
   fetched. Everything the app computes itself is fair game to improve — that distinction

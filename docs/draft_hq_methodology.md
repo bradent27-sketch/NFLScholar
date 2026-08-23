@@ -26,7 +26,7 @@ Two categories run through the whole document:
 | **nflverse / nflreadpy** weekly stats | Every play-derived stat: carries, targets, receptions, yards, TDs, attempts, INTs, fumbles, FG/PAT, opponent, week | local history via `data.loaders.load_weekly_stats_history` | on load |
 | **nflverse** injury report | Current designations | `nflreadpy`, falls back one season at a time | short TTL — a Saturday IR move should invalidate a board within the hour |
 | **ESPN site API** | Player news headlines | public JSON, several host candidates tried in order | 6h |
-| **Fantasy Football Advice** (your upload) | `ffaValue`, `adpComposite`, `proj`, Elo / PPR Elo / Dynasty Elo, analyst stat lines, scouting notes, age | **file you supply** — `external_data/ffa_players.json`, gitignored, never fetched | on upload |
+| **Fantasy Football Advice** | `ffaValue`, `adpComposite`, `proj`, Elo / PPR Elo / Dynasty Elo, analyst stat lines, scouting notes, age | reviewed local or versioned snapshot at `external_data/ffa_players.json`; authenticated fetch adapter permitted but not implemented | on snapshot update or import |
 | **FantasyPros ADP** (live) | Consensus ADP averaged across NFFC, Sleeper, ESPN, CBS and RTSports | `fantasypros.com/nfl/adp/{format}.php` | 6h |
 | **FantasyPros ADP** (local) | The same consensus, recovered offline from `rankings/fantasypros_2026_*.csv` as `RK + "ECR VS. ADP"` | your own periodic export | on file change |
 | **Fantasy Football Calculator** | ADP from mock drafts on their own site | `fantasyfootballcalculator.com/api/v1/adp` | manual selection only |
@@ -67,12 +67,16 @@ When no ADP source answers at all, consensus rank stands in so the
 availability model keeps working; the source label says `ECR estimate` so
 you know it isn't real ADP.
 
-**The FFA import is upload-only by design.** Nothing in this repo talks to
-their servers, polls their API, or automates a login. It reads a file you
-already have, and their *stat line* is imported rather than their point
-total — a point total is only correct for the scoring it was computed
-under, and theirs is half-PPR. Re-scoring their stat line through this
-app's own engine keeps your league's settings honest.
+**FFA data is a governed source, not an upload-only one.** The current code
+reads a local payload, either imported through the UI or placed at
+`external_data/ffa_players.json`; that sanitized snapshot may be versioned.
+An authenticated fetch adapter is permitted but has not been implemented.
+Any adapter must keep credentials in local or hosted secrets and must never
+commit cookies, tokens, passwords, raw request headers, or browser HAR
+files. Their *stat line* is imported rather than their point total — a point
+total is only correct for the scoring it was computed under, and theirs is
+half-PPR. Re-scoring their stat line through this app's own engine keeps your
+league's settings honest.
 
 ---
 

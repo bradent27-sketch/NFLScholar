@@ -114,6 +114,109 @@ switchable, and are documented here with the numbers that kept them off —
 same discipline `docs/draft_hq_methodology.md` applies to the three changes
 it built, measured and rejected.
 
+### Defense-profile reliability correction — not yet an accuracy claim
+
+The original quality-adjusted defense estimator divided each individual
+player-game by that player's own season average, then averaged those ratios
+by defense. That is vulnerable to a low-volume replacement: a 75-yard relief
+appearance against a 35-yard personal baseline looks like a 2.1× defensive
+failure even if the offense's full QB passing game was ordinary. A live
+Houston audit exposed this exact problem, but the flaw was not Houston-only.
+
+Weekly Rankings now aggregates every projected position's rows into one
+offense-versus-defense game before estimating the defense. It compares each
+position-team total to that offense's own positional baseline and computes a
+recency-weighted **pooled observed / expected** factor, with four neutral
+league-average games as a transparent sparse-stat prior. Real zero-output
+position games are retained; player-row count is never treated as evidence.
+QB rushing, RB rushing, RB receiving, WR receiving, and TE receiving are
+separate inputs. QB team rushing yards are floored at zero before forming a
+baseline because box-score kneels can make net QB rushing negative.
+
+The raw weekly offense (`game_team`) is preserved before the current-roster
+merge, so a player's later team after a trade cannot rewrite the historic
+offense-vs-defense assignment. Role-conditioned profiles use the same
+team-game grain; QB passing deliberately bypasses role overlays, including
+when the optional volume×efficiency rebuild is enabled.
+
+This is a **data-integrity correction**, not a fitted performance claim. It
+has deterministic all-stat partition-invariance tests and a no-leakage 2025
+smoke backtest, but it must complete the project's locked multi-season
+evaluation before becoming evidence of an accuracy improvement or a reason
+to retune calibration/clip settings.
+
+### Partial-game player evidence and expected-QB gate — data integrity, not an injury forecast
+
+The weekly box-score feed contains a player’s recorded snap percentage, but
+not a trustworthy historical injury timestamp or the clock time at which he
+left a game. A quiet box score is therefore never enough to label a player
+injured or to discard a normal lower-volume outing.
+
+For a player’s own full-game production history only, Weekly Rankings removes
+a game when the measured participation makes it an unusually clear
+interruption:
+
+- two QBs split the game’s offensive snaps in a normal relief range;
+- an established player falls to at most 50% of snaps and at most 60% of his
+  prior established role;
+- a previously fringe same-position teammate takes a partial role in that
+  exact game after the established player’s exit; or
+- an established player is sharply reduced in a **28+ point win**, the narrow
+  final-score pattern consistent with late-game rest.
+
+The filter requires a real matched weekly snap source. Missing or zero-filled
+snap data is explicitly left alone, and mild workload changes remain evidence.
+An excluded row is removed from player rate averages, current-season evidence
+counts, role trends, and expected snap shares; it remains in the raw
+offense-team game used for defense profiles. The player popup records the
+count and reason so a user can audit it. This fixes a denominator/data-shape
+problem; it has not been presented as a measured accuracy improvement.
+
+Quarterbacks have an additional participation rule: exactly one expected QB1
+per team receives normal passing and rushing volume. A manual QB1 selection
+is strongest. In a cold start, a lone 65% prior-season incumbent can be
+automatic; in season, the candidate must be recently active for that team and
+show a clear full-snap most-recent eligible game. All nonstarters receive zero
+normal QB volume rather than inheriting a relief-game per-appearance rate. An
+ambiguous room is held at zero until a visible manual selection resolves it.
+This prevents a backup QB from appearing as a plausible 5–10 point weekly
+option merely because he threw during a replacement or garbage-time drive.
+
+### Local preseason depth-chart evidence
+
+The model can use a user-imported snapshot of printer-friendly Ourlads depth
+charts. This is a local-file import only: the app does not fetch, scrape,
+automate a signed-in session, or contact Ourlads at projection time. The
+raw pages and derived local snapshot stay outside Git. The parser preserves
+the source's QB/RB/TE and `LWR`/`RWR`/`SWR` labels, source order, timestamp,
+and availability class. In the experimental V2 path, an `lc_red` player is
+an **unconfirmed chart warning**, not a medical determination: the resolved
+player keeps the conditional depth-role signal unless a target-week injury
+report or explicit manual availability override confirms that he is out. The
+released V1 baseline keeps its prior red-row behavior as a control.
+
+For a live preseason Week 1-style cold start, a uniquely matched first-listed
+QB is a QB1 eligibility signal with this precedence: manual choice, imported
+chart, clear prior-season incumbent, then an explicit unresolved room. A
+current availability source can veto the chart; chart colour alone cannot. It
+does not affect historical targets or in-season selection. For RB, WR, and
+TE, imported chart order is a **low-evidence role floor**, not a workload
+forecast: it can prevent a verified new starter from being treated as an
+unknown, but it cannot reduce an established role or assert full snaps,
+targets, carries, or equal workloads across the three listed WR formations.
+For V2 RBs, a team-constrained allocator now distributes core-RB snaps,
+carries, and targets separately among credible functional RBs, retaining an
+explicit other-RB remainder. It uses stable player identity, literal source
+rank, same-team and active-game evidence, draft signal, current availability,
+and clear pre-absence/return segments. Fullbacks are excluded from the
+core-RB allocator and retain only their own historic touch rate.
+
+An optional local `data/availability_overrides.csv` supports an explicit
+target-week decision when the public/current report needs correction. Its
+columns are `year,week,team,player,status,plays_probability,workload_if_active,note`.
+It is ignored by Git, resolves by stable ID/full name/reviewed alias/unique
+suffix in that order, and refuses an ambiguous player rather than guessing.
+
 ### Headline: before this pass vs. what ships now
 
 ```

@@ -35,8 +35,17 @@ except Exception:
 
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
 
+# Was an unbounded @st.cache_data (never expires within a running process)
+# on every loader below. Long enough to avoid thrashing on a cheap re-run;
+# short enough that a mid-session data re-upload or regeneration - a new
+# Ourlads snapshot, a re-imported weekly stats CSV, a refreshed PFF export -
+# is picked up within the hour instead of only on the next full process
+# restart. See the V2 audit's "cache staleness" finding in
+# docs/weekly_projection_model_v2_rebuild.md.
+CACHE_TTL_SECONDS = 3600
 
-@st.cache_data
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def _pivot_nflreadpy_snap_counts(year):
     """
     nflreadpy.load_snap_counts (PFR-sourced via nflverse, covers 2012-present)
@@ -79,7 +88,7 @@ def _pivot_nflreadpy_snap_counts(year):
     return pivoted
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def build_veteran_database(target_year):
     try:
         past_years = [target_year - 1, target_year - 2, target_year - 3]
@@ -89,7 +98,7 @@ def build_veteran_database(target_year):
         return set()
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def _load_raw_weekly_stats(year):
     """
     The weekly stats file for one season, exactly as it sits on disk (or the
@@ -174,7 +183,7 @@ def load_box_score_stats(year):
     return stats
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_year_data(year):
     """
     Loads and merges roster/stat/snap data for one season. This is the
@@ -186,6 +195,20 @@ def load_year_data(year):
     toggle.
     """
     stats = _load_raw_weekly_stats(year)
+
+    # ``team`` in the raw weekly feed is the offense that played THIS game.
+    # A later roster merge deliberately replaces the visible ``team`` with a
+    # player's latest roster team so current cards and pools stay current;
+    # without this immutable copy, a mid-season trade rewrites historical
+    # offense-vs-defense evidence (for every position, not just QBs). Keep
+    # the game fields separate for any calculation keyed to a past game.
+    game_context = {}
+    if 'game_team' not in stats.columns:
+        game_context['game_team'] = stats.get('team', pd.Series('', index=stats.index))
+    if 'game_opponent' not in stats.columns:
+        game_context['game_opponent'] = stats.get('opponent_team', pd.Series('', index=stats.index))
+    if game_context:
+        stats = pd.concat([stats, pd.DataFrame(game_context, index=stats.index)], axis=1)
 
     # Regular season only - every local stats_player_week_{year}.csv (2019-
     # 2025, confirmed on all seven files) mixes REG rows in with POST
@@ -562,7 +585,8 @@ def load_year_data(year):
     # Reproduced directly: st.dataframe(risers.set_index('Player'), ...)
     # raised "Could not convert '...' with type str: tried to convert to
     # int64" once 'Player' had picked up category dtype from this loop.
-    no_categorize = {name_col, 'full_name', 'clean_merge_name', 'gsis_id', 'headshot_url'}
+    no_categorize = {name_col, 'full_name', 'clean_merge_name', 'gsis_id', 'headshot_url',
+                      'game_team', 'game_opponent'}
     obj_cols = stats.select_dtypes(include=['object']).columns
     for c in obj_cols:
         if not len(stats): continue
@@ -588,7 +612,7 @@ def load_year_data(year):
     return stats, team_col, name_col, global_rookie_names
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_weekly_stats_history():
     """
     Loads every local weekly-granularity player stats export (all years) for
@@ -622,7 +646,7 @@ def load_weekly_stats_history():
     return pd.DataFrame()
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_external_coverage_schemes():
     """
     Team-level man/zone coverage rates - free alternative to PFF's Shadow
@@ -639,7 +663,7 @@ def load_external_coverage_schemes():
     return pd.DataFrame()
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_sumersports_tendency_data():
     """
     Team personnel-grouping (11 personnel usage rate) and formation (2X2
@@ -666,7 +690,7 @@ def load_sumersports_tendency_data():
     return out
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_sharp_positional_coverage():
     """
     Yards-per-target ALLOWED by receiver type (WR/TE/RB) and alignment
@@ -731,7 +755,7 @@ def load_pff_year(base_filename, year):
     return load_pff(f'{base_filename}.csv')
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_all_pff_data(year):
     """
     Loads every PFF export for one season plus percentile columns for each,
@@ -946,7 +970,7 @@ def _build_master_pff_grades(d):
     return {}, set()
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_pfr_pass_block(year):
     """
     PFR advanced passing stats (season level) - times_pressured/pressure_pct
@@ -965,7 +989,7 @@ def load_pfr_pass_block(year):
         return pd.DataFrame()
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_pfr_def_pressure(year):
     """PFR advanced defensive stats (season level) - per-player pressures/sacks/hurries/knockdowns, aggregated by team below into a defense's pressure rate generated."""
     try:
@@ -975,7 +999,7 @@ def load_pfr_def_pressure(year):
         return pd.DataFrame()
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_team_pass_attempts_faced(year):
     """Team-level pass attempts faced (the opponent's own passing attempts each week), used to turn raw defensive pressure counts into a rate."""
     try:
@@ -988,7 +1012,7 @@ def load_team_pass_attempts_faced(year):
         return pd.Series(dtype=float)
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_pbp(year):
     """
     Raw play-by-play (nflfastR, via nflreadpy) for one season - carries
@@ -1005,7 +1029,7 @@ def load_pbp(year):
         return pd.DataFrame()
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_team_logos():
     """
     abbr -> ESPN logo URL, from the local teams_colors_logos.csv (nflverse
@@ -1022,7 +1046,7 @@ def load_team_logos():
     return {}
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_player_id_crosswalk():
     """
     nflverse's master player table (gsis_id / pff_id / espn_id / pfr_id /
@@ -1049,7 +1073,7 @@ def load_player_id_crosswalk():
         return pd.DataFrame()
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_team_pace(year):
     """
     Offensive plays run per game and defensive plays FACED per game, both
@@ -1088,7 +1112,7 @@ def load_team_pace(year):
     return pd.concat([off[['off_pace']], defn[['def_pace']]], axis=1)
 
 
-@st.cache_data
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_schedule(year):
     """
     Full season schedule, REG season only - feeds the strength-of-schedule

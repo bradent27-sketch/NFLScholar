@@ -21,22 +21,20 @@
 # the expected shape with no real key in it.
 .streamlit/secrets.toml
 
-# Imported Fantasy Football Advice data. This is paid subscription content
-# belonging to FFA, imported for personal use via tools/har_extract.py +
-# data/ffa_import.py - it should live on your machine, not in a git repo.
-external_data/ffa_players.json
+# A reviewed, sanitized FFA dataset may be versioned at
+# external_data/ffa_players.json. Do not add credentials, cookies, tokens,
+# passwords, or raw browser captures to that file or any other tracked file.
 
 # FantasyPros cheat-sheet import (auction values, expert tiers, analyst
-# notes). Same reasoning as the FFA import above: subscription content,
-# imported for personal use, belongs on your machine rather than in a repo.
+# notes). These remain local-only subscription content.
 external_data/fantasypros_cheatsheet.json
 external_data/fantasypros_players.json
 
 # Raw browser HAR captures. A HAR carries every cookie and Authorization
 # header the browser sent, so committing one publishes a live login session
-# for whatever site was captured. Run it through tools/har_extract.py first
-# and commit that output instead - it keeps the API payloads and copies no
-# headers, cookies or POST bodies.
+# for whatever site was captured. Never commit a raw HAR. Extract only a
+# reviewed, sanitized dataset; a versioned FFA snapshot is permitted, but
+# credentials, cookies, headers, and raw POST bodies are not.
 *.har
 
 # Python
@@ -69,3 +67,20 @@ external_data/draftkings_player_futures.json
 external_data/prizepicks_weekly_projections.json
 external_data/draftkings_weekly_props.json
 external_data/weekly_props_snapshot.json
+
+# Locally saved public depth-chart exports and the normalized personal-use
+# snapshot derived from them.  The app can import these from the Depth Charts
+# tab, but raw browser exports / regularly refreshed source snapshots should
+# not churn a public repository.
+external_data/ourlads_depth_charts/
+external_data/ourlads_depth_charts.csv
+external_data/ourlads_depth_chart_key.txt
+
+# Weekly PFF alignment exports are locally licensed source material.  Keep
+# the small manifest/provenance record reviewable if desired, but never stage
+# the raw subscription reports by accident when preparing a public push.
+pff_imports/*/weekly/
+
+# Optional manual Week-1 availability decisions. This is personal runtime
+# state, not a public source file; the code supplies an empty-safe loader.
+data/availability_overrides.csv

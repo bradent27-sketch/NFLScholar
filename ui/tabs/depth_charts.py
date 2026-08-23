@@ -6,6 +6,13 @@ from config import MASTER_TEAMS_LIST, TEAM_CONFIG, TAB_PLAYER_SEARCH, AVAILABLE_
 from data.transforms import load_and_merge_data, fetch_intelligent_depth_chart
 from data.loaders import build_veteran_database, load_pff_data_with_fallback
 from data.utils import clean_name_exact
+from data.weekly_projections import (resolve_preseason_qb1s, resolve_inseason_qb1s,
+                                     save_qb1_override, clear_qb1_override,
+                                     _all_played_weeks, _invalidate_weekly_projection_cache)
+from data.ourlads_depth_charts import (
+    load_ourlads_snapshot, save_ourlads_snapshot,
+    load_ourlads_key, save_ourlads_key, build_ourlads_projection_signal,
+)
 from ui.styling import style_depth_chart_table, df_auto_height
 from ui.components import switch_tab, render_team_banner, skeleton_loader
 
@@ -145,6 +152,191 @@ def _make_cell_click_callback(source_df, table_key, year, team):
     return _on_cell_select
 
 
+def _render_projection_qb1_control(year, team, current_stats, team_col, name_col):
+    """Small, explicit upcoming-game QB1 control for weekly projections.
+
+    The generated chart below remains a roster-browsing aid.  It is not a
+    source of truth for a new-season QB starter because its ordering comes
+    from historical snaps.  This control instead records a named selection
+    whenever current evidence cannot identify one clear starter.
+    """
+    required = {name_col, team_col, 'position'}
+    if current_stats.empty or not required.issubset(current_stats.columns):
+        return
+    qbs = current_stats[
+        current_stats[team_col].astype(str).str.upper().eq(str(team).upper())
+        & current_stats['position'].astype(str).str.upper().eq('QB')
+    ][[name_col, team_col]].dropna(subset=[name_col]).drop_duplicates(subset=[name_col])
+    if qbs.empty:
+        return
+    try:
+        prior_stats, prior_team_col, prior_name_col, _ = load_and_merge_data(year - 1, 'Full PPR')
+    except Exception:
+        prior_stats, prior_team_col, prior_name_col = pd.DataFrame(), team_col, name_col
+    observed_weeks = pd.to_numeric(current_stats.get('week', pd.Series(dtype=float)), errors='coerce')
+    latest_observed = observed_weeks[observed_weeks > 0].max() if (observed_weeks > 0).any() else None
+    current_qbs = current_stats[current_stats['position'].astype(str).str.upper().eq('QB')]
+    if latest_observed is not None:
+        resolution = resolve_inseason_qb1s(
+            current_qbs, name_col, team_col, current_stats, name_col, team_col,
+            int(latest_observed) + 1, year,
+        )
+    else:
+        ourlads_qb1s = pd.DataFrame()
+        snapshot, snapshot_problem = load_ourlads_snapshot(year)
+        if snapshot_problem is None and not snapshot.empty:
+            signal = build_ourlads_projection_signal(snapshot, current_stats, name_col, team_col)
+            ourlads_qb1s = signal['qb_starters']
+        resolution = resolve_preseason_qb1s(
+            current_qbs, name_col, team_col, _all_played_weeks(prior_stats), prior_name_col, prior_team_col, year,
+            ourlads_qb1s=ourlads_qb1s,
+        )
+    status = resolution['by_team'].get(str(team).upper(), {})
+    player_options = qbs[name_col].astype(str).sort_values().tolist()
+    selected = status.get('player')
+    selected_index = player_options.index(selected) if selected in player_options else 0
+
+    with st.expander('Weekly projection QB1 selection', expanded=status.get('status') == 'selection_required'):
+        st.caption(
+            'The generated chart below is not the weekly QB1 source. A locally imported Ourlads preseason '
+            'chart can resolve a healthy listed QB1; a manual selection always wins; otherwise a clear '
+            'incumbent or explicit choice is required.'
+        )
+        if status.get('status') == 'manual_override':
+            st.success(f"Manual selection: {selected}. This player receives the full projected QB workload.")
+        elif status.get('status') == 'prior_season_incumbent':
+            st.info(
+                f"Automatic incumbent: {selected} ({status.get('prior_snap_share', 0):.0%} prior-season snap share). "
+                'You can still replace this if current preseason information changes the starter.'
+            )
+        elif status.get('status') == 'ourlads_depth_chart':
+            st.info(
+                f"Imported Ourlads QB1: {selected} (source slot {status.get('source_slot', 1)}). "
+                'This establishes expected starter eligibility only; the projection still models his stats independently.'
+            )
+        elif status.get('status') == 'observed_current_starter':
+            st.info(
+                f"Automatic in-season starter: {selected} "
+                f"({status.get('recent_snap_share', 0):.0%} recent snap share)."
+            )
+        else:
+            st.warning('No unambiguous QB starter. Select the expected QB1 before relying on this room’s projection.')
+        if resolution['warnings']:
+            for warning in resolution['warnings']:
+                if str(team).upper() in warning:
+                    st.caption(f'⚠️ {warning}')
+
+        choice = st.selectbox(
+            'Expected upcoming-game QB1', player_options, index=selected_index,
+            key=f'projection_qb1_choice_{year}_{team}',
+        )
+        save_col, clear_col = st.columns(2)
+        with save_col:
+            if st.button('Save QB1 selection', key=f'projection_qb1_save_{year}_{team}'):
+                try:
+                    save_qb1_override(year, team, choice)
+                    st.success(f'Saved {choice} as {team} QB1 for {year}. Weekly projections will refresh now.')
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+        with clear_col:
+            if status.get('status') == 'manual_override' and st.button(
+                    'Clear manual selection', key=f'projection_qb1_clear_{year}_{team}'):
+                try:
+                    clear_qb1_override(year, team)
+                    st.success('Cleared the manual selection. The automatic-incumbent rule will apply if available.')
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+
+
+_OURLADS_STATUS_LABELS = {
+    'lc_gold': '2026 acquisition',
+    'lc_purple': '2026 rookie pick',
+    'lc_aqua': '2026 UDFA',
+    'lc_red': 'injured / inactive',
+}
+
+
+def _ourlads_status_label(value):
+    values = str(value or '').split()
+    return ', '.join(_OURLADS_STATUS_LABELS.get(item, item) for item in values if item) or '—'
+
+
+def _render_ourlads_import_control(year, team):
+    """Local Ourlads import/status panel; no live request or scraping path."""
+    snapshot, problem = load_ourlads_snapshot(year)
+    with st.expander('Ourlads preseason depth-chart signal', expanded=False):
+        st.caption(
+            'Import your saved printer-friendly Ourlads MHTML team pages here. The app stores a local normalized '
+            'snapshot—not the raw browser files—and never logs in to or scrapes Ourlads.'
+        )
+        if problem:
+            st.error(problem)
+        elif snapshot.empty:
+            st.info(f'No local Ourlads snapshot is imported for {year} yet.')
+        else:
+            teams = sorted(snapshot['team'].drop_duplicates().tolist())
+            missing = sorted(set(MASTER_TEAMS_LIST) - set(teams))
+            updated = [value for value in snapshot['source_updated_at'].dropna().astype(str).unique() if value]
+            st.success(f'Loaded {len(snapshot):,} skill-position rows for {len(teams)}/32 teams.')
+            if updated:
+                st.caption(f"Source update shown in export: {', '.join(updated[:3])}{' …' if len(updated) > 3 else ''}")
+            if missing:
+                st.warning(f"No imported Ourlads page for: {', '.join(missing)}. Those teams fall back to the regular preseason logic.")
+            team_rows = snapshot[snapshot['team'].eq(team)].copy()
+            if not team_rows.empty:
+                team_rows['Status'] = team_rows['status_class'].map(_ourlads_status_label)
+                display = team_rows[[
+                    'position_label', 'depth_rank', 'player', 'Status', 'source_file',
+                ]].rename(columns={
+                    'position_label': 'Formation / Pos', 'depth_rank': 'Chart slot',
+                    'player': 'Ourlads player', 'source_file': 'Source export',
+                })
+                st.dataframe(display, hide_index=True, width='stretch', height=df_auto_height(min(len(display), 16)))
+
+        uploads = st.file_uploader(
+            'Saved Ourlads team pages (.mhtml)', type=['mhtml', 'mht', 'html'],
+            accept_multiple_files=True, key=f'ourlads_pages_{year}',
+        )
+        key_upload = st.file_uploader(
+            'Optional Ourlads depth-chart key (.mhtml)', type=['mhtml', 'mht', 'html'],
+            key=f'ourlads_key_{year}',
+        )
+        import_col, key_col = st.columns(2)
+        with import_col:
+            if st.button('Import Ourlads pages', key=f'ourlads_import_{year}', disabled=not uploads):
+                imported, report = save_ourlads_snapshot(uploads, year)
+                if report.get('error'):
+                    st.error(report['error'])
+                else:
+                    _invalidate_weekly_projection_cache()
+                    st.success(f"Imported {len(imported):,} rows for {report['team_count']}/32 teams.")
+                    if report['missing_teams']:
+                        st.warning(f"Still missing: {', '.join(report['missing_teams'])}")
+                    for unreadable in report['unreadable_files']:
+                        st.caption(f"Skipped {unreadable['source_file']}: {unreadable['error']}")
+                    st.rerun()
+        with key_col:
+            if st.button('Save Ourlads key', key=f'ourlads_key_save_{year}', disabled=key_upload is None):
+                _, error = save_ourlads_key(key_upload)
+                if error:
+                    st.error(error)
+                else:
+                    st.success('Saved a local plain-text Ourlads key for reference.')
+                    st.rerun()
+        key_text, key_problem = load_ourlads_key()
+        if key_problem:
+            st.caption(key_problem)
+        elif key_text:
+            with st.expander('Saved Ourlads key / legend'):
+                st.text(key_text[:8000])
+        st.caption(
+            'Model use: a healthy imported QB can identify the Week 1 QB1; RB/WR/TE entries only provide a '
+            'conservative low-evidence role floor. Formation starters such as LWR/RWR/SWR never imply equal or full snaps.'
+        )
+
+
 def render():
     st.markdown("<div class='custom-section-header'>NFL DEPTH CHARTS</div>", unsafe_allow_html=True)
     c_year, c_team = st.columns(2)
@@ -168,6 +360,10 @@ def render():
     veteran_names = build_veteran_database(t2_target_year)
 
     render_team_banner(sel_team_t2, subtitle=f"{t2_target_year} depth chart — click any player to open their full profile")
+    _render_ourlads_import_control(t2_target_year, sel_team_t2)
+    _render_projection_qb1_control(
+        t2_target_year, sel_team_t2, df_t2_stats, t2_t_col, t2_n_col,
+    )
 
     dc_df = fetch_intelligent_depth_chart(sel_team_t2, df_t2_stats, pff['rec'], t2_target_year)
 

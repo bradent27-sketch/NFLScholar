@@ -400,14 +400,13 @@ def _render_fantasypros_api_import(cfg):
     from data.draft_sources import (
         get_fantasypros_api_key, save_fantasypros_api_key,
         fantasypros_api_calls_this_month, fetch_fantasypros_players,
-        fantasypros_effective_limit, FANTASYPROS_API_MONTHLY_LIMIT,
     )
     st.caption(
         "**FantasyPros API** — one call pulls ECR *and* ADP for the whole player pool at "
-        "once, straight from FantasyPros rather than a third-party mirror. Free key at "
+        "once, straight from FantasyPros rather than a third-party mirror. Request a key at "
         "[secure.fantasypros.com/api-keys/request](https://secure.fantasypros.com/api-keys/request/) "
-        "— the free tier is capped at 50 calls a month, so this is a manual refresh, not "
-        "something the board pulls on its own."
+        "— this is a manual, button-triggered refresh either way, not something the board "
+        "pulls on its own."
     )
     secret_key, key_source = get_fantasypros_api_key()
     if key_source == 'secrets':
@@ -428,22 +427,12 @@ def _render_fantasypros_api_import(cfg):
             save_fantasypros_api_key(api_key)
 
     used = fantasypros_api_calls_this_month()
-    limit = fantasypros_effective_limit()
-    if limit is None:
-        remaining = None
-        st.caption(f"{used} calls made this month — this key last reported a paid tier, so the "
-                   f"{FANTASYPROS_API_MONTHLY_LIMIT}/month free-tier cap isn't being enforced.")
-    else:
-        remaining = limit - used
-        st.caption(f"{used} of {limit} calls used this month "
-                   f"({max(remaining, 0)} left, resets on the 1st).")
+    st.caption(f"{used} call{'s' if used != 1 else ''} made this month.")
 
     fetch = st.button("📡 Fetch ECR + ADP from FantasyPros API", key="dhq_fp_api_fetch",
-                      disabled=not api_key or (remaining is not None and remaining <= 0))
+                      disabled=not api_key)
     if not api_key:
         st.caption("Enter a key above to enable this.")
-    elif remaining is not None and remaining <= 0:
-        st.warning(f"This month's {limit} calls are spent — resets on the 1st.")
     if fetch:
         scoring = ('Full PPR' if cfg['ppr'] >= 0.75 else 'Half-PPR'
                   if cfg['ppr'] >= 0.25 else 'Standard')

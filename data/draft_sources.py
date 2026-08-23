@@ -1008,11 +1008,13 @@ def fetch_fantasypros_players(api_key, scoring='Full PPR'):
     touches the local call-budget counter, and it does so unconditionally on
     every real request (including one that comes back an error - a 401 or a
     parse failure still spent a call against FantasyPros' quota, even though
-    nothing useful came back). Callers gate this behind an explicit button
-    and check fantasypros_api_calls_this_month() against
-    fantasypros_effective_limit() first so a call that would push past the
-    enforced budget never fires - see that function's docstring for why the
-    enforced number isn't always the free tier's 50.
+    nothing useful came back). Callers gate this behind an explicit button;
+    the UI no longer blocks on fantasypros_effective_limit() (the app's own
+    key is on a paid tier with a per-minute rate limit far above anything
+    this app would burst), but fantasypros_api_calls_this_month() still
+    counts every call for the informational caption, and
+    fantasypros_effective_limit()/_record_fantasypros_tier() remain available
+    if a future key ever needs the free-tier monthly cap enforced again.
     """
     if not api_key:
         return pd.DataFrame(), pd.DataFrame(), {'error': 'no API key set'}

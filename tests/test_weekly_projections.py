@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 pd.options.mode.string_storage = "python"
 
 import data.weekly_projections as wp  # noqa: E402
+import data.ourlads_depth_charts as odc  # noqa: E402
 
 
 def weekly(rows):
@@ -39,6 +40,134 @@ def weekly(rows):
     if 'position' not in frame.columns:
         frame['position'] = pd.Series(dtype=str)
     return frame
+
+
+def _ourlads_mhtml(team='ARZ'):
+    """Minimal printer-friendly page covering parser/status behavior."""
+    return f'''From: <Saved by Blink>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="chart"
+
+--chart
+Content-Type: text/html; charset=UTF-8
+Content-Location: https://www.ourlads.com/nfldepthcharts/pfdepthchart/{team}
+
+<html><head><title>Arizona Cardinals Depth Chart</title></head><body>
+Updated: 08/19/2026 2:16PM ET
+<table><tr><th>Pos</th><th>No.</th><th>Player 1</th><th>No.</th><th>Player 2</th></tr>
+<tr><td>LWR</td><td>1</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/1/" class="lc_purple">Rookie, Wide 26/1</a></td><td>2</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/2/">Reserve, Wide CF26</a></td></tr>
+<tr><td>SWR</td><td>3</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/3/">Slot, Wide U/NE</a></td><td>4</td><td></td></tr>
+<tr><td>QB</td><td>9</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/4/" class="lc_red">Penix Jr., Michael 24/1</a></td><td>8</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/5/">Tagovailoa, Tua CC/Mia</a></td></tr>
+<tr><td>RB</td><td>4</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/6/">Back, New 26/1</a></td><td>5</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/7/">Back, Reserve SF26</a></td></tr>
+<tr><td>TE</td><td>85</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/8/">End, Tight 25/2</a></td><td>84</td><td></td></tr>
+</table></body></html>
+--chart--
+'''.encode('utf-8')
+
+
+# --- local Ourlads preseason depth-chart import -----------------------------
+
+def test_ourlads_mhtml_parser_preserves_formation_and_inactive_status():
+    chart, report = odc.parse_ourlads_depth_chart(_ourlads_mhtml(), 'Arizona.mhtml')
+    assert report['error'] == '' and report['team'] == 'ARI'
+    assert set(chart.loc[chart['position'].eq('WR'), 'position_label']) == {'LWR', 'SWR'}
+    tua = chart.loc[chart['player'].eq('Tua Tagovailoa')].iloc[0]
+    penix = chart.loc[chart['player'].eq('Michael Penix Jr.')].iloc[0]
+    assert tua['source_slot'] == 2 and not tua['is_inactive']
+    assert penix['is_listed_starter'] and penix['is_inactive']
+    assert penix['status_class'] == 'lc_red'
+    assert chart.loc[chart['position'].eq('RB'), 'position_occurrence'].eq(0).all()
+
+
+def test_ourlads_signal_retains_first_qb_and_red_source_status_for_current_availability_layer():
+    chart, _ = odc.parse_ourlads_depth_chart(_ourlads_mhtml(), 'Arizona.mhtml')
+    roster = pd.DataFrame([
+        {'name': 'Michael Penix Jr.', 'team': 'ARI', 'position': 'QB'},
+        {'name': 'Tua Tagovailoa', 'team': 'ARI', 'position': 'QB'},
+        {'name': 'New Back', 'team': 'ARI', 'position': 'RB'},
+        {'name': 'Reserve Back', 'team': 'ARI', 'position': 'RB'},
+        {'name': 'Wide Rookie', 'team': 'ARI', 'position': 'WR'},
+        {'name': 'Wide Slot', 'team': 'ARI', 'position': 'WR'},
+        {'name': 'Tight End', 'team': 'ARI', 'position': 'TE'},
+    ])
+    signal = odc.build_ourlads_projection_signal(chart, roster, 'name', 'team')
+    assert len(signal['qb_starters']) == 1
+    assert signal['qb_starters'].iloc[0]['matched_player'] == 'Michael Penix Jr.'
+    assert signal['qb_starters'].iloc[0]['source_is_inactive']
+    assert 'current availability must confirm' in signal['qb_starters'].iloc[0]['source_status_warning']
+    assert set(signal['skill_roles']['matched_player']) >= {'New Back', 'Wide Rookie', 'Wide Slot'}
+
+
+def test_ourlads_role_floor_only_supports_new_or_thin_role_evidence():
+    roles = pd.DataFrame([
+        {'team': 'KC', 'position': 'RB', 'position_label': 'RB', 'source_row': 1,
+         'source_slot': 1, 'position_occurrence': 0, 'matched_player_key': 'New Lead'},
+        {'team': 'KC', 'position': 'RB', 'position_label': 'RB', 'source_row': 1,
+         'source_slot': 2, 'position_occurrence': 0, 'matched_player_key': 'New Reserve'},
+        {'team': 'KC', 'position': 'WR', 'position_label': 'LWR', 'source_row': 2,
+         'source_slot': 1, 'position_occurrence': 0, 'matched_player_key': 'Outside Wide'},
+        {'team': 'KC', 'position': 'WR', 'position_label': 'SWR', 'source_row': 3,
+         'source_slot': 1, 'position_occurrence': 0, 'matched_player_key': 'Slot Wide'},
+    ])
+    rb_share, rb_used, rb_rank, rb_floor, _ = wp.apply_ourlads_preseason_role_floor(
+        np.array([0.12, 0.05, 0.35]), np.array([np.nan, np.nan, 0.35]),
+        np.array(['', '', 'KC']), np.array(['KC', 'KC', 'KC']),
+        np.array(['New Lead', 'New Reserve', 'Established Same-Team']), 'RB', roles)
+    assert rb_share.tolist() == [0.55, 0.20, 0.35]
+    assert rb_used.tolist() == [True, True, False]
+    assert rb_rank.tolist()[:2] == [1.0, 2.0] and rb_floor.tolist()[:2] == [0.55, 0.20]
+
+    wr_share, wr_used, _, _, labels = wp.apply_ourlads_preseason_role_floor(
+        np.array([0.10, 0.10]), np.array([np.nan, np.nan]), np.array(['', '']),
+        np.array(['KC', 'KC']), np.array(['Outside Wide', 'Slot Wide']), 'WR', roles)
+    assert wr_used.all() and wr_share.tolist() == [0.45, 0.45]
+    assert labels.tolist() == ['LWR', 'SWR']
+    assert max(wr_share) < 1.0  # listed formations are not 100%-snap claims
+
+
+def test_ourlads_starter_overlay_adds_only_a_uniquely_verified_starter():
+    chart, _ = odc.parse_ourlads_depth_chart(_ourlads_mhtml(), 'Arizona.mhtml')
+    # New Back is absent from the current roster but exists uniquely in the
+    # prior-year history. Reserve Back is not a chart starter and must stay out.
+    roster = pd.DataFrame([
+        {'name': 'Tua Tagovailoa', 'team': 'ARI', 'position': 'QB'},
+        {'name': 'Rookie Wide', 'team': 'ARI', 'position': 'WR'},
+    ])
+    prior = weekly([
+        {'name': 'New Back', 'team': 'SEA', 'position': 'RB', 'week': 1},
+        {'name': 'Reserve Back', 'team': 'SEA', 'position': 'RB', 'week': 1},
+    ])
+    overlaid, changes, warnings = odc.apply_ourlads_starter_roster_overlay(
+        chart[chart['position'].eq('RB')], roster, 'name', 'team', prior, 'name', 'team')
+    assert not warnings
+    assert any(change['player'] == 'New Back' and change['action'] == 'added verified missing starter'
+               for change in changes)
+    assert 'New Back' in set(overlaid['name'])
+    assert 'Reserve Back' not in set(overlaid['name'])
+
+
+def test_preseason_qb1_manual_selection_beats_ourlads_then_ourlads_beats_old_incumbent():
+    current = pd.DataFrame([
+        {'name': 'Old Incumbent', 'team': 'KC', 'position': 'QB'},
+        {'name': 'New Starter', 'team': 'KC', 'position': 'QB'},
+    ])
+    prior = weekly([
+        {'name': 'Old Incumbent', 'team': 'OLD', 'position': 'QB', 'week': 1, 'weekly_snap_pct': 95.0},
+        {'name': 'New Starter', 'team': 'NEW', 'position': 'QB', 'week': 1, 'weekly_snap_pct': 10.0},
+    ])
+    chart_qb = pd.DataFrame([{
+        'team': 'KC', 'matched_player_key': 'New Starter', 'matched_player': 'New Starter',
+        'source_slot': 1, 'status_class': '',
+    }])
+    imported = wp.resolve_preseason_qb1s(
+        current, 'name', 'team', prior, 'name', 'team', 2026,
+        overrides=pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS), ourlads_qb1s=chart_qb)
+    assert imported['selected'][('KC', 'newstarter')] == 'ourlads_depth_chart'
+    manual = wp.resolve_preseason_qb1s(
+        current, 'name', 'team', prior, 'name', 'team', 2026,
+        overrides=pd.DataFrame([{'year': 2026, 'team': 'KC', 'player': 'Old Incumbent'}]),
+        ourlads_qb1s=chart_qb)
+    assert manual['selected'][('KC', 'oldincumbent')] == 'manual_override'
 
 
 # --- no-leakage week filters --------------------------------------------
@@ -102,6 +231,170 @@ def test_quality_adjusted_matchup_centers_on_one_and_favors_the_tougher_defense(
 def test_quality_adjusted_matchup_empty_without_opponent_column():
     df = weekly([{'name': 'A', 'week': 1, 'position': 'WR', 'receiving_yards': 40}])
     assert wp.build_quality_adjusted_matchup(df, 'name', ['receiving_yards'], as_of_week=2).empty
+
+
+def test_qb_passing_matchup_uses_one_team_game_not_replacement_qb_rows():
+    # Each offense totals only 100 yards against HOU and 200 against KC, so
+    # HOU should look tough. A 75-yard backup whose own two-game mean is
+    # only 37.5 used to flip the player-row estimator in the wrong direction.
+    rows = []
+    for team in ('A', 'B'):
+        rows.extend([
+            {'name': f'{team} Starter', 'team': team, 'opponent_team': 'HOU', 'week': 1,
+             'position': 'QB', 'passing_yards': 25.0},
+            {'name': f'{team} Backup', 'team': team, 'opponent_team': 'HOU', 'week': 1,
+             'position': 'QB', 'passing_yards': 75.0},
+            {'name': f'{team} Starter', 'team': team, 'opponent_team': 'KC', 'week': 2,
+             'position': 'QB', 'passing_yards': 200.0},
+            {'name': f'{team} Backup', 'team': team, 'opponent_team': 'KC', 'week': 2,
+             'position': 'QB', 'passing_yards': 0.0},
+        ])
+    df = weekly(rows)
+    player_row = wp.build_quality_adjusted_matchup(df, 'name', ['passing_yards'], as_of_week=3)
+    team_game = wp.build_qb_passing_quality_adjusted_matchup(
+        df, 'team', ['passing_yards'], as_of_week=3)
+    assert player_row.loc['HOU', 'passing_yards'] > 1.0
+    assert team_game.loc['HOU', 'passing_yards'] < 1.0
+    assert team_game.loc['HOU', 'passing_yards'] < team_game.loc['KC', 'passing_yards']
+
+
+def test_qb_passing_matchup_drops_an_all_zero_td_baseline_safely():
+    df = weekly([
+        {'name': 'A QB', 'team': 'A', 'opponent_team': 'HOU', 'week': 1,
+         'position': 'QB', 'passing_tds': 0.0},
+        {'name': 'A QB', 'team': 'A', 'opponent_team': 'KC', 'week': 2,
+         'position': 'QB', 'passing_tds': 0.0},
+    ])
+    out = wp.build_qb_passing_quality_adjusted_matchup(df, 'team', ['passing_tds'], as_of_week=3)
+    assert out.empty
+
+
+def _position_team_fixture(pos, stat, split_spot_starter=False):
+    """Same team-position totals, optionally split across a spot starter."""
+    rows = []
+    for team in ('A', 'B'):
+        values = [('HOU', 1, 10.0), ('KC', 2, 20.0)]
+        for opponent, week, total in values:
+            if split_spot_starter:
+                rows.extend([
+                    {'name': f'{team} Main', 'team': team, 'opponent_team': opponent,
+                     'week': week, 'position': pos, stat: 2.0 if week == 1 else total},
+                    {'name': f'{team} Spot', 'team': team, 'opponent_team': opponent,
+                     'week': week, 'position': pos, stat: total - 2.0 if week == 1 else 0.0},
+                ])
+            else:
+                rows.append({'name': f'{team} Main', 'team': team, 'opponent_team': opponent,
+                             'week': week, 'position': pos, stat: total})
+    return weekly(rows)
+
+
+def test_every_projected_stat_uses_a_team_game_defense_profile_not_player_rows():
+    # This is the generalized version of the Houston QB regression.  The
+    # position-team total is 10 vs HOU and 20 vs KC in both fixtures.  In the
+    # split fixture, a spot player owns most of the HOU game and zero in KC;
+    # the old individual-baseline estimator reverses the defensive signal.
+    # Every projected stat must be partition-invariant instead.
+    for pos, stats in wp.OFFENSE_PROJECTION_STATS.items():
+        for stat in stats:
+            unsplit = wp.build_team_game_quality_adjusted_matchup(
+                _position_team_fixture(pos, stat), 'team', [stat], as_of_week=3)
+            split = wp.build_team_game_quality_adjusted_matchup(
+                _position_team_fixture(pos, stat, split_spot_starter=True),
+                'team', [stat], as_of_week=3)
+            assert np.allclose(unsplit.sort_index()[stat], split.sort_index()[stat]), (pos, stat)
+            assert unsplit.loc['HOU', stat] < 1.0 < unsplit.loc['KC', stat], (pos, stat)
+
+
+def test_role_profile_is_also_invariant_to_a_spot_starter_split():
+    # The forward role overlay is part of the final multiplier, so its table
+    # must use the same team-game grain as the broad defense profile.
+    roles = {'A Main': 'WR_DEEP', 'A Spot': 'WR_DEEP',
+             'B Main': 'WR_DEEP', 'B Spot': 'WR_DEEP'}
+    unsplit, unsplit_sizes = wp.build_role_matchup(
+        _position_team_fixture('WR', 'receiving_yards'), 'name', 'team',
+        ['receiving_yards'], 3, roles)
+    split, split_sizes = wp.build_role_matchup(
+        _position_team_fixture('WR', 'receiving_yards', split_spot_starter=True), 'name', 'team',
+        ['receiving_yards'], 3, roles)
+    assert np.allclose(unsplit['WR_DEEP'].sort_index()['receiving_yards'],
+                       split['WR_DEEP'].sort_index()['receiving_yards'])
+    assert unsplit_sizes == split_sizes
+
+
+def test_qb_rushing_profile_ignores_negative_kneel_denominators():
+    # A QB team can have negative net rushing yards because kneels live in
+    # the box score. That is not a valid negative baseline for a forward
+    # player rushing projection; it must never produce sign-flipped or
+    # infinite defensive ratings.
+    rows = []
+    for team in ('A', 'B'):
+        rows.extend([
+            {'name': f'{team} QB', 'team': team, 'opponent_team': 'HOU', 'week': 1,
+             'position': 'QB', 'rushing_yards': -4.0},
+            {'name': f'{team} QB', 'team': team, 'opponent_team': 'KC', 'week': 2,
+             'position': 'QB', 'rushing_yards': 20.0},
+        ])
+    out = wp.build_team_game_quality_adjusted_matchup(
+        weekly(rows), 'team', ['rushing_yards'], as_of_week=3)
+    assert np.isfinite(out['rushing_yards']).all()
+    assert out.loc['HOU', 'rushing_yards'] < out.loc['KC', 'rushing_yards']
+
+
+def test_broad_position_profile_keeps_a_zero_output_game_from_the_full_universe():
+    # Weekly player files are stat-triggered. The TE group has no row in the
+    # HOU games, but the offense still played and that zero is real defensive
+    # evidence for a broad TE profile rather than a missing game.
+    universe = weekly([
+        {'name': 'A QB', 'team': 'A', 'opponent_team': 'HOU', 'week': 1, 'position': 'QB'},
+        {'name': 'A TE', 'team': 'A', 'opponent_team': 'KC', 'week': 2, 'position': 'TE', 'targets': 4},
+        {'name': 'B QB', 'team': 'B', 'opponent_team': 'HOU', 'week': 1, 'position': 'QB'},
+        {'name': 'B TE', 'team': 'B', 'opponent_team': 'KC', 'week': 2, 'position': 'TE', 'targets': 4},
+    ])
+    tes = universe[universe['position'].eq('TE')]
+    games, _ = wp._position_team_games(tes, 'team', ['targets'], game_universe=universe)
+    assert len(games) == 4
+    assert games.loc[games['_defense'].eq('HOU'), 'targets'].eq(0.0).all()
+    evidence = wp._defense_game_evidence(tes, game_universe=universe, team_col='team')
+    assert evidence.to_dict() == {'HOU': 1.0, 'KC': 1.0}
+
+
+def test_historical_game_team_beats_latest_roster_team_and_game_id_fallback():
+    # The explicit raw game team wins even when an old game_id uses OAK and
+    # the current NFL abbreviation is LV. A pre-contract cached frame still
+    # reconstructs the offense from game_id + opponent as a safe fallback.
+    explicit = pd.DataFrame([{
+        'team': 'DEN', 'game_team': 'LV', 'opponent_team': 'DEN',
+        'game_id': '2019_01_DEN_OAK',
+    }])
+    fallback = pd.DataFrame([{
+        'team': 'CIN', 'opponent_team': 'BAL', 'game_id': '2025_01_CLE_BAL',
+    }])
+    assert wp._historical_game_team(explicit, 'team').iloc[0] == 'LV'
+    assert wp._historical_game_team(fallback, 'team').iloc[0] == 'CLE'
+
+
+def test_qb_passing_efficiency_bypasses_role_tables_when_enabled():
+    overall = pd.DataFrame({'passing_yards': [0.90], 'passing_attempts': [1.00]}, index=['HOU'])
+    role_tables = {'QB_DOWNFIELD': pd.DataFrame(
+        {'passing_yards': [1.30], 'passing_attempts': [0.75]}, index=['HOU'])}
+    out = wp._efficiency_matchup(
+        overall, role_tables, {('HOU', 'QB_DOWNFIELD'): 100.0},
+        np.array(['HOU']), np.array(['QB_DOWNFIELD']),
+        'passing_yards', 'passing_attempts', position='QB')
+    assert abs(out[0] - 0.90) < 1e-9
+
+
+def test_prior_season_defense_recency_keeps_a_broad_full_season_baseline():
+    weeks = pd.Series([1, 18])
+    ordinary = wp.defense_recency_weights(weeks, as_of_week=19)
+    prior = wp.defense_recency_weights(
+        weeks, as_of_week=19, recency_floor=wp.PRIOR_SEASON_DEFENSE_RECENCY_FLOOR)
+    # In-season the finale legitimately carries much more weight.  Across an
+    # offseason, the new profile may modestly favor it but cannot act like a
+    # trailing-few-games sample.
+    assert ordinary.iloc[1] / ordinary.iloc[0] > 10
+    assert prior.iloc[1] == 1.0
+    assert prior.iloc[1] / prior.iloc[0] < 1.35
 
 
 def test_weighted_player_rates_weighs_recent_games_more():
@@ -291,6 +584,357 @@ def test_expected_snap_share_does_not_punish_a_returning_starter():
     assert abs(share['Hurt'] - share['Healthy']) < 0.06
 
 
+def test_cold_start_returning_skill_role_restores_only_a_proven_same_team_role():
+    restored, used = wp.restore_cold_start_returning_role_share(
+        np.array([0.34, 0.15, 0.33, 0.40]),
+        np.array([0.91, 0.90, 0.90, 0.90]),
+        np.array([7, 3, 8, 7]),
+        np.array(['NYJ', 'KC', 'HOU', 'TB']),
+        np.array(['NYJ', 'KC', 'SEA', 'TB']),
+        'WR',
+    )
+    assert used.tolist() == [True, False, False, True]
+    # Recovery is deliberately continuous rather than the old all-or-nothing
+    # restore.  Proven same-team roles gain material credit for active-game
+    # work, but do not jump straight to a full-share assumption from a single
+    # preseason signal.
+    assert 0.34 < restored[0] < 0.91
+    assert restored[1] == 0.15
+    assert restored[2] == 0.33
+    assert 0.40 < restored[3] < 0.90
+    # RBs need the stricter eight-game evidence threshold, preserving the
+    # conservative treatment for a short fill-in sample.
+    rb_restored, rb_used = wp.restore_cold_start_returning_role_share(
+        np.array([0.35]), np.array([0.90]), np.array([7]),
+        np.array(['KC']), np.array(['KC']), 'RB',
+    )
+    assert not rb_used[0]
+    assert rb_restored[0] == 0.35
+
+
+def test_charted_short_sample_returning_starter_recovers_without_treating_source_red_as_out():
+    # Nabers-shaped history: three genuine full-snap games, then a clear
+    # partial exit and a terminal absence.  Three games are not enough for a
+    # generic WR returning-role claim, but a resolved current WR1 chart rank
+    # gives a bounded live-preseason recovery path.  It remains well below
+    # the raw 95% active sample and never fires when an actual availability
+    # source says the player is out.
+    restored, used, reasons = wp.restore_cold_start_returning_role_share(
+        np.array([0.168, 0.168]), np.array([0.95, 0.95]), np.array([3, 3]),
+        np.array(['NYG', 'NYG']), np.array(['NYG', 'NYG']), 'WR',
+        pre_absence_share=np.array([0.95, 0.95]),
+        depth_rank=np.array([1.0, np.nan]),
+        terminal_gap_weeks=np.array([14.0, 14.0]),
+        return_details=True,
+    )
+    assert used.tolist() == [True, False]
+    assert reasons.tolist() == ['charted short-sample returning-starter recovery', 'none']
+    assert 0.50 < restored[0] <= 0.75
+    assert restored[1] == 0.168
+
+
+def test_regular_season_late_games_remain_in_a_returning_receiver_prior():
+    # Drake London audit regression: the late low-output games must remain
+    # rate evidence when they were real full-role games.  This is deliberately
+    # a no-op on judgment—the participation screen should only drop a clear
+    # partial/relief game, not quietly select the high-production portion of
+    # a season.
+    rows = []
+    for week in range(1, 10):
+        rows.append({'name': 'Drake London', 'team': 'ATL', 'opponent_team': 'NO',
+                     'week': week, 'position': 'WR', 'weekly_snap_pct': 90.0,
+                     'has_snap_match': True, 'targets': 94.0 / 9.0,
+                     'receptions': 6.67, 'receiving_yards': 90.0})
+    rows.extend([
+        {'name': 'Drake London', 'team': 'ATL', 'opponent_team': 'NO', 'week': 16,
+         'position': 'WR', 'weekly_snap_pct': 69.0, 'has_snap_match': True,
+         'targets': 8.0, 'receptions': 3.0, 'receiving_yards': 27.0},
+        {'name': 'Drake London', 'team': 'ATL', 'opponent_team': 'NO', 'week': 17,
+         'position': 'WR', 'weekly_snap_pct': 98.0, 'has_snap_match': True,
+         'targets': 2.0, 'receptions': 1.0, 'receiving_yards': 4.0},
+        {'name': 'Drake London', 'team': 'ATL', 'opponent_team': 'NO', 'week': 18,
+         'position': 'WR', 'weekly_snap_pct': 94.0, 'has_snap_match': True,
+         'targets': 8.0, 'receptions': 4.0, 'receiving_yards': 78.0},
+    ])
+    eligible = wp.annotate_player_history_participation(weekly(rows), 'name', 'team')
+    assert eligible['_player_history_eligible'].all()
+    totals = wp._season_totals(
+        eligible, 'name', 'team', 'WR', ['targets', 'receptions', 'receiving_yards'])
+    london = totals.iloc[0]
+    assert london['Games'] == 12
+    assert np.isclose(london['targets'], 112.0, atol=0.02)
+    assert np.isclose(london['receiving_yards'], 919.0, atol=0.02)
+
+
+def test_v1_feature_set_keeps_v2_rb_and_alignment_experiments_out_of_the_control():
+    v1 = wp.resolve_model_features('v1')
+    v2 = wp.resolve_model_features('v2')
+    assert 'v2_preseason_rb_allocator' not in v1
+    assert 'v2_pff_alignment_matchup' not in v1
+    assert 'v2_preseason_rb_allocator' in v2
+    assert 'v2_pff_alignment_matchup' in v2
+
+
+def test_preseason_qb1_resolution_auto_selects_one_clear_full_season_incumbent():
+    current = pd.DataFrame([
+        {'name': 'Joe Burrow', 'team': 'CIN', 'position': 'QB'},
+        {'name': 'Jake Browning', 'team': 'CIN', 'position': 'QB'},
+        {'name': 'Lamar Jackson', 'team': 'BAL', 'position': 'QB'},
+    ])
+    prior = weekly([
+        *[{'name': 'Joe Burrow', 'team': 'CIN', 'opponent_team': 'BAL', 'week': w,
+           'position': 'QB', 'weekly_snap_pct': 96.0} for w in range(1, 11)],
+        *[{'name': 'Jake Browning', 'team': 'CIN', 'opponent_team': 'BAL', 'week': w,
+           'position': 'QB', 'weekly_snap_pct': 4.0} for w in range(1, 11)],
+        *[{'name': 'Lamar Jackson', 'team': 'BAL', 'opponent_team': 'CIN', 'week': w,
+           'position': 'QB', 'weekly_snap_pct': 98.0} for w in range(1, 11)],
+    ])
+    resolution = wp.resolve_preseason_qb1s(
+        current, 'name', 'team', prior, 'name', 'team', 2026,
+        overrides=pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS),
+    )
+    assert resolution['selected'][('CIN', 'joeburrow')] == 'prior_season_incumbent'
+    assert resolution['selected'][('BAL', 'lamarjackson')] == 'prior_season_incumbent'
+    assert ('CIN', 'jakebrowning') not in resolution['selected']
+    assert not resolution['selection_required_teams']
+
+
+def test_preseason_qb1_resolution_requires_a_manual_choice_for_an_ambiguous_room():
+    current = pd.DataFrame([
+        {'name': 'Jaxson Dart', 'team': 'NYG', 'position': 'QB'},
+        {'name': 'Brandon Allen', 'team': 'NYG', 'position': 'QB'},
+    ])
+    prior = weekly([
+        *[{'name': 'Jaxson Dart', 'team': 'NYG', 'opponent_team': 'DAL', 'week': w,
+           'position': 'QB', 'weekly_snap_pct': 60.0} for w in range(1, 11)],
+        *[{'name': 'Brandon Allen', 'team': 'NYG', 'opponent_team': 'DAL', 'week': w,
+           'position': 'QB', 'weekly_snap_pct': 40.0} for w in range(1, 11)],
+    ])
+    unresolved = wp.resolve_preseason_qb1s(
+        current, 'name', 'team', prior, 'name', 'team', 2026,
+        overrides=pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS),
+    )
+    assert 'NYG' in unresolved['selection_required_teams']
+    assert not unresolved['selected']
+    resolved = wp.resolve_preseason_qb1s(
+        current, 'name', 'team', prior, 'name', 'team', 2026,
+        overrides=pd.DataFrame([{'year': 2026, 'team': 'NYG', 'player': 'Jaxson Dart'}]),
+    )
+    assert resolved['selected'][('NYG', 'jaxsondart')] == 'manual_override'
+    assert 'NYG' not in resolved['selection_required_teams']
+
+
+def test_cold_start_manual_qb1_receives_full_prior_per_game_workload():
+    # A named upcoming QB1 may only have half of the prior team's season. The
+    # manual selection must restore a full workload without promoting backups.
+    current = pd.DataFrame([
+        {'name': 'Starter', 'team': 'KC', 'position': 'QB'},
+    ])
+    prior_rows = []
+    for week in (1, 2, 3):
+        prior_rows.append({
+            'name': 'Starter', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+            'position': 'QB', 'weekly_snap_pct': 80.0,
+            'passing_attempts': 30.0, 'passing_completions': 20.0,
+            'passing_yards': 200.0, 'passing_tds': 1.0,
+            'passing_interceptions': 0.5, 'rushing_attempts': 3.0,
+            'rushing_yards': 15.0, 'rushing_tds': 0.0,
+        })
+    for week in (4, 5, 6):
+        prior_rows.append({
+            'name': 'Backup', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+            'position': 'QB', 'weekly_snap_pct': 80.0,
+            'passing_attempts': 20.0, 'passing_completions': 12.0,
+            'passing_yards': 130.0, 'passing_tds': 0.5,
+            'passing_interceptions': 0.5, 'rushing_attempts': 2.0,
+            'rushing_yards': 8.0, 'rushing_tds': 0.0,
+        })
+    prior = weekly(prior_rows)
+    schedule = pd.DataFrame([{'week': 1, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+                wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year: pd.DataFrame()
+        wp.load_qb1_overrides = lambda _year: (
+            pd.DataFrame([{'year': 2026, 'team': 'KC', 'player': 'Starter'}]), None)
+        wp._target_margins_by_team = lambda year, week: {}
+        out, meta = wp.build_weekly_projections(
+            2026, 1, 'Full PPR', as_of_week=1, apply_injury=False, model_version='v1')
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+         wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team) = original
+    starter = out.loc[out['Player'] == 'Starter'].iloc[0]
+    detail = meta['explanations'][('Starter', 'QB', 'KC')]
+    passing = detail['stats']['passing_yards']
+    assert starter['Expected Snap Share'] == 1.0
+    assert starter['QB1 Workload Override']
+    assert passing['qb1_workload_override']
+    assert passing['qb1_workload_source'] == 'Manual QB1 selection'
+    assert passing['role_scale'] == 1.0
+    assert passing['prior_rate'] == 200.0
+    assert meta['source_contract']['qb_starter_source'] == 'manual_qb1_overrides_plus_unambiguous_prior_season_incumbents'
+
+
+# --- interrupted player-game screen / QB starter gate ----------------------
+
+def test_partial_game_screen_excludes_a_qb_split_from_player_rate_evidence():
+    rows = []
+    for week, share in ((1, 95.0), (2, 96.0), (3, 94.0), (4, 48.0)):
+        rows.append({
+            'name': 'Starter', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+            'position': 'QB', 'weekly_snap_pct': share, 'has_snap_match': True,
+            'passing_yards': 250.0 if week < 4 else 80.0,
+        })
+    rows.append({
+        'name': 'Backup', 'team': 'KC', 'opponent_team': 'DEN', 'week': 4,
+        'position': 'QB', 'weekly_snap_pct': 52.0, 'has_snap_match': True,
+        'passing_yards': 90.0,
+    })
+    annotated = wp.annotate_player_history_participation(weekly(rows), 'name', 'team')
+    split = annotated[annotated['week'].eq(4)]
+    assert not split['_player_history_eligible'].any()
+    assert set(split['_player_history_reason']) == {'QB split/relief game'}
+    eligible = annotated[annotated['_player_history_eligible']]
+    totals = wp._season_totals(eligible, 'name', 'team', 'QB', ['passing_yards'])
+    starter = totals.loc[totals['name'].eq('Starter')].iloc[0]
+    assert starter['Games'] == 3
+    assert starter['passing_yards'] == 750.0
+
+
+def test_partial_game_screen_excludes_paired_replacement_but_not_normal_rotation():
+    rows = []
+    for week, lead_share, reserve_share in ((1, 92.0, 8.0), (2, 90.0, 10.0),
+                                            (3, 94.0, 6.0), (4, 45.0, 55.0)):
+        rows.extend([
+            {'name': 'Lead RB', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+             'position': 'RB', 'weekly_snap_pct': lead_share, 'has_snap_match': True,
+             'rushing_attempts': 14.0},
+            {'name': 'Reserve RB', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+             'position': 'RB', 'weekly_snap_pct': reserve_share, 'has_snap_match': True,
+             'rushing_attempts': 3.0},
+        ])
+    for week, share in ((1, 42.0), (2, 39.0), (3, 45.0), (4, 40.0)):
+        rows.append({
+            'name': 'Committee RB', 'team': 'DEN', 'opponent_team': 'KC', 'week': week,
+            'position': 'RB', 'weekly_snap_pct': share, 'has_snap_match': True,
+            'rushing_attempts': 7.0,
+        })
+    annotated = wp.annotate_player_history_participation(weekly(rows), 'name', 'team')
+    lead = annotated[(annotated['name'] == 'Lead RB') & annotated['week'].eq(4)].iloc[0]
+    reserve = annotated[(annotated['name'] == 'Reserve RB') & annotated['week'].eq(4)].iloc[0]
+    committee = annotated[annotated['name'].eq('Committee RB')]
+    assert not lead['_player_history_eligible']
+    assert lead['_player_history_reason'] == 'abrupt partial role after established workload'
+    assert not reserve['_player_history_eligible']
+    assert reserve['_player_history_reason'] == 'partial replacement after teammate exit'
+    assert committee['_player_history_eligible'].all()
+
+
+def test_partial_game_screen_uses_a_final_margin_only_for_extreme_rest_case():
+    rows = [
+        {'name': 'WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+         'position': 'WR', 'weekly_snap_pct': share, 'has_snap_match': True,
+         'targets': 7.0}
+        for week, share in ((1, 94.0), (2, 95.0), (3, 93.0), (4, 60.0))
+    ]
+    schedule = pd.DataFrame([
+        {'week': 4, 'home_team': 'KC', 'away_team': 'DEN', 'home_score': 35, 'away_score': 7},
+    ])
+    without_score = wp.annotate_player_history_participation(weekly(rows), 'name', 'team')
+    with_score = wp.annotate_player_history_participation(weekly(rows), 'name', 'team', schedule)
+    assert without_score.loc[without_score['week'].eq(4), '_player_history_eligible'].iloc[0]
+    rested = with_score.loc[with_score['week'].eq(4)].iloc[0]
+    assert not rested['_player_history_eligible']
+    assert rested['_player_history_reason'] == 'severe blowout rest'
+
+
+def test_partial_game_screen_never_treats_an_unmatched_snap_source_as_an_exit():
+    rows = [
+        {'name': 'WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+         'position': 'WR', 'weekly_snap_pct': share, 'has_snap_match': False,
+         'targets': 7.0}
+        for week, share in ((1, 95.0), (2, 94.0), (3, 96.0), (4, 20.0))
+    ]
+    annotated = wp.annotate_player_history_participation(weekly(rows), 'name', 'team')
+    assert annotated['_player_history_eligible'].all()
+
+
+def test_inseason_qb1_resolver_requires_one_clear_recent_starter_or_manual_choice():
+    current = pd.DataFrame([
+        {'name': 'Starter', 'team': 'KC', 'position': 'QB'},
+        {'name': 'Backup', 'team': 'KC', 'position': 'QB'},
+    ])
+    history = weekly([
+        *[{'name': 'Starter', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+           'position': 'QB', 'weekly_snap_pct': 95.0} for week in (1, 2, 3)],
+        *[{'name': 'Backup', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+           'position': 'QB', 'weekly_snap_pct': 5.0} for week in (1, 2, 3)],
+    ])
+    automatic = wp.resolve_inseason_qb1s(
+        current, 'name', 'team', history, 'name', 'team', 4, 2026,
+        overrides=pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS))
+    assert automatic['selected'][('KC', 'starter')] == 'observed_current_starter'
+    manual = wp.resolve_inseason_qb1s(
+        current, 'name', 'team', history, 'name', 'team', 4, 2026,
+        overrides=pd.DataFrame([{'year': 2026, 'team': 'KC', 'player': 'Backup'}]))
+    assert manual['selected'][('KC', 'backup')] == 'manual_override'
+    split_history = history.copy()
+    split_history.loc[split_history['name'].eq('Starter'), 'weekly_snap_pct'] = 55.0
+    split_history.loc[split_history['name'].eq('Backup'), 'weekly_snap_pct'] = 45.0
+    unresolved = wp.resolve_inseason_qb1s(
+        current, 'name', 'team', split_history, 'name', 'team', 4, 2026,
+        overrides=pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS))
+    assert 'KC' in unresolved['selection_required_teams']
+
+
+def test_nonstarter_qb_has_zero_projected_volume_not_a_relief_rate_projection():
+    rows = []
+    for week in (1, 2, 3):
+        rows.extend([
+            {'name': 'Starter', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+             'position': 'QB', 'weekly_snap_pct': 95.0, 'has_snap_match': True,
+             'passing_attempts': 32.0, 'passing_completions': 21.0,
+             'passing_yards': 245.0, 'passing_tds': 1.5, 'passing_interceptions': 0.5,
+             'rushing_attempts': 3.0, 'rushing_yards': 15.0, 'rushing_tds': 0.1},
+            {'name': 'Backup', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+             'position': 'QB', 'weekly_snap_pct': 5.0, 'has_snap_match': True,
+             'passing_attempts': 3.0, 'passing_completions': 2.0,
+             'passing_yards': 35.0, 'passing_tds': 0.2, 'passing_interceptions': 0.0,
+             'rushing_attempts': 1.0, 'rushing_yards': 5.0, 'rushing_tds': 0.0},
+        ])
+    current = weekly(rows)
+    prior = current.copy()
+    schedule = pd.DataFrame([{'week': 4, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+                wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year: pd.DataFrame()
+        wp.load_qb1_overrides = lambda _year: (pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS), None)
+        wp._target_margins_by_team = lambda year, week: {}
+        out, meta = wp.build_weekly_projections(
+            2026, 4, 'Full PPR', as_of_week=4, apply_injury=False, model_version='v1')
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+         wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team) = original
+    starter = out.loc[out['Player'].eq('Starter')].iloc[0]
+    backup = out.loc[out['Player'].eq('Backup')].iloc[0]
+    assert starter['QB Projected Starter']
+    assert not backup['QB Projected Starter']
+    for stat in wp.OFFENSE_PROJECTION_STATS['QB']:
+        assert backup[stat] == 0.0
+    assert backup['Raw Model Proj Pts'] == 0.0
+    detail = meta['explanations'][('Backup', 'QB', 'KC')]
+    assert detail['stats']['passing_yards']['qb_nonstarter_volume_factor'] == 0.0
+
+
 # --- roles / role-conditioned matchup ----------------------------------------
 
 def test_player_roles_split_receivers_by_depth_of_target():
@@ -370,6 +1014,267 @@ def test_calibration_is_one_sided():
     assert min(low, intercept + slope * low) == low        # the bottom is left alone
 
 
+# --- V2: priors, continuous roles, and cutoff-safe sources -----------------
+
+def test_v2_defense_prior_starts_at_last_year_then_adapts_quickly():
+    current = pd.DataFrame({'targets': [1.4]}, index=['DEN'])
+    prior = pd.DataFrame({'targets': [0.8]}, index=['DEN'])
+    week_one = wp.blend_defense_prior(current, prior, pd.Series({'DEN': 0.0}))
+    four_games = wp.blend_defense_prior(current, prior, pd.Series({'DEN': 4.0}))
+    assert abs(week_one.loc['DEN', 'targets'] - 0.8) < 1e-9
+    assert abs(four_games.loc['DEN', 'targets'] - 1.1) < 1e-9
+
+
+def test_v2_confirmed_role_change_allows_aggressive_volume_but_not_td_blend():
+    # The agreed target behavior: three real 9-target games after a
+    # comparable 6-target prior should be roughly 8--8.25 when role evidence
+    # is strong.  TD shrinkage must remain unchanged by that role signal.
+    volume = wp._blended_rate(np.array([9.0]), np.array([3.0]), np.array([6.0]),
+                              np.array([6.0]), 'targets', np.array([1.0]),
+                              role_change_confidence=np.array([0.75]))
+    td_with_signal = wp._blended_rate(np.array([1.0]), np.array([3.0]), np.array([0.2]),
+                                      np.array([0.2]), 'receiving_tds', np.array([1.0]),
+                                      role_change_confidence=np.array([1.0]))
+    td_without_signal = wp._blended_rate(np.array([1.0]), np.array([3.0]), np.array([0.2]),
+                                         np.array([0.2]), 'receiving_tds', np.array([1.0]))
+    assert 8.0 <= volume[0] <= 8.25
+    assert abs(td_with_signal[0] - td_without_signal[0]) < 1e-9
+
+
+def test_v2_two_year_td_prior_requires_a_comparable_opportunity_role():
+    comparable, used = wp.blend_comparable_td_priors(
+        np.array([0.50]), np.array([0.30]), np.array([7.0]), np.array([6.0]))
+    changed_role, rejected = wp.blend_comparable_td_priors(
+        np.array([0.50]), np.array([0.30]), np.array([7.0]), np.array([1.0]))
+    assert used[0] and 0.30 < comparable[0] < 0.50
+    assert not rejected[0] and changed_role[0] == 0.50
+
+
+def test_v2_qb_and_rb_rushing_channels_are_explicitly_separate():
+    assert wp.projection_channel('QB', 'rushing_yards') == 'QB rushing'
+    assert wp.projection_channel('RB', 'rushing_yards') == 'RB rushing'
+    assert wp.projection_channel('RB', 'receiving_yards') == 'RB receiving'
+
+
+def test_v2_role_profile_keeps_target_earner_rank_continuous():
+    df = weekly([
+        {'name': 'WR1', 'week': 1, 'team': 'KC', 'position': 'WR', 'targets': 10, 'weekly_snap_pct': 90},
+        {'name': 'WR2', 'week': 1, 'team': 'KC', 'position': 'WR', 'targets': 5, 'weekly_snap_pct': 80},
+        {'name': 'WR3', 'week': 1, 'team': 'KC', 'position': 'WR', 'targets': 1, 'weekly_snap_pct': 30},
+        {'name': 'RB', 'week': 1, 'team': 'KC', 'position': 'RB', 'targets': 4, 'weekly_snap_pct': 60},
+    ])
+    profile = wp.build_continuous_role_profiles(df, 'name', 'team', 'WR')
+    assert profile.loc['WR1', 'target_earner_rank'] == 1
+    assert profile.loc['WR1', 'target_share'] == 0.5  # all KC targets, not just WR targets
+    assert profile.loc['WR1', 'target_earner_score'] > profile.loc['WR2', 'target_earner_score']
+    assert profile.loc['WR2', 'target_earner_score'] > profile.loc['WR3', 'target_earner_score']
+    assert not profile.loc['WR1', 'alignment_available']
+
+
+def test_v2_continuous_role_weights_sum_to_one_without_a_bucket_cliff():
+    rows = []
+    for i in range(12):
+        rows.append({'name': f'W{i}', 'week': 1, 'team': 'KC', 'position': 'WR',
+                     'opponent_team': 'DEN', 'targets': 30, 'receiving_air_yards': 30 * (4 + i)})
+    weights = wp.build_continuous_role_weights(weekly(rows), 'name', 'WR')
+    assert np.allclose(weights.sum(axis=1).to_numpy(), 1.0)
+    assert (weights.loc['W5'] > 0).sum() >= 1
+
+
+def test_v2_as_of_pace_excludes_future_week_rows():
+    df = weekly([
+        {'name': 'QB', 'week': 1, 'team': 'KC', 'opponent_team': 'DEN', 'position': 'QB',
+         'passing_attempts': 30},
+        {'name': 'RB', 'week': 1, 'team': 'KC', 'opponent_team': 'DEN', 'position': 'RB',
+         'rushing_attempts': 20},
+        {'name': 'QB', 'week': 2, 'team': 'KC', 'opponent_team': 'DEN', 'position': 'QB',
+         'passing_attempts': 60},
+        {'name': 'RB', 'week': 2, 'team': 'KC', 'opponent_team': 'DEN', 'position': 'RB',
+         'rushing_attempts': 40},
+    ])
+    pace = wp.as_of_team_pace(df, 'team', as_of_week=2)
+    assert pace.loc['KC', 'off_pace'] == 50
+    assert pace.loc['DEN', 'def_pace'] == 50
+
+
+def test_v2_defense_matchup_falls_back_to_prior_season_at_true_cold_start():
+    # as_of_week=1 has no current-season "before" week by construction (week
+    # numbering starts at 1), so this is every Week 1 decomposition until the
+    # first 2026 games are played - defense_matchup must fall back to the
+    # full prior season rather than silently staying empty for the entire
+    # opening week of a new season, which is exactly when a user would look
+    # at this the most.
+    current = weekly([
+        {'name': 'KC WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 6.0,
+         'receptions': 4.0, 'receiving_yards': 50.0},
+        {'name': 'DEN WR', 'team': 'DEN', 'opponent_team': 'KC', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 6.0,
+         'receptions': 4.0, 'receiving_yards': 50.0},
+    ])
+    prior = weekly([
+        {'name': 'KC WR P', 'team': 'KC', 'opponent_team': 'DEN', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 6.0,
+         'receptions': 4.0, 'receiving_yards': 50.0, 'fantasy_points': 10.0},
+        {'name': 'DEN WR P', 'team': 'DEN', 'opponent_team': 'KC', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 6.0,
+         'receptions': 4.0, 'receiving_yards': 90.0, 'fantasy_points': 20.0},
+    ])
+    schedule = pd.DataFrame([
+        {'week': 1, 'home_team': 'KC', 'away_team': 'DEN', 'home_score': np.nan, 'away_score': np.nan},
+    ])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        result, meta = wp.build_weekly_projections(
+            2026, 1, 'Full PPR', as_of_week=1, apply_injury=False, model_version='v2')
+    finally:
+        wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving = original
+    assert not result.empty
+    kc_wr = meta['explanations'][('KC WR', 'WR', 'KC')]
+    matchup = kc_wr['defense_matchup']
+    assert matchup is not None
+    assert matchup['source'] == '2025 full season (no 2026 games played yet)'
+    assert matchup['of'] == 2
+    # kc_wr's opponent is DEN, so this is DEN's defense profile. DEN's
+    # defense faced one prior WR (KC WR P, opponent_team=DEN) who scored
+    # 10.0 fantasy_points; KC's defense faced the other (DEN WR P,
+    # opponent_team=KC) who scored 20.0. defense_stat_rank's OWN convention
+    # (see its test in test_matchup_signals.py) is rank 1 = allows the MOST -
+    # DEN allowed fewer (10 < 20), so DEN is rank 2 of 2 by that raw
+    # convention (the tougher defense, ranked last by "how much it allows").
+    assert matchup['rank'] == 2
+    assert matchup['value'] == 10.0
+
+
+def test_v2_full_projection_contract_is_cutoff_safe_and_explained():
+    # Integration fixture: patch only I/O boundaries, then exercise the
+    # real V2 build end to end.  Future Week 2 values are deliberately huge;
+    # changing them must not change a Week 2 projection built as of Week 2.
+    stats = []
+    all_stats = set(sum(wp.OFFENSE_PROJECTION_STATS.values(), []))
+    for season, week_values in ((2026, {1: 1.0, 2: 100.0}), (2025, {1: 0.9, 2: 1.1})):
+        for week, multiplier in week_values.items():
+            for team, opponent in (('KC', 'DEN'), ('DEN', 'KC')):
+                for pos in wp.DRAFTABLE_POSITIONS:
+                    row = {stat: 0.0 for stat in all_stats}
+                    row.update({
+                        'season': season, 'week': week, 'name': f'{team} {pos}',
+                        'team': team, 'opponent_team': opponent, 'position': pos,
+                        'weekly_snap_pct': 85.0, 'receiving_air_yards': 20.0 * multiplier,
+                    })
+                    if pos == 'QB':
+                        row.update({'passing_attempts': 30.0 * multiplier,
+                                    'passing_completions': 20.0 * multiplier,
+                                    'passing_yards': 220.0 * multiplier,
+                                    'passing_tds': 1.5 * multiplier,
+                                    'rushing_attempts': 4.0 * multiplier,
+                                    'rushing_yards': 20.0 * multiplier})
+                    elif pos == 'RB':
+                        row.update({'rushing_attempts': 14.0 * multiplier,
+                                    'rushing_yards': 60.0 * multiplier,
+                                    'targets': 4.0 * multiplier,
+                                    'receptions': 3.0 * multiplier,
+                                    'receiving_yards': 25.0 * multiplier})
+                    else:
+                        row.update({'targets': 6.0 * multiplier,
+                                    'receptions': 4.0 * multiplier,
+                                    'receiving_yards': 50.0 * multiplier})
+                    stats.append(row)
+    current = pd.DataFrame([r for r in stats if r['season'] == 2026])
+    prior = pd.DataFrame([r for r in stats if r['season'] == 2025])
+    schedule = pd.DataFrame([
+        {'week': 2, 'home_team': 'KC', 'away_team': 'DEN', 'home_score': np.nan, 'away_score': np.nan},
+    ])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        first, meta = wp.build_weekly_projections(
+            2026, 2, 'Full PPR', as_of_week=2, apply_injury=False, model_version='v2')
+        current.loc[current['week'] == 2, list(all_stats)] = 99999.0
+        second, _ = wp.build_weekly_projections(
+            2026, 2, 'Full PPR', as_of_week=2, apply_injury=False, model_version='v2')
+    finally:
+        wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving = original
+    assert not first.empty
+    assert first[['Player', 'Raw Model Proj Pts', 'Calibrated Model Proj Pts']].equals(
+        second[['Player', 'Raw Model Proj Pts', 'Calibrated Model Proj Pts']])
+    assert meta['source_contract']['historical_target']
+    assert meta['source_contract']['pace'] == 'weekly_box_score_proxy'
+    assert meta['source_contract']['prior_defense_recency'].startswith('75% full-season')
+    assert len(meta['explanations']) == len(first)
+    detail = meta['explanations'][('KC QB', 'QB', 'KC')]
+    trace = detail['stats']['passing_yards']
+    for key in ('build_path', 'raw_prior_rate', 'role_scale', 'blended_rate',
+                'defense_estimator', 'defense_current_games', 'defense_prior_games',
+                'script_multiplier', 'pace_multiplier', 'availability_multiplier',
+                'environment_multiplier', 'pre_vacancy_projection',
+                'vacancy_delta', 'final_projection'):
+        assert key in trace
+    for explanation in meta['explanations'].values():
+        for stat in wp.OFFENSE_PROJECTION_STATS[explanation['position']]:
+            stat_trace = explanation['stats'][stat]
+            assert stat_trace['defense_estimator'] == 'offense-position team-game normalized production'
+    assert trace['final_projection'] == detail['stat_line']['passing_yards']
+
+
+def test_v2_decomposition_refreshes_the_stat_line_after_vacancy_redistribution():
+    # The final explanation must describe the selected ranking row, not the
+    # pre-vacancy stat line captured inside the per-position loop.
+    current = weekly([
+        {'name': 'Out WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 8.0,
+         'receptions': 5.0, 'receiving_yards': 70.0, 'receiving_tds': 0.5},
+        {'name': 'Healthy WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 5.0,
+         'receptions': 3.0, 'receiving_yards': 40.0, 'receiving_tds': 0.2},
+        {'name': 'DEN WR', 'team': 'DEN', 'opponent_team': 'KC', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 5.0,
+         'receptions': 3.0, 'receiving_yards': 40.0, 'receiving_tds': 0.2},
+    ])
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 2, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+                wp.load_team_pace, wp._target_margins_by_team, wp._injury_profiles,
+                wp.load_fantasypros_availability)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp._injury_profiles = lambda year, week: {
+            'Out WR': {'plays_probability': 0.0, 'workload_if_active': 1.0, 'status': 'out'},
+        }
+        # v2_fantasypros_availability is in V2_EXPERIMENTAL_FEATURES and now
+        # takes precedence over v2_availability's nflverse-backed
+        # _injury_profiles - mock the source this model_version='v2' run
+        # actually calls, not the one it superseded.
+        wp.load_fantasypros_availability = lambda year, week: (
+            {'Out WR': {'plays_probability': 0.0, 'workload_if_active': 1.0, 'status': 'out',
+                       'source': 'FantasyPros injury report'}}, None)
+        out, meta = wp.build_weekly_projections(
+            2026, 2, 'Full PPR', as_of_week=2, apply_injury=True, model_version='v2')
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+         wp.load_team_pace, wp._target_margins_by_team, wp._injury_profiles,
+         wp.load_fantasypros_availability) = original
+    healthy = out.loc[out['Player'] == 'Healthy WR'].iloc[0]
+    detail = meta['explanations'][('Healthy WR', 'WR', 'KC')]
+    trace = detail['stats']['targets']
+    assert trace['vacancy_delta'] > 0
+    assert detail['stat_line']['targets'] == float(healthy['targets'])
+    assert trace['final_projection'] == float(healthy['targets'])
+
+
 # --- teammate vacancy ---------------------------------------------------------
 
 def test_vacated_targets_move_to_healthy_teammates_in_proportion():
@@ -405,6 +1310,62 @@ def test_vacancy_growth_is_capped():
     frame['_full_rushing_attempts'] = [50.0, 4.0]
     out, _n = wp.redistribute_vacated_usage(frame, {'Out': 0.4})
     assert out.loc[1, 'rushing_attempts'] <= 4.0 * wp.VACANCY_MAX_GROWTH + 1e-9
+
+
+def test_v2_vacancy_keeps_qb_passes_and_wr_targets_in_their_own_roles():
+    frame = pd.DataFrame({
+        'Player': ['Out QB', 'Backup QB', 'Out WR', 'WR Two', 'RB One'],
+        'Pos': ['QB', 'QB', 'WR', 'WR', 'RB'],
+        'Team': ['KC', 'KC', 'KC', 'KC', 'KC'],
+        'Expected Snap Share': [1.0, 0.7, 0.9, 0.8, 0.7],
+        'passing_attempts': [0.0, 12.0, np.nan, np.nan, np.nan],
+        'passing_yards': [0.0, 100.0, np.nan, np.nan, np.nan],
+        'targets': [np.nan, np.nan, 0.0, 5.0, 3.0],
+        'receptions': [np.nan, np.nan, 0.0, 3.0, 2.0],
+        'receiving_yards': [np.nan, np.nan, 0.0, 35.0, 20.0],
+    })
+    frame['_full_passing_attempts'] = [32.0, 12.0, np.nan, np.nan, np.nan]
+    frame['_full_targets'] = [np.nan, np.nan, 9.0, 5.0, 3.0]
+    profiles = {
+        'Out QB': {'plays_probability': 0.0},
+        'Out WR': {'plays_probability': 0.0},
+    }
+    out, n, ledger = wp.redistribute_v2_vacated_usage(frame, profiles)
+    assert n >= 2 and ledger
+    assert out.loc[1, 'passing_attempts'] > 12.0
+    assert out.loc[3, 'targets'] > 5.0
+    assert out.loc[4, 'targets'] == 3.0  # WR absence does not feed the RB pool.
+
+
+def test_v2_qb_vacancy_never_rehydrates_a_nonstarter_qb_projection():
+    """An injured QB's pass volume can only go to the selected QB1."""
+    frame = pd.DataFrame({
+        'Player': ['Out QB', 'Selected QB', 'Backup QB'],
+        'Pos': ['QB', 'QB', 'QB'],
+        'Team': ['KC', 'KC', 'KC'],
+        'Expected Snap Share': [1.0, 1.0, 0.2],
+        'QB Projected Starter': [True, True, False],
+        'passing_attempts': [0.0, 12.0, 9.0],
+        'passing_yards': [0.0, 96.0, 72.0],
+    })
+    frame['_full_passing_attempts'] = [30.0, 12.0, 9.0]
+    out, n, ledger = wp.redistribute_v2_vacated_usage(
+        frame, {'Out QB': {'plays_probability': 0.0}})
+    assert n == 1
+    assert out.loc[1, 'passing_attempts'] > 12.0
+    assert out.loc[2, 'passing_attempts'] == 9.0
+    assert out.loc[2, 'passing_yards'] == 72.0
+    assert any(entry['volume'] == 'passing_attempts' and entry['allocated'] > 0 for entry in ledger)
+
+    unresolved = frame.copy()
+    unresolved['QB Projected Starter'] = False
+    unresolved_out, unresolved_n, unresolved_ledger = wp.redistribute_v2_vacated_usage(
+        unresolved, {'Out QB': {'plays_probability': 0.0}})
+    assert unresolved_n == 0
+    assert unresolved_out.loc[1, 'passing_attempts'] == 12.0
+    assert unresolved_out.loc[2, 'passing_attempts'] == 9.0
+    assert any(entry['volume'] == 'passing_attempts' and entry['unallocated'] > 0
+               for entry in unresolved_ledger)
 
 
 def test_scoring_a_cross_position_frame_survives_missing_stat_columns():

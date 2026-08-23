@@ -1,6 +1,13 @@
 # Local Python virtualenv - never a repo artifact.
 .venv/
 
+# Scratch space for separate clones/checkouts of this same repo (used to
+# work on multiple branches side by side). These have accidentally ended up
+# committed as opaque gitlinks before (no .gitmodules, so `git add` on a
+# nested .git folder just records a stale commit pointer) - ignoring the
+# whole directory stops that from happening again.
+.worktrees/
+
 # Secrets - never commit. The Live Odds tab persists an Odds API key here in
 # plaintext (see ui/tabs/live_odds.py) - HANDOFF.md explicitly warns about
 # this file before sharing the folder.

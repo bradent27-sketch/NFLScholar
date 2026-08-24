@@ -12,10 +12,24 @@ evaluated on - same discipline as WEEKLY_CALIBRATION in data.weekly_
 projections, which this ALSO depends on: the ratios below are actual points
 divided by CALIBRATED points, so a stale calibration line changes what they
 mean). WEEKLY_DISTRIBUTION_BANDS stores, per position x usage tier (the same
-Elite/Starter/Flex/Streamer buckets scripts/backtest_five_weeks.py reports
-on), the empirical P10/P25/P50/P75/P90 of that ratio. Multiplying a band onto
-any player's own calibrated points gives that tier's typical spread - this is
-the "typical distribution by position" reference line.
+Starter/Streamer-Bench buckets scripts/backtest_five_weeks.py reports on),
+the empirical P10/P25/P50/P75/P90 of that ratio. Multiplying a band onto any
+player's own calibrated points gives that tier's typical spread - this is the
+"typical distribution by position" reference line.
+
+TWO TIERS, NOT FOUR. Originally Elite/Starter/Flex/Streamer-Bench (rank
+1-6/7-15/16-30/31+), collapsed to just Starter (1-30) and Streamer/Bench
+(31+) per explicit request: a player's tier is derived from their OWN
+projected rank that week, so most players anyone actually opens this chart
+for land in Starter or Flex - tiers whose bands, fit on a narrow, already-
+similar sub-population, read as closer to "average" than a real starters-
+vs-bench comparison would. Merging them widens the "This player" vs.
+"Typical" comparison back out to what a real starter population actually
+looks like. TIER_BOUNDS below is the single source of truth for these
+cutoffs - scripts/fit_weekly_distribution.py and scripts/backtest_five_
+weeks.py both import it rather than keeping their own copy, after those
+copies were found to have silently drifted into their own hardcoded
+duplicates of this same tuple.
 
 PERSONALIZING IT. A flat per-tier band is still not "this specific player's"
 distribution - a well-established, high-snap-share role is more predictable
@@ -46,32 +60,26 @@ import numpy as np
 # other genuinely-missing input in this app.
 WEEKLY_DISTRIBUTION_BANDS = {
     'QB': {
-        'Elite': {10: 0.531, 25: 0.763, 50: 1.022, 75: 1.326, 90: 1.603},  # n=224
-        'Starter': {10: 0.435, 25: 0.697, 50: 0.992, 75: 1.247, 90: 1.593},  # n=325
-        'Flex': {10: 0.367, 25: 0.637, 50: 0.939, 75: 1.348, 90: 1.701},  # n=384
+        'Starter': {10: 0.415, 25: 0.687, 50: 0.984, 75: 1.319, 90: 1.668},  # n=933
+        # 'Streamer/Bench': skipped, only n=2 (<30)
     },
     'RB': {
-        'Elite': {10: 0.361, 25: 0.547, 50: 0.889, 75: 1.234, 90: 1.518},  # n=200
-        'Starter': {10: 0.339, 25: 0.573, 50: 0.990, 75: 1.404, 90: 1.697},  # n=286
-        'Flex': {10: 0.321, 25: 0.605, 50: 1.008, 75: 1.432, 90: 1.933},  # n=481
+        'Starter': {10: 0.332, 25: 0.573, 50: 0.970, 75: 1.377, 90: 1.810},  # n=967
         'Streamer/Bench': {10: 0.084, 25: 0.440, 50: 1.062, 75: 2.079, 90: 3.758},  # n=1584
     },
     'WR': {
-        'Elite': {10: 0.325, 25: 0.580, 50: 0.847, 75: 1.321, 90: 1.688},  # n=212
-        'Starter': {10: 0.361, 25: 0.617, 50: 0.907, 75: 1.340, 90: 1.864},  # n=312
-        'Flex': {10: 0.333, 25: 0.556, 50: 0.940, 75: 1.405, 90: 1.910},  # n=501
+        'Starter': {10: 0.333, 25: 0.569, 50: 0.909, 75: 1.368, 90: 1.863},  # n=1025
         'Streamer/Bench': {10: 0.000, 25: 0.381, 50: 0.901, 75: 1.698, 90: 2.621},  # n=2882
     },
     'TE': {
-        'Elite': {10: 0.319, 25: 0.547, 50: 0.903, 75: 1.329, 90: 1.926},  # n=198
-        'Starter': {10: 0.234, 25: 0.507, 50: 0.989, 75: 1.500, 90: 2.082},  # n=289
-        'Flex': {10: 0.227, 25: 0.428, 50: 0.921, 75: 1.625, 90: 2.373},  # n=456
+        'Starter': {10: 0.249, 25: 0.485, 50: 0.950, 75: 1.533, 90: 2.210},  # n=943
         'Streamer/Bench': {10: 0.000, 25: 0.394, 50: 0.900, 75: 1.809, 90: 2.869},  # n=750
     },
 }
-NEEDS_REFIT = False
+NEEDS_REFIT = False  # re-fit under the consolidated TIER_BOUNDS below, 2021-2023
+# weeks 5-17 (python scripts/fit_weekly_distribution.py --years 2021,2022,2023).
 
-TIER_BOUNDS = (('Elite', 1, 6), ('Starter', 7, 15), ('Flex', 16, 30), ('Streamer/Bench', 31, 10_000))
+TIER_BOUNDS = (('Starter', 1, 30), ('Streamer/Bench', 31, 10_000))
 MIN_WIDTH_SCALE, MAX_WIDTH_SCALE = 0.7, 1.4
 
 

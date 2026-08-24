@@ -79,6 +79,35 @@ _STATUS_ALIASES = {
     'active': 'healthy', 'healthy': 'healthy', '': 'healthy', 'nan': 'healthy',
 }
 
+
+def canonical_status(raw) -> str:
+    """Any raw availability status string -> exactly one of healthy/
+    questionable/doubtful/out, for display (the decomposition dialog's
+    header, in place of a bare plays-probability percentage).
+
+    Reuses _STATUS_ALIASES so this always agrees with what
+    parse_fantasypros_injury_export already does. Missing/empty input reads
+    as 'healthy' (no report = presumed fine - the same fallback
+    _STATUS_ALIASES itself uses for '' and 'nan'). This includes 'No
+    current designation' - data.weekly_projections' own
+    `row['Injury Status'] or 'No current designation'` fallback string for
+    a player with nothing on the report, not a real designation, so it has
+    to map the same way plain emptiness does or every player with a clean
+    bill of health would misread as flagged. A NON-EMPTY, genuinely
+    unrecognized status - possible from the older nflverse-sourced V1
+    availability path, which does not route through _STATUS_ALIASES
+    upstream - reads as 'questionable' rather than 'healthy': a real but
+    unmapped designation should never silently present as full health.
+    """
+    if raw is None:
+        return 'healthy'
+    key = str(raw).strip().lower()
+    if key in ('', 'nan', 'no current designation'):
+        return 'healthy'
+    mapped = _STATUS_ALIASES.get(key, 'questionable')
+    return mapped if mapped in ('healthy', 'questionable', 'doubtful', 'out') else 'questionable'
+
+
 # The FantasyPros injury export's probability-of-playing column, if present
 # (only the live API supplies this - a saved CSV export generally won't).
 _PROB_COLUMNS = ('plays_probability', 'probability_of_playing', 'probability')

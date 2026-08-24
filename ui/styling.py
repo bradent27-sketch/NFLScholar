@@ -1416,6 +1416,20 @@ def get_diverging_color(val, max_abs):
     return _blend_hex(C['surface_container_high'], C['positive'] if frac > 0 else C['negative'], abs(frac))
 
 
+def get_multiplier_color(val, max_abs=0.15, center=1.0):
+    """Green/red diverging color for a MULTIPLIER column (e.g. the
+    decomposition dialog's defense/context multiplier columns) - the same
+    scale-by-magnitude read as get_diverging_color, just re-centered on 1.0
+    (neutral) instead of 0.0, since a multiplier's "no effect" value is 1.0
+    not 0.0. Above center is favorable for the player (green), below is
+    unfavorable (red). A thin wrapper, not a reimplementation, so both
+    columns share one blending rule.
+    """
+    if pd.isna(val):
+        return C['surface_container_high']
+    return get_diverging_color(float(val) - center, max_abs)
+
+
 def _cell_text(val):
     if pd.isna(val):
         return ''
@@ -1471,7 +1485,7 @@ def get_tier_color(tier):
 
 
 def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None, tier_cols=None,
-                          label_cols=None):
+                          position_cols=None, label_cols=None):
     """
     Sortable Styler for st.dataframe (historical totals, risers, rookie
     watch, rankings, VORP sheet, odds tables, coverage scheme tendencies).
@@ -1516,6 +1530,17 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     alongside it. Takes precedence over everything else, since a caller that
     passes this has already decided tier is the right read for that column.
 
+    position_cols: dict of {column_name: position-code sequence}, same
+    row-position matching as the others - colors a column by FOOTBALL
+    POSITION (get_position_color/get_position_chip_bg, the same chip look
+    the Pos/Position column itself uses) rather than by its own value.
+    Built for Weekly Rankings' rank columns ("RB4"-style text, no color of
+    their own) once the standalone Position column is dropped to save table
+    width - the color carries the same at-a-glance position signal the old
+    Position column gave, without spending a column on it. Lower precedence
+    than tier_cols: a column already carrying an explicit tier read (e.g.
+    Model Rank) keeps it rather than being overridden by this.
+
     label_cols: dict of {column_name: {raw_value: display_text}} - keeps a
     column's UNDERLYING values numeric while showing text in the cell (e.g.
     Weekly Rankings' rank columns, which store a sortable number and display
@@ -1542,10 +1567,12 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     diverging_cols = diverging_cols or {}
     matchup_pct_cols = matchup_pct_cols or {}
     tier_cols = tier_cols or {}
+    position_cols = position_cols or {}
     label_cols = label_cols or {}
     pct_arrays = {col: list(vals) for col, vals in numeric_pct_cols.items()}
     matchup_arrays = {col: list(vals) for col, vals in matchup_pct_cols.items()}
     tier_arrays = {col: list(vals) for col, vals in tier_cols.items()}
+    position_arrays = {col: list(vals) for col, vals in position_cols.items()}
 
     _DEFAULT_STYLE = f"background-color:{C['surface_container']}; color:{C['on_surface']};"
 
@@ -1571,6 +1598,7 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
         matchup_vals = matchup_arrays.get(col)
         pct_vals = pct_arrays.get(col)
         tier_vals = tier_arrays.get(col)
+        position_vals = position_arrays.get(col)
         is_team = col == 'Team'
         is_position = col in ('Pos', 'Position')
         is_tier = col == 'Tier'
@@ -1587,6 +1615,12 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
                 tier_bg = get_tier_color(tier_vals[pos])
                 out.append(f"background-color:{tier_bg}; color:#ffffff; font-weight:bold;"
                            if tier_bg else _DEFAULT_STYLE)
+                continue
+            if position_vals is not None and pos < len(position_vals):
+                from config import get_position_color, get_position_chip_bg
+                chip_bg = get_position_chip_bg(position_vals[pos])
+                out.append(f"background-color:{chip_bg}; color:{get_position_color(position_vals[pos])}; font-weight:bold;"
+                           if chip_bg else _DEFAULT_STYLE)
                 continue
             if matchup_vals is not None and pos < len(matchup_vals):
                 bg = get_matchup_color(matchup_vals[pos])

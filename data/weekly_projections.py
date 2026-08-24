@@ -114,7 +114,7 @@ import streamlit as st
 
 from data.transforms import (load_and_merge_data, OFFENSE_PROJECTION_STATS,
                              score_projected_stats)
-from data.loaders import load_team_pace, load_schedule, CACHE_TTL_SECONDS
+from data.loaders import load_team_pace, load_team_weekly_plays, load_schedule, CACHE_TTL_SECONDS
 from data.utils import clean_name_exact
 from data.ourlads_depth_charts import (
     load_ourlads_snapshot, build_ourlads_projection_signal,
@@ -139,6 +139,8 @@ from data.pff_alignment import (
     load_weekly_alignment_profiles, load_season_alignment_prior,
     lookup_alignment_profile, load_weekly_alignment_defense_profiles,
     alignment_defense_residual_multiplier,
+    load_weekly_scheme_profiles, lookup_scheme_profile,
+    load_weekly_scheme_defense_profiles, scheme_defense_residual_multiplier,
 )
 
 DRAFTABLE_POSITIONS = ('QB', 'RB', 'WR', 'TE')
@@ -465,9 +467,32 @@ CALIBRATION_INPUT_FEATURES = frozenset({
 # the market's numbers on the same row, and what decides whether the
 # startable tier is systematically over-promised. Measured on 2024-2025 the
 # startable bias it removes is +0.80 (QB), +0.81 (RB), +0.87 (WR).
+#
+# QB REMOVED, 2026-08-23. The model has moved since the QB line above was
+# fit (qb1_override and other role work since), and a fresh re-check no
+# longer agrees with it - re-run to reproduce:
+#
+#   python scripts/eval_weekly_model.py --years 2024,2025 --weeks 5-17 --variants \
+#     "role_volume+role_matchup+teammate_vacancy+qb1_override+calibration,\
+#      role_volume+role_matchup+teammate_vacancy+qb1_override"
+#
+# QB, calibrated vs uncalibrated, current shipping feature set: MAE 6.881 vs
+# 6.863 (uncalibrated slightly LOWER), bias -3.032 vs -2.245 (calibrated now
+# runs meaningfully MORE negative, not less), uncalibrated wins the
+# week-level MAE comparison 14-12 pooled and 14-12 startable-only. The line
+# that used to correct QB over-projection is now adding under-projection on
+# top of whatever the current model already has - a stale fit, not evidence
+# against calibration as a mechanism.
+#
+# RB/WR/TE re-checked the same way and still clearly justify keeping
+# calibration: calibrated wins the week-level comparison 20-6 (RB), 25-1
+# (WR), 17-9 (TE), with lower MAE and less bias than uncalibrated at every
+# one. This is a per-position finding, not a reason to doubt the mechanism
+# itself - re-run the command above whenever the shipping feature set moves
+# again, and re-fit (scripts/fit_weekly_calibration.py) if QB's own gap
+# turns out to be structural rather than just a stale line.
 # ---------------------------------------------------------------------------
 WEEKLY_CALIBRATION = {
-    'QB': (0.522, 7.326),
     'RB': (0.814, 2.460),
     'WR': (0.844, 2.036),
     'TE': (0.770, 2.364),
@@ -578,6 +603,26 @@ def _clean_team_key(values):
     series = series.where(series.notna(), '').astype(str).str.strip().str.upper()
     series = series.replace({'OAK': 'LV', 'SD': 'LAC', 'STL': 'LA'})
     return series.where(~series.isin(('', 'NAN', 'NONE', '<NA>')), '')
+
+
+def _team_game_plays_lookup(plays_df):
+    """Normalize a (team, week, plays) table to the ['_offense', '_week',
+    '_plays'] merge key _position_team_games' output already uses, so
+    _team_game_quality_profile can divide a single game's raw stat total by
+    that game's own play count. Team abbreviations are run through the same
+    _clean_team_key normalization as _historical_game_team, so an old code
+    (e.g. OAK) in a play-count source still joins against a game row already
+    relabeled under its current franchise (LV).
+    """
+    if plays_df is None or plays_df.empty:
+        return pd.DataFrame(columns=['_offense', '_week', '_plays'])
+    out = plays_df.rename(columns={'team': '_offense', 'week': '_week', 'plays': '_plays'})
+    out = out[['_offense', '_week', '_plays']].copy()
+    out['_offense'] = _clean_team_key(out['_offense'])
+    out['_week'] = pd.to_numeric(out['_week'], errors='coerce')
+    out['_plays'] = pd.to_numeric(out['_plays'], errors='coerce')
+    out = out.dropna(subset=['_week'])
+    return out.groupby(['_offense', '_week'], observed=True, as_index=False)['_plays'].sum()
 
 
 def _historical_game_opponent(frame):
@@ -723,8 +768,60 @@ def _position_team_games(hist_pos, team_col, stats, name_col=None, roles=None,
     return game, group_keys
 
 
+def _build_player_stat_game_log(hist_annotated_pos, name_col, stats, matchup_matrix):
+    """Per-game raw + defense-adjusted values for one position's game
+    history, keyed by player name (as spelled in ``name_col``).
+
+    Factored out so the Deep Dive can build this identically for a CURRENT
+    season and a PRIOR season, from either the in-season or cold-start
+    branch - one definition of "what does a per-game log row look like"
+    instead of copy-pasting it per season/branch combination. The defense
+    adjustment is raw / matchup multiplier, WITHOUT _weighted_player_rates'
+    recency/rematch weighting - that belongs in the averaged rate, not in a
+    per-game log meant to show each game as-is. Sourced from an *_annotated
+    frame (not the eligibility-filtered player_hist/player_prior), so
+    partial-game-screen-excluded games are still present here, correctly
+    flagged via _player_history_eligible/_reason.
+    """
+    if hist_annotated_pos is None or hist_annotated_pos.empty:
+        return {}
+    log = hist_annotated_pos.copy()
+    opponent = (log['opponent_team'].astype(str) if 'opponent_team' in log.columns
+                else pd.Series('', index=log.index))
+    for stat in stats:
+        if stat not in log.columns:
+            continue
+        raw = pd.to_numeric(log[stat], errors='coerce').fillna(0.0)
+        mult = pd.Series(1.0, index=log.index)
+        if matchup_matrix is not None and not matchup_matrix.empty and stat in matchup_matrix.columns:
+            mult = opponent.map(matchup_matrix[stat]).fillna(1.0).clip(*HISTORY_MATCHUP_CLIP)
+        log[f'_defadj_{stat}'] = raw / mult
+    return {name: g for name, g in log.groupby(name_col)}
+
+
+def _build_defense_weekly_log(pos_rows, team_col, stats, game_universe, as_of_week):
+    """Per-week opponent-allowed rows for one position, keyed by defense team.
+
+    The raw offense-defense-week totals _position_team_games builds and
+    _team_game_quality_profile immediately collapses into a single matchup
+    multiplier - kept here too (one more cheap call with the identical
+    arguments) so the Deep Dive can show the arithmetic behind that
+    multiplier instead of just the final number. Shared by both season
+    choices in both branches, same reasoning as _build_player_stat_game_log.
+    """
+    game, _keys = _position_team_games(pos_rows, team_col, stats, game_universe=game_universe)
+    if game.empty:
+        return {}
+    game = game.copy()
+    baseline = game.groupby('_offense', observed=True)[stats].transform('mean')
+    for stat in stats:
+        game[f'_baseline_{stat}'] = baseline[stat]
+    game['_weight'] = defense_recency_weights(game['_week'], as_of_week)
+    return {team: g for team, g in game.groupby('_defense')}
+
+
 def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
-                               partition_keys=()):
+                               partition_keys=(), plays=None):
     """Pooled observed/expected team-game defense factor.
 
     A defense's profile is a *ratio of weighted totals*, not an equal-weight
@@ -734,6 +831,20 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
     a small, explicit empirical-Bayes prior for every stat; that is most
     useful for TDs/INTs, where zeroes are common, and modest after a full
     season of evidence.
+
+    ``plays`` is an optional ['_offense', '_week', '_plays'] table (see
+    as_of_team_weekly_plays/load_team_weekly_plays). When supplied, every
+    game's raw stat total is divided by THAT game's own play count before
+    the observed/expected ratio is built, so the ratio reflects per-play
+    defensive quality rather than volume. This exists because the
+    standalone pace multiplier applied later in build_weekly_projections
+    (opponent_defensive_pace / league_pace) already re-applies volume, from
+    the upcoming opponent's SEASON pace level; without this normalization a
+    defense that merely faces a lot of plays reads as a bad matchup twice -
+    once here, from raw per-game totals correlating with that game's play
+    count, and again through pace_mult. A game whose play count is unknown
+    is dropped from the ratio (no evidence) rather than left at raw scale,
+    which would silently mix per-play and per-game units in the same sum.
     """
     if game.empty:
         return pd.DataFrame(), pd.Series(dtype=float)
@@ -745,7 +856,7 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
         profiles, evidence_blocks = [], []
         for key, block in game.groupby(partition_keys, observed=True):
             profile, evidence = _team_game_quality_profile(
-                block, stats, as_of_week, recency_floor=recency_floor)
+                block, stats, as_of_week, recency_floor=recency_floor, plays=plays)
             if profile.empty:
                 continue
             labels = key if isinstance(key, tuple) else (key,)
@@ -763,6 +874,15 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
         profile_out = pd.concat(profiles).sort_index()
         evidence_out = pd.concat(evidence_blocks).sort_index() if evidence_blocks else pd.Series(dtype=float)
         return profile_out, evidence_out
+
+    if plays is not None and not plays.empty:
+        game = game.merge(plays, on=['_offense', '_week'], how='left')
+        known_plays = pd.to_numeric(game['_plays'], errors='coerce')
+        has_plays = known_plays > 0
+        game = game.loc[has_plays].copy()
+        if game.empty:
+            return pd.DataFrame(), pd.Series(dtype=float)
+        game[stats] = game[stats].div(known_plays[has_plays].to_numpy(), axis=0)
 
     baseline_keys = ['_offense'] + partition_keys
     baseline = game.groupby(baseline_keys, observed=True)[stats].transform('mean')
@@ -795,7 +915,8 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
 
 
 def build_team_game_quality_adjusted_matchup(hist_pos, team_col, stats, as_of_week,
-                                             recency_floor=0.0, game_universe=None):
+                                             recency_floor=0.0, game_universe=None,
+                                             plays=None):
     """Robust defense profile for one projected position channel.
 
     For every statistic, first sum *all players at that position* into one
@@ -809,6 +930,11 @@ def build_team_game_quality_adjusted_matchup(hist_pos, team_col, stats, as_of_we
     in the projection path. A spot starter can change one position team's
     total for one game, but can no longer supply a huge ratio from a tiny
     personal baseline or count as a second independent defensive game.
+
+    ``plays`` is optional and forwarded to _team_game_quality_profile - see
+    its docstring for why the ratio is normalized by each game's own play
+    count rather than left as a raw-total volume that pace_mult would then
+    double-apply.
     """
     game, group_keys = _position_team_games(
         hist_pos, team_col, stats, game_universe=game_universe)
@@ -816,7 +942,7 @@ def build_team_game_quality_adjusted_matchup(hist_pos, team_col, stats, as_of_we
         return pd.DataFrame()
     result, _evidence = _team_game_quality_profile(
         game, stats, as_of_week, recency_floor=recency_floor,
-        partition_keys=group_keys[3:],
+        partition_keys=group_keys[3:], plays=plays,
     )
     return result
 
@@ -856,21 +982,21 @@ QB_PASSING_MATCHUP_STATS = frozenset({
 
 
 def build_qb_passing_quality_adjusted_matchup(hist_qbs, team_col, stats, as_of_week,
-                                               recency_floor=0.0):
+                                               recency_floor=0.0, plays=None):
     """Backward-compatible QB-passing wrapper around the common estimator."""
     passing_stats = [stat for stat in stats if stat in QB_PASSING_MATCHUP_STATS]
     return build_team_game_quality_adjusted_matchup(
-        hist_qbs, team_col, passing_stats, as_of_week, recency_floor=recency_floor)
+        hist_qbs, team_col, passing_stats, as_of_week, recency_floor=recency_floor, plays=plays)
 
 
 def build_qb_quality_adjusted_matchup(hist_qbs, name_col, team_col, stats, as_of_week,
-                                      recency_floor=0.0):
+                                      recency_floor=0.0, plays=None):
     """Backward-compatible QB wrapper; passing and rushing stay separate
     only because callers build QB as its own position channel, not because
     rushing falls back to a player-row defensive estimator."""
     del name_col  # kept in the public signature for existing callers
     return build_team_game_quality_adjusted_matchup(
-        hist_qbs, team_col, stats, as_of_week, recency_floor=recency_floor)
+        hist_qbs, team_col, stats, as_of_week, recency_floor=recency_floor, plays=plays)
 
 
 # Four defense games are enough for the current season to move a profile
@@ -929,6 +1055,24 @@ def blend_defense_prior(current, prior, evidence, prior_games=DEFENSE_PRIOR_GAME
     return out
 
 
+def _as_of_team_game_plays(stats_df, team_col, as_of_week):
+    """Cutoff-safe per-(team, week) play count, the shared raw ingredient
+    behind both as_of_team_pace's season-level proxy and
+    as_of_team_weekly_plays' per-game table - one measurement of "plays
+    that game", not two that could quietly drift apart.
+    """
+    hist = _played_weeks_before(stats_df, as_of_week)
+    required = {team_col, 'opponent_team', 'week'}
+    if hist.empty or not required.issubset(hist.columns):
+        return pd.DataFrame(columns=[team_col, 'opponent_team', 'week', '_plays'])
+    play_cols = [c for c in ('passing_attempts', 'rushing_attempts') if c in hist.columns]
+    if not play_cols:
+        return pd.DataFrame(columns=[team_col, 'opponent_team', 'week', '_plays'])
+    frame = hist[[team_col, 'opponent_team', 'week'] + play_cols].copy()
+    frame['_plays'] = frame[play_cols].apply(pd.to_numeric, errors='coerce').fillna(0.0).sum(axis=1)
+    return frame.groupby([team_col, 'opponent_team', 'week'], observed=True)['_plays'].sum().reset_index()
+
+
 def as_of_team_pace(stats_df, team_col, as_of_week):
     """A cutoff-safe pace proxy from weekly player box scores.
 
@@ -939,26 +1083,33 @@ def as_of_team_pace(stats_df, team_col, as_of_week):
     so it is deliberately called a proxy and used only in V2 historical
     runs; it is still much more honest than reading the future.
     """
-    hist = _played_weeks_before(stats_df, as_of_week)
-    required = {team_col, 'opponent_team', 'week'}
-    if hist.empty or not required.issubset(hist.columns):
+    games = _as_of_team_game_plays(stats_df, team_col, as_of_week)
+    if games.empty:
         return pd.DataFrame(columns=['off_pace', 'def_pace'])
-    play_cols = [c for c in ('passing_attempts', 'rushing_attempts') if c in hist.columns]
-    if not play_cols:
-        return pd.DataFrame(columns=['off_pace', 'def_pace'])
-    frame = hist[[team_col, 'opponent_team', 'week'] + play_cols].copy()
-    frame['_plays'] = frame[play_cols].apply(pd.to_numeric, errors='coerce').fillna(0.0).sum(axis=1)
-    games = frame.groupby([team_col, 'week'], observed=True)['_plays'].sum().reset_index()
     off = games.groupby(team_col, observed=True)['_plays'].mean().rename('off_pace')
-    defense_games = games.rename(columns={team_col: 'offense_team'}).merge(
-        frame[[team_col, 'opponent_team', 'week']].drop_duplicates(),
-        left_on=['offense_team', 'week'], right_on=[team_col, 'week'], how='left')
-    # ``opponent_team`` is present on every player row; use the one distinct
-    # value paired with an offense/week rather than summing it per player.
-    defense_games = defense_games.dropna(subset=['opponent_team'])
-    defense_games['opponent_team'] = defense_games['opponent_team'].astype(str)
-    defense = defense_games.groupby('opponent_team', observed=True)['_plays'].mean().rename('def_pace')
+    defense = games.groupby('opponent_team', observed=True)['_plays'].mean().rename('def_pace')
+    defense.index.name = off.index.name
     return pd.concat([off, defense], axis=1)
+
+
+def as_of_team_weekly_plays(stats_df, team_col, as_of_week):
+    """Cutoff-safe per-(team, week) play count - the per-game counterpart to
+    as_of_team_pace's season-average proxy, used only in V2 historical runs
+    for the same leakage reason.
+
+    Feeds the defense-matchup ratio's own pace normalization
+    (_team_game_quality_profile's ``plays`` argument): a single game's raw
+    stat total is divided by that game's own play count before it is
+    compared to a defense's expected total, so the standalone pace
+    multiplier (built from as_of_team_pace/load_team_pace's SEASON-level
+    estimate) is the only place game volume gets applied. Without this, a
+    defense's ratio would already carry its own pace, and pace_mult would
+    apply it a second time.
+    """
+    games = _as_of_team_game_plays(stats_df, team_col, as_of_week)
+    if games.empty:
+        return pd.DataFrame(columns=['team', 'week', 'plays'])
+    return games.rename(columns={team_col: 'team', '_plays': 'plays'})[['team', 'week', 'plays']]
 
 
 # ---------------------------------------------------------------------------
@@ -1188,7 +1339,7 @@ def build_continuous_role_weights(hist_pos, name_col, pos):
 
 
 def build_role_matchup(hist_pos, name_col, team_col, stats, as_of_week, roles,
-                       recency_floor=0.0):
+                       recency_floor=0.0, plays=None):
     """Role-conditioned team-game defense profiles.
 
     A role is still assigned from a player's own measured usage, but once
@@ -1198,6 +1349,11 @@ def build_role_matchup(hist_pos, name_col, team_col, stats, as_of_week, roles,
     merely because his personal season average is tiny. The returned role
     tables retain the existing public contract, including evidence-weighted
     shrinkage in the forward multiplier.
+
+    ``plays`` is optional and forwarded to _team_game_quality_profile - same
+    per-game pace normalization as build_team_game_quality_adjusted_matchup,
+    kept consistent here so a role-conditioned rating and the overall rating
+    it blends toward are on the same (pace-free) scale.
     """
     if hist_pos.empty or not roles:
         return {}, {}
@@ -1207,7 +1363,7 @@ def build_role_matchup(hist_pos, name_col, team_col, stats, as_of_week, roles,
         return {}, {}
     result, evidence = _team_game_quality_profile(
         game, stats, as_of_week, recency_floor=recency_floor,
-        partition_keys=group_keys[3:],
+        partition_keys=group_keys[3:], plays=plays,
     )
     if result.empty:
         return {}, {}
@@ -3476,8 +3632,73 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'adjustment': 'neutral (defense residual preview only; no scoring multiplier applied)',
                 'defender_slot_coverage_used': False,
             }
+    # Man/zone scheme evidence - same weekly archive, same dormant/audit-only
+    # posture, same feature gate as the slot/wide/inline pair above (one
+    # lever for "show this PFF weekly evidence in the audit panel", not two).
+    # No season-prior equivalent exists yet for the PLAYER side (that would
+    # need its own load_season_alignment_prior-style manifest/rollover
+    # logic); at cold start pff_scheme_profiles honestly stays empty rather
+    # than guessing. The DEFENSE side needs no such branch - it is always
+    # keyed to the CURRENT year's archive with an as_of_week cutoff, exactly
+    # like pff_alignment_defense_profiles above, and is simply empty/
+    # unavailable at Week 1 when nothing has been played yet.
+    pff_scheme_profiles = pd.DataFrame()
+    pff_scheme_contract = {
+        'status': 'feature disabled', 'source_kind': 'none', 'included_weeks': [],
+        'issues': [], 'adjustment': 'neutral (no scheme matchup multiplier applied)',
+    }
+    pff_scheme_defense_profiles = pd.DataFrame()
+    pff_scheme_defense_contract = {
+        'status': 'feature disabled', 'source_kind': 'none', 'included_weeks': [],
+        'issues': [], 'adjustment': 'neutral (defense residual preview only; no scoring multiplier applied)',
+    }
+    if 'v2_pff_alignment_matchup' in feats:
+        if not cold_start:
+            try:
+                scheme_result = load_weekly_scheme_profiles(year, as_of_week)
+                pff_scheme_profiles = scheme_result.profiles
+                pff_scheme_contract = {
+                    'status': 'time-valid local scheme profiles available'
+                    if scheme_result.available else 'no eligible local scheme profiles',
+                    'source_kind': scheme_result.metadata.get('source_kind', 'weekly_archive'),
+                    'included_weeks': list(scheme_result.metadata.get('included_weeks', ())),
+                    'issues': list(scheme_result.issues),
+                    'adjustment': 'neutral (no scheme matchup multiplier applied)',
+                }
+            except Exception as exc:
+                pff_scheme_contract = {
+                    'status': 'scheme archive unavailable', 'source_kind': 'weekly_archive',
+                    'included_weeks': [], 'issues': [f'{type(exc).__name__}: {exc}'],
+                    'adjustment': 'neutral (no scheme matchup multiplier applied)',
+                }
+        try:
+            scheme_defense_result = load_weekly_scheme_defense_profiles(
+                year, as_of_week, schedule_df)
+            pff_scheme_defense_profiles = scheme_defense_result.profiles
+            pff_scheme_defense_contract = {
+                'status': ('time-valid offensive-weekly scheme defense profiles available'
+                           if scheme_defense_result.available
+                           else 'no eligible local scheme defense profiles'),
+                'source_kind': scheme_defense_result.metadata.get(
+                    'source_kind', 'weekly_offensive_scheme_archive'),
+                'included_weeks': list(scheme_defense_result.metadata.get('included_weeks', ())),
+                'issues': list(scheme_defense_result.issues),
+                'adjustment': 'neutral (defense residual preview only; no scoring multiplier applied)',
+                'scoring_active': bool(scheme_defense_result.metadata.get('scoring_active', False)),
+                'team_game_rows': int(scheme_defense_result.metadata.get('team_game_rows', 0)),
+                'profile_rows': int(scheme_defense_result.metadata.get('profile_rows', 0)),
+            }
+        except Exception as exc:
+            pff_scheme_defense_contract = {
+                'status': 'scheme-defense archive unavailable',
+                'source_kind': 'weekly_offensive_scheme_archive',
+                'included_weeks': [], 'issues': [f'{type(exc).__name__}: {exc}'],
+                'adjustment': 'neutral (defense residual preview only; no scoring multiplier applied)',
+            }
     source_contract['pff_alignment'] = pff_alignment_contract
     source_contract['pff_alignment_defense'] = pff_alignment_defense_contract
+    source_contract['pff_scheme'] = pff_scheme_contract
+    source_contract['pff_scheme_defense'] = pff_scheme_defense_contract
     pace = (as_of_team_pace(stats_df, team_col, as_of_week)
             if use_v2_guard and historical_target else load_team_pace(year))
     if cold_start and (pace is None or pace.empty):
@@ -3487,6 +3708,20 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # below would be.
         pace = load_team_pace(year - 1)
     league_pace = pace['def_pace'].mean() if pace is not None and not pace.empty and 'def_pace' in pace.columns else None
+
+    # Per-game play counts for the defense-matchup ratio's own pace
+    # normalization (see _team_game_quality_profile's ``plays`` docstring) -
+    # same live-vs-cutoff-safe source split as ``pace`` immediately above,
+    # just kept at per-(team, week) granularity instead of collapsed to a
+    # season average. ``current_plays`` covers this season's games (used by
+    # the in-season branch's own-year matchup/role tables); ``prior_plays``
+    # covers last season in full (used by every prior-season matchup/role
+    # table, at cold start and mid-season alike) - last season is already
+    # complete, so it carries no leakage risk and needs no as-of cutoff.
+    current_plays = _team_game_plays_lookup(
+        as_of_team_weekly_plays(stats_df, team_col, as_of_week)
+        if use_v2_guard and historical_target else load_team_weekly_plays(year))
+    prior_plays = _team_game_plays_lookup(load_team_weekly_plays(year - 1))
 
     cold_pool = _cold_start_pool(stats_df, name_col, team_col, as_of_week) if cold_start else pd.DataFrame()
     prior_played = _all_played_weeks(prior_stats)
@@ -3923,8 +4158,31 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if not older.empty:
             older_rates['_identity_key'] = older['_identity_key'].to_numpy(dtype=object)
 
-        role_conf = _role_confidence(player_hist, name_col, as_of_week, pos, pff_rec)
-        cur = cur.merge(role_conf.rename('role_confidence'), left_on=name_col, right_index=True, how='left')
+        if cold_start and prior_max_week is not None and not pd.isna(prior_max_week):
+            # player_hist (THIS season) is empty at cold start, so the normal
+            # path below would return an empty Series and every player would
+            # fall through to the same 0.5 neutral default - which is exactly
+            # what was happening: role_confidence, and therefore
+            # player_distribution's width_scale, was identically 1.0 for
+            # EVERY player at Week 1 of a season, making the range-of-
+            # outcomes chart's relative shape indistinguishable between
+            # players (only its point-scale differed) even though the chart
+            # itself was rendering correctly off genuinely different inputs.
+            # Substitute last season's own last-3-games snap share, the same
+            # "prior season stands in for missing current-season signal"
+            # pattern already used for matchup_matrix/roles just below - and
+            # re-key through clean_name_exact for the same reason documented
+            # there (gotcha #35): a prior-season frame's name column is not
+            # guaranteed to even be called the same thing as this year's.
+            prior_role_conf = _role_confidence(
+                player_prior, prior_name_col, int(prior_max_week) + 1, pos, pff_rec)
+            prior_role_by_key = pd.Series(
+                prior_role_conf.to_numpy(),
+                index=clean_name_exact(pd.Series(prior_role_conf.index)))
+            cur['role_confidence'] = clean_name_exact(cur[name_col]).map(prior_role_by_key).to_numpy()
+        else:
+            role_conf = _role_confidence(player_hist, name_col, as_of_week, pos, pff_rec)
+            cur = cur.merge(role_conf.rename('role_confidence'), left_on=name_col, right_index=True, how='left')
         cur['role_confidence'] = cur['role_confidence'].fillna(0.5)
         role_profiles = pd.DataFrame()
         role_change = pd.Series(dtype=float)
@@ -3950,6 +4208,21 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 alignment_rows.append(profile)
             if alignment_rows:
                 pff_alignment_for_cur = pd.DataFrame(alignment_rows, index=cur.index)
+        # Same overlay, man/zone route share instead of slot/wide/inline -
+        # see pff_scheme_profiles' construction above for why this is empty
+        # (not an error) at cold start.
+        pff_scheme_for_cur = pd.DataFrame(index=cur.index)
+        if 'v2_pff_alignment_matchup' in feats and not pff_scheme_profiles.empty:
+            scheme_rows = []
+            pff_ids = (cur.get('pff_id', pd.Series('', index=cur.index))
+                       if 'pff_id' in cur.columns else pd.Series('', index=cur.index))
+            for player, team, pff_id in zip(cur[name_col], cur['Team'], pff_ids):
+                scheme_rows.append(lookup_scheme_profile(
+                    pff_scheme_profiles, player_id=pff_id,
+                    player=str(player), team=str(team), position=pos,
+                ))
+            if scheme_rows:
+                pff_scheme_for_cur = pd.DataFrame(scheme_rows, index=cur.index)
         cur['role_change_confidence'] = cur[name_col].map(role_change).fillna(0.0)
         if not current_history_exclusions.empty:
             cur['_current_history_excluded_games'] = cur[name_col].map(
@@ -4023,6 +4296,37 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             pff_alignment_for_cur['alignment_defense_reason'] = preview_reasons
             pff_alignment_for_cur['alignment_defense_scoring_active'] = False
 
+        # Same defense-evidence preview, man/zone instead of slot/non-slot.
+        scheme_defense_previews = {}
+        if 'v2_pff_alignment_matchup' in feats:
+            pff_scheme_for_cur = pff_scheme_for_cur.reindex(cur.index)
+            scheme_preview_columns = {'targets': [], 'receptions': [], 'yards': []}
+            scheme_preview_reasons = []
+            scheme_preview_available = []
+            for row_index, opponent in zip(cur.index, cur['Opponent']):
+                man_rate = (pff_scheme_for_cur.at[row_index, 'man_route_share']
+                           if 'man_route_share' in pff_scheme_for_cur.columns else None)
+                previews = {
+                    stat: scheme_defense_residual_multiplier(
+                        pff_scheme_defense_profiles,
+                        defense_team=opponent,
+                        position=pos,
+                        player_man_rate=man_rate,
+                        stat=stat,
+                    )
+                    for stat in scheme_preview_columns
+                }
+                scheme_defense_previews[row_index] = previews
+                for stat in scheme_preview_columns:
+                    scheme_preview_columns[stat].append(previews[stat].get('candidate_multiplier', 1.0))
+                scheme_preview_reasons.append(previews['targets'].get('reason', ''))
+                scheme_preview_available.append(bool(previews['targets'].get('candidate_available', False)))
+            for stat, values in scheme_preview_columns.items():
+                pff_scheme_for_cur[f'scheme_defense_{stat}_candidate_multiplier'] = values
+            pff_scheme_for_cur['scheme_defense_candidate_available'] = scheme_preview_available
+            pff_scheme_for_cur['scheme_defense_reason'] = scheme_preview_reasons
+            pff_scheme_for_cur['scheme_defense_scoring_active'] = False
+
         # Recency + matchup-strength + rematch weighted own-history rate,
         # and the SAME defense ratings reused below to price the upcoming
         # matchup - see build_team_game_quality_adjusted_matchup's docstring and the
@@ -4048,9 +4352,30 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 build_team_game_quality_adjusted_matchup(
                     prior_pos_rows, prior_team_col, stats, anchor_week,
                     recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
-                    game_universe=prior_played,
+                    game_universe=prior_played, plays=prior_plays,
                 ) if anchor_week is not None else pd.DataFrame()
             )
+            # Deep Dive: no CURRENT-season games exist yet at cold start, so
+            # that side of the season selector is honestly empty - but last
+            # season's full log is exactly what this branch already loaded
+            # to build the projection itself, so build it here too rather
+            # than showing a blank tab for the entire preseason/Week 1
+            # window. Re-keyed through clean_name_exact, same gotcha as the
+            # role lookup just below (#35): a prior-season frame's name
+            # column is not guaranteed to even be spelled the same way.
+            player_game_log_current = np.full(len(cur), np.nan, dtype=object)
+            opponent_defense_log_current = np.full(len(cur), np.nan, dtype=object)
+            prior_annotated_pos = (prior_annotated[prior_annotated['position'].astype(str).str.upper() == pos]
+                                   if not prior_annotated.empty else prior_annotated)
+            game_log_by_name_prior = _build_player_stat_game_log(
+                prior_annotated_pos, prior_name_col, stats, matchup_matrix)
+            game_log_by_key_prior = {clean_name_exact(pd.Series([p])).iloc[0]: g
+                                     for p, g in game_log_by_name_prior.items()}
+            player_game_log_prior = clean_name_exact(cur[name_col]).map(game_log_by_key_prior).to_numpy()
+            defense_log_by_team_prior = _build_defense_weekly_log(
+                prior_pos_rows, prior_team_col, stats, prior_played,
+                anchor_week if anchor_week is not None else as_of_week)
+            opponent_defense_log_prior = cur['Opponent'].astype(str).map(defense_log_by_team_prior).to_numpy()
             # Cold start reads ROLES off last season too, and keys them by
             # the player's own name in THAT season's frame - which is why the
             # lookup below re-keys through clean_name_exact rather than
@@ -4062,7 +4387,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior_roles = build_player_roles(player_prior_pos_rows, prior_name_col, pos)
                 role_tables, role_sizes = build_role_matchup(
                     prior_pos_rows, prior_name_col, prior_team_col, stats, anchor_week, prior_roles,
-                    recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR)
+                    recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR, plays=prior_plays)
                 roles_by_key = {clean_name_exact(pd.Series([p])).iloc[0]: r
                                 for p, r in prior_roles.items()}
                 player_roles = {p: roles_by_key.get(clean_name_exact(pd.Series([p])).iloc[0])
@@ -4084,32 +4409,68 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 pos_rows, game_universe=hist, team_col=team_col)
             upcoming_opponent_map = dict(zip(cur[name_col], cur['Opponent']))
             matchup_matrix = build_team_game_quality_adjusted_matchup(
-                pos_rows, team_col, stats, as_of_week, game_universe=hist)
+                pos_rows, team_col, stats, as_of_week, game_universe=hist, plays=current_plays)
+            # prior_pos_rows/prior_anchor/prior_matrix are computed
+            # unconditionally (not just under v2_defense_prior) because the
+            # Deep Dive's prior-season selector needs them regardless of
+            # whether that feature flag lets them affect SCORING - only the
+            # blend into matchup_matrix below stays feature-gated.
+            prior_pos_rows = (prior_played[prior_played['position'].astype(str).str.upper() == pos]
+                              if not prior_played.empty else prior_played)
+            defense_prior_evidence = _defense_game_evidence(
+                prior_pos_rows, game_universe=prior_played, team_col=prior_team_col)
+            prior_anchor = (prior_max_week + 1 if prior_max_week is not None else None)
+            if prior_anchor is None and not prior_pos_rows.empty:
+                max_prior = pd.to_numeric(prior_pos_rows['week'], errors='coerce').max()
+                prior_anchor = int(max_prior) + 1 if pd.notna(max_prior) else None
+            prior_matrix = (
+                build_team_game_quality_adjusted_matchup(
+                    prior_pos_rows, prior_team_col, stats, prior_anchor,
+                    recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
+                    game_universe=prior_played, plays=prior_plays,
+                ) if prior_anchor is not None else pd.DataFrame()
+            )
             if 'v2_defense_prior' in feats:
-                prior_pos_rows = (prior_played[prior_played['position'].astype(str).str.upper() == pos]
-                                  if not prior_played.empty else prior_played)
-                defense_prior_evidence = _defense_game_evidence(
-                    prior_pos_rows, game_universe=prior_played, team_col=prior_team_col)
-                prior_anchor = (prior_max_week + 1 if prior_max_week is not None else None)
-                if prior_anchor is None and not prior_pos_rows.empty:
-                    max_prior = pd.to_numeric(prior_pos_rows['week'], errors='coerce').max()
-                    prior_anchor = int(max_prior) + 1 if pd.notna(max_prior) else None
-                prior_matrix = (
-                    build_team_game_quality_adjusted_matchup(
-                        prior_pos_rows, prior_team_col, stats, prior_anchor,
-                        recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
-                        game_universe=prior_played,
-                    ) if prior_anchor is not None else pd.DataFrame()
-                )
                 matchup_matrix = blend_defense_prior(
                     matchup_matrix, prior_matrix, _defense_game_evidence(
                         pos_rows, game_universe=hist, team_col=team_col))
+
+            # Deep Dive per-game/per-week detail for BOTH seasons, threaded
+            # through to the decomposition dialog via explanations[...]
+            # below. Current-season frames are cheap: they reuse data
+            # _weighted_player_rates and _position_team_games already
+            # compute for this exact position group once per board build
+            # (not once per player) - "stop discarding the intermediate
+            # frame", not new computation. The prior-season pair costs one
+            # more of the same cheap calls, using prior_matrix (now always
+            # built above) instead of the current-season matchup_matrix, so
+            # the season selector always has a real last-season log to show
+            # even mid-season, not only at cold start.
+            game_log_pos = hist_annotated[hist_annotated['position'].astype(str).str.upper() == pos]
+            game_log_by_name = _build_player_stat_game_log(game_log_pos, name_col, stats, matchup_matrix)
+            player_game_log_current = cur[name_col].map(game_log_by_name).to_numpy()
+
+            prior_annotated_pos = (prior_annotated[prior_annotated['position'].astype(str).str.upper() == pos]
+                                   if not prior_annotated.empty else prior_annotated)
+            game_log_by_name_prior = _build_player_stat_game_log(
+                prior_annotated_pos, prior_name_col, stats, prior_matrix)
+            game_log_by_key_prior = {clean_name_exact(pd.Series([p])).iloc[0]: g
+                                     for p, g in game_log_by_name_prior.items()}
+            player_game_log_prior = clean_name_exact(cur[name_col]).map(game_log_by_key_prior).to_numpy()
+
+            defense_log_by_team = _build_defense_weekly_log(pos_rows, team_col, stats, hist, as_of_week)
+            opponent_defense_log_current = cur['Opponent'].astype(str).map(defense_log_by_team).to_numpy()
+            defense_log_by_team_prior = _build_defense_weekly_log(
+                prior_pos_rows, prior_team_col, stats, prior_played,
+                prior_anchor if prior_anchor is not None else as_of_week)
+            opponent_defense_log_prior = cur['Opponent'].astype(str).map(defense_log_by_team_prior).to_numpy()
+
             weighted_rates, weighted_totals = _weighted_player_rates(
                 player_pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map)
             if 'role_matchup' in feats or 'v2_continuous_roles' in feats:
                 player_roles = build_player_roles(player_pos_rows, name_col, pos)
                 role_tables, role_sizes = build_role_matchup(
-                    pos_rows, name_col, team_col, stats, as_of_week, player_roles)
+                    pos_rows, name_col, team_col, stats, as_of_week, player_roles, plays=current_plays)
                 if 'v2_continuous_roles' in feats:
                     continuous_role_weights = build_continuous_role_weights(player_pos_rows, name_col, pos)
                     continuous_role_weights = continuous_role_weights.reindex(cur[name_col]).fillna(0.0)
@@ -4120,6 +4481,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # is 0 for everyone here too, so _blended_rate ignores it anyway
             # and lands entirely on prior_rate.
             weighted_rates, weighted_totals = pd.DataFrame(), pd.DataFrame()
+            # player_game_log_current/opponent_defense_log_current were
+            # already set to the honest "no games this season" NaN stub
+            # above, alongside the real prior-season pair - same fail-to-
+            # empty discipline as weighted_rates above, not fabricated.
 
         # Snap-share arrays for this position's frame. `share_ref` is the
         # position's own snap-weighted game count, which turns the position
@@ -4867,8 +5232,27 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if 'teammate_vacancy' in feats or 'v2_vacancy' in feats:
             for stat in ('passing_attempts', 'targets', 'rushing_attempts'):
                 if stat in proj_cols:
+                    # qb_nonstarter_volume_factor is included here too (it's a
+                    # QB1 gate: 1.0 for the starter and every non-QB row, hard
+                    # 0.0 for a backup QB) even though the discount it stands
+                    # in for is applied to proj_cols much later (see "sits
+                    # after optional efficiency rebuilding" below). Without it,
+                    # a benched backup's blended relief-appearance rate - his
+                    # real per-game share is correctly zero, he is never going
+                    # to play over a healthy starter - still looked like
+                    # legitimate "vacated" volume the moment the injury feed
+                    # marked him Out, and got redistributed onto the ALREADY-
+                    # STARTING QB1 on top of his own complete rate (caught via
+                    # Lamar Jackson projecting 324.79 passing yards in a normal
+                    # matchup - traced to backup Skylar Thompson's fictional
+                    # 11.26-attempt "full" volume). The starter's OWN injury
+                    # discount must still reach vacancy_volume undimmed (that's
+                    # the whole point of this snapshot, see the comment above)
+                    # - this factor is 1.0 for him regardless of his own
+                    # injury status, so that path is untouched.
                     vacancy_volume[stat] = np.clip(
-                        proj_cols[stat] * pace_mult.to_numpy() * env_mult, 0.0, None)
+                        proj_cols[stat] * pace_mult.to_numpy() * env_mult
+                        * qb_nonstarter_volume_factor, 0.0, None)
 
         for stat in proj_cols:
             # Floored at zero - every one of these is a real-world COUNT
@@ -5025,6 +5409,20 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             ):
                 if profile_col in pff_alignment_for_cur.columns:
                     out[f'_profile_{profile_col}'] = pff_alignment_for_cur[profile_col].to_numpy()
+        if not pff_scheme_for_cur.empty:
+            for profile_col in (
+                'man_route_share', 'zone_route_share', 'scheme_sample_weight', 'scheme_confidence',
+                'man_catch_rate', 'man_yards_per_target', 'man_yprr',
+                'zone_catch_rate', 'zone_yards_per_target', 'zone_yprr',
+                'scheme_available', 'scheme_semantics', 'source_weeks', 'source_week_count',
+                'scheme_defense_targets_candidate_multiplier',
+                'scheme_defense_receptions_candidate_multiplier',
+                'scheme_defense_yards_candidate_multiplier',
+                'scheme_defense_candidate_available', 'scheme_defense_reason',
+                'scheme_defense_scoring_active',
+            ):
+                if profile_col in pff_scheme_for_cur.columns:
+                    out[f'_scheme_profile_{profile_col}'] = pff_scheme_for_cur[profile_col].to_numpy()
         for stat, values in proj_cols.items():
             out[stat] = np.round(values, 2)
         for stat, values in vacancy_volume.items():
@@ -5261,9 +5659,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'final_projection': round(float(row.get(stat, 0.0)), 3),
                     'projection': round(float(row.get(stat, 0.0)), 3),
                 }
+            _pgl_cur, _odl_cur = player_game_log_current[i], opponent_defense_log_current[i]
+            _pgl_prior, _odl_prior = player_game_log_prior[i], opponent_defense_log_prior[i]
+
+            def _records(frame):
+                return frame.to_dict('records') if isinstance(frame, pd.DataFrame) else []
+
             explanations[(player, pos, row['Team'])] = {
                 'player': player, 'position': pos, 'team': row['Team'], 'opponent': row['Opponent'],
-                'target_week': int(week), 'as_of_week': int(as_of_week),
+                'target_week': int(week), 'as_of_week': int(as_of_week), 'season_year': int(year),
                 'defense_matchup': defense_matchup_by_opponent.get(str(row['Opponent'])),
                 'distribution': player_distribution(
                     pos, position_rank.iloc[i], float(row['Calibrated Model Proj Pts']),
@@ -5271,6 +5675,51 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'raw_points': float(row['Raw Model Proj Pts']),
                 'calibrated_points': float(row['Calibrated Model Proj Pts']),
                 'stat_line': {stat: float(row.get(stat, 0.0)) for stat in stats if stat in out.columns},
+                # Deep Dive tab source data, keyed by season year so the UI
+                # can offer a season selector instead of only ever showing
+                # whichever season this branch happened to run as - per-game
+                # log for this player (raw + defense-adjusted value per stat,
+                # excluded games flagged) and, for that season's upcoming/
+                # most-recent opponent read, the per-week allowed-to-every-
+                # offense log the matchup multiplier was itself built from.
+                # list-of-record-dicts, same plain-data contract as 'vacancy'
+                # below (rebuilt into a DataFrame in the UI layer, never a
+                # raw DataFrame stored here). The CURRENT season entry is
+                # honestly empty at cold start (no games played yet); the
+                # PRIOR season entry is populated in every branch.
+                'game_log_by_season': {
+                    int(year): _records(_pgl_cur),
+                    int(year) - 1: _records(_pgl_prior),
+                },
+                'defense_weekly_log_by_season': {
+                    int(year): _records(_odl_cur),
+                    int(year) - 1: _records(_odl_prior),
+                },
+                # Audit-only PFF slot/wide/inline + man/zone evidence for the
+                # Context tab. Every *_candidate_multiplier here is a preview
+                # only - see pff_alignment.py's module docstring - nothing in
+                # this dict has ever been multiplied into a scored stat.
+                'alignment_scheme_evidence': {
+                    'player_slot_rate': row.get('_profile_slot_alignment_rate'),
+                    'player_wide_rate': row.get('_profile_wide_alignment_rate'),
+                    'player_inline_rate': row.get('_profile_inline_alignment_rate'),
+                    'player_alignment_available': bool(row.get('_profile_alignment_available', False)),
+                    'player_alignment_sample_weight': row.get('_profile_alignment_sample_weight'),
+                    'defense_slot_candidate_multiplier': row.get(
+                        '_profile_alignment_defense_targets_candidate_multiplier'),
+                    'defense_alignment_candidate_available': bool(
+                        row.get('_profile_alignment_defense_candidate_available', False)),
+                    'defense_alignment_reason': row.get('_profile_alignment_defense_reason', ''),
+                    'player_man_route_share': row.get('_scheme_profile_man_route_share'),
+                    'player_zone_route_share': row.get('_scheme_profile_zone_route_share'),
+                    'player_scheme_available': bool(row.get('_scheme_profile_scheme_available', False)),
+                    'player_scheme_sample_weight': row.get('_scheme_profile_scheme_sample_weight'),
+                    'defense_man_candidate_multiplier': row.get(
+                        '_scheme_profile_scheme_defense_targets_candidate_multiplier'),
+                    'defense_scheme_candidate_available': bool(
+                        row.get('_scheme_profile_scheme_defense_candidate_available', False)),
+                    'defense_scheme_reason': row.get('_scheme_profile_scheme_defense_reason', ''),
+                },
                 'role': role | {
                     'role_confidence': float(row['Role Confidence']),
                     'expected_snap_share': float(row['Expected Snap Share']),

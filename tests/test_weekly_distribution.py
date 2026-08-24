@@ -23,12 +23,9 @@ def test_needs_refit_withholds_a_band_rather_than_fabricating_one():
 
 
 def test_tier_for_rank_matches_the_backtest_bucket_boundaries():
-    assert wd.tier_for_rank(1) == 'Elite'
-    assert wd.tier_for_rank(6) == 'Elite'
-    assert wd.tier_for_rank(7) == 'Starter'
+    assert wd.tier_for_rank(1) == 'Starter'
     assert wd.tier_for_rank(15) == 'Starter'
-    assert wd.tier_for_rank(16) == 'Flex'
-    assert wd.tier_for_rank(30) == 'Flex'
+    assert wd.tier_for_rank(30) == 'Starter'
     assert wd.tier_for_rank(31) == 'Streamer/Bench'
     assert wd.tier_for_rank(None) == 'Streamer/Bench'
     assert wd.tier_for_rank(float('nan')) == 'Streamer/Bench'
@@ -60,7 +57,7 @@ def test_high_role_confidence_narrows_the_band_around_its_own_median():
     try:
         wd.NEEDS_REFIT = False
         wd.WEEKLY_DISTRIBUTION_BANDS = {
-            'RB': {'Elite': {10: 0.40, 25: 0.70, 50: 1.00, 75: 1.30, 90: 1.60}},
+            'RB': {'Starter': {10: 0.40, 25: 0.70, 50: 1.00, 75: 1.30, 90: 1.60}},
         }
         confident = wd.player_distribution('RB', 2, calibrated_points=20.0, role_confidence=1.0)
         uncertain = wd.player_distribution('RB', 2, calibrated_points=20.0, role_confidence=0.0)

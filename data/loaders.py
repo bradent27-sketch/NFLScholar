@@ -1113,6 +1113,39 @@ def load_team_pace(year):
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
+def load_team_weekly_plays(year):
+    """
+    The same offensive-plays-run source as load_team_pace (attempts +
+    carries + sacks_suffered from nflreadpy's weekly team stats), kept at
+    per-team-per-week granularity instead of collapsed to a season average.
+
+    Feeds data.weekly_projections' defense-matchup ratio: a single game's
+    raw stat total is divided by that game's own play count before it is
+    compared to a defense's expected total, so the ratio reflects per-play
+    quality rather than volume - the standalone pace multiplier already
+    re-applies volume, from the upcoming opponent's season pace level,
+    exactly once. Normalizing the ratio by season-average pace instead of
+    each game's own play count would leave the same volume signal counted
+    twice.
+
+    Returns columns ['team', 'week', 'plays'] (empty DataFrame if nflreadpy
+    has nothing for this year).
+    """
+    try:
+        df = nflreadpy.load_team_stats([year], summary_level='week').to_pandas()
+    except Exception:
+        return pd.DataFrame(columns=['team', 'week', 'plays'])
+    if df.empty or 'team' not in df.columns:
+        return pd.DataFrame(columns=['team', 'week', 'plays'])
+    play_cols = [c for c in ['attempts', 'carries', 'sacks_suffered'] if c in df.columns]
+    if not play_cols:
+        return pd.DataFrame(columns=['team', 'week', 'plays'])
+    out = df[['team', 'week']].copy()
+    out['plays'] = df[play_cols].sum(axis=1)
+    return out.groupby(['team', 'week'], observed=True, as_index=False)['plays'].sum()
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_schedule(year):
     """
     Full season schedule, REG season only - feeds the strength-of-schedule

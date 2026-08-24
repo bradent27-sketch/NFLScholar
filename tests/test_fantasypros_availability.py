@@ -67,6 +67,34 @@ def test_parse_carries_through_a_real_probability_of_playing_when_present():
     assert abs(float(out.iloc[0]['plays_probability']) - 0.65) < 1e-9
 
 
+def test_canonical_status_maps_real_designations_to_one_of_four_buckets():
+    assert fpa.canonical_status('Questionable') == 'questionable'
+    assert fpa.canonical_status('Doubtful') == 'doubtful'
+    assert fpa.canonical_status('IR') == 'out'
+    assert fpa.canonical_status('Suspended') == 'out'
+    assert fpa.canonical_status('COV-IR') == 'out'
+    assert fpa.canonical_status('Not Starting') == 'doubtful'
+    assert fpa.canonical_status('Active') == 'healthy'
+
+
+def test_canonical_status_treats_no_report_as_healthy_not_flagged():
+    # 'No current designation' is data.weekly_projections' own fallback
+    # string for a player with nothing on the report (row['Injury Status']
+    # or 'No current designation') - not a real designation. A regression
+    # here would misread every healthy player in the app as Questionable.
+    assert fpa.canonical_status('No current designation') == 'healthy'
+    assert fpa.canonical_status('') == 'healthy'
+    assert fpa.canonical_status(None) == 'healthy'
+    assert fpa.canonical_status(float('nan')) == 'healthy'
+
+
+def test_canonical_status_treats_a_genuinely_unrecognized_status_as_questionable():
+    # A non-empty status this app doesn't recognize (e.g. an nflverse-
+    # specific code from the older V1 availability path) must never silently
+    # present as full health - it should read as "something's flagged".
+    assert fpa.canonical_status('some_unmapped_nflverse_code') == 'questionable'
+
+
 def test_fetch_injury_report_reads_the_real_nfl_injuries_schema(monkeypatch):
     """Pins the fix: name/team_id/status/comment/probability_of_playing on
     GET /nfl/injuries - not player_name/team/injury_status on /nfl/players."""

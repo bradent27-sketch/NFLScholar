@@ -29,8 +29,10 @@ from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
 from data.weekly_projections import build_weekly_projections
 from data.odds_weekly import weekly_props, weekly_market_projection
+from data.fantasypros_availability import canonical_status
 from ui.charts import sparkline_data_uri
-from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
+from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
+                        get_diverging_color, get_multiplier_color)
 from ui.components import (position_group_buttons, apply_position_group, skeleton_loader,
                            import_hint)
 
@@ -136,68 +138,285 @@ def _close_projection_dialog():
     st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
 
 
-def _open_projection_dialog(detail):
-    """Open the backend-produced weekly projection decomposition."""
-    if not detail:
-        return
+_DECOMPOSITION_2DP_STATS = {'passing_tds', 'rushing_tds', 'receiving_tds', 'passing_interceptions'}
 
-    def _body():
-        st.caption(
-            f"{detail['position']} · {detail['team']} vs {detail['opponent']} · "
-            f"Week {detail['target_week']} using information through Week {detail['as_of_week'] - 1}"
-        )
-        raw, calibrated = detail['raw_points'], detail['calibrated_points']
+
+def _fmt_stat(stat, value, signed=False):
+    """Reception/yard/attempt-type stats display at 1 decimal, TD/INT-type
+    stats at 2 - explicit request, since a TD/INT rate lives in a much
+    smaller numeric range where the extra decimal carries real signal."""
+    if value is None:
+        return '—'
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return '—'
+    if not np.isfinite(value):
+        return '—'
+    decimals = 2 if stat in _DECOMPOSITION_2DP_STATS else 1
+    return f"{value:+.{decimals}f}" if signed else f"{value:.{decimals}f}"
+
+
+def _render_decomposition_header(detail):
+    st.caption(
+        f"{detail['position']} · {detail['team']} vs {detail['opponent']} · "
+        f"Week {detail['target_week']} using information through Week {detail['as_of_week'] - 1}"
+    )
+    raw, calibrated = detail['raw_points'], detail['calibrated_points']
+    status = canonical_status(detail.get('availability', {}).get('status'))
+    if detail.get('calibration', {}).get('enabled'):
         c1, c2, c3 = st.columns(3)
         c1.metric("Raw model", f"{raw:.2f} pts")
         c2.metric("Displayed projection", f"{calibrated:.2f} pts")
-        c3.metric("Availability", f"{detail['availability']['plays_probability']:.0%}")
+        c3.metric("Availability", status.title())
+    else:
+        c1, c2 = st.columns(2)
+        c1.metric("Projected points", f"{calibrated:.2f} pts")
+        c2.metric("Availability", status.title())
 
-        matchup = detail.get('defense_matchup')
-        if matchup:
-            allowed_rank, of = matchup['rank'], matchup['of']
-            # data.matchup_signals.defense_stat_rank's own rank is 1 = allows
-            # the MOST (softest defense) - confirmed against that function's
-            # own test, test_defense_stat_rank_computes_per_game_average_
-            # and_rank ("the higher (softer) of the two" -> rank 1). Flipped
-            # here into a "toughness rank" (1 = toughest) because that is the
-            # number a fantasy decision actually wants, and because reading
-            # a raw "#1" next to the word "toughest" would otherwise say the
-            # opposite of what the underlying number means.
-            toughness_rank = of - allowed_rank + 1
-            tier = ("toughest" if toughness_rank <= of / 3
-                    else "easiest" if toughness_rank > 2 * of / 3 else "middling")
-            st.markdown(
-                f"**{detail['opponent']} defense vs {detail['position']}: {tier} matchup** — "
-                f"#{toughness_rank} of {of} toughest (allows {matchup['value']:.1f} pts/game to the "
-                f"position, league avg {matchup['league_avg']:.1f})."
-            )
-            st.caption(
-                f"Blends targets, receptions, yards and TDs into one number the way this league's own "
-                f"scoring does — source: {matchup.get('source', 'unknown')}. Not yet split by slot/wide/"
-                f"inline role (see PFF alignment role below; that split activates once enough weekly PFF "
-                f"archives exist)."
-            )
+    matchup = detail.get('defense_matchup')
+    if matchup:
+        allowed_rank, of = matchup['rank'], matchup['of']
+        # data.matchup_signals.defense_stat_rank's own rank is 1 = allows
+        # the MOST (softest defense) - confirmed against that function's
+        # own test, test_defense_stat_rank_computes_per_game_average_
+        # and_rank ("the higher (softer) of the two" -> rank 1). Flipped
+        # here into a "toughness rank" (1 = toughest) because that is the
+        # number a fantasy decision actually wants, and because reading
+        # a raw "#1" next to the word "toughest" would otherwise say the
+        # opposite of what the underlying number means.
+        toughness_rank = of - allowed_rank + 1
+        tier = ("toughest" if toughness_rank <= of / 3
+               else "easiest" if toughness_rank > 2 * of / 3 else "middling")
+        st.markdown(
+            f"**{detail['opponent']} defense vs {detail['position']}: {tier} matchup** — "
+            f"#{toughness_rank} of {of} toughest (allows {matchup['value']:.1f} pts/game to the "
+            f"position, league avg {matchup['league_avg']:.1f})."
+        )
+        st.caption(f"Source: {matchup.get('source', 'unknown')}. Full breakdown in the Deep Dive tabs below.")
+    else:
+        st.caption("Defense matchup rank: not enough prior weeks of data yet to rank this opponent against this position.")
+
+    if detail.get('experimental'):
+        st.info("Experimental V2 run — this decomposition is auditable, but its components are not yet default-on.")
+
+
+def _render_decomposition_primary_table(detail):
+    """The at-a-glance table: one row per projected stat, left-to-right
+    exactly stat -> projected value -> raw (season-blended) average ->
+    weighted (defense-adjusted) average -> defense multiplier -> context
+    multiplier -> vacancy delta - explicit request, replacing both the old
+    plain stat-line table and the old 'Projection path by stat' expander."""
+    stats = detail.get('stats', {})
+    if not stats:
+        st.caption("No projected stat line for this player.")
+        return
+    season_year = detail.get('season_year')
+    rows = []
+    for stat, values in stats.items():
+        context_mult = (
+            values.get('script_multiplier', 1.0) * values.get('pace_multiplier', 1.0)
+            * values.get('availability_multiplier', 1.0) * values.get('environment_multiplier', 1.0)
+        )
+        cur_w, cur_games = values.get('current_weight'), values.get('current_games') or 0.0
+        if cur_w is None:
+            season_note = ''
+        elif not cur_games:
+            season_note = (f"100% {season_year - 1} season" if season_year else "100% prior season")
         else:
-            st.caption("Defense matchup rank: not enough prior weeks of data yet to rank this opponent against this position.")
+            season_note = (f"{cur_w:.0%} {season_year} ({cur_games:.0f} gm) + {1 - cur_w:.0%} prior"
+                          if season_year else f"{cur_w:.0%} this season")
+        vacancy_raw = float(values.get('vacancy_delta', 0.0) or 0.0)
+        rows.append({
+            'Stat': stat.replace('_', ' ').title(),
+            'Projected value': _fmt_stat(stat, values.get('final_projection', values.get('projection'))),
+            'Raw average': _fmt_stat(stat, values.get('blended_rate')),
+            'Season mix': season_note,
+            'Weighted average': _fmt_stat(stat, values.get('current_rate')),
+            'Defense multiplier': round(float(values.get('matchup_multiplier', 1.0)), 3),
+            'Context multiplier': round(float(context_mult), 3),
+            'Vacancy Δ': _fmt_stat(stat, vacancy_raw, signed=True),
+            '_vacancy_raw': vacancy_raw,
+        })
+    table = pd.DataFrame(rows)
+    vacancy_vals = table['_vacancy_raw'].tolist()
+    display_cols = ['Stat', 'Projected value', 'Raw average', 'Season mix',
+                    'Weighted average', 'Defense multiplier', 'Context multiplier', 'Vacancy Δ']
+    display_table = table[display_cols]
 
-        if detail.get('experimental'):
-            st.info("Experimental V2 run — this decomposition is auditable, but its components are not yet default-on.")
+    # Local Styler, not a style_plain_dataframe extension - that helper is
+    # shared by every other table in the app, and this coloring rule
+    # (multiplier columns centered on 1.0) is specific to this one table.
+    def _style_column(col):
+        if col in ('Defense multiplier', 'Context multiplier'):
+            return [f'background-color:{get_multiplier_color(v)}; color:#ffffff; font-weight:bold;'
+                   for v in display_table[col]]
+        if col == 'Vacancy Δ':
+            return [f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;'
+                   for v in vacancy_vals]
+        return [''] * len(display_table)
 
-        distribution = detail.get('distribution')
-        if distribution:
-            st.markdown("**Range of outcomes**")
-            _render_distribution_chart(distribution, detail['position'])
-        else:
-            st.caption(
-                "Range of outcomes: not available yet for this run — needs scripts/fit_weekly_"
-                "distribution.py's bands (see data/weekly_distribution.py)."
-            )
+    style_grid = pd.DataFrame({col: _style_column(col) for col in display_cols})
+    styler = (display_table.style.apply(lambda _: style_grid, axis=None)
+             .format({'Defense multiplier': '{:.3f}×', 'Context multiplier': '{:.3f}×'}))
+    st.dataframe(styler, hide_index=True, width="stretch", height=df_auto_height(len(display_table)))
+    st.caption("Context multiplier = game script × pace × availability × Vegas-implied game environment.")
 
-        stat_line = pd.DataFrame([detail['stat_line']]).T.reset_index()
-        stat_line.columns = ['Projected stat', 'Value']
-        st.markdown("**Projected stat line**")
-        st.dataframe(stat_line, hide_index=True, width="stretch", height=df_auto_height(len(stat_line)))
 
+def _render_stat_deep_dive(detail, stat, game_log, defense_log, season_year=None):
+    values = detail.get('stats', {}).get(stat, {})
+    label = stat.replace('_', ' ').title()
+    season_label = season_year if season_year is not None else (detail.get('season_year') or 'current')
+
+    player_rows = [g for g in game_log if stat in g]
+    if player_rows:
+        pgl = pd.DataFrame(player_rows)
+        pgl['_week_num'] = pd.to_numeric(pgl.get('week'), errors='coerce')
+        pgl = pgl.dropna(subset=['_week_num']).sort_values('_week_num')
+        eligible = (pgl['_player_history_eligible'] if '_player_history_eligible' in pgl.columns
+                   else pd.Series(True, index=pgl.index))
+        reason = (pgl['_player_history_reason'] if '_player_history_reason' in pgl.columns
+                 else pd.Series('', index=pgl.index))
+        included = [('Yes' if e else f'Excluded — {r}') for e, r in zip(eligible, reason)]
+        adj_col = f'_defadj_{stat}'
+        pgl_display = pd.DataFrame({
+            'Week': pgl['_week_num'].astype(int),
+            'Opponent': pgl.get('opponent_team', ''),
+            f'Raw {label}': [_fmt_stat(stat, v) for v in pgl[stat]],
+            f'Defense-adj {label}': [_fmt_stat(stat, v) for v in pgl.get(adj_col, pd.Series(dtype=float))],
+            'Included': included,
+        })
+        spark_values = pd.to_numeric(pgl[stat], errors='coerce').fillna(0.0).tolist()
+        season_avg = float(np.mean(spark_values)) if spark_values else None
+        st.markdown(
+            f"<img src='{sparkline_data_uri(spark_values, season_avg, width=260, height=60)}'>",
+            unsafe_allow_html=True,
+        )
+        st.dataframe(pgl_display, hide_index=True, width="stretch", height=df_auto_height(len(pgl_display)))
+        n_excluded = int((~eligible.astype(bool)).sum())
+        if n_excluded:
+            st.caption(f"{n_excluded} game(s) excluded from this player's rate evidence (marked above, not hidden).")
+    else:
+        st.caption(f"No {season_label} season games logged yet for {label.lower()}.")
+
+    st.markdown(f"**{detail['opponent']} defense — what it's allowed to {label.lower()}, by week**")
+    defense_rows = [g for g in defense_log if stat in g]
+    if defense_rows:
+        dgl = pd.DataFrame(defense_rows)
+        dgl['_week_num'] = pd.to_numeric(dgl.get('_week'), errors='coerce')
+        dgl = dgl.dropna(subset=['_week_num']).sort_values('_week_num')
+        baseline_col = f'_baseline_{stat}'
+        dgl_display = pd.DataFrame({
+            'Week': dgl['_week_num'].astype(int),
+            'Offense faced': dgl.get('_offense', ''),
+            f'Allowed {label}': [_fmt_stat(stat, v) for v in dgl[stat]],
+            "That offense's own average": [_fmt_stat(stat, v) for v in dgl.get(baseline_col, pd.Series(dtype=float))],
+            'Recency weight': [f"{v:.2f}" if pd.notna(v) else '—' for v in dgl.get('_weight', pd.Series(dtype=float))],
+        })
+        st.dataframe(dgl_display, hide_index=True, width="stretch", height=df_auto_height(len(dgl_display)))
+        st.caption(
+            f"Defense multiplier ({values.get('matchup_multiplier', 1.0):.3f}×): each week above compares what "
+            f"{detail['opponent']} allowed to that offense's own average, recency-weighted, then re-centered "
+            f"to a league average of 1.0 — this table is that comparison's raw ingredients."
+        )
+    else:
+        st.caption(f"No {label.lower()} matchup evidence available for {detail['opponent']} yet.")
+
+    notes = []
+    if values.get('prior_source'):
+        role_scale = values.get('role_scale')
+        notes.append(f"Prior-season source: {values['prior_source']}"
+                    + (f" (role scale {role_scale:.3f})" if role_scale is not None else ""))
+    if values.get('efficiency_denominator'):
+        notes.append(
+            f"Efficiency rebuild: projected {values['efficiency_denominator'].replace('_', ' ')} × "
+            f"efficiency rate {values.get('efficiency_rate', 0.0):.3f}")
+    if values.get('two_year_td_prior'):
+        notes.append("Uses a comparable two-year TD prior.")
+    if values.get('qb1_selection_required'):
+        notes.append("QB1 selection required — volume held at zero until selected.")
+    elif not values.get('qb_projected_starter', True):
+        notes.append("Not the expected starter — normal QB volume held at zero.")
+    if values.get('rb_segment_status') not in (None, '', 'no_clear_internal_gap'):
+        notes.append(f"RB role segment: {values['rb_segment_status']}.")
+    if notes:
+        st.caption(" · ".join(notes))
+
+
+def _render_context_deep_dive(detail):
+    stats = detail.get('stats', {})
+    rows = []
+    for stat, values in stats.items():
+        rows.append({
+            'Stat': stat.replace('_', ' ').title(),
+            'Game script': f"{values.get('script_multiplier', 1.0):.3f}×",
+            'Pace': f"{values.get('pace_multiplier', 1.0):.3f}×",
+            'Availability': f"{values.get('availability_multiplier', 1.0):.3f}×",
+            'Environment': f"{values.get('environment_multiplier', 1.0):.3f}×",
+        })
+    if rows:
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", height=df_auto_height(len(rows)))
+    sample = next(iter(stats.values()), {})
+    target_margin = sample.get('target_margin')
+    opp_pace, league_pace = sample.get('opponent_defensive_pace'), sample.get('league_pace')
+    st.caption(
+        f"**Game script** ({sample.get('script_status', 'not modeled')}"
+        + (f", target margin {target_margin:+.1f}" if target_margin is not None else "")
+        + "): this player's own history at similar Vegas-implied point margins. "
+        "**Pace**: opponent's plays/game ("
+        + (f"{opp_pace:.1f}" if opp_pace is not None else "unavailable") + " vs league "
+        + (f"{league_pace:.1f}" if league_pace is not None else "unavailable") + "). "
+        "**Availability**: this week's injury/role discount. **Environment**: Vegas-implied team total "
+        f"and venue ({sample.get('environment_status', 'feature disabled')})."
+    )
+    role = detail.get('role', {})
+    if role.get('alignment_available'):
+        alignment_bits = []
+        for lbl, key in (('Slot', 'slot_alignment_rate'), ('Non-slot', 'non_slot_alignment_rate'),
+                         ('Wide', 'wide_alignment_rate'), ('Inline', 'inline_alignment_rate')):
+            value = role.get(key)
+            if value is not None and pd.notna(value):
+                alignment_bits.append(f"{lbl}: {float(value):.0%}")
+        if alignment_bits:
+            st.markdown("**PFF alignment role**")
+            st.caption(" · ".join(alignment_bits))
+    if role.get('alignment_defense_candidate_available'):
+        st.caption("PFF alignment-defense residual: audit-only, not yet scoring this projection (needs "
+                  "enough weekly PFF archives, then a predeclared backtest to authorize it).")
+
+    evidence = detail.get('alignment_scheme_evidence', {})
+    if evidence.get('player_scheme_available'):
+        man, zone = evidence.get('player_man_route_share'), evidence.get('player_zone_route_share')
+        if man is not None and pd.notna(man):
+            st.markdown("**PFF man/zone role**")
+            st.caption(f"Man: {float(man):.0%}"
+                      + (f" · Zone: {float(zone):.0%}" if zone is not None and pd.notna(zone) else ""))
+    defense_bits = []
+    if evidence.get('defense_alignment_candidate_available'):
+        mult = evidence.get('defense_slot_candidate_multiplier')
+        if mult is not None and pd.notna(mult):
+            defense_bits.append(f"slot-weighted {float(mult):.3f}×")
+    if evidence.get('defense_scheme_candidate_available'):
+        mult = evidence.get('defense_man_candidate_multiplier')
+        if mult is not None and pd.notna(mult):
+            defense_bits.append(f"man-weighted {float(mult):.3f}×")
+    if defense_bits:
+        st.markdown("**Opponent alignment/scheme vulnerability (candidate only)**")
+        st.caption(
+            f"{detail['opponent']}'s defense, back-calculated from every offense it actually faced this "
+            f"season — " + " · ".join(defense_bits) + ". Audit-only: not applied to this projection, pending "
+            "a predeclared out-of-sample backtest."
+        )
+
+
+def _render_decomposition_audit_expander(detail):
+    """Everything that isn't needed at a glance, preserved rather than
+    dropped - role/depth-chart provenance, the RB allocator ledger, the
+    availability and calibration sources, the injury/vacancy ledger, and the
+    data-confidence/cutoff safeguards. One collapsed expander instead of
+    being permanently on-page, which is what actually fixes 'too much text,
+    hard to track' without losing any of the underlying audit trail."""
+    with st.expander("Role, audit & data sources", expanded=False):
         role = detail.get('role', {})
         role_bits = []
         for label, key, fmt in (
@@ -227,7 +446,7 @@ def _open_projection_dialog(detail):
         if role.get('returning_role_restored'):
             st.info(
                 'Preseason role restoration: prior missed games were not treated as a reduced Week 1 workload; '
-                f"the player’s proven active-game role was used ({role.get('returning_role_reason', 'role recovery')})."
+                f"the player's proven active-game role was used ({role.get('returning_role_reason', 'role recovery')})."
             )
         elif role.get('preseason_role_source') not in (None, 'Not applicable'):
             st.caption(f"Preseason role source: {role['preseason_role_source']}.")
@@ -258,34 +477,6 @@ def _open_projection_dialog(detail):
             )
         if role.get('alignment_note'):
             st.caption(f"Alignment: {role['alignment_note']}")
-        if role.get('alignment_available'):
-            alignment_bits = []
-            for label, key in (
-                ('Slot', 'slot_alignment_rate'), ('Non-slot', 'non_slot_alignment_rate'),
-                ('Wide', 'wide_alignment_rate'), ('Inline', 'inline_alignment_rate'),
-            ):
-                value = role.get(key)
-                if value is not None and pd.notna(value):
-                    alignment_bits.append(f"{label}: {float(value):.0%}")
-            if alignment_bits:
-                st.caption("PFF alignment role — " + " · ".join(alignment_bits))
-        if role.get('alignment_defense_candidate_available'):
-            target_preview = role.get('alignment_defense_targets_candidate_multiplier')
-            reception_preview = role.get('alignment_defense_receptions_candidate_multiplier')
-            yard_preview = role.get('alignment_defense_yards_candidate_multiplier')
-            preview_bits = []
-            for label, value in (
-                ('targets', target_preview), ('receptions', reception_preview), ('yards', yard_preview),
-            ):
-                if value is not None and pd.notna(value):
-                    preview_bits.append(f"{label} {float(value):.3f}×")
-            if preview_bits:
-                st.caption(
-                    "PFF alignment-defense residual preview — " + " · ".join(preview_bits)
-                    + ". Audit-only; it does not change this projection until it passes backtests."
-                )
-        elif role.get('alignment_defense_reason'):
-            st.caption("Alignment-defense evidence: " + str(role['alignment_defense_reason']))
 
         if detail.get('position') == 'RB' and (
                 role.get('rb_allocator_applied')
@@ -349,189 +540,93 @@ def _open_projection_dialog(detail):
         if calibration:
             if calibration.get('enabled'):
                 st.caption(
-                    f"Point calibration only: raw {calibration.get('raw_points', raw):.2f} → "
-                    f"displayed {calibration.get('displayed_points', calibrated):.2f} "
+                    f"Point calibration only: raw {calibration.get('raw_points', detail['raw_points']):.2f} → "
+                    f"displayed {calibration.get('displayed_points', detail['calibrated_points']):.2f} "
                     f"({calibration.get('delta', 0.0):+.2f}); "
                     f"slope {calibration.get('slope', 1.0):.3f}, intercept {calibration.get('intercept', 0.0):.3f}."
                 )
             else:
                 st.caption("Point calibration is disabled for this model run; the stat line itself is unchanged either way.")
 
-        # Plain-language summary of the ONE stat that drives this player's
-        # volume, ahead of the dense per-stat tables below. The numbers here
-        # already exist in detail['stats'][primary]; this is presentation
-        # only - explicit ask was "much more clear to understand", not new
-        # math. QB1-gated/zero-workload rows skip it - "35% current + 65%
-        # prior" reads as informative for a real blend and as noise for a
-        # player whose volume is held at zero by the QB1 gate instead.
-        primary_stat = {'QB': 'passing_attempts', 'RB': 'rushing_attempts',
-                        'WR': 'targets', 'TE': 'targets'}.get(detail.get('position'))
-        primary = (detail.get('stats', {}) or {}).get(primary_stat) if primary_stat else None
-        if primary and not primary.get('qb1_selection_required') and primary.get('qb_projected_starter', True):
-            cur_w = primary.get('current_weight')
-            cur_rate, cur_games = primary.get('current_rate'), primary.get('current_games')
-            prior_rate, prior_source = primary.get('prior_rate'), primary.get('prior_source', 'position fallback')
-            blended = primary.get('blended_rate')
-            label = primary_stat.replace('_', ' ')
-            if cur_w is not None and blended is not None:
-                st.markdown("**Player average, in plain terms**")
-                if cur_games:
-                    st.caption(
-                        f"{label.title()}: **{cur_w:.0%} this season** ({cur_rate:.1f}/game over "
-                        f"{cur_games:.0f} game(s)) blended with **{1 - cur_w:.0%} prior evidence** "
-                        f"({prior_rate:.1f}/game, from {prior_source}) → **{blended:.1f}/game** before "
-                        f"matchup, script, and pace adjustments below."
-                    )
-                else:
-                    st.caption(
-                        f"{label.title()}: no current-season games yet, so this is 100% prior evidence "
-                        f"({prior_rate:.1f}/game, from {prior_source}) → **{blended:.1f}/game** before "
-                        f"matchup, script, and pace adjustments below."
-                    )
-                defense_mult = primary.get('matchup_multiplier')
-                if defense_mult is not None:
-                    direction = "tougher" if defense_mult < 0.98 else ("easier" if defense_mult > 1.02 else "roughly average")
-                    st.caption(
-                        f"Defense adjustment on {label}: **{defense_mult:.3f}×** "
-                        f"({direction} than a neutral matchup) via {primary.get('defense_profile', 'current season')}."
-                    )
-
-        stat_rows = []
-        for stat, values in detail.get('stats', {}).items():
-            context_mult = (
-                values.get('script_multiplier', 1.0)
-                * values.get('pace_multiplier', 1.0)
-                * values.get('availability_multiplier', 1.0)
-                * values.get('environment_multiplier', 1.0)
-            )
-            stat_rows.append({
-                'Stat': stat.replace('_', ' ').title(),
-                'Channel': values.get('channel', ''),
-                'Build path': values.get('build_path', 'direct rate'),
-                'Blended rate': values.get('blended_rate'),
-                'Defense multiplier': values['matchup_multiplier'],
-                'Context multiplier': round(context_mult, 3),
-                'Pre-vacancy': values.get('pre_vacancy_projection'),
-                'Vacancy Δ': values.get('vacancy_delta', 0.0),
-                'Final projection': values.get('final_projection', values['projection']),
-            })
-        if stat_rows:
-            with st.expander("Projection path by stat", expanded=True):
-                st.caption("Direct path: blended rate × defense × script × pace × availability × environment. "
-                           "Derived stats are rebuilt from their projected opportunity and efficiency rate.")
-                st.dataframe(pd.DataFrame(stat_rows), hide_index=True, width="stretch",
-                              height=df_auto_height(min(len(stat_rows), 10)))
-            for stat, values in detail.get('stats', {}).items():
-                title = stat.replace('_', ' ').title()
-                with st.expander(f"{title} — inputs and evidence"):
-                    role_scale = values.get('role_scale', 1.0)
-                    st.markdown(
-                        f"**Rate blend:** current {values.get('current_rate', 0.0):.3f} "
-                        f"over {values.get('current_games', 0.0):.0f} game(s), with current-season weight "
-                        f"{values.get('current_weight', 0.0):.1%}.  "
-                        f"Prior source: {values.get('prior_source', 'position fallback')} — raw "
-                        f"{values.get('raw_prior_rate', '—') if values.get('raw_prior_rate') is not None else '—'}, "
-                        f"role scale {role_scale:.3f}, used prior {values.get('prior_rate', 0.0):.3f}; "
-                        f"blended rate {values.get('blended_rate', 0.0):.3f}."
-                    )
-                    st.caption(
-                        f"Expected snap share: {values.get('expected_snap_share', 0.0):.0%}; "
-                        f"prior active snap share: "
-                        f"{values.get('prior_snap_share'):.0%}" if values.get('prior_snap_share') is not None
-                        else f"Expected snap share: {values.get('expected_snap_share', 0.0):.0%}; prior active snap share unavailable."
-                    )
-                    current_excluded = values.get('current_history_excluded_games', 0.0) or 0.0
-                    prior_excluded = values.get('prior_history_excluded_games', 0.0) or 0.0
-                    if current_excluded or prior_excluded:
-                        reasons = '; '.join(filter(None, [
-                            values.get('current_history_exclusion_reasons', ''),
-                            values.get('prior_history_exclusion_reasons', ''),
-                        ]))
-                        st.caption(
-                            f"Partial-game screen: excluded {current_excluded:.0f} current and "
-                            f"{prior_excluded:.0f} prior full-game rate sample(s)"
-                            f"{f' — {reasons}' if reasons else ''}."
-                        )
-                    if values.get('qb1_selection_required'):
-                        st.caption("QB1 selection: required for this ambiguous room; QB volume is held at zero until selected.")
-                    elif not values.get('qb_projected_starter', True):
-                        st.caption("QB status: not the expected starter; normal QB volume is held at zero.")
-                    elif detail.get('position') == 'QB':
-                        st.caption(f"QB status: expected starter ({values.get('qb1_workload_source', 'not recorded')}).")
-                    if values.get('returning_role_restored'):
-                        st.caption(
-                            'Preseason active-role restoration is applied for this returning skill player: '
-                            f"{values.get('returning_role_reason', 'role recovery')}."
-                        )
-                    if detail.get('position') == 'RB' and values.get('rb_segment_status') not in (None, '', 'no_clear_internal_gap'):
-                        st.caption(
-                            f"RB role segment: {values.get('rb_segment_status')}; pre-gap "
-                            f"{values.get('rb_segment_pre_absence_snap_share') or 0:.0%}, "
-                            f"gap {values.get('rb_segment_gap_games') or 0:.0f} team game(s), "
-                            f"return {values.get('rb_segment_return_snap_share') or 0:.0%}; "
-                            f"incumbent credit {values.get('rb_interrupted_incumbent_credit') or 0:.2f}, "
-                            f"shared-healthy lead {values.get('rb_shared_healthy_lead_score') or 0:+.2f}, "
-                            f"replacement-only downweight {values.get('rb_replacement_only_downweight') or 0:.2f}."
-                        )
-                    st.markdown(
-                        f"**Defense:** {values.get('defense_profile', 'current season')} · "
-                        f"{values.get('matchup_multiplier', 1.0):.3f}× multiplier."
-                    )
-                    if values.get('defense_estimator') or values.get('role_overlay'):
-                        st.caption(
-                            f"Defense estimator: {values.get('defense_estimator', 'not recorded')}. "
-                            f"Evidence: current {values.get('defense_current_games', 0.0):.0f} "
-                            f"defense game(s), prior {values.get('defense_prior_games', 0.0):.0f}. "
-                            f"Role overlay: {values.get('role_overlay', 'not recorded')}."
-                        )
-                    target_margin = values.get('target_margin')
-                    margin_text = f"target margin {target_margin:+.1f}" if target_margin is not None else "no target margin"
-                    st.caption(
-                        f"Game script: {values.get('script_status', 'not modeled')} "
-                        f"({margin_text}; {values.get('script_multiplier', 1.0):.3f}×). "
-                        f"Pace: opponent {values.get('opponent_defensive_pace') if values.get('opponent_defensive_pace') is not None else 'unavailable'} "
-                        f"vs league {values.get('league_pace') if values.get('league_pace') is not None else 'unavailable'} "
-                        f"({values.get('pace_multiplier', 1.0):.3f}×)."
-                    )
-                    st.caption(
-                        f"Availability multiplier: {values.get('availability_multiplier', 1.0):.3f}×. "
-                        f"Environment: {values.get('environment_status', 'feature disabled')} "
-                        f"({values.get('environment_multiplier', 1.0):.3f}×)."
-                    )
-                    if values.get('efficiency_denominator'):
-                        st.caption(
-                            f"Efficiency rebuild: projected {values['efficiency_denominator'].replace('_', ' ')} × "
-                            f"efficiency rate {values.get('efficiency_rate', 0.0):.3f} "
-                            f"(evidence {values.get('efficiency_evidence', 0.0):.0f}; matchup "
-                            f"{values.get('efficiency_matchup_multiplier', 1.0):.3f}×; defense source "
-                            f"{values.get('efficiency_defense_estimator', 'not recorded')})."
-                        )
-                    if values.get('two_year_td_prior'):
-                        st.caption("Comparable two-year TD prior was used for this touchdown-rate estimate.")
-                    st.markdown(
-                        f"**Final:** pre-vacancy {values.get('pre_vacancy_projection', 0.0):.3f} "
-                        f"+ vacancy change {values.get('vacancy_delta', 0.0):+.3f} = "
-                        f"{values.get('final_projection', values.get('projection', 0.0)):.3f}."
-                    )
-
         vacancy = detail.get('vacancy', [])
         if vacancy:
-            with st.expander("Injury/vacancy ledger"):
-                st.dataframe(pd.DataFrame(vacancy), hide_index=True, width="stretch")
+            st.markdown("**Injury/vacancy ledger**")
+            st.dataframe(pd.DataFrame(vacancy), hide_index=True, width="stretch")
 
         contract = detail.get('data_contract', {})
-        with st.expander("Data confidence and cutoff safeguards"):
+        st.markdown("**Data confidence and cutoff safeguards**")
+        st.caption(
+            f"Target classified as {'historical' if contract.get('historical_target') else 'live/upcoming'}; "
+            f"latest observed week: {contract.get('latest_observed_week') or 'none'}."
+        )
+        for label in ('pff_season_totals', 'pff_alignment', 'pace', 'injury', 'market_script',
+                      'prior_defense_recency', 'qb_starter_source',
+                      'preseason_skill_role_policy', 'ourlads_preseason_depth_chart',
+                      'availability', 'rb_role_segments',
+                      'partial_game_history_filter'):
+            st.write(f"{label.replace('_', ' ').title()}: {contract.get(label, 'unknown')}")
+        st.caption("Market and FantasyPros values in the ranking table are comparisons, never inputs to this projection.")
+
+
+def _open_projection_dialog(detail):
+    """Open the backend-produced weekly projection decomposition: header ->
+    primary at-a-glance table -> range of outcomes -> tabbed Deep Dive ->
+    role/audit detail, in that order - explicit request, replacing what was
+    previously a long flat stack of mostly free-text captions."""
+    if not detail:
+        return
+
+    def _body():
+        _render_decomposition_header(detail)
+        _render_decomposition_primary_table(detail)
+
+        distribution = detail.get('distribution')
+        if distribution:
+            st.markdown("**Range of outcomes**")
+            _render_distribution_chart(distribution, detail['position'])
+        else:
             st.caption(
-                f"Target classified as {'historical' if contract.get('historical_target') else 'live/upcoming'}; "
-                f"latest observed week: {contract.get('latest_observed_week') or 'none'}."
+                "Range of outcomes: not available yet for this run — needs scripts/fit_weekly_"
+                "distribution.py's bands (see data/weekly_distribution.py)."
             )
-            for label in ('pff_season_totals', 'pff_alignment', 'pace', 'injury', 'market_script',
-                          'prior_defense_recency', 'qb_starter_source',
-                          'preseason_skill_role_policy', 'ourlads_preseason_depth_chart',
-                          'availability', 'rb_role_segments',
-                          'partial_game_history_filter'):
-                st.write(f"{label.replace('_', ' ').title()}: {contract.get(label, 'unknown')}")
-            st.caption("Market and FantasyPros values in the ranking table are comparisons, never inputs to this projection.")
+
+        stats = detail.get('stats', {})
+        if stats:
+            st.markdown("**Deep dive**")
+            game_log_by_season = detail.get('game_log_by_season') or {}
+            defense_log_by_season = detail.get('defense_weekly_log_by_season') or {}
+            season_years = sorted(set(game_log_by_season) | set(defense_log_by_season), reverse=True)
+            if len(season_years) > 1:
+                current_year = detail.get('season_year')
+                season_labels = {
+                    yr: (f"{yr} (this season)" if yr == current_year else f"{yr} (last season)")
+                    for yr in season_years
+                }
+                # Default to whichever season actually has games logged - the
+                # honest empty case is a cold-start CURRENT season, and
+                # there's no reason to land the user on a blank tab by
+                # default when last season's full log is one click away.
+                default_year = next(
+                    (yr for yr in season_years if game_log_by_season.get(yr)), season_years[0])
+                selected_year = st.radio(
+                    "Season", season_years, index=season_years.index(default_year),
+                    format_func=lambda yr: season_labels[yr], horizontal=True,
+                    key=(f"weekly_rank_deepdive_season_{detail['player']}_{detail['team']}_"
+                        f"{detail['target_week']}_{detail['as_of_week']}"),
+                )
+            else:
+                selected_year = season_years[0] if season_years else detail.get('season_year')
+            game_log = game_log_by_season.get(selected_year) or []
+            defense_log = defense_log_by_season.get(selected_year) or []
+            stat_keys = list(stats.keys())
+            tabs = st.tabs([s.replace('_', ' ').title() for s in stat_keys] + ['Context'])
+            for stat, tab in zip(stat_keys, tabs[:-1]):
+                with tab:
+                    _render_stat_deep_dive(detail, stat, game_log, defense_log, selected_year)
+            with tabs[-1]:
+                _render_context_deep_dive(detail)
+
+        _render_decomposition_audit_expander(detail)
 
     dialog = st.dialog(f"Projection decomposition — {detail['player']}", width="large",
                        on_dismiss=_close_projection_dialog)(_body)
@@ -1142,7 +1237,14 @@ def render():
         # projections side by side, then the stat line behind this app's own
         # number, then the context columns, then the three source ranks
         # together as a comparison block at the end.
-        display_cols = ['Rank', 'Player', 'Position', 'Team', 'Opponent',
+        #
+        # No standalone Position column - dropped to save table width, per
+        # explicit request. Its info isn't lost: every rank column already
+        # carries it in the "RB4"-style label (_woven_rank), and the rank
+        # columns are now colored by position too (position_values/
+        # position_cols below) so the same at-a-glance signal the Position
+        # column gave survives without spending a column on it.
+        display_cols = ['Rank', 'Player', 'Team', 'Opponent',
                         'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts']
         display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
         display_cols += ['Market Coverage', 'Injury Status', 'Last 5 Weeks',
@@ -1150,13 +1252,19 @@ def render():
                         'FantasyPros ECR', 'Model vs FantasyPros ECR']
 
         # 'Last 5 Weeks' is built per-displayed-row further down, so it isn't
-        # a real column yet at slicing time.
-        keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier']
+        # a real column yet at slicing time. 'Position' is kept even though
+        # it's no longer in display_cols (see the comment above) - the
+        # position-group filter just below and the rank-column position
+        # coloring further down both still need the raw values; it's
+        # dropped from the actually-rendered frame later, at the
+        # display_cols re-select (indexed = indexed[[...]]).
+        keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position']
         positions, group_label = position_group_buttons('wr', default='SUPERFLEX')
         filtered_df = apply_position_group(merged_model[keep_cols], positions, pos_col='Position')
         total_filtered = len(filtered_df)
         display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
         tier_values = display_df['_tier'].tolist()
+        position_values = display_df['Position'].tolist()
         display_df = display_df.drop(columns=['_tier'])
         indexed = display_df.set_index('Player')
 
@@ -1199,7 +1307,7 @@ def render():
             if c in indexed.columns and indexed[c].notna().any():
                 pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
         column_config = build_column_help_config(
-            indexed, pinned_cols=['Rank', 'Team', 'Position', 'Opponent'])
+            indexed, pinned_cols=['Rank', 'Team', 'Opponent'])
         column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
             help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
                   f"({form_source_year}), with the dotted line at that season's average"),
@@ -1230,6 +1338,15 @@ def render():
         st.dataframe(
             style_plain_dataframe(indexed, numeric_pct_cols=pct_cols,
                                   tier_cols={'Model Rank': tier_values} if 'Model Rank' in indexed.columns else None,
+                                  # Model Rank keeps its existing tier shading
+                                  # (a separate explicit request - performance
+                                  # cliffs, not position) rather than also
+                                  # getting position colors here; the other
+                                  # three rank columns had no coloring at all
+                                  # before, so this is a clean addition there.
+                                  position_cols={c: position_values for c in
+                                                 ('Rank', 'FantasyPros Rank', 'Market Rank')
+                                                 if c in indexed.columns},
                                   label_cols={c: labels for c, labels in rank_labels.items()
                                               if c in indexed.columns}),
             width="stretch", height=df_auto_height(min(len(display_df), 40), row_px=42),

@@ -117,6 +117,8 @@ ARCHIVE_COLUMNS = [
     "week",
     "summary_path",
     "concept_path",
+    "scheme_path",
+    "scheme_present",
     "pair_complete",
     "manifest_present",
     "regular_season",
@@ -256,6 +258,86 @@ _SLOT_EVENT_COLUMNS = (
     "slot_touchdowns",
 )
 
+# ---------------------------------------------------------------------------
+# Weekly man/zone receiving-scheme tendency (player side only)
+# ---------------------------------------------------------------------------
+# receiving_scheme.csv is self-contained: man_* and zone_* already partition
+# every route/target PFF assigned a coverage shell to, so unlike the slot
+# alignment profile above there is no second "total" report to merge in -
+# one file, one week, one validated table. This is deliberately a separate
+# schema from PROFILE_COLUMNS (not a set of extra columns bolted onto it):
+# alignment (slot/wide/inline) and scheme (man/zone) are two independent
+# dimensions of the same route, not alternate labels for one dimension - a
+# player has both a slot rate AND a man rate at once.
+
+PFF_SCHEME_VERSION = "v1_player_scheme_tendency_foundation"
+
+SCHEME_PROFILE_COLUMNS = [
+    "player_id",
+    "player",
+    "position",
+    "team",
+    "identity_key",
+    "identity_quality",
+    "man_route_share",
+    "zone_route_share",
+    "scheme_sample_weight",
+    "scheme_confidence",
+    "man_routes",
+    "man_targets",
+    "man_receptions",
+    "man_yards",
+    "man_touchdowns",
+    "man_catch_rate",
+    "man_yards_per_target",
+    "man_yprr",
+    "zone_routes",
+    "zone_targets",
+    "zone_receptions",
+    "zone_yards",
+    "zone_touchdowns",
+    "zone_catch_rate",
+    "zone_yards_per_target",
+    "zone_yprr",
+    "scheme_available",
+    "scheme_semantics",
+    "source_kind",
+    "source_year",
+    "source_weeks",
+    "source_week_count",
+    "source_regular_season",
+    "source_time_valid",
+    "source_confidence",
+    "source_paths",
+    "source_notes",
+    "profile_version",
+]
+
+_SCHEME_ALIASES = {
+    "player": ("player", "player_name", "name"),
+    "player_id": ("player_id", "pff_player_id", "pff_id"),
+    "position": ("position", "pos"),
+    "team_name": ("team_name", "team"),
+    "man_routes": ("man_routes",),
+    "man_targets": ("man_targets",),
+    "man_receptions": ("man_receptions",),
+    "man_yards": ("man_yards",),
+    "man_touchdowns": ("man_touchdowns", "man_tds"),
+    "man_yprr": ("man_yprr",),
+    "zone_routes": ("zone_routes",),
+    "zone_targets": ("zone_targets",),
+    "zone_receptions": ("zone_receptions",),
+    "zone_yards": ("zone_yards",),
+    "zone_touchdowns": ("zone_touchdowns", "zone_tds"),
+    "zone_yprr": ("zone_yprr",),
+    "player_game_count": ("player_game_count", "games", "games_played"),
+}
+
+_SCHEME_EVENT_COLUMNS = (
+    "man_routes", "man_targets", "man_receptions", "man_yards", "man_touchdowns", "man_yprr",
+    "zone_routes", "zone_targets", "zone_receptions", "zone_yards", "zone_touchdowns", "zone_yprr",
+)
+
 
 @dataclass
 class AlignmentLoadResult:
@@ -306,6 +388,11 @@ class AlignmentDefenseLoadResult:
 def empty_alignment_profiles() -> pd.DataFrame:
     """Return the schema-stable, empty representation of no usable source."""
     return pd.DataFrame(columns=PROFILE_COLUMNS)
+
+
+def empty_scheme_profiles() -> pd.DataFrame:
+    """Return the schema-stable, empty representation of no usable man/zone source."""
+    return pd.DataFrame(columns=SCHEME_PROFILE_COLUMNS)
 
 
 def empty_alignment_team_games() -> pd.DataFrame:
@@ -370,6 +457,55 @@ def neutral_alignment_profile(reason: str = "No time-valid PFF alignment source"
         "source_paths": "",
         "source_notes": reason,
         "profile_version": PFF_ALIGNMENT_VERSION,
+    }
+
+
+def neutral_scheme_profile(reason: str = "No time-valid PFF scheme source") -> dict[str, Any]:
+    """A safe no-op man/zone tendency profile, the SCHEME_PROFILE_COLUMNS
+    twin of neutral_alignment_profile(). A missing profile is never a claim
+    that a player is 0% man-coverage; nothing multiplies by a scheme rate
+    from this yet (SCHEME_PROFILE_COLUMNS carries no scoring multiplier at
+    all - man/zone is audit-only, unlike alignment_matchup_multiplier's
+    always-1.0 placeholder)."""
+    return {
+        "player_id": "",
+        "player": "",
+        "position": "",
+        "team": "",
+        "identity_key": "",
+        "identity_quality": "missing",
+        "man_route_share": None,
+        "zone_route_share": None,
+        "scheme_sample_weight": 0.0,
+        "scheme_confidence": 0.0,
+        "man_routes": None,
+        "man_targets": None,
+        "man_receptions": None,
+        "man_yards": None,
+        "man_touchdowns": None,
+        "man_catch_rate": None,
+        "man_yards_per_target": None,
+        "man_yprr": None,
+        "zone_routes": None,
+        "zone_targets": None,
+        "zone_receptions": None,
+        "zone_yards": None,
+        "zone_touchdowns": None,
+        "zone_catch_rate": None,
+        "zone_yards_per_target": None,
+        "zone_yprr": None,
+        "scheme_available": False,
+        "scheme_semantics": "missing / neutral",
+        "source_kind": "missing",
+        "source_year": None,
+        "source_weeks": "",
+        "source_week_count": 0,
+        "source_regular_season": None,
+        "source_time_valid": False,
+        "source_confidence": "none",
+        "source_paths": "",
+        "source_notes": reason,
+        "profile_version": PFF_SCHEME_VERSION,
     }
 
 
@@ -685,6 +821,7 @@ def discover_weekly_alignment_exports(
     for week, week_dir in sorted(week_dirs, key=lambda item: item[0]):
         summary = week_dir / "receiving_summary.csv"
         concept = week_dir / "receiving_concept.csv"
+        scheme = week_dir / "receiving_scheme.csv"
         meta = manifest.get(week, {})
         regular = meta.get("regular_season")
         regular_status = "confirmed" if regular is True else ("rejected" if regular is False else "unverified")
@@ -702,6 +839,8 @@ def discover_weekly_alignment_exports(
             "week": week,
             "summary_path": str(summary) if summary.is_file() else "",
             "concept_path": str(concept) if concept.is_file() else "",
+            "scheme_path": str(scheme) if scheme.is_file() else "",
+            "scheme_present": scheme.is_file(),
             "pair_complete": complete,
             "manifest_present": manifest_present,
             "regular_season": regular,
@@ -796,6 +935,23 @@ def _validate_concept(frame: pd.DataFrame, label: str, issues: list[str]) -> tup
             # slot_routes is required.  Other event fields are useful for a
             # later defense profile but do not make a player-alignment prior
             # unusable; retain explicit missing values rather than zeros.
+            out[column] = pd.NA
+            issues.append(f"{label} has no {column}; this event field remains unavailable.")
+    return out, True
+
+
+def _validate_scheme(frame: pd.DataFrame, label: str, issues: list[str]) -> tuple[pd.DataFrame, bool]:
+    out = _normalise_column_names(frame, _SCHEME_ALIASES)
+    required = ("player", "position", "team_name", "man_targets", "zone_targets")
+    missing = [column for column in required if column not in out.columns]
+    if missing:
+        issues.append(f"{label} failed scheme schema validation; missing {', '.join(missing)}.")
+        return pd.DataFrame(), False
+    if "player_id" not in out.columns:
+        issues.append(f"{label} has no player_id; using conservative name/team/position joins.")
+        out["player_id"] = ""
+    for column in _SCHEME_EVENT_COLUMNS:
+        if column not in out.columns:
             out[column] = pd.NA
             issues.append(f"{label} has no {column}; this event field remains unavailable.")
     return out, True
@@ -920,6 +1076,45 @@ def _prepare_concept_rows(concept: pd.DataFrame, *, week: int) -> pd.DataFrame:
     # A player can have duplicate export rows only in unusual source shapes;
     # sum them once before joining so a duplicate cannot inflate a role.
     return out.groupby(["identity_key", "source_week"], as_index=False, observed=True)[list(_SLOT_EVENT_COLUMNS)].sum(min_count=1)
+
+
+def _prepare_scheme_rows(
+    scheme: pd.DataFrame,
+    *,
+    week: int,
+    path: str,
+    regular_season: bool | None,
+    source_confidence: str,
+) -> pd.DataFrame:
+    out = scheme.copy()
+    out["player"] = out["player"].map(_clean_text)
+    out["player_id"] = out["player_id"].map(_clean_id)
+    out["team_name"] = out["team_name"].map(_team_key)
+    out["position"] = out["position"].map(_normalise_position)
+    out = out[out["player"].ne("") & out["position"].isin(_SUPPORTED_RECEIVING_POSITIONS)].copy()
+    keys, quality = _stable_identity_key(out)
+    out["identity_key"] = keys
+    out["identity_quality"] = quality
+    for column in _SCHEME_EVENT_COLUMNS:
+        out[column] = _numeric_column(out, column)
+    # NOTE: PFF's own man_route_rate/zone_route_rate columns are NOT a
+    # slot_rate-style share of this player's routes - each is routes run
+    # DIVIDED BY that coverage type's own pass_plays (route participation
+    # conditional on the defense's call), so the two do not sum to 1.0 and
+    # cannot answer "what share of this player's work came against man vs
+    # zone."  That share is derived directly from route counts here instead,
+    # the same way the slot alignment profile above derives its rate from
+    # raw snap counts rather than trusting a differently-defined PFF percent
+    # column.
+    routes = out[["man_routes", "zone_routes"]].sum(axis=1, min_count=1)
+    out["_man_route_share"] = (out["man_routes"] / routes).where(routes.gt(0.0))
+    out["_zone_route_share"] = (out["zone_routes"] / routes).where(routes.gt(0.0))
+    out["_scheme_weight"] = routes.where(routes.gt(0.0), _numeric_column(out, "player_game_count", 0.0).fillna(0.0))
+    out["source_week"] = int(week)
+    out["source_path"] = str(path)
+    out["source_regular_season"] = regular_season
+    out["source_confidence"] = source_confidence
+    return out
 
 
 def _merge_week_pair(summary_rows: pd.DataFrame, concept_rows: pd.DataFrame) -> pd.DataFrame:
@@ -1080,6 +1275,86 @@ def _aggregate_profiles(
     return pd.DataFrame(records, columns=PROFILE_COLUMNS)
 
 
+def _aggregate_scheme_profiles(
+    rows: pd.DataFrame,
+    *,
+    source_kind: str,
+    source_year: int,
+    source_time_valid: bool,
+    source_notes: str,
+) -> pd.DataFrame:
+    if rows.empty:
+        return empty_scheme_profiles()
+    records: list[dict[str, Any]] = []
+    sorted_rows = rows.sort_values(["identity_key", "source_week", "source_path"], kind="stable")
+    for identity_key, group in sorted_rows.groupby("identity_key", sort=False, observed=True):
+        group = group.copy()
+        last = group.iloc[-1]
+        weights = pd.to_numeric(group["_scheme_weight"], errors="coerce").fillna(0.0)
+        weight = float(weights.sum())
+        man_share = _weighted_average(group["_man_route_share"], weights)
+        zone_share = _weighted_average(group["_zone_route_share"], weights)
+        position = _normalise_position(last["position"])
+        event_totals = {
+            column: float(pd.to_numeric(group[column], errors="coerce").sum(min_count=1))
+            if pd.to_numeric(group[column], errors="coerce").notna().any()
+            else None
+            for column in _SCHEME_EVENT_COLUMNS
+        }
+        man_catch_rate, man_ypt = _alignment_efficiency(
+            event_totals.get("man_targets"), event_totals.get("man_receptions"), event_totals.get("man_yards"))
+        zone_catch_rate, zone_ypt = _alignment_efficiency(
+            event_totals.get("zone_targets"), event_totals.get("zone_receptions"), event_totals.get("zone_yards"))
+        man_yprr = _weighted_average(pd.to_numeric(group["man_yprr"], errors="coerce"), weights)
+        zone_yprr = _weighted_average(pd.to_numeric(group["zone_yprr"], errors="coerce"), weights)
+        source_weeks = tuple(sorted({int(value) for value in group["source_week"].tolist() if int(value) > 0}))
+        regular_values = [value for value in group["source_regular_season"].tolist() if value is not None and not pd.isna(value)]
+        regular = True if regular_values and all(bool(value) for value in regular_values) else None
+        confidence_values = [str(value) for value in group["source_confidence"].tolist() if _clean_text(value)]
+        record = {
+            "player_id": _clean_id(last.get("player_id")),
+            "player": _clean_text(last.get("player")),
+            "position": position,
+            "team": _team_key(last.get("team_name")),
+            "identity_key": str(identity_key),
+            "identity_quality": _clean_text(last.get("identity_quality")) or "name_team_position_fallback",
+            "man_route_share": man_share,
+            "zone_route_share": zone_share if zone_share is not None else ((1.0 - man_share) if man_share is not None else None),
+            "scheme_sample_weight": weight,
+            "scheme_confidence": weight / (weight + ALIGNMENT_CONFIDENCE_HALF_WEIGHT) if weight > 0 else 0.0,
+            "man_routes": event_totals.get("man_routes"),
+            "man_targets": event_totals.get("man_targets"),
+            "man_receptions": event_totals.get("man_receptions"),
+            "man_yards": event_totals.get("man_yards"),
+            "man_touchdowns": event_totals.get("man_touchdowns"),
+            "man_catch_rate": man_catch_rate,
+            "man_yards_per_target": man_ypt,
+            "man_yprr": man_yprr,
+            "zone_routes": event_totals.get("zone_routes"),
+            "zone_targets": event_totals.get("zone_targets"),
+            "zone_receptions": event_totals.get("zone_receptions"),
+            "zone_yards": event_totals.get("zone_yards"),
+            "zone_touchdowns": event_totals.get("zone_touchdowns"),
+            "zone_catch_rate": zone_catch_rate,
+            "zone_yards_per_target": zone_ypt,
+            "zone_yprr": zone_yprr,
+            "scheme_available": man_share is not None,
+            "scheme_semantics": "man route-share / zone route-share (this player's own routes split by coverage faced)",
+            "source_kind": source_kind,
+            "source_year": int(source_year),
+            "source_weeks": ",".join(str(value) for value in source_weeks),
+            "source_week_count": len(source_weeks),
+            "source_regular_season": regular,
+            "source_time_valid": bool(source_time_valid),
+            "source_confidence": "; ".join(dict.fromkeys(confidence_values)) or "schema_validated_local_export",
+            "source_paths": "; ".join(dict.fromkeys(str(value) for value in group["source_path"].tolist())),
+            "source_notes": source_notes,
+            "profile_version": PFF_SCHEME_VERSION,
+        }
+        records.append(record)
+    return pd.DataFrame(records, columns=SCHEME_PROFILE_COLUMNS)
+
+
 def _unique_issues(issues: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(issue for issue in issues if issue))
 
@@ -1169,6 +1444,85 @@ def load_weekly_alignment_profiles(
             int(row.week) for row in archives.itertuples(index=False) if row.schema_valid is True
         ),
         "alignment_adjustment_mode": "neutral_only_foundation",
+    }
+    return AlignmentLoadResult(profiles, archives, _unique_issues(issues), metadata)
+
+
+def load_weekly_scheme_profiles(
+    year: int,
+    as_of_week: int,
+    pff_root: str | Path = DEFAULT_PFF_ROOT,
+) -> AlignmentLoadResult:
+    """Load only time-valid weekly PFF player man/zone scheme profiles.
+
+    Mirrors :func:`load_weekly_alignment_profiles`'s discovery/eligibility
+    rules exactly - the same weekly/{week}/ archive, the same
+    ``week < as_of_week`` cutoff, the same manifest handling - but reads
+    ``receiving_scheme.csv`` instead of the receiving_summary/receiving_concept
+    pair.  receiving_scheme.csv is self-contained, so there is no second file
+    to merge here.  A week that has the summary/concept pair but not yet a
+    receiving_scheme.csv is skipped for this profile only (not an error);
+    :data:`ARCHIVE_COLUMNS`'s ``scheme_present`` flag makes that visible.
+    """
+    target_week = _validate_week_number(as_of_week)
+    discovered = discover_weekly_alignment_exports(year, target_week, pff_root)
+    archives = discovered.archives.copy()
+    issues = list(discovered.issues)
+    records: list[pd.DataFrame] = []
+
+    if archives.empty:
+        metadata = {
+            **discovered.metadata,
+            "available": False,
+            "included_weeks": (),
+            "excluded_weeks": (),
+        }
+        return AlignmentLoadResult(empty_scheme_profiles(), archives, _unique_issues(issues), metadata)
+
+    for index, archive in archives.loc[archives["eligible_as_of"].astype(bool)].iterrows():
+        week = int(archive["week"])
+        scheme_path = archive.get("scheme_path", "")
+        if not scheme_path:
+            issues.append(f"PFF Week {week} has no receiving_scheme.csv; scheme profile skipped for that week.")
+            continue
+        local_issues: list[str] = []
+        scheme = _safe_read_csv(scheme_path, f"PFF Week {week} receiving_scheme", local_issues)
+        scheme, scheme_valid = _validate_scheme(scheme, f"PFF Week {week} receiving_scheme", local_issues)
+        issues.extend(local_issues)
+        if not scheme_valid:
+            continue
+        regular_season = _coerce_bool(archive.get("regular_season"))
+        confidence = _clean_text(archive.get("manifest_source_confidence"))
+        if not confidence:
+            confidence = (
+                "weekly_manifest_regular_season" if regular_season is True
+                else "weekly_schema_valid_regular_season_unverified"
+            )
+        records.append(_prepare_scheme_rows(
+            scheme, week=week, path=scheme_path,
+            regular_season=regular_season, source_confidence=confidence,
+        ))
+
+    combined = pd.concat(records, ignore_index=True) if records else pd.DataFrame()
+    included_weeks = tuple(sorted({int(value) for value in combined.get("source_week", pd.Series(dtype=int)).tolist()}))
+    profiles = _aggregate_scheme_profiles(
+        combined,
+        source_kind="weekly_archive",
+        source_year=int(year),
+        source_time_valid=True,
+        source_notes=(
+            f"Local manually exported weekly PFF receiving_scheme archive through Week {max(included_weeks)} "
+            f"for a Week {target_week} projection."
+            if included_weeks else "No schema-valid, time-valid weekly PFF receiving_scheme reports were available."
+        ),
+    )
+    metadata = {
+        **discovered.metadata,
+        "available": not profiles.empty,
+        "included_weeks": included_weeks,
+        "excluded_weeks": tuple(
+            int(row.week) for row in archives.itertuples(index=False) if not bool(row.eligible_as_of)
+        ),
     }
     return AlignmentLoadResult(profiles, archives, _unique_issues(issues), metadata)
 
@@ -1902,6 +2256,655 @@ def alignment_defense_residual_multiplier(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Weekly offense-derived man/zone scheme-defense foundation
+# ---------------------------------------------------------------------------
+# Deliberately a PARALLEL set of functions, not a generalization of the
+# alignment-defense pipeline above, even though the math (leave-one-out
+# offense baseline, shrinkage, clipping, confidence) is identical in shape.
+# Two real blockers make in-place generalization the riskier choice:
+# aggregate_alignment_defense_profiles hard-filters to
+# alignment.isin({"slot","non_slot"}), and _position_normal_slot_rates reads
+# the literal "alignment" column name and 'slot'/'non_slot' values.
+# Retrofitting both to a configurable split dimension would touch already-
+# tested, carefully reasoned code for a currently-dormant, audit-only
+# feature; a clean parallel copy is the safer choice. receiving_scheme.csv is
+# also structurally simpler than the slot pair: man_*/zone_* already
+# partition every target, so there is no "total minus slot" derivation and no
+# impossible-value guard needed here.
+
+PFF_SCHEME_DEFENSE_VERSION = "v1_offensive_weekly_scheme_defense_foundation"
+SCHEME_DEFENSE_STATS = ("targets", "receptions", "yards", "touchdowns")
+SCHEME_DEFENSE_SUPPORTED_POSITIONS = {"WR", "TE"}
+
+SCHEME_TEAM_GAME_COLUMNS = [
+    "source_year",
+    "source_week",
+    "offense_team",
+    "defense_team",
+    "position",
+    "scheme",
+    "stat",
+    "observed_value",
+    "event_available",
+    "event_complete",
+    "player_rows",
+    "valid_player_rows",
+    "scheme_routes",
+    "source_regular_season",
+    "source_time_valid",
+    "source_confidence",
+    "source_paths",
+    "source_notes",
+]
+
+SCHEME_DEFENSE_PROFILE_COLUMNS = [
+    "defense_team",
+    "position",
+    "scheme",
+    "stat",
+    "profile_available",
+    "candidate_available",
+    "scoring_active",
+    "observed_total",
+    "expected_total",
+    "raw_allowed_ratio",
+    "clipped_allowed_ratio",
+    "shrunk_allowed_ratio",
+    "sample_games",
+    "comparison_games",
+    "uncompared_games",
+    "sample_offenses",
+    "event_sample_weight",
+    "shrinkage_games",
+    "shrinkage_weight",
+    "scheme_confidence",
+    "position_normal_man_rate",
+    "normal_scheme_source",
+    "baseline_source",
+    "fallback_reason",
+    "source_kind",
+    "source_method",
+    "source_year",
+    "source_weeks",
+    "source_week_count",
+    "source_regular_season",
+    "source_time_valid",
+    "source_confidence",
+    "source_paths",
+    "source_notes",
+    "profile_version",
+]
+
+
+def empty_scheme_team_games() -> pd.DataFrame:
+    """Return an empty but schema-stable offense-versus-defense scheme evidence table."""
+    return pd.DataFrame(columns=SCHEME_TEAM_GAME_COLUMNS)
+
+
+def empty_scheme_defense_profiles() -> pd.DataFrame:
+    """Return an empty but schema-stable scheme-defense profile table."""
+    return pd.DataFrame(columns=SCHEME_DEFENSE_PROFILE_COLUMNS)
+
+
+def neutral_scheme_defense_profile(
+    reason: str = "No time-valid, schedule-mapped PFF scheme-defense evidence",
+    *,
+    defense_team: Any = None,
+    position: Any = None,
+    scheme: Any = None,
+    stat: Any = None,
+) -> dict[str, Any]:
+    """Return a no-op scheme-defense record for a missing or ambiguous match.
+
+    Mirrors neutral_alignment_defense_profile's contract exactly - a missing
+    profile is never a claim that a defense is neutral in reality.
+    """
+    return {
+        "defense_team": _canonical_team_key(defense_team),
+        "position": _normalise_position(position),
+        "scheme": _clean_text(scheme).lower(),
+        "stat": _normalise_alignment_stat(stat),
+        "profile_available": False,
+        "candidate_available": False,
+        "scoring_active": False,
+        "observed_total": None,
+        "expected_total": None,
+        "raw_allowed_ratio": None,
+        "clipped_allowed_ratio": None,
+        "shrunk_allowed_ratio": 1.0,
+        "sample_games": 0,
+        "comparison_games": 0,
+        "uncompared_games": 0,
+        "sample_offenses": 0,
+        "event_sample_weight": 0.0,
+        "shrinkage_games": ALIGNMENT_DEFENSE_SHRINKAGE_GAMES,
+        "shrinkage_weight": 0.0,
+        "scheme_confidence": 0.0,
+        "position_normal_man_rate": None,
+        "normal_scheme_source": "unavailable",
+        "baseline_source": "neutral_fallback",
+        "fallback_reason": reason,
+        "source_kind": "missing",
+        "source_method": "offensive_weekly_reports_mapped_via_schedule",
+        "source_year": None,
+        "source_weeks": "",
+        "source_week_count": 0,
+        "source_regular_season": None,
+        "source_time_valid": False,
+        "source_confidence": "none",
+        "source_paths": "",
+        "source_notes": reason,
+        "profile_version": PFF_SCHEME_DEFENSE_VERSION,
+    }
+
+
+def _prepare_scheme_team_games(
+    combined: pd.DataFrame,
+    *,
+    source_year: int,
+    opponent_map: Mapping[tuple[int, str], str],
+    issues: list[str],
+) -> pd.DataFrame:
+    """Convert player-level weekly scheme rows into offense-defense event rows.
+
+    Same team-game-not-player-row aggregation as
+    _prepare_alignment_team_games (one backup's relief-appearance row must
+    not outvote an entire offense's game), but no complement derivation:
+    man_*/zone_* already partition every target.
+    """
+    if combined.empty:
+        return empty_scheme_team_games()
+    players = combined.copy()
+    players["team_name"] = players["team_name"].map(_canonical_team_key)
+    players["position"] = players["position"].map(_normalise_position)
+    players = players.loc[
+        players["team_name"].ne("") & players["position"].isin(_SUPPORTED_RECEIVING_POSITIONS)
+    ].copy()
+    if players.empty:
+        return empty_scheme_team_games()
+
+    value_cols = [f"{prefix}_{stat}" for prefix in ("man", "zone") for stat in SCHEME_DEFENSE_STATS]
+    for column in (*value_cols, "man_routes", "zone_routes"):
+        if column not in players.columns:
+            players[column] = np.nan
+        players[column] = pd.to_numeric(players[column], errors="coerce")
+    players["_scheme_routes_total"] = players["man_routes"].fillna(0.0) + players["zone_routes"].fillna(0.0)
+
+    records: list[dict[str, Any]] = []
+    unmapped: set[tuple[int, str]] = set()
+    group_columns = ["source_week", "team_name", "position"]
+    for (week_raw, offense_team, position), group in players.groupby(group_columns, sort=True, observed=True):
+        week = int(week_raw)
+        defense_team = opponent_map.get((week, offense_team))
+        if not defense_team:
+            unmapped.add((week, offense_team))
+            continue
+        player_rows = int(len(group))
+        regular = _group_regular_season_status(group["source_regular_season"])
+        confidence_values = [_clean_text(value) for value in group["source_confidence"].tolist()]
+        confidence = "; ".join(dict.fromkeys(value for value in confidence_values if value))
+        source_paths = tuple(dict.fromkeys(
+            _clean_text(value) for value in group["source_path"].tolist() if _clean_text(value)))
+        scheme_routes = float(group["_scheme_routes_total"].sum())
+
+        for scheme in ("man", "zone"):
+            for stat in SCHEME_DEFENSE_STATS:
+                values = pd.to_numeric(group[f"{scheme}_{stat}"], errors="coerce")
+                valid_rows = int(values.notna().sum())
+                complete = bool(player_rows > 0 and valid_rows == player_rows)
+                records.append({
+                    "source_year": int(source_year),
+                    "source_week": week,
+                    "offense_team": offense_team,
+                    "defense_team": defense_team,
+                    "position": position,
+                    "scheme": scheme,
+                    "stat": stat,
+                    "observed_value": float(values.sum()) if complete else None,
+                    "event_available": complete,
+                    "event_complete": complete,
+                    "player_rows": player_rows,
+                    "valid_player_rows": valid_rows,
+                    "scheme_routes": scheme_routes,
+                    "source_regular_season": regular,
+                    "source_time_valid": True,
+                    "source_confidence": confidence or "weekly_schema_valid_local_export",
+                    "source_paths": "; ".join(source_paths),
+                    "source_notes": (
+                        "Team-game event from the manual weekly offensive PFF receiving_scheme report; "
+                        "man/zone already partition every target, no derived complement."
+                    ),
+                })
+    for week, offense_team in sorted(unmapped):
+        issues.append(
+            f"No unambiguous schedule opponent for PFF Week {week} offense {offense_team}; that scheme team-game is excluded."
+        )
+    return pd.DataFrame(records, columns=SCHEME_TEAM_GAME_COLUMNS) if records else empty_scheme_team_games()
+
+
+def _attach_offense_leave_one_out_baselines_scheme(team_games: pd.DataFrame) -> pd.DataFrame:
+    """Scheme-column twin of _attach_offense_leave_one_out_baselines.
+
+    Identical reasoning (a defense must not look soft merely because it
+    faced a good man- or zone-beating offense); duplicated only because the
+    alignment version groups by the literal column name "alignment".
+    """
+    out = team_games.copy()
+    out["_expected_value"] = float("nan")
+    out["_baseline_games"] = 0
+    out["_baseline_source"] = "neutral_no_offense_comparison"
+    if out.empty:
+        return out
+    available = out["event_available"].fillna(False).astype(bool)
+    observed = pd.to_numeric(out["observed_value"], errors="coerce")
+    valid = available & observed.notna() & observed.ge(0.0)
+    group_columns = ["offense_team", "position", "scheme", "stat"]
+    for _key, group in out.loc[valid].groupby(group_columns, sort=False, observed=True):
+        group = group.sort_values(["source_week", "defense_team"], kind="stable")
+        for index, row in group.iterrows():
+            others = group.loc[group["source_week"].ne(row["source_week"])]
+            values = pd.to_numeric(others["observed_value"], errors="coerce")
+            values = values[values.notna() & values.ge(0.0)]
+            if values.empty:
+                continue
+            out.at[index, "_expected_value"] = float(values.mean())
+            out.at[index, "_baseline_games"] = int(others["source_week"].nunique())
+            out.at[index, "_baseline_source"] = "offense_leave_one_out_time_valid"
+    return out
+
+
+def _position_normal_man_rates(team_games: pd.DataFrame) -> dict[str, float | None]:
+    """Observed position-normal man/zone route mix - the neutral reference
+    mix used by scheme_defense_residual_multiplier, exactly analogous to
+    _position_normal_slot_rates above."""
+    if team_games is None or team_games.empty:
+        return {}
+    base_columns = ["source_year", "source_week", "offense_team", "defense_team", "position", "scheme"]
+    existing = [column for column in base_columns if column in team_games.columns]
+    unique = team_games.drop_duplicates(subset=existing).copy() if existing else team_games.copy()
+    exposure = pd.to_numeric(unique.get("scheme_routes", pd.Series(float("nan"), index=unique.index)), errors="coerce")
+    unique["_scheme_exposure"] = exposure.where(exposure.ge(0.0), 0.0)
+    rates: dict[str, float | None] = {}
+    for position, group in unique.groupby("position", sort=False, observed=True):
+        man = float(group.loc[group["scheme"].eq("man"), "_scheme_exposure"].sum())
+        zone = float(group.loc[group["scheme"].eq("zone"), "_scheme_exposure"].sum())
+        total = man + zone
+        rates[_normalise_position(position)] = (man / total) if total > 0.0 else None
+    return rates
+
+
+def aggregate_scheme_defense_profiles(
+    team_games: pd.DataFrame | None,
+    *,
+    shrinkage_games: float = ALIGNMENT_DEFENSE_SHRINKAGE_GAMES,
+) -> pd.DataFrame:
+    """Build bounded, quality-adjusted man/zone defense evidence from team-game rows.
+
+    Mirrors aggregate_alignment_defense_profiles's math and contract exactly
+    (see that function's docstring) with "scheme" (man/zone) standing in for
+    "alignment" (slot/non_slot). Never creates a projection multiplier: every
+    record carries scoring_active=False.
+    """
+    if team_games is None or team_games.empty:
+        return empty_scheme_defense_profiles()
+    try:
+        shrinkage_games = float(shrinkage_games)
+    except (TypeError, ValueError):
+        shrinkage_games = ALIGNMENT_DEFENSE_SHRINKAGE_GAMES
+    if shrinkage_games < 0.0:
+        raise ValueError("shrinkage_games must be non-negative")
+
+    required = {"offense_team", "defense_team", "position", "scheme", "stat", "source_week"}
+    if not required.issubset(team_games.columns):
+        return empty_scheme_defense_profiles()
+    rows = team_games.copy()
+    rows["defense_team"] = rows["defense_team"].map(_canonical_team_key)
+    rows["offense_team"] = rows["offense_team"].map(_canonical_team_key)
+    rows["position"] = rows["position"].map(_normalise_position)
+    rows["scheme"] = rows["scheme"].map(lambda value: _clean_text(value).lower())
+    rows["stat"] = rows["stat"].map(_normalise_alignment_stat)
+    rows = rows.loc[
+        rows["defense_team"].ne("")
+        & rows["offense_team"].ne("")
+        & rows["scheme"].isin({"man", "zone"})
+        & rows["stat"].isin(SCHEME_DEFENSE_STATS)
+    ].copy()
+    if rows.empty:
+        return empty_scheme_defense_profiles()
+
+    rows = _attach_offense_leave_one_out_baselines_scheme(rows)
+    normal_man_rates = _position_normal_man_rates(rows)
+    records: list[dict[str, Any]] = []
+    group_columns = ["defense_team", "position", "scheme", "stat"]
+    for (defense_team, position, scheme, stat), group in rows.groupby(group_columns, sort=True, observed=True):
+        group = group.copy()
+        observed = pd.to_numeric(group.get("observed_value"), errors="coerce")
+        available = group.get("event_available", pd.Series(False, index=group.index)).fillna(False).astype(bool)
+        expected = pd.to_numeric(group.get("_expected_value"), errors="coerce")
+        comparable = available & observed.notna() & observed.ge(0.0) & expected.notna() & expected.gt(0.0)
+        valid = available & observed.notna() & observed.ge(0.0)
+        sample_games = int(group.loc[valid, "source_week"].nunique())
+        comparison_games = int(group.loc[comparable, "source_week"].nunique())
+        uncompared_games = max(sample_games - comparison_games, 0)
+        sample_offenses = int(group.loc[valid, "offense_team"].nunique())
+        observed_total = float(observed[comparable].sum()) if comparable.any() else None
+        expected_total = float(expected[comparable].sum()) if comparable.any() else None
+        raw_ratio = (
+            observed_total / expected_total
+            if observed_total is not None and expected_total is not None and expected_total > 0.0
+            else None
+        )
+        clipped_ratio = (
+            float(min(max(raw_ratio, ALIGNMENT_DEFENSE_RAW_RATIO_CLIP[0]), ALIGNMENT_DEFENSE_RAW_RATIO_CLIP[1]))
+            if raw_ratio is not None else None
+        )
+        shrinkage_weight = (
+            comparison_games / (comparison_games + shrinkage_games)
+            if comparison_games > 0 else 0.0
+        )
+        shrunk_ratio = (
+            1.0 + shrinkage_weight * (clipped_ratio - 1.0)
+            if clipped_ratio is not None else 1.0
+        )
+        event_weight = (
+            expected_total / (expected_total + ALIGNMENT_DEFENSE_EVENT_HALF_WEIGHT)
+            if expected_total is not None and expected_total > 0.0 else 0.0
+        )
+        confidence = float(shrinkage_weight * event_weight)
+        normal_man_rate = normal_man_rates.get(position)
+        regular = _group_regular_season_status(group.get("source_regular_season", pd.Series(dtype=object)))
+        source_weeks = tuple(sorted({int(value) for value in group["source_week"].tolist()}))
+        source_year_series = group.get("source_year", pd.Series(float("nan"), index=group.index))
+        source_years = tuple(sorted({
+            int(value) for value in pd.to_numeric(source_year_series, errors="coerce").dropna().tolist()
+        }))
+        source_paths = "; ".join(dict.fromkeys(
+            _clean_text(value) for value in group.get("source_paths", pd.Series("", index=group.index)).tolist() if _clean_text(value)
+        ))
+        confidence_values = "; ".join(dict.fromkeys(
+            _clean_text(value) for value in group.get("source_confidence", pd.Series("", index=group.index)).tolist() if _clean_text(value)
+        ))
+        baseline_sources = tuple(dict.fromkeys(
+            _clean_text(value) for value in group.loc[comparable, "_baseline_source"].tolist() if _clean_text(value)
+        ))
+        profile_available = bool(comparison_games > 0 and raw_ratio is not None)
+        candidate_available = bool(
+            profile_available
+            and position in SCHEME_DEFENSE_SUPPORTED_POSITIONS
+            and stat != "touchdowns"
+            and normal_man_rate is not None
+        )
+        if stat == "touchdowns":
+            fallback_reason = "Touchdown scheme residuals are deliberately neutral pending a dedicated backtest."
+        elif not profile_available:
+            fallback_reason = (
+                "No other time-valid game for this offense/position/scheme/stat; "
+                "the candidate residual remains neutral."
+            )
+        elif normal_man_rate is None:
+            fallback_reason = "Position-normal scheme exposure is unavailable; the candidate residual remains neutral."
+        elif position not in SCHEME_DEFENSE_SUPPORTED_POSITIONS:
+            fallback_reason = (
+                f"{position} scheme is retained for audit only; WR/TE are the first candidate experiment."
+            )
+        else:
+            fallback_reason = ""
+        records.append({
+            "defense_team": defense_team,
+            "position": position,
+            "scheme": scheme,
+            "stat": stat,
+            "profile_available": profile_available,
+            "candidate_available": candidate_available,
+            "scoring_active": False,
+            "observed_total": observed_total,
+            "expected_total": expected_total,
+            "raw_allowed_ratio": raw_ratio,
+            "clipped_allowed_ratio": clipped_ratio,
+            "shrunk_allowed_ratio": float(shrunk_ratio),
+            "sample_games": sample_games,
+            "comparison_games": comparison_games,
+            "uncompared_games": uncompared_games,
+            "sample_offenses": sample_offenses,
+            "event_sample_weight": float(expected_total or 0.0),
+            "shrinkage_games": float(shrinkage_games),
+            "shrinkage_weight": float(shrinkage_weight),
+            "scheme_confidence": confidence,
+            "position_normal_man_rate": normal_man_rate,
+            "normal_scheme_source": "league_scheme_routes" if normal_man_rate is not None else "unavailable",
+            "baseline_source": "; ".join(baseline_sources) if baseline_sources else "neutral_no_offense_comparison",
+            "fallback_reason": fallback_reason,
+            "source_kind": "weekly_offensive_scheme_archive",
+            "source_method": "offensive_weekly_reports_mapped_via_schedule",
+            "source_year": source_years[0] if len(source_years) == 1 else ",".join(str(value) for value in source_years),
+            "source_weeks": ",".join(str(value) for value in source_weeks),
+            "source_week_count": len(source_weeks),
+            "source_regular_season": regular,
+            "source_time_valid": bool(group.get("source_time_valid", pd.Series(False, index=group.index)).fillna(False).all()),
+            "source_confidence": confidence_values or "weekly_schema_valid_local_export",
+            "source_paths": source_paths,
+            "source_notes": (
+                "Observed/expected is quality-adjusted against the same offense's other time-valid games. "
+                "It is bounded and shrunk to 1.0; no scoring multiplier is active."
+            ),
+            "profile_version": PFF_SCHEME_DEFENSE_VERSION,
+        })
+    return pd.DataFrame(records, columns=SCHEME_DEFENSE_PROFILE_COLUMNS) if records else empty_scheme_defense_profiles()
+
+
+def load_weekly_scheme_defense_profiles(
+    year: int,
+    as_of_week: int,
+    schedule_df: pd.DataFrame | None,
+    pff_root: str | Path = DEFAULT_PFF_ROOT,
+    *,
+    shrinkage_games: float = ALIGNMENT_DEFENSE_SHRINKAGE_GAMES,
+) -> AlignmentDefenseLoadResult:
+    """Load a neutral-by-default man/zone scheme-defense evidence set.
+
+    Mirrors load_weekly_alignment_defense_profiles exactly (same as-of
+    cutoff, same schedule-mapping requirement, same neutral-on-missing
+    contract) but reads receiving_scheme.csv - self-contained, so unlike the
+    alignment version there is no receiving_summary/receiving_concept pair or
+    total-vs-slot schema check to run first.
+    """
+    target_week = _validate_week_number(as_of_week)
+    source_year = int(year)
+    discovered = discover_weekly_alignment_exports(source_year, target_week, pff_root)
+    archives = discovered.archives.copy()
+    issues = list(discovered.issues)
+    opponent_map = _schedule_opponent_map(schedule_df, issues)
+    records: list[pd.DataFrame] = []
+
+    if not archives.empty and opponent_map:
+        for index, archive in archives.loc[archives["eligible_as_of"].astype(bool)].iterrows():
+            week = int(archive["week"])
+            scheme_path = archive.get("scheme_path", "")
+            if not scheme_path:
+                issues.append(f"PFF Week {week} has no receiving_scheme.csv; scheme defense profile skipped for that week.")
+                continue
+            local_issues: list[str] = []
+            scheme = _safe_read_csv(scheme_path, f"PFF Week {week} receiving_scheme", local_issues)
+            scheme, scheme_valid = _validate_scheme(scheme, f"PFF Week {week} receiving_scheme", local_issues)
+            issues.extend(local_issues)
+            if not scheme_valid:
+                continue
+            regular_season = _coerce_bool(archive.get("regular_season"))
+            confidence = _clean_text(archive.get("manifest_source_confidence"))
+            if not confidence:
+                confidence = (
+                    "weekly_manifest_regular_season" if regular_season is True
+                    else "weekly_schema_valid_regular_season_unverified"
+                )
+            records.append(_prepare_scheme_rows(
+                scheme, week=week, path=scheme_path,
+                regular_season=regular_season, source_confidence=confidence,
+            ))
+    elif not archives.empty and not opponent_map:
+        archives.loc[archives["eligible_as_of"].astype(bool), "schema_issues"] = (
+            "Schedule mapping unavailable; no scheme-defense team-games constructed."
+        )
+
+    combined = pd.concat(records, ignore_index=True) if records else pd.DataFrame()
+    team_games = _prepare_scheme_team_games(
+        combined,
+        source_year=source_year,
+        opponent_map=opponent_map,
+        issues=issues,
+    ) if not combined.empty and opponent_map else empty_scheme_team_games()
+    profiles = aggregate_scheme_defense_profiles(team_games, shrinkage_games=shrinkage_games)
+    included_weeks = tuple(sorted({int(value) for value in team_games.get("source_week", pd.Series(dtype=int)).tolist()}))
+    excluded_weeks = tuple(
+        int(row.week) for row in archives.itertuples(index=False)
+        if not bool(row.eligible_as_of) or row.schema_valid is False
+    )
+    metadata = {
+        "available": bool(not profiles.empty),
+        "source_kind": "weekly_offensive_scheme_archive",
+        "source_year": source_year,
+        "as_of_week": target_week,
+        "included_weeks": included_weeks,
+        "excluded_weeks": excluded_weeks,
+        "team_game_rows": int(len(team_games)),
+        "profile_rows": int(len(profiles)),
+        "scoring_active": False,
+        "requires_backtest_before_activation": True,
+    }
+    return AlignmentDefenseLoadResult(profiles, team_games, archives, _unique_issues(issues), metadata)
+
+
+def lookup_scheme_defense_profile(
+    profiles: pd.DataFrame | None,
+    *,
+    defense_team: Any,
+    position: Any,
+    scheme: Any,
+    stat: Any,
+) -> dict[str, Any]:
+    """Find exactly one scheme-defense evidence record or return a neutral fallback."""
+    wanted = {
+        "defense_team": _canonical_team_key(defense_team),
+        "position": _normalise_position(position),
+        "scheme": _clean_text(scheme).lower(),
+        "stat": _normalise_alignment_stat(stat),
+    }
+    if profiles is None or profiles.empty:
+        return neutral_scheme_defense_profile(**wanted)
+    required = set(wanted)
+    if not required.issubset(profiles.columns):
+        return neutral_scheme_defense_profile("Scheme-defense profile schema is unavailable", **wanted)
+    matches = profiles.copy()
+    for column, value in wanted.items():
+        normalizer = {
+            "defense_team": _canonical_team_key,
+            "position": _normalise_position,
+            "scheme": lambda v: _clean_text(v).lower(),
+            "stat": _normalise_alignment_stat,
+        }[column]
+        matches = matches[matches[column].map(normalizer).eq(value)]
+    if len(matches) == 1:
+        return matches.iloc[0].to_dict()
+    reason = "No matching scheme-defense profile" if matches.empty else "Ambiguous scheme-defense profile"
+    return neutral_scheme_defense_profile(reason, **wanted)
+
+
+def scheme_defense_residual_multiplier(
+    profiles: pd.DataFrame | None,
+    *,
+    defense_team: Any,
+    position: Any,
+    player_man_rate: Any,
+    stat: Any,
+) -> dict[str, Any]:
+    """Preview a bounded man/zone residual while always returning 1.0 to score.
+
+    Exact structural mirror of alignment_defense_residual_multiplier: the
+    broad weekly defense model already owns the overall positional matchup;
+    ``multiplier`` stays unconditionally 1.0, ``candidate_multiplier`` is a
+    transparent preview only.
+    """
+    normalized_position = _normalise_position(position)
+    normalized_stat = _normalise_alignment_stat(stat)
+    result: dict[str, Any] = {
+        "multiplier": 1.0,
+        "candidate_multiplier": 1.0,
+        "applied": False,
+        "scoring_active": False,
+        "candidate_available": False,
+        "reason": "",
+        "defense_team": _canonical_team_key(defense_team),
+        "position": normalized_position,
+        "stat": normalized_stat,
+        "player_man_rate": None,
+        "position_normal_man_rate": None,
+        "man_profile": None,
+        "zone_profile": None,
+        "raw_residual": None,
+        "effect_weight": 0.0,
+        "residual_clip": ALIGNMENT_DEFENSE_RESIDUAL_CLIP,
+    }
+    if normalized_stat == "touchdowns":
+        result["reason"] = "Touchdown scheme residuals are intentionally neutral."
+        return result
+    if normalized_position not in SCHEME_DEFENSE_SUPPORTED_POSITIONS:
+        result["reason"] = f"{normalized_position} scheme remains audit-only until a position-specific experiment is validated."
+        return result
+    try:
+        man_rate = float(player_man_rate)
+    except (TypeError, ValueError):
+        result["reason"] = "Player man-coverage route share is unavailable."
+        return result
+    if pd.isna(man_rate) or man_rate < 0.0 or man_rate > 1.0:
+        result["reason"] = "Player man-coverage route share must be a bounded 0..1 value."
+        return result
+    result["player_man_rate"] = man_rate
+    man_profile = lookup_scheme_defense_profile(
+        profiles, defense_team=defense_team, position=normalized_position, scheme="man", stat=normalized_stat)
+    zone_profile = lookup_scheme_defense_profile(
+        profiles, defense_team=defense_team, position=normalized_position, scheme="zone", stat=normalized_stat)
+    result["man_profile"] = man_profile
+    result["zone_profile"] = zone_profile
+    if not (man_profile.get("candidate_available") and zone_profile.get("candidate_available")):
+        result["reason"] = "Man/zone comparison evidence is unavailable; scheme residual remains neutral."
+        return result
+    normal_man = man_profile.get("position_normal_man_rate")
+    if normal_man is None:
+        normal_man = zone_profile.get("position_normal_man_rate")
+    try:
+        normal_man = float(normal_man)
+        man_factor = float(man_profile.get("shrunk_allowed_ratio"))
+        zone_factor = float(zone_profile.get("shrunk_allowed_ratio"))
+    except (TypeError, ValueError):
+        result["reason"] = "Scheme-defense evidence is incomplete; residual remains neutral."
+        return result
+    if any(pd.isna(value) for value in (normal_man, man_factor, zone_factor)) or not 0.0 <= normal_man <= 1.0:
+        result["reason"] = "Scheme-defense evidence is invalid; residual remains neutral."
+        return result
+    player_factor = man_rate * man_factor + (1.0 - man_rate) * zone_factor
+    normal_factor = normal_man * man_factor + (1.0 - normal_man) * zone_factor
+    if normal_factor <= 0.0:
+        result["reason"] = "Position-normal scheme factor is non-positive; residual remains neutral."
+        return result
+    raw_residual = player_factor / normal_factor
+    man_confidence_value = pd.to_numeric(pd.Series([man_profile.get("scheme_confidence")]), errors="coerce").iloc[0]
+    zone_confidence_value = pd.to_numeric(pd.Series([zone_profile.get("scheme_confidence")]), errors="coerce").iloc[0]
+    man_confidence = 0.0 if pd.isna(man_confidence_value) else float(man_confidence_value)
+    zone_confidence = 0.0 if pd.isna(zone_confidence_value) else float(zone_confidence_value)
+    effect_weight = min(max(man_confidence, 0.0), max(zone_confidence, 0.0), 1.0)
+    candidate = 1.0 + effect_weight * (raw_residual - 1.0)
+    candidate = float(min(max(candidate, ALIGNMENT_DEFENSE_RESIDUAL_CLIP[0]), ALIGNMENT_DEFENSE_RESIDUAL_CLIP[1]))
+    result.update({
+        "candidate_multiplier": candidate,
+        "candidate_available": True,
+        "reason": "Candidate scheme residual preview only; no scoring multiplier is active.",
+        "position_normal_man_rate": normal_man,
+        "raw_residual": float(raw_residual),
+        "effect_weight": effect_weight,
+    })
+    return result
+
+
 def _read_season_metadata(year_dir: Path, explicit: Mapping[str, Any] | None, issues: list[str]) -> dict[str, Any]:
     """Load an optional audited season sidecar, with explicit args taking priority."""
     metadata: dict[str, Any] = {}
@@ -2108,4 +3111,39 @@ def lookup_alignment_profile(
         return matches.iloc[0].to_dict()
     return neutral_alignment_profile(
         "No unique local PFF alignment profile" if matches.empty else "Ambiguous name-based PFF alignment profile"
+    )
+
+
+def lookup_scheme_profile(
+    profiles: pd.DataFrame | None,
+    *,
+    player_id: Any = None,
+    player: str | None = None,
+    team: str | None = None,
+    position: str | None = None,
+) -> dict[str, Any]:
+    """Player-level man/zone tendency lookup - exact structural mirror of
+    lookup_alignment_profile, PFF ID first then a conservative name/team/
+    position fallback, neutral_scheme_profile() on any ambiguity or miss."""
+    if profiles is None or profiles.empty:
+        return neutral_scheme_profile()
+    frame = profiles.copy()
+    if player_id is not None and "player_id" in frame.columns:
+        desired_id = _clean_id(player_id)
+        matches = frame[frame["player_id"].map(_clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
+        if len(matches) == 1:
+            return matches.iloc[0].to_dict()
+        if len(matches) > 1:
+            return neutral_scheme_profile("Ambiguous PFF player_id scheme profile")
+    if not player:
+        return neutral_scheme_profile()
+    matches = frame[frame.get("player", pd.Series("", index=frame.index)).map(_name_key).eq(_name_key(player))]
+    if team:
+        matches = matches[matches.get("team", pd.Series("", index=matches.index)).map(_team_key).eq(_team_key(team))]
+    if position:
+        matches = matches[matches.get("position", pd.Series("", index=matches.index)).map(_normalise_position).eq(_normalise_position(position))]
+    if len(matches) == 1:
+        return matches.iloc[0].to_dict()
+    return neutral_scheme_profile(
+        "No unique local PFF scheme profile" if matches.empty else "Ambiguous name-based PFF scheme profile"
     )

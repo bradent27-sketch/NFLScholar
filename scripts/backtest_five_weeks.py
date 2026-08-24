@@ -11,8 +11,9 @@ WHAT THIS ANSWERS (two separate questions the user asked together):
    That is exactly "a mock projection based on the previous season and the
    weeks leading up to it" - no result ever leaks into its own projection.
    Reported per week AND pooled, broken into rank-within-position tiers
-   (Elite/Starter/Flex/Streamer) using the MODEL'S OWN projected order that
-   week, since that is the population a real start/sit call is made from.
+   (Starter/Streamer-Bench, TIER_BOUNDS in data/weekly_distribution.py) using
+   the MODEL'S OWN projected order that week, since that is the population a
+   real start/sit call is made from.
 
 2. "The TE bias may be a weekly-variance/TD-dependency issue, dig into it" -
    independent of the model entirely: for every skill-position player-game in
@@ -42,8 +43,7 @@ import pandas as pd  # noqa: E402
 
 from data.weekly_projections import build_weekly_projections  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
-
-TIERS = [('Elite', 1, 6), ('Starter', 7, 15), ('Flex', 16, 30), ('Streamer/Bench', 31, 10_000)]
+from data.weekly_distribution import TIER_BOUNDS  # noqa: E402
 
 
 def _actual_points(stats_df, name_col, week, scoring_col='fantasy_points_ppr'):
@@ -106,7 +106,7 @@ def run_backtest(year, weeks, scoring='Full PPR'):
 
         for pos in ('QB', 'RB', 'WR', 'TE'):
             sub = proj[proj['Pos'] == pos].sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
-            for tier_name, lo, hi in TIERS:
+            for tier_name, lo, hi in TIER_BOUNDS:
                 tsub = sub.iloc[lo - 1:hi]
                 if tsub.empty:
                     continue
@@ -143,7 +143,7 @@ def print_backtest(model_rows, naive_rows, per_week_lines, weeks):
     print(f"\n{'--- by position x tier (model only, pooled across the 5 weeks) ---'}")
     print(f"{'pos':<6}{'tier':<16}{'n':>6}{'MAE':>8}{'bias':>9}{'rank_corr':>11}")
     for pos in ('QB', 'RB', 'WR', 'TE'):
-        for tier_name, _lo, _hi in TIERS + [('ALL', 0, 0)]:
+        for tier_name, _lo, _hi in list(TIER_BOUNDS) + [('ALL', 0, 0)]:
             rows = model_rows.get(pos, {}).get(tier_name, [])
             if not rows:
                 continue

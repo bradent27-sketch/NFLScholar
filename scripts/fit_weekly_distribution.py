@@ -4,8 +4,10 @@ Fit empirical boom/bust percentile bands for data.weekly_distribution.
 WHAT THIS MEASURES. A single point projection is a median-ish guess, not the
 whole story - the same 12.0-point projection means something different for a
 high-floor possession receiver than for a boom/bust deep threat. This script
-measures, for each position x usage tier (the same Elite/Starter/Flex/
-Streamer buckets scripts/backtest_five_weeks.py reports on), the empirical
+measures, for each position x usage tier (Starter/Streamer-Bench -
+TIER_BOUNDS in data/weekly_distribution.py, also imported by scripts/
+backtest_five_weeks.py so both scripts and the live app share one
+definition), the empirical
 distribution of actual/calibrated ratio across a real backtest: at P10, what
 fraction of the projection did the actual outcome come in at; at P90; etc.
 That ratio ladder is the "shape" - multiply it onto any player's own
@@ -41,8 +43,8 @@ import pandas as pd  # noqa: E402
 
 from data.weekly_projections import build_weekly_projections  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
+from data.weekly_distribution import TIER_BOUNDS  # noqa: E402
 
-TIERS = [('Elite', 1, 6), ('Starter', 7, 15), ('Flex', 16, 30), ('Streamer/Bench', 31, 10_000)]
 PERCENTILES = (10, 25, 50, 75, 90)
 MIN_DENOMINATOR = 1.0  # a near-zero projection makes the ratio meaningless, not informative
 
@@ -66,7 +68,7 @@ def main():
     weeks = list(range(int(lo), int(hi) + 1))
     scoring_col = 'fantasy_points_ppr' if args.scoring != 'Standard' else 'fantasy_points'
 
-    ratios = {pos: {tier: [] for tier, _lo, _hi in TIERS} for pos in ('QB', 'RB', 'WR', 'TE')}
+    ratios = {pos: {tier: [] for tier, _lo, _hi in TIER_BOUNDS} for pos in ('QB', 'RB', 'WR', 'TE')}
 
     for year in years:
         stats_df, _t, name_col, _ = load_and_merge_data(year, args.scoring)
@@ -81,7 +83,7 @@ def main():
                 continue
             for pos in ('QB', 'RB', 'WR', 'TE'):
                 sub = proj[proj['Pos'] == pos].sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
-                for tier_name, tlo, thi in TIERS:
+                for tier_name, tlo, thi in TIER_BOUNDS:
                     tsub = sub.iloc[tlo - 1:thi]
                     if tsub.empty:
                         continue
@@ -97,7 +99,7 @@ def main():
     print("WEEKLY_DISTRIBUTION_BANDS = {")
     for pos in ('QB', 'RB', 'WR', 'TE'):
         print(f"    '{pos}': {{")
-        for tier_name, _lo, _hi in TIERS:
+        for tier_name, _lo, _hi in TIER_BOUNDS:
             sample = np.array(ratios[pos][tier_name], dtype=float)
             if len(sample) < 30:
                 print(f"        # '{tier_name}': skipped, only n={len(sample)} (<30)")

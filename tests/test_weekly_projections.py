@@ -269,6 +269,86 @@ def test_qb_passing_matchup_drops_an_all_zero_td_baseline_safely():
     assert out.empty
 
 
+def test_team_game_plays_lookup_normalizes_team_keys_and_columns():
+    raw = pd.DataFrame([{'team': 'OAK', 'week': 1, 'plays': 65}])
+    out = wp._team_game_plays_lookup(raw)
+    assert list(out.columns) == ['_offense', '_week', '_plays']
+    assert out.iloc[0]['_offense'] == 'LV'
+    assert out.iloc[0]['_plays'] == 65
+
+
+def test_team_game_quality_profile_removes_pace_volume_when_plays_supplied():
+    # Two offenses (A, B) each play HOU once and FAST once. Against HOU the
+    # game had 40 total plays and each offense gained 40 receiving yards -
+    # par, a 1.0-yard-per-play rate. Against FAST the game had DOUBLE the
+    # plays (80) and each offense gained double the yards (80) - the exact
+    # same 1.0-yard-per-play rate, just a bigger game. Raw totals alone make
+    # FAST look like a much worse matchup than HOU; per-play, they are
+    # identical, which is what pace_mult (built from FAST's own higher play
+    # count) is supposed to be the ONLY place that volume difference shows
+    # up.
+    rows = []
+    for team in ('A', 'B'):
+        rows.append({'name': f'{team} WR', 'team': team, 'opponent_team': 'HOU',
+                     'week': 1, 'position': 'WR', 'receiving_yards': 40.0})
+        rows.append({'name': f'{team} WR', 'team': team, 'opponent_team': 'FAST',
+                     'week': 2, 'position': 'WR', 'receiving_yards': 80.0})
+    df = weekly(rows)
+    plays_lookup = wp._team_game_plays_lookup(pd.DataFrame([
+        {'team': 'A', 'week': 1, 'plays': 40}, {'team': 'B', 'week': 1, 'plays': 40},
+        {'team': 'A', 'week': 2, 'plays': 80}, {'team': 'B', 'week': 2, 'plays': 80},
+    ]))
+
+    without = wp.build_team_game_quality_adjusted_matchup(
+        df, 'team', ['receiving_yards'], as_of_week=3)
+    with_plays = wp.build_team_game_quality_adjusted_matchup(
+        df, 'team', ['receiving_yards'], as_of_week=3, plays=plays_lookup)
+
+    assert without.loc['FAST', 'receiving_yards'] > without.loc['HOU', 'receiving_yards']
+    assert np.isclose(with_plays.loc['HOU', 'receiving_yards'],
+                       with_plays.loc['FAST', 'receiving_yards'], atol=1e-6)
+
+
+def test_team_game_quality_profile_drops_a_game_with_unknown_plays_instead_of_raw_scale():
+    rows = [
+        {'name': 'A WR', 'team': 'A', 'opponent_team': 'HOU', 'week': 1,
+         'position': 'WR', 'receiving_yards': 40.0},
+        {'name': 'B WR', 'team': 'B', 'opponent_team': 'HOU', 'week': 2,
+         'position': 'WR', 'receiving_yards': 40.0},
+    ]
+    df = weekly(rows)
+    # Only team A's week-1 play count is known; team B's week-2 game has no
+    # matching row at all in the plays table.
+    plays_lookup = wp._team_game_plays_lookup(pd.DataFrame([{'team': 'A', 'week': 1, 'plays': 40}]))
+    out = wp.build_team_game_quality_adjusted_matchup(
+        df, 'team', ['receiving_yards'], as_of_week=3, plays=plays_lookup)
+    assert not out.empty and np.isfinite(out.loc['HOU', 'receiving_yards'])
+
+
+def test_role_matchup_pace_normalization_survives_partition_recursion():
+    # Same HOU/FAST par-per-play setup as the team-game test above, but
+    # role-partitioned - exercises _team_game_quality_profile's recursive
+    # partition_keys branch, which must also forward `plays` to each
+    # recursive call rather than silently reverting to raw totals.
+    rows = []
+    for team in ('A', 'B'):
+        rows.append({'name': f'{team} WR', 'team': team, 'opponent_team': 'HOU',
+                     'week': 1, 'position': 'WR', 'receiving_yards': 40.0})
+        rows.append({'name': f'{team} WR', 'team': team, 'opponent_team': 'FAST',
+                     'week': 2, 'position': 'WR', 'receiving_yards': 80.0})
+    df = weekly(rows)
+    roles = {'A WR': 'primary', 'B WR': 'primary'}
+    plays_lookup = wp._team_game_plays_lookup(pd.DataFrame([
+        {'team': 'A', 'week': 1, 'plays': 40}, {'team': 'B', 'week': 1, 'plays': 40},
+        {'team': 'A', 'week': 2, 'plays': 80}, {'team': 'B', 'week': 2, 'plays': 80},
+    ]))
+    role_tables, _sizes = wp.build_role_matchup(
+        df, 'name', 'team', ['receiving_yards'], as_of_week=3, roles=roles, plays=plays_lookup)
+    table = role_tables['primary']
+    assert np.isclose(table.loc['HOU', 'receiving_yards'],
+                       table.loc['FAST', 'receiving_yards'], atol=1e-6)
+
+
 def _position_team_fixture(pos, stat, split_spot_starter=False):
     """Same team-position totals, optionally split across a spot starter."""
     rows = []
@@ -1095,6 +1175,25 @@ def test_v2_as_of_pace_excludes_future_week_rows():
     pace = wp.as_of_team_pace(df, 'team', as_of_week=2)
     assert pace.loc['KC', 'off_pace'] == 50
     assert pace.loc['DEN', 'def_pace'] == 50
+
+
+def test_as_of_team_weekly_plays_excludes_future_week_rows_and_stays_per_game():
+    df = weekly([
+        {'name': 'QB', 'week': 1, 'team': 'KC', 'opponent_team': 'DEN', 'position': 'QB',
+         'passing_attempts': 30},
+        {'name': 'RB', 'week': 1, 'team': 'KC', 'opponent_team': 'DEN', 'position': 'RB',
+         'rushing_attempts': 20},
+        {'name': 'QB', 'week': 2, 'team': 'KC', 'opponent_team': 'DEN', 'position': 'QB',
+         'passing_attempts': 60},
+        {'name': 'RB', 'week': 2, 'team': 'KC', 'opponent_team': 'DEN', 'position': 'RB',
+         'rushing_attempts': 40},
+    ])
+    plays = wp.as_of_team_weekly_plays(df, 'team', as_of_week=2)
+    # Week 2 (>= as_of_week) is excluded, same cutoff as_of_team_pace uses -
+    # only the single week-1 game (50 plays) survives.
+    assert list(plays['week']) == [1]
+    row = plays[(plays['team'] == 'KC') & (plays['week'] == 1)].iloc[0]
+    assert row['plays'] == 50
 
 
 def test_v2_defense_matchup_falls_back_to_prior_season_at_true_cold_start():

@@ -76,6 +76,68 @@ def test_high_role_confidence_narrows_the_band_around_its_own_median():
         wd.WEEKLY_DISTRIBUTION_BANDS, wd.NEEDS_REFIT = original_bands, original_needs_refit
 
 
+def test_own_variance_below_min_games_falls_back_to_the_role_confidence_heuristic():
+    ratios = {10: 0.40, 25: 0.70, 50: 1.00, 75: 1.30, 90: 1.60}
+    heuristic = wd._width_scale(0.5)
+    # Fewer than MIN_GAMES_FOR_OWN_VARIANCE real games (a rookie/limited
+    # sample) - own evidence must not move the scale at all.
+    few_games = [10.0, 12.0, 9.0]
+    assert len(few_games) < wd.MIN_GAMES_FOR_OWN_VARIANCE
+    assert math.isclose(wd.player_width_scale(0.5, ratios, few_games), heuristic)
+    assert math.isclose(wd.player_width_scale(0.5, ratios, None), heuristic)
+    assert math.isclose(wd.player_width_scale(0.5, ratios, []), heuristic)
+
+
+def test_own_variance_with_a_full_sample_differentiates_consistent_from_erratic_players():
+    ratios = {10: 0.40, 25: 0.70, 50: 1.00, 75: 1.30, 90: 1.60}
+    rng = np.random.default_rng(0)
+    # Same role_confidence and mean for both - only their real week-to-week
+    # spread differs, which is exactly the signal the old role_confidence-
+    # only heuristic could not see (real 2025 case: CeeDee Lamb vs. Ja'Marr
+    # Chase, ~same role_confidence, very different real CV).
+    consistent = list(rng.normal(loc=15.0, scale=2.0, size=16))
+    erratic = list(rng.normal(loc=15.0, scale=9.0, size=16))
+    assert len(consistent) >= wd.GAMES_FOR_FULL_TRUST
+    scale_consistent = wd.player_width_scale(0.6, ratios, consistent)
+    scale_erratic = wd.player_width_scale(0.6, ratios, erratic)
+    assert scale_consistent < scale_erratic
+    assert wd.REAL_MIN_WIDTH_SCALE <= scale_consistent <= wd.REAL_MAX_WIDTH_SCALE
+    assert wd.REAL_MIN_WIDTH_SCALE <= scale_erratic <= wd.REAL_MAX_WIDTH_SCALE
+
+
+def test_own_variance_sample_size_shrinks_toward_the_heuristic_not_a_hard_cutover():
+    ratios = {10: 0.40, 25: 0.70, 50: 1.00, 75: 1.30, 90: 1.60}
+    rng = np.random.default_rng(1)
+    heuristic = wd._width_scale(0.5)
+    very_consistent = list(rng.normal(loc=15.0, scale=0.5, size=20))
+    partial_scale = wd.player_width_scale(0.5, ratios, very_consistent[:wd.MIN_GAMES_FOR_OWN_VARIANCE])
+    full_scale = wd.player_width_scale(0.5, ratios, very_consistent[:wd.GAMES_FOR_FULL_TRUST])
+    # Right at the sample floor, real evidence barely outweighs the
+    # heuristic; by full trust, it should have pulled well past halfway.
+    assert abs(partial_scale - heuristic) < abs(full_scale - heuristic)
+
+
+def test_player_distribution_passes_through_own_game_points_to_the_width_scale():
+    original_bands, original_needs_refit = wd.WEEKLY_DISTRIBUTION_BANDS, wd.NEEDS_REFIT
+    try:
+        wd.NEEDS_REFIT = False
+        wd.WEEKLY_DISTRIBUTION_BANDS = {
+            'RB': {'Starter': {10: 0.40, 25: 0.70, 50: 1.00, 75: 1.30, 90: 1.60}},
+        }
+        rng = np.random.default_rng(2)
+        tight_history = list(rng.normal(loc=20.0, scale=1.0, size=16))
+        wide_history = list(rng.normal(loc=20.0, scale=12.0, size=16))
+        tight = wd.player_distribution('RB', 2, calibrated_points=20.0, role_confidence=0.5,
+                                       own_game_points=tight_history)
+        wide = wd.player_distribution('RB', 2, calibrated_points=20.0, role_confidence=0.5,
+                                      own_game_points=wide_history)
+        assert (tight['points'][90] - tight['points'][10]) < (wide['points'][90] - wide['points'][10])
+        # position_points (the 'Typical' overlay) never moves with own evidence.
+        assert tight['position_points'] == wide['position_points']
+    finally:
+        wd.WEEKLY_DISTRIBUTION_BANDS, wd.NEEDS_REFIT = original_bands, original_needs_refit
+
+
 def test_band_points_never_go_negative_even_with_a_low_floor_and_wide_scale():
     original_bands, original_needs_refit = wd.WEEKLY_DISTRIBUTION_BANDS, wd.NEEDS_REFIT
     try:

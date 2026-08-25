@@ -746,13 +746,28 @@ def test_regular_season_late_games_remain_in_a_returning_receiver_prior():
     assert np.isclose(london['receiving_yards'], 919.0, atol=0.02)
 
 
-def test_v1_feature_set_keeps_v2_rb_and_alignment_experiments_out_of_the_control():
+def test_v1_feature_set_keeps_v2_rb_allocator_experiment_out_of_the_control():
     v1 = wp.resolve_model_features('v1')
     v2 = wp.resolve_model_features('v2')
     assert 'v2_preseason_rb_allocator' not in v1
-    assert 'v2_pff_alignment_matchup' not in v1
     assert 'v2_preseason_rb_allocator' in v2
+
+
+def test_pff_alignment_matchup_is_rejected_for_default_but_live_in_v2():
+    # Measured 2026-08-24 against the 2025 startable pool (see
+    # DEFAULT_FEATURES's own comment): loses MAE and rank-corr on both
+    # START-WR and START-TE, so - same as volume_efficiency and game_env
+    # before it - DEFAULT_FEATURES leaves it off. Unlike those two, it was
+    # then re-enabled in the V2 experimental bundle the same day at the
+    # user's explicit request, purely so it can be inspected on a real V2
+    # board while hunting for a fixable cause - see
+    # V2_EXPERIMENTAL_FEATURES's own comment. That reactivation is a
+    # diagnostic convenience, not a reversal of the backtest result.
+    v1 = wp.resolve_model_features('v1')
+    v2 = wp.resolve_model_features('v2')
+    assert 'v2_pff_alignment_matchup' not in v1
     assert 'v2_pff_alignment_matchup' in v2
+    assert 'v2_pff_alignment_matchup' in wp.MODEL_FEATURES
 
 
 def test_preseason_qb1_resolution_auto_selects_one_clear_full_season_incumbent():
@@ -1130,6 +1145,62 @@ def test_v2_two_year_td_prior_requires_a_comparable_opportunity_role():
     assert not rejected[0] and changed_role[0] == 0.50
 
 
+def test_prior2_blend_weight_full_when_2024_raises_the_value():
+    # Lamar Jackson/Jayden Daniels shape: a down/injury-shortened 2025 (4
+    # games, so fraction_missing=(8-4)/8=0.5) with a BETTER 2024 - kept at
+    # full base weight, no asymmetric cut.
+    weight = wp.prior2_blend_weight(
+        games_2025=np.array([4.0]), games_2024=np.array([17.0]),
+        current=np.array([0.20]), prior2_value=np.array([0.30]))
+    expected_base = wp.PRIOR2_BLEND_BASE_WEIGHT + (wp.PRIOR2_BLEND_MAX_WEIGHT - wp.PRIOR2_BLEND_BASE_WEIGHT) * 0.5
+    assert abs(weight[0] - expected_base) < 1e-9
+
+
+def test_prior2_blend_weight_dampened_when_2024_lowers_the_value():
+    # A full 2025 season (>=8 games -> floor weight) with a WORSE 2024 (a
+    # 2025 breakout off a thinner/backup prior role) - cut to
+    # PRIOR2_BLEND_DECREASE_DAMPENING of the base weight, staying bullish on
+    # the ascending player rather than docking him at full weight.
+    weight = wp.prior2_blend_weight(
+        games_2025=np.array([16.0]), games_2024=np.array([17.0]),
+        current=np.array([0.30]), prior2_value=np.array([0.10]))
+    expected = wp.PRIOR2_BLEND_BASE_WEIGHT * wp.PRIOR2_BLEND_DECREASE_DAMPENING
+    assert abs(weight[0] - expected) < 1e-9
+
+
+def test_prior2_blend_weight_decays_to_zero_across_the_2026_season():
+    games_2025 = np.array([16.0])
+    games_2024 = np.array([17.0])
+    current = np.array([0.20])
+    prior2_value = np.array([0.30])  # pulls up, so no asymmetric cut muddies the decay check
+    at_cold_start = wp.prior2_blend_weight(games_2025, games_2024, current, prior2_value,
+                                           games_2026=np.array([0.0]))
+    at_half_decay = wp.prior2_blend_weight(games_2025, games_2024, current, prior2_value,
+                                           games_2026=np.array([wp.PRIOR2_DECAY_GAMES_2026 / 2.0]))
+    at_full_decay = wp.prior2_blend_weight(games_2025, games_2024, current, prior2_value,
+                                           games_2026=np.array([wp.PRIOR2_DECAY_GAMES_2026]))
+    no_decay_requested = wp.prior2_blend_weight(games_2025, games_2024, current, prior2_value)
+    assert abs(at_cold_start[0] - no_decay_requested[0]) < 1e-9  # zero 2026 games is a no-op
+    assert abs(at_half_decay[0] - no_decay_requested[0] * 0.5) < 1e-9
+    assert at_full_decay[0] == 0.0
+    # A player who has barely played (1 of 8 games) keeps most of his 2024
+    # read - an early-season absence must not burn the fade down for him.
+    barely_played = wp.prior2_blend_weight(games_2025, games_2024, current, prior2_value,
+                                           games_2026=np.array([1.0]))
+    assert barely_played[0] > no_decay_requested[0] * 0.8
+
+
+def test_prior2_blend_weight_zero_below_minimum_2024_games():
+    below_min = wp.prior2_blend_weight(
+        games_2025=np.array([4.0]), games_2024=np.array([0.0]),
+        current=np.array([0.20]), prior2_value=np.array([0.30]))
+    missing = wp.prior2_blend_weight(
+        games_2025=np.array([4.0]), games_2024=np.array([np.nan]),
+        current=np.array([0.20]), prior2_value=np.array([np.nan]))
+    assert below_min[0] == 0.0
+    assert missing[0] == 0.0
+
+
 def test_v2_qb_and_rb_rushing_channels_are_explicitly_separate():
     assert wp.projection_channel('QB', 'rushing_yards') == 'QB rushing'
     assert wp.projection_channel('RB', 'rushing_yards') == 'RB rushing'
@@ -1306,7 +1377,7 @@ def test_v2_full_projection_contract_is_cutoff_safe_and_explained():
         second[['Player', 'Raw Model Proj Pts', 'Calibrated Model Proj Pts']])
     assert meta['source_contract']['historical_target']
     assert meta['source_contract']['pace'] == 'weekly_box_score_proxy'
-    assert meta['source_contract']['prior_defense_recency'].startswith('75% full-season')
+    assert meta['source_contract']['prior_defense_recency'].startswith('80% full-season')
     assert len(meta['explanations']) == len(first)
     detail = meta['explanations'][('KC QB', 'QB', 'KC')]
     trace = detail['stats']['passing_yards']

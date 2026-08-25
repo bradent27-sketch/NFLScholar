@@ -184,18 +184,28 @@ pass, not a claim of an out-of-sample fantasy-point improvement.
   optional provenance manifest. Player slot/non-slot profiles are shown in the popup.
   Defense evidence comes only from weekly **offensive** PFF data mapped to the scheduled
   opponent and aggregated at a team-game grain; the incompatible defender `slot_coverage`
-  report is never used. WR/TE target/reception/yard residuals are a bounded audit preview
-  only. TD, RB/FB, missing data, all historical leaks, and every scoring calculation remain
-  neutral until a separate locked out-of-sample backtest authorizes activation.
+  report is never used. WR/TE target/reception/yard residuals were a bounded audit preview
+  only through 2026-08-23; on 2026-08-24 the residual was wired into scoring behind the
+  `v2_pff_alignment_matchup` feature flag and run through the locked out-of-sample backtest
+  this note used to require — see `docs/weekly_projections_methodology.md`'s
+  `v2_pff_alignment_matchup` section for the numbers. **Result: rejected**, same bar as
+  `volume_efficiency`/`game_env` — it loses MAE and rank-corr on the startable WR/TE pool
+  that actually drives a lineup decision, worst on TE. The mechanism, code, and lookup
+  helpers all stay in place (reachable by explicit feature name, excluded from
+  `DEFAULT_FEATURES`); TD, RB/FB, and missing data remain neutral regardless. **Update, same
+  day:** re-enabled in `V2_EXPERIMENTAL_FEATURES` only, at the user's request, purely so the
+  active per-player residual is visible on a real V2 board while looking for a fixable
+  cause — see the methodology doc's own update note. `DEFAULT_FEATURES` is unaffected.
 
 ### Still deferred because the current sources cannot support an honest version
 
-- **WR slot/wide and TE slot/inline matchup math:** available PFF alignment files are
-  season totals without a week/timestamp cutoff. The receiving summary offers alignment
-  snaps/rates, and the route-concept report offers a slot efficiency split, but neither
-  supplies honest historic as-of-week wide/inline efficiency. V2 exposes the missing
-  feature as neutral rather than leaking a season total. A dated weekly or play-level,
-  alignment-aware feed is required to turn it on.
+- **WR slot/wide and TE slot/inline matchup math:** the dated weekly feed this used to be
+  blocked on now exists for 2025 (`pff_imports/2025/weekly/`) and was tried — see the
+  "Follow-up implementation" section above: built, backtested, and rejected 2026-08-24, not
+  for a data-availability reason but because 2025 is still the only season with weekly-grain
+  files, so the defense-side slot/non-slot split is thin (a handful of games per team) even
+  with the existing shrinkage. Revisit once more weekly-grain seasons accumulate, not by
+  retuning the shrinkage constants against this same single season.
 - **Depth × field location and QB pressure/sack inputs:** play-by-play can support a
   future depth/location study, but the current pass has not validated an incremental
   projection benefit and does not fabricate pressure data from a season summary.

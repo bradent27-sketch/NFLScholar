@@ -25,7 +25,7 @@ Content-Location: https://www.ourlads.com/nfldepthcharts/pfdepthchart/MIA
 <html><head><title>Miami Dolphins Depth Chart</title></head><body>
 <table><tr><th>Pos</th><th>Player 1</th><th>Player 2</th><th>Player 3</th></tr>
 <tr><td>RB</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/1/">Back, Missing 26/1</a></td><td><a href="https://www.ourlads.com/nfldepthcharts/player/2/">Back, Known 26/1</a></td><td><a href="https://www.ourlads.com/nfldepthcharts/player/3/" class="lc_red">Back, Third 26/1</a></td></tr>
-<tr><td>FB</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/4/">Ingold, Alec 20/3</a></td><td></td><td></td></tr>
+<tr><td>FB</td><td><a href="https://www.ourlads.com/nfldepthcharts/player/4/">Ingold, Alec 20/3</a></td><td><a href="https://www.ourlads.com/nfldepthcharts/player/5/">Herman, Dj 25/7</a></td><td></td></tr>
 </table></body></html>
 --chart--
 '''
@@ -41,6 +41,12 @@ class OurladsFullbackAndRankTests(unittest.TestCase):
             # nflverse groups a fullback under RB; the narrow roster field
             # must keep him out of the core-RB Ourlads signal.
             {"name": "Alec Ingold", "team": "MIA", "position": "RB", "depth_chart_position": "FB"},
+            # A real 2026-08-24 miscall: the roster's OWN depth_chart_position
+            # is a stale "RB" (nflverse never granularly tagged this backup
+            # fullback), while Ourlads' current, curated chart specifically
+            # lists him at FB2. The old precedence trusted the roster field
+            # unconditionally and let him compete for real core-RB volume.
+            {"name": "Dj Herman", "team": "MIA", "position": "RB", "depth_chart_position": "RB"},
         ])
 
     def test_parser_retains_fullbacks(self):
@@ -78,6 +84,17 @@ class OurladsFullbackAndRankTests(unittest.TestCase):
         fullback = signal["fullback_roles"].iloc[0]
         self.assertEqual(fullback["source_position"], "RB")
         self.assertEqual(fullback["functional_position"], "FB")
+
+    def test_ourlads_fullback_listing_overrides_a_stale_roster_rb_depth_chart_position(self):
+        signal = odc.build_ourlads_projection_signal(self.snapshot, self.roster, "name", "team")
+        herman = signal["matches"].loc[signal["matches"]["matched_player"].eq("Dj Herman")].iloc[0]
+        self.assertEqual(herman["source_position"], "FB")
+        self.assertEqual(herman["roster_depth_chart_position"], "RB")
+        self.assertEqual(herman["functional_position"], "FB")
+        self.assertNotIn("Dj Herman", set(signal["skill_roles"]["matched_player"]))
+        fullbacks = set(signal["fullback_roles"]["matched_player"])
+        self.assertIn("Dj Herman", fullbacks)
+        self.assertIn("Alec Ingold", fullbacks)
 
     def test_reviewed_name_alias_bridges_source_only_spelling_difference(self):
         chart = self.snapshot.copy()

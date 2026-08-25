@@ -28,7 +28,111 @@ DEFAULT_RB_CARRY_CAPACITY = 21.0
 DEFAULT_RB_TARGET_CAPACITY = 5.0
 MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE = 0.86
 VACANCY_SURVIVAL = 0.80
+
+# Season-scoped RB eligibility, redone 2026-08-24 at explicit request after a
+# real miscall: the old bar ("4+ games at >=10% base, ANYWHERE in a player's
+# career, in EITHER season") let a player whose 2025 role was tiny and
+# irrelevant on his CURRENT team still count as a credible core-RB candidate
+# and pull real share away from an unambiguous starter (measured live -
+# Dameon Pierce, 5 games at an 8.4% active-game share for a DIFFERENT team
+# in 2025, was still splitting PHI's backfield with Saquon Barkley). The new
+# rule is a two-step season check instead: does 2025 alone clear a real bar,
+# and if not, was 2024 a genuine starter's season interrupted since (the
+# Malik-Nabers-shaped case, not "any four games")? This governs `strong_
+# evidence` below - it is deliberately SEPARATE from `base` (used for the
+# actual SCORE magnitude), which stays the caller's already-blended, best
+# point-estimate share; this only gates who is credible to compete at all.
+RB_ELIGIBILITY_MIN_GAMES_2025 = 5
+RB_ELIGIBILITY_MIN_SHARE_2025 = 0.15
+RB_ELIGIBILITY_PRIOR2_MIN_GAMES = 4
+RB_ELIGIBILITY_PRIOR2_STARTER_SHARE = 0.40
+
+# Without an imported Ourlads chart, every "eligible" candidate on a team
+# used to compete on raw score alone - no penalty at all for being the
+# team's 3rd (or 4th) back, the exact discount a real chart rank already
+# applies below. Reuses THAT SAME discount schedule (1.08/0.98/0.88), just
+# keyed off score-derived rank instead of a chart rank, so a team with no
+# chart still down-weights a genuine third option instead of letting the
+# 1.45 concentration exponent be its only defense.
+SCORE_RANK_DISCOUNT = {1: 1.08, 2: 0.98, 3: 0.88}
+SCORE_RANK_DISCOUNT_DEFAULT = 0.80
 VACANCY_MAX_GROWTH = 2.00
+
+# Explicit depth-chart-order nudge, added 2026-08-24 per request: even after
+# SCORE_RANK_DISCOUNT above, a real preseason-committee RB3 can still clear
+# 20%+ of team snaps once concentration and evidence scoring finish - well
+# past what an actual NFL RB3 sees outside an injury or a blowout script
+# ("generally an RB3 is not going to get more than 10% of snaps"). This is a
+# SECOND, later pass: a bounded, PARTIAL pull of whatever share a rank>=3
+# back holds above RB_DEPTH_RANK_SNAP_TARGET_RANK3 toward the team's rank-1
+# back, conserving the team's total core-RB snap allocation exactly (a
+# transfer, not new capacity). Deliberately partial (RB_DEPTH_RANK_SNAP_PULL
+# < 1) and capped small per team (RB_DEPTH_RANK_SNAP_NUDGE_CAP) rather than a
+# hard ceiling at the target - a real committee back with strong standalone
+# evidence keeps most of his share; "a few outliers is fine to leave" was
+# explicit. RB2 is deliberately untouched - only rank 1 (receiver) and
+# rank>=3 (donor) participate, matching "mild uptick to RB1 and downtick to
+# RB3" exactly as asked, not a general re-flattening of the whole backfield.
+RB_DEPTH_RANK_SNAP_TARGET_RANK3 = 0.10
+RB_DEPTH_RANK_SNAP_PULL = 0.5
+RB_DEPTH_RANK_SNAP_NUDGE_CAP = 0.05
+
+# A second, sibling correction, added 2026-08-24 per explicit request: the
+# nudge above only guards RB1-vs-RB3+; it left a real case where a chart
+# rank>=3 back's OWN evidence score was strong enough to outrun the chart
+# rank-2 back next to him (measured live - Kimani Vidal, chart RB3, real
+# 2024/2025 game evidence, ended up at 20.7% team share vs. Keaton Mitchell,
+# chart RB2, at 9.4%). "The RB3 listed should not be so much higher than the
+# RB2 listed" is the same shape of ask as the RB1 case, so this reuses the
+# identical bounded/partial/capped/conserved mechanism, just keyed to RB2 as
+# the receiver instead of RB1 - a real committee outlier still keeps most of
+# an earned lead; only the excess above what RB2 himself holds is pulled.
+RB_DEPTH_RANK2_ORDER_PULL = 0.5
+RB_DEPTH_RANK2_ORDER_NUDGE_CAP = 0.05
+
+# When a chart rank<=3 teammate is unavailable (a real target-week 'out'),
+# the next chart slot is a genuine next-man-up, not a phantom that should
+# stay at a hard, unrealistic zero - added 2026-08-24 after a real miscall
+# (Seattle with Zach Charbonnet out left only Jadarian Price and George
+# Holani eligible at all, so Price alone climbed to a true 74% workhorse
+# share with no possible relief valve). Bounded to exactly the count of
+# unavailable top-three slots, so a fully healthy backfield is unaffected.
+# The newly admitted slot gets a small explicit score floor - real snap
+# evidence for a true 4th/5th-string reserve is usually ~0, which would
+# make him uncompetitive for a share even once he is technically eligible.
+RB_VACANCY_EXTENSION_BASE_FLOOR = 0.03
+
+# A team's core-RB snap shares are meant to describe its WHOLE backfield,
+# not just the confidently-projected slice of it - added 2026-08-24 after a
+# real miscall (a clean, fully-charted Bears room still summed to ~92% of
+# team snaps, ~8 points short of "a full backfield", because both the
+# `other RB` residual and the gap between snap_capacity and 1.0 were left
+# unassigned to anyone). Rather than inventing a role for an unlisted
+# reserve, the unclaimed remainder is redistributed only to already-
+# projected core RBs, proportional to the share each already holds - see
+# the final rescale call below, which reuses `_bounded_allocation` exactly
+# as intended (it only ever distributes across `scores.gt(0)`).
+RB_TEAM_SNAP_SHARE_TARGET = 1.00
+
+# How much of an incumbent's documented pre-injury role (``pre_gap``) is
+# credited back to him when ``interrupted_incumbent_role_credit`` is at its
+# max (1.0) - i.e. clear internal evidence he was starter-caliber before a
+# mid-season absence, not just a same-role stat-line average. Tuned
+# 2026-08-24 (0.30 -> 0.60) after the user flagged Cam Skattebo (2025 NYG
+# rookie, injury-shortened season, credit=0.79) sitting well below Tyrone
+# Tracy Jr. (fuller, uninterrupted 2025 role) and asked for the weight to be
+# swept and judged on its own, not hand-picked to fix one pairing. Checked
+# 0.30/0.40/0.50/0.60/0.70 against the full 2026 Week 1 board: the effect
+# stays narrow and well-behaved at every step (6 backfields move at 0.50, 13
+# at 0.70, no runaway share anywhere), and only 0.60 actually closes the
+# ordering the user was questioning - Skattebo's snap share (0.390 -> 0.435)
+# passes Tracy's (0.452 -> 0.418) instead of merely narrowing the gap, while
+# every other affected player (Irving/Hampton/Stevenson/Dobbins - all
+# similarly credited, real, interrupted 2025 seasons) moves by a comparable,
+# modest amount. 0.70 was rejected as pushing the same handful of players
+# further with no added ordering benefit - i.e. tuned toward the general
+# mechanism holding at that step, not toward this one pairing specifically.
+RB_INCUMBENT_CREDIT_WEIGHT = 0.60
 
 # ``weekly_snap_pct`` can contain a one- or two-snap appearance.  That is
 # real participation, but it is not enough on its own to establish a role or
@@ -56,7 +160,7 @@ RB_ROLE_SEGMENT_COLUMNS = (
     "absence_replacement_core_rb_snap_share", "return_recovery_games",
     "return_recovery_start_week", "return_recovery_end_week", "return_recovery_snap_share",
     "return_recovery_carries_per_game", "return_recovery_targets_per_game",
-    "interrupted_incumbent_role_credit",
+    "interrupted_incumbent_role_credit", "pre_window_teammate_vacancy_downweight",
 )
 
 RB_TEAMMATE_CONTEXT_COLUMNS = (
@@ -223,6 +327,59 @@ def _bounded_allocation(scores: pd.Series, total: float, max_each: float | None 
     return result.clip(lower=0.0)
 
 
+def _apply_depth_rank_snap_nudge(snap_alloc: pd.Series, effective_rank: pd.Series) -> pd.Series:
+    """Bounded, conserved RB1-up / RB3-down snap-share transfer for one team.
+
+    See RB_DEPTH_RANK_SNAP_* module constants for the rationale. ``snap_alloc``
+    is this team's already-computed core-RB snap shares; ``effective_rank`` is
+    a chart rank (1/2/3/...) when the team has an imported Ourlads chart, or a
+    score-derived rank (same convention) when it does not - the caller decides
+    which. Only rank 1 (receiver) and rank>=3 (donor) participate; a two-man
+    backfield (no rank>=3) or a team with no clear rank-1 is left untouched.
+    """
+    rank1_idx = effective_rank.index[effective_rank.eq(1)]
+    donor_idx = effective_rank.index[effective_rank.ge(3)]
+    if not len(rank1_idx) or not len(donor_idx):
+        return snap_alloc
+    donor_share = snap_alloc.loc[donor_idx]
+    excess = (donor_share - RB_DEPTH_RANK_SNAP_TARGET_RANK3).clip(lower=0.0)
+    total_excess = float(excess.sum())
+    if total_excess <= 1e-9:
+        return snap_alloc
+    transfer = min(RB_DEPTH_RANK_SNAP_PULL * total_excess, RB_DEPTH_RANK_SNAP_NUDGE_CAP)
+    nudged = snap_alloc.copy()
+    nudged.loc[donor_idx] -= (excess / total_excess) * transfer
+    nudged.loc[rank1_idx] += transfer / len(rank1_idx)
+    return nudged
+
+
+def _apply_depth_rank2_order_nudge(snap_alloc: pd.Series, effective_rank: pd.Series) -> pd.Series:
+    """Bounded, conserved correction when a listed RB3+ outshares the listed RB2.
+
+    See RB_DEPTH_RANK2_ORDER_* above.  Structurally identical to
+    ``_apply_depth_rank_snap_nudge``, except the receiver is rank 2 (instead
+    of rank 1) and the pull target is RB2's OWN current share (instead of a
+    fixed ceiling) - only the excess a rank>=3 back holds ABOVE what RB2
+    himself has is eligible to move, so this only ever restores order, never
+    inverts it.
+    """
+    rank2_idx = effective_rank.index[effective_rank.eq(2)]
+    donor_idx = effective_rank.index[effective_rank.ge(3)]
+    if not len(rank2_idx) or not len(donor_idx):
+        return snap_alloc
+    rank2_share = float(snap_alloc.loc[rank2_idx].sum()) / len(rank2_idx)
+    donor_share = snap_alloc.loc[donor_idx]
+    excess = (donor_share - rank2_share).clip(lower=0.0)
+    total_excess = float(excess.sum())
+    if total_excess <= 1e-9:
+        return snap_alloc
+    transfer = min(RB_DEPTH_RANK2_ORDER_PULL * total_excess, RB_DEPTH_RANK2_ORDER_NUDGE_CAP)
+    nudged = snap_alloc.copy()
+    nudged.loc[donor_idx] -= (excess / total_excess) * transfer
+    nudged.loc[rank2_idx] += transfer / len(rank2_idx)
+    return nudged
+
+
 def _role_base(group: pd.DataFrame) -> pd.Series:
     base = _numeric(group, "base_snap_share", "expected_snap_share", "Expected Snap Share")
     active = _numeric(group, "prior_active_snap_share", "active_snap_share")
@@ -241,7 +398,7 @@ def _role_base(group: pd.DataFrame) -> pd.Series:
     # move toward the player's documented *pre-gap* role; it cannot invent a
     # bell-cow role from a small depth-chart sample.
     incumbent_credit = _numeric(group, "interrupted_incumbent_role_credit", default=0.0).fillna(0.0).clip(0.0, 1.0)
-    role += 0.30 * incumbent_credit * pre_gap
+    role += RB_INCUMBENT_CREDIT_WEIGHT * incumbent_credit * pre_gap
     # Shared-healthy teammate data distinguishes an incumbent's role before
     # injury from a replacement's temporary absence-era workload.  A two-game
     # shared sample is not a verdict, so these are modest, capped score
@@ -305,22 +462,90 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame) -> tuple[pd.DataFrame,
     # does not make DET/PIT (or an unavailable source) unusable.
     listed = rank.notna() & rank.ge(1)
     team_has_chart = listed.groupby(out["_rb_team"], observed=True).transform("any")
-    fallback_credible = (
-        # ``base`` can be the position-median fallback for a rostered player
-        # with no real prior sample.  Require a real observed role before it
-        # can admit an uncharted veteran; otherwise an unknown DET/PIT
-        # reserve gets the same synthetic 16%-ish role as a proven player.
-        (has_observed_prior_role & prior_games.ge(4) & base.ge(0.10))
-        | (draft_capital.ge(1) & draft_capital.le(150))
+    # Season-scoped evidence, redone 2026-08-24 - see RB_ELIGIBILITY_* above
+    # for why. ``season_active_2025``/``prior2_games``/``prior2_active_share``
+    # come from the caller (weekly_projections.py's cold-start blend); a
+    # direct caller that predates them (e.g. an older test fixture) gets an
+    # all-NaN column here, which correctly fails every ``.ge()`` check below
+    # rather than raising.
+    # Falls back to the older ``prior_active_snap_share`` column when the
+    # caller doesn't supply the season-scoped one (an older/direct caller,
+    # e.g. this module's own test fixtures) - that column is exactly this
+    # value for such a caller anyway, since only the real production caller
+    # in weekly_projections.py blends ``prior_active_snap_share`` itself
+    # with 2024 evidence and therefore needs a separate, unblended field.
+    season_active_2025 = _numeric(out, "season_active_snap_share_2025", "prior_active_snap_share")
+    # A flat whole-season average treats a role that grew meaningfully late
+    # in the year the same as one that never did - measured on real 2025
+    # data, this alone was the difference between correctly keeping Tank
+    # Bigsby (a real 2nd back with a strong finish) eligible and wrongly
+    # excluding him alongside a genuine 3rd-string committee back whose
+    # season average happened to land within two points of his. Takes
+    # whichever of the two reads is more favorable, same "max of two role
+    # signals" convention _blend_prior2/restore_cold_start_returning_role_
+    # share already use elsewhere in this pipeline - a real recent role
+    # should never be capped BY a thinner whole-season history.
+    recent8_2025 = _numeric(out, "season_recent8_snap_share_2025")
+    season_active_2025 = season_active_2025.combine(recent8_2025, lambda a, b: np.nanmax([a, b])
+                                                     if pd.notna(a) or pd.notna(b) else np.nan)
+    prior2_games = _numeric(out, "prior2_games", default=0.0).fillna(0.0)
+    prior2_active_share = _numeric(out, "prior2_active_snap_share")
+    season_2025_qualified = (
+        has_observed_prior_role
+        & prior_games.ge(RB_ELIGIBILITY_MIN_GAMES_2025)
+        & season_active_2025.ge(RB_ELIGIBILITY_MIN_SHARE_2025)
     )
+    # "Was he a starter who got hurt" - a real 2024 lead/near-lead role,
+    # checked only when 2025 alone did not already clear the bar. This is a
+    # binary OR-fallback, deliberately not blended with 2025 the way the
+    # caller's own point-estimate share is - a player either has a credible
+    # starter season on record somewhere recent enough to matter, or he does
+    # not; there is no partial credit for eligibility itself.
+    prior2_starter_fallback = (
+        ~season_2025_qualified
+        & prior2_games.ge(RB_ELIGIBILITY_PRIOR2_MIN_GAMES)
+        & prior2_active_share.ge(RB_ELIGIBILITY_PRIOR2_STARTER_SHARE)
+    )
+    strong_evidence = season_2025_qualified | prior2_starter_fallback
+    # Draft capital is a real signal ONLY for a player with essentially no
+    # NFL role evidence yet - the case the comment below has always
+    # described. It used to apply to any historically-drafted veteran
+    # regardless of how much (or how irrelevant) his career evidence since
+    # has been - confirmed live: a 2022 mid-round RB with a 5-game, 8.4%
+    # active-game share for a DIFFERENT team in 2025 was still counted
+    # credible on his new team purely off a 2022 draft slot. Scoped to
+    # ``is_rookie`` now, matching what the comment already claimed it did.
+    fallback_credible = strong_evidence | (is_rookie & draft_capital.ge(1) & draft_capital.le(150))
     # Identity/source failures must never erase a real same-team incumbent
     # who had a strong proven role.  This is an eligibility safety net—not a
     # free workload: the normal finite-capacity scoring still decides his
     # share and deep/unknown reserves cannot meet the evidence guard.
     incumbent_backstop = _text(out, "established_incumbent_backstop", default="").str.lower().isin(
         {"1", "true", "yes", "y"})
-    credible = np.where(team_has_chart, rank.le(3) | incumbent_backstop, fallback_credible)
-    eligible = core & credible & availability.gt(0.01)
+    # Vacancy-aware credibility ceiling - see RB_VACANCY_EXTENSION_BASE_FLOOR
+    # above.  A team's literal rank<=3 gate assumes those three slots are all
+    # actually available; when one is not, the next chart slot is a genuine
+    # next-man-up, not a phantom.  Bounded to exactly the count of
+    # unavailable top-three slots, so a healthy backfield is unaffected.
+    unavailable_top3 = (rank.le(3) & availability.le(0.01)).groupby(
+        out["_rb_team"], observed=True).transform("sum").fillna(0)
+    rank_ceiling = 3 + unavailable_top3
+    credible = np.where(team_has_chart, rank.le(rank_ceiling) | incumbent_backstop, fallback_credible)
+    # A literal Ourlads FB listing for THIS player is direct, current,
+    # curated evidence he is a fullback, even when `functional_position`
+    # resolved to RB - added 2026-08-24 after two real miscalls (D.J.
+    # Herman, MIA FB2; Max Bredeson, MIN FB, both climbing to a real core-RB
+    # snap share). `classify_functional_position` intentionally still lets a
+    # current roster's own depth_chart_position win a genuine conflict (see
+    # its own docstring and the "Core Back" test) - a converted FB who is
+    # now a real, evidenced RB must stay eligible. This guard is deliberately
+    # narrower and only fires for a player with no observed prior role and
+    # no established-incumbent backstop, i.e. exactly the "unproven depth
+    # fullback the roster feed happens to broadly tag RB" case, not a real
+    # RB with a track record.
+    ourlads_fb_signal = _text(out, "ourlads_position", default="").str.upper().eq("FB")
+    weak_fb_evidence = ourlads_fb_signal & ~has_observed_prior_role & ~incumbent_backstop
+    eligible = core & credible & availability.gt(0.01) & ~weak_fb_evidence
     out["core_rb"] = core
     out["eligible_core_rb"] = eligible
     out["established_incumbent_backstop"] = incumbent_backstop
@@ -336,12 +561,13 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame) -> tuple[pd.DataFrame,
     )
     out["allocation_eligibility_reason"] = np.where(
         out["functional_position"].eq("FB"), "functional fullback excluded",
-        np.where(~core, "not a functional RB",
-                 np.where(rank.le(3), "literal Ourlads top-three role",
-                          np.where(incumbent_backstop,
-                                   "established same-team incumbent safety backstop",
-                                   np.where(fallback_credible, "observed role/draft fallback",
-                                            "no credible role evidence")))))
+        np.where(weak_fb_evidence, "literal Ourlads fullback listing, no offsetting RB evidence",
+                 np.where(~core, "not a functional RB",
+                          np.where(rank.le(3), "literal Ourlads top-three role",
+                                   np.where(incumbent_backstop,
+                                            "established same-team incumbent safety backstop",
+                                            np.where(fallback_credible, "observed role/draft fallback",
+                                                     "no credible role evidence"))))))
     ledger: list[dict[str, Any]] = []
 
     for team, group in out.groupby("_rb_team", sort=False, observed=True):
@@ -360,26 +586,91 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame) -> tuple[pd.DataFrame,
             continue
         candidates_team = out.loc[indexes]
         source_rank = rank.loc[indexes]
+        has_chart = bool(team_has_chart.loc[indexes].any())
+        # Effective rank re-ranks the literal chart order among only the
+        # CURRENTLY ELIGIBLE candidates (dense, so no gaps survive an
+        # unavailable teammate) - this is what lets a chart RB2 correctly
+        # read as "the guy" once chart RB1 is out, instead of still
+        # competing for a stale rank-2 discount against a rank-1 slot that
+        # no one currently fills. A team with no chart already computes an
+        # equivalent rank restricted to `indexes` below, so it needs no
+        # separate vacancy handling.
+        effective_rank = source_rank.rank(method='dense') if has_chart else pd.Series(dtype=float)
+        # A candidate admitted only via the vacancy-extension ceiling above
+        # (literal chart rank>3) rarely has any real snap evidence of his
+        # own; without a small floor he would be mathematically uncompetitive
+        # for a share even though he is now technically eligible.
+        base_for_score = base.loc[indexes].copy()
+        vacancy_extension_idx = indexes[source_rank.gt(3).fillna(False)] if has_chart else indexes[0:0]
+        if len(vacancy_extension_idx):
+            base_for_score.loc[vacancy_extension_idx] = base_for_score.loc[vacancy_extension_idx].clip(
+                lower=RB_VACANCY_EXTENSION_BASE_FLOOR)
         # Preserve an established active-game role much more strongly than a
         # plain linear split.  A 78% lead-back role should not be averaged
         # down to 34% merely because a chart also lists two reserves; the
         # exponent is a bounded concentration, not a hard depth-chart lock.
-        score = base.loc[indexes].clip(lower=0.01).pow(1.45)
+        score = base_for_score.clip(lower=0.01).pow(1.45)
         low_evidence = score.lt(0.30)
-        score *= np.where(source_rank.eq(1) & low_evidence, 1.25,
-                          np.where(source_rank.eq(1), 1.08,
-                                   np.where(source_rank.eq(2), 0.98,
-                                            np.where(source_rank.eq(3), 0.88, 1.0))))
+        if has_chart:
+            score *= np.where(effective_rank.eq(1) & low_evidence, 1.25,
+                              np.where(effective_rank.eq(1), 1.08,
+                                       np.where(effective_rank.eq(2), 0.98,
+                                                np.where(effective_rank.eq(3), 0.88, 1.0))))
+        else:
+            # No imported chart for this team, added 2026-08-24: the block
+            # just above is a no-op here (source_rank is all-NaN without a
+            # chart), so a genuine 3rd/4th eligible back previously competed
+            # on raw score alone with no depth penalty at all. Apply the
+            # SAME discount schedule, keyed by SCORE-derived rank instead -
+            # see SCORE_RANK_DISCOUNT's own comment.
+            score_rank = base.loc[indexes].rank(ascending=False, method='first')
+            score *= score_rank.map(SCORE_RANK_DISCOUNT).fillna(SCORE_RANK_DISCOUNT_DEFAULT)
         draft_bonus = (0.20 * (1.0 - (draft_capital.loc[indexes].fillna(999.0) - 1.0) / 149.0)
                        .clip(0.0, 1.0))
-        score += np.where(is_rookie.loc[indexes] | low_evidence, draft_bonus, 0.0)
+        # A vacancy-extension admit (see RB_VACANCY_EXTENSION_BASE_FLOOR) does
+        # not get the low-evidence draft bonus below - it exists for a real
+        # top-three-caliber rookie/veteran competing for a starting-caliber
+        # role, not for a longshot 4th/5th-string arm let in only because a
+        # teammate is out (measured live - Velus Jones Jr., a 2022 3rd-round
+        # WR pick admitted at SEA's vacancy-extended rank 4, jumped to a real
+        # ~15% team share purely off his old WR draft slot, which has nothing
+        # to do with his current RB role).
+        is_vacancy_extension = indexes.isin(vacancy_extension_idx)
+        score += np.where((is_rookie.loc[indexes] | low_evidence) & ~is_vacancy_extension, draft_bonus, 0.0)
         same_team = _text(candidates_team, "same_team", default="").str.lower().isin({"1", "true", "yes"})
         score += np.where(same_team, 0.02, 0.0)
         score *= availability.loc[indexes]
         charted = int(source_rank.le(3).sum())
-        other_fraction = _other_fraction(charted)
+        # A team with no imported chart (``charted == 0``) is not
+        # automatically an unsettled backfield: treat a player with a real,
+        # measured prior-season role the same as a literal charted slot for
+        # sizing the "other RB" residual, capped at the same three-slot
+        # ceiling a chart would carry. This is what stops an established
+        # bell-cow (real 2025 evidence, but no reimported 2026 Ourlads
+        # snapshot) from having a quarter of his own backfield's capacity
+        # walled off as "unknown" every single week - see HANDOFF.md's RB
+        # snap-share note for the measured Henry/Hampton/Chase Brown cases
+        # this fixes. Draft-capital-only credibility (a rookie with zero
+        # career games) does NOT count here; that is real uncertainty, not
+        # a documented role, so it keeps the harsher default residual.
+        evidenced = int(strong_evidence.loc[indexes].sum())
+        other_fraction = _other_fraction(max(charted, min(evidenced, 3)))
         player_snap_total = snap_capacity * (1.0 - other_fraction)
         snap_alloc = _bounded_allocation(score, player_snap_total, MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE)
+        nudge_rank = effective_rank if has_chart else base.loc[indexes].rank(ascending=False, method='first')
+        snap_alloc = _apply_depth_rank_snap_nudge(snap_alloc, nudge_rank)
+        snap_alloc = _apply_depth_rank2_order_nudge(snap_alloc, nudge_rank)
+        # Redistribute any unclaimed team-snap remainder back to the
+        # already-projected core RBs, proportional to their current share -
+        # see RB_TEAM_SNAP_SHARE_TARGET above. `_bounded_allocation` only
+        # ever distributes across players who already hold a positive share,
+        # so a zero-share bench reserve is untouched. The target is never
+        # LOWER than the team's own real snap_capacity - a team whose
+        # measured capacity already exceeds 100% (a real 2-RB-personnel
+        # committee, where two backs share a single snap) must not be
+        # artificially compressed back down to a flat 100%.
+        snap_share_target = max(snap_capacity, RB_TEAM_SNAP_SHARE_TARGET)
+        snap_alloc = _bounded_allocation(snap_alloc, snap_share_target, MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE)
 
         prior_carry_rate = _numeric(candidates_team, "prior_carries_per_game", "prior_carry_rate", "prior_carries")
         prior_target_rate = _numeric(candidates_team, "prior_targets_per_game", "prior_target_rate", "prior_targets")
@@ -407,7 +698,14 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame) -> tuple[pd.DataFrame,
             "team-constrained preseason core-RB allocator (incumbent safety backstop)",
             "team-constrained preseason core-RB allocator",
         )
-        for metric, capacity, allocation in (("core_rb_snaps", snap_capacity, snap_alloc),
+        # core_rb_snaps' ledger capacity is the post-rescale team-share
+        # target, not the raw historical snap_capacity - the final rescale
+        # above deliberately redistributes the gap between the two (plus the
+        # `other RB` residual) back to the projected core RBs, so the ledger
+        # must reconcile against the number they were actually rescaled to.
+        # Carries/targets are untouched by that rescale and keep reconciling
+        # against their own real capacities.
+        for metric, capacity, allocation in (("core_rb_snaps", snap_share_target, snap_alloc),
                                              ("rb_carries", carry_capacity, carry_alloc),
                                              ("rb_targets", target_capacity, target_alloc)):
             allocated = float(allocation.sum())
@@ -719,14 +1017,117 @@ def _select_internal_role_gap(player_weeks: pd.DataFrame, calendar_weeks: list[f
             "gap_start_week": float(gap_weeks[0]),
             "gap_end_week": float(gap_weeks[-1]),
         })
-    if not candidates:
+    if candidates:
+        # Multiple clear gaps are rare.  Use the longest one, then prefer the
+        # one supported by more meaningful pre-gap games; both tie-breakers
+        # are auditable in the returned raw fields.
+        candidates.sort(key=lambda item: (len(item["gap_weeks"]), len(item["pre"]), item["return_start_week"]),
+                        reverse=True)
+        return candidates[0]
+    # No return-based gap found. A season-ending absence - the player's
+    # season simply stopped, with no later meaningful OR active game to
+    # anchor a "return" - is not weaker evidence of a real interruption;
+    # requiring an observed return excluded exactly the case it should have
+    # covered best (added 2026-08-24, a rookie clearly winning a starting
+    # job before a season-ending injury, Cam Skattebo-shaped: he got ZERO
+    # incumbent credit purely because he never played again that season).
+    last = meaningful.iloc[-1]
+    start_index = calendar_index.get(last["_rb_segment_week"])
+    if start_index is None or start_index + 1 >= len(calendar_weeks):
         return None
-    # Multiple clear gaps are rare.  Use the longest one, then prefer the
-    # one supported by more meaningful pre-gap games; both tie-breakers are
-    # auditable in the returned raw fields.
-    candidates.sort(key=lambda item: (len(item["gap_weeks"]), len(item["pre"]), item["return_start_week"]),
-                    reverse=True)
-    return candidates[0]
+    gap_weeks = calendar_weeks[start_index + 1:]
+    if len(gap_weeks) < RB_SEGMENT_MIN_GAP_TEAM_GAMES:
+        return None
+    active_in_gap = player_weeks.loc[
+        player_weeks["_rb_segment_week"].isin(gap_weeks) & player_weeks["_active"]]
+    if not active_in_gap.empty:
+        return None
+    return {
+        "pre": meaningful,
+        "return_start_week": None,
+        "gap_weeks": gap_weeks,
+        "gap_start_week": float(gap_weeks[0]),
+        "gap_end_week": float(gap_weeks[-1]),
+        "season_ending": True,
+    }
+
+
+RB_VACANCY_FULL_STRENGTH_SNAP_DROP = 0.50
+
+
+def _pre_window_teammate_vacancy_downweight(team_weeks: pd.DataFrame, incumbent_key: str,
+                                            incumbent_rows: pd.DataFrame,
+                                            pre_weeks: list[float], calendar_weeks: list[float]) -> float:
+    """Was the incumbent's own pre-gap stretch just a teammate's injury
+    vacancy rather than an earned role?
+
+    ADDED 2026-08-24 per explicit request (the Devin Neal / Travis Etienne
+    Saints backfield case): the existing shared_healthy_lead_score /
+    replacement_only_era_downweight pair only looks at what happened during
+    the INCUMBENT's gap - it is blind to a clean handoff where the two
+    players were simply never active in the same week, which is exactly
+    what a real injury-driven vacancy looks like (Neal's real 2025 log:
+    zero weeks of a meaningful Neal snap share while Kamara was still
+    playing a normal workload - Kamara went 73-86% snaps weeks 1-7, then
+    collapsed to 14%/out weeks 12-15, which is precisely when Neal's own
+    "pre-gap" 65% stretch happened; nowhere in the log did the two share a
+    healthy week with Neal leading, so the existing overlap-based check
+    never fires and Neal's own late-season role reads as an earned,
+    restorable incumbency instead of what it actually was).
+
+    This checks the other direction instead: for each teammate, compare
+    their own snap share in the team-calendar weeks BEFORE the incumbent's
+    pre-window even started against their snap share DURING that same
+    pre-window. A teammate who was clearly the more established back before
+    the window (ahead of the incumbent's own level at that time) and then
+    collapsed right as the incumbent's stretch began is the actual
+    signature of a vacancy-driven promotion - scaled by how big that
+    collapse was, capped at 1.0 (full discount) once it reaches a
+    RB_VACANCY_FULL_STRENGTH_SNAP_DROP-point drop (a clear starter falling
+    to a non-factor). A teammate who was only modestly ahead, or who stayed
+    active throughout, does not trigger this - see Cam Skattebo/Tyrone
+    Tracy's real log for the negative case this must NOT fire on: Tracy was
+    already roughly co-equal with Skattebo early (44% vs. 41%), not clearly
+    the incumbent, so Skattebo's real separation reads as earned, not a
+    vacancy fill.
+    """
+    if not pre_weeks:
+        return 0.0
+    earlier_weeks = [w for w in calendar_weeks if w < min(pre_weeks)]
+    if not earlier_weeks:
+        return 0.0
+
+    def _avg_snap(frame: pd.DataFrame, weeks: list[float]) -> float:
+        indexed = frame.set_index("_rb_segment_week", drop=False) if "_rb_segment_week" in frame.columns else frame
+        values = []
+        for week in weeks:
+            if week not in indexed.index:
+                continue
+            value = indexed.loc[week, "_snap"]
+            if isinstance(value, pd.Series):
+                value = pd.to_numeric(value, errors="coerce").max()
+            value = pd.to_numeric(pd.Series([value]), errors="coerce").iloc[0]
+            if pd.notna(value):
+                values.append(float(value))
+        return float(np.mean(values)) if values else np.nan
+
+    incumbent_earlier_level = _avg_snap(incumbent_rows, earlier_weeks)
+    others = team_weeks.loc[team_weeks["rb_segment_identity_key"].ne(incumbent_key)]
+    best_drop = 0.0
+    for _, teammate_weeks in others.groupby("rb_segment_identity_key", observed=True):
+        teammate_earlier_level = _avg_snap(teammate_weeks, earlier_weeks)
+        teammate_during_level = _avg_snap(teammate_weeks, pre_weeks)
+        if not (np.isfinite(teammate_earlier_level) and np.isfinite(teammate_during_level)):
+            continue
+        # The teammate must have clearly been the more established back
+        # before the handoff - otherwise a drop from an already-marginal
+        # committee role does not establish that the incumbent's rise was a
+        # vacancy fill rather than a real change in the pecking order.
+        if np.isfinite(incumbent_earlier_level) and teammate_earlier_level <= incumbent_earlier_level:
+            continue
+        drop = max(0.0, teammate_earlier_level - teammate_during_level)
+        best_drop = max(best_drop, drop)
+    return float(np.clip(best_drop / RB_VACANCY_FULL_STRENGTH_SNAP_DROP, 0.0, 1.0))
 
 
 def _absence_replacement_metrics(team_weeks: pd.DataFrame, incumbent_key: str,
@@ -966,31 +1367,57 @@ def analyze_rb_role_segments(
             "return_recovery_carries_per_game": np.nan,
             "return_recovery_targets_per_game": np.nan,
             "interrupted_incumbent_role_credit": 0.0,
+            "pre_window_teammate_vacancy_downweight": 0.0,
         }
         if not observed_rows.empty:
             gap = _select_internal_role_gap(player_rows, calendar_weeks)
             if gap is not None:
+                season_ending = bool(gap.get("season_ending"))
                 pre_all = gap["pre"]
                 pre_window = pre_all.tail(RB_SEGMENT_PRE_GAP_WINDOW)
                 gap_weeks = list(gap["gap_weeks"])
-                return_rows = player_rows.loc[
-                    player_rows["_meaningful"]
-                    & player_rows["_rb_segment_week"].ge(gap["return_start_week"])
-                ].sort_values("_rb_segment_week", kind="stable")
+                if season_ending:
+                    # No later meaningful game exists to anchor a "return" -
+                    # the player's season simply stopped. Not weaker evidence
+                    # of a real interruption than a mid-season gap-and-return
+                    # (see _select_internal_role_gap's own comment): if
+                    # anything, a rotation/benching implies SOME later role,
+                    # which by definition did not happen here.
+                    return_rows = player_rows.iloc[0:0]
+                else:
+                    return_rows = player_rows.loc[
+                        player_rows["_meaningful"]
+                        & player_rows["_rb_segment_week"].ge(gap["return_start_week"])
+                    ].sort_values("_rb_segment_week", kind="stable")
                 pre_snap = _segment_mean(pre_window, "_snap")
                 # Evidence strength, not an automatic workload.  The later
-                # caller decides how much of this 0..1 credit to use.
+                # caller decides how much of this 0..1 credit to use. The
+                # return-games confidence factor is dropped (not zeroed) for
+                # a season-ending gap - there being no return to measure is
+                # the expected shape of this case, not missing evidence.
+                return_confidence = 1.0 if season_ending else min(1.0, len(return_rows) / 2.0)
                 credit = min(1.0, len(pre_window) / RB_SEGMENT_MIN_PRE_GAP_GAMES) \
-                    * min(1.0, len(gap_weeks) / 4.0) * min(1.0, len(return_rows) / 2.0) \
+                    * min(1.0, len(gap_weeks) / 4.0) * return_confidence \
                     * float(np.clip((pre_snap - 0.20) / 0.45, 0.0, 1.0))
                 team_rows = player_weeks.loc[
                     player_weeks["_rb_segment_team"].eq(team)
                     & player_weeks["_rb_segment_season"].eq(season)
                 ]
+                # Was this pre-window itself just a teammate's injury vacancy
+                # rather than an earned role? See the function's own docstring
+                # (the real Devin Neal/Alvin Kamara 2025 case this fixes, and
+                # the real Cam Skattebo/Tyrone Tracy case it must not fire on).
+                # Applied directly to credit - a vacancy-fill stretch should
+                # not restore a role that was never really the player's own.
+                vacancy_downweight = _pre_window_teammate_vacancy_downweight(
+                    team_rows, str(identity), player_rows,
+                    pre_window["_rb_segment_week"].astype(float).tolist(), calendar_weeks)
+                credit *= (1.0 - vacancy_downweight)
                 replacement_observed, replacement_top, replacement_total = _absence_replacement_metrics(
                     team_rows, str(identity), gap_weeks)
                 record.update({
-                    "rb_segment_status": "clear_internal_absence_return",
+                    "rb_segment_status": ("clear_internal_absence_season_ended" if season_ending
+                                          else "clear_internal_absence_return"),
                     "interrupted_season": True,
                     "pre_absence_games": int(len(pre_all)),
                     "pre_absence_window_games": int(len(pre_window)),
@@ -1006,12 +1433,15 @@ def analyze_rb_role_segments(
                     "absence_replacement_top_rb_snap_share": replacement_top,
                     "absence_replacement_core_rb_snap_share": replacement_total,
                     "return_recovery_games": int(len(return_rows)),
-                    "return_recovery_start_week": float(return_rows["_rb_segment_week"].iloc[0]),
-                    "return_recovery_end_week": float(return_rows["_rb_segment_week"].iloc[-1]),
+                    "return_recovery_start_week": (
+                        float(return_rows["_rb_segment_week"].iloc[0]) if not return_rows.empty else np.nan),
+                    "return_recovery_end_week": (
+                        float(return_rows["_rb_segment_week"].iloc[-1]) if not return_rows.empty else np.nan),
                     "return_recovery_snap_share": _segment_mean(return_rows, "_snap"),
                     "return_recovery_carries_per_game": _segment_mean(return_rows, "_carries"),
                     "return_recovery_targets_per_game": _segment_mean(return_rows, "_targets"),
                     "interrupted_incumbent_role_credit": float(np.clip(credit, 0.0, 1.0)),
+                    "pre_window_teammate_vacancy_downweight": vacancy_downweight,
                 })
                 pre_weeks = pre_all["_rb_segment_week"].astype(float).tolist()
                 return_weeks = return_rows["_rb_segment_week"].astype(float).tolist()

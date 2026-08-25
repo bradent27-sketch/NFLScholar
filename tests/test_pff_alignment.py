@@ -361,7 +361,12 @@ def test_offensive_weekly_archive_builds_schedule_mapped_defense_profiles_and_ne
         assert result.available
         assert result.metadata["scoring_active"] is False
         assert result.metadata["defender_slot_coverage_used"] is False
-        assert set(result.team_games["alignment"]) == {"slot", "non_slot"}
+        # wide/inline are additional buckets alongside slot/non_slot (added
+        # 2026-08-24) whenever real wide_snaps/inline_snaps are reported -
+        # true here, even though this fixture's inline snaps are always 0
+        # (see the dedicated 3-way test below for a case where they clear
+        # the candidate-available bar).
+        assert set(result.team_games["alignment"]) == {"slot", "non_slot", "wide", "inline"}
         week_one = result.team_games[
             (result.team_games["source_week"] == 1)
             & (result.team_games["offense_team"] == "KC")
@@ -408,6 +413,77 @@ def test_offensive_weekly_archive_builds_schedule_mapped_defense_profiles_and_ne
         )
         assert not early["profile_available"]
         assert early["shrunk_allowed_ratio"] == 1.0
+
+
+def test_alignment_defense_residual_blends_slot_wide_and_inline_when_all_three_are_evidenced():
+    """The 3-way blend activates only when wide AND inline both clear the
+    same candidate-available bar slot/non-slot already require - added
+    2026-08-24. KC's real wide_snaps/inline_snaps split moves from
+    wide-heavy (Week 1, vs DEN) to inline-heavy (Week 2, vs BUF), giving
+    each defense a real, non-degenerate leave-one-out comparison for both
+    buckets, not just slot/non-slot."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "pff_imports"
+        _write_week(root, 2026, 1, [
+            _summary_row(team_name="KC", slot_rate=60.0, wide_rate=30.0, inline_rate=10.0,
+                         slot_snaps=60, wide_snaps=30, inline_snaps=10,
+                         targets=10, receptions=8, yards=10, touchdowns=1),
+        ], [
+            _concept_row(team_name="KC", slot_targets=6, slot_receptions=5, slot_yards=6, slot_touchdowns=0),
+        ])
+        _write_week(root, 2026, 2, [
+            _summary_row(team_name="KC", slot_rate=30.0, wide_rate=20.0, inline_rate=30.0,
+                         slot_snaps=30, wide_snaps=20, inline_snaps=30,
+                         targets=10, receptions=8, yards=10, touchdowns=1),
+        ], [
+            _concept_row(team_name="KC", slot_targets=3, slot_receptions=3, slot_yards=3, slot_touchdowns=0),
+        ])
+        _write_manifest(root, 2026, [
+            {"week": 1, "regular_season": True, "schema_valid": True},
+            {"week": 2, "regular_season": True, "schema_valid": True},
+        ])
+        schedule = pd.DataFrame([
+            {"week": 1, "home_team": "KC", "away_team": "DEN", "game_type": "REG"},
+            {"week": 2, "home_team": "KC", "away_team": "BUF", "game_type": "REG"},
+        ])
+
+        result = pa.load_weekly_alignment_defense_profiles(2026, 3, schedule, pff_root=root)
+        assert result.available
+
+        den_wide = pa.lookup_alignment_defense_profile(
+            result.profiles, defense_team="DEN", position="WR", alignment="wide", stat="yards"
+        )
+        den_inline = pa.lookup_alignment_defense_profile(
+            result.profiles, defense_team="DEN", position="WR", alignment="inline", stat="yards"
+        )
+        assert den_wide["candidate_available"]
+        assert den_inline["candidate_available"]
+        # DEN faced KC's wide-heavy week; its comparison (Week 2) was
+        # inline-heavy, so DEN's observed inline production is well below
+        # what KC's other game implies - a real, evidenced allowed-ratio
+        # below 1.0 for inline, not a placeholder.
+        assert den_inline["shrunk_allowed_ratio"] < 1.0
+        assert den_wide["position_normal_alignment_rate"] is not None
+        assert den_inline["position_normal_alignment_rate"] is not None
+
+        preview = pa.alignment_defense_residual_multiplier(
+            result.profiles, defense_team="DEN", position="WR", stat="yards",
+            player_slot_rate=0.5, player_wide_rate=0.3, player_inline_rate=0.2,
+        )
+        assert preview["blend_mode"] == "slot_wide_inline"
+        assert preview["candidate_available"]
+        assert preview["wide_profile"] is not None and preview["inline_profile"] is not None
+        assert preview["multiplier"] == 1.0
+        assert not preview["applied"]
+        assert preview["residual_clip"][0] <= preview["candidate_multiplier"] <= preview["residual_clip"][1]
+
+        # A caller that omits the wide/inline rates (every pre-existing
+        # caller) is completely unaffected - falls straight back to the
+        # original slot/non-slot blend.
+        legacy = pa.alignment_defense_residual_multiplier(
+            result.profiles, defense_team="DEN", position="WR", stat="yards", player_slot_rate=0.5,
+        )
+        assert legacy["blend_mode"] == "slot_non_slot"
 
 
 def test_alignment_defense_missing_schedule_or_source_is_neutral_not_guessed():
@@ -608,6 +684,153 @@ def test_scheme_defense_missing_schedule_or_source_is_neutral_not_guessed():
         assert preview["multiplier"] == 1.0
         assert preview["candidate_multiplier"] == 1.0
         assert not preview["candidate_available"]
+
+
+def test_discover_postseason_week_is_excluded_by_default_but_included_when_opted_in():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "pff_imports"
+        _write_week(root, 2025, 18, [_summary_row(slot_rate=30.0)], [_concept_row()])
+        _write_week(root, 2025, 19, [_summary_row(slot_rate=60.0)], [_concept_row()])
+        _write_manifest(root, 2025, [
+            {"week": 18, "regular_season": True, "schema_valid": True},
+            {"week": 19, "regular_season": False, "schema_valid": True,
+             "source_confidence": "in_app_upload_postseason_wild_card_export"},
+        ])
+
+        default = pa.discover_weekly_alignment_exports(2025, as_of_week=23, pff_root=root)
+        by_week = default.archives.set_index("week")
+        assert bool(by_week.loc[18, "eligible_as_of"])
+        assert not bool(by_week.loc[19, "eligible_as_of"])
+        assert any("ignored" in issue for issue in default.issues if "Week 19" in issue)
+
+        opted_in = pa.discover_weekly_alignment_exports(2025, as_of_week=23, pff_root=root, include_postseason=True)
+        by_week_opt = opted_in.archives.set_index("week")
+        assert bool(by_week_opt.loc[18, "eligible_as_of"])
+        assert bool(by_week_opt.loc[19, "eligible_as_of"])
+        assert opted_in.metadata["include_postseason"] is True
+
+
+def test_season_prior_merges_postseason_weeks_as_supplementary_evidence_when_opted_in():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "pff_imports"
+        # Season total: 300 slot-heavy snaps for the whole regular season.
+        _write_season(
+            root, 2025,
+            summary_rows=[_summary_row(slot_rate=30.0, slot_snaps=90, wide_snaps=195, inline_snaps=15, routes=300)],
+            concept_rows=[_concept_row(slot_targets=30)],
+        )
+        (root / "2025").mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([{"week": 0, "regular_season": True, "schema_valid": True,
+                       "source_confidence": "season_manifest_regular_season", "export_date": "2026-08-24"}]
+                     ).to_csv(root / "2025" / "season_manifest.csv", index=False)
+        # One postseason game: real extra evidence, distinctly different mix.
+        _write_week(root, 2025, 19, [_summary_row(slot_rate=80.0, slot_snaps=40, wide_snaps=8, inline_snaps=2, routes=50)],
+                    [_concept_row(slot_targets=6)])
+        _write_manifest(root, 2025, [
+            {"week": 19, "regular_season": False, "schema_valid": True,
+             "source_confidence": "in_app_upload_postseason_wild_card_export"},
+        ])
+
+        without_post = pa.load_season_alignment_prior(2025, 2026, 1, pff_root=root)
+        with_post = pa.load_season_alignment_prior(2025, 2026, 1, pff_root=root, include_postseason_weeks=True)
+
+        assert without_post.available and with_post.available
+        row_without = without_post.profiles.iloc[0]
+        row_with = with_post.profiles.iloc[0]
+        # Real extra snaps must strengthen the sample weight...
+        assert row_with["alignment_sample_weight"] > row_without["alignment_sample_weight"]
+        assert math.isclose(row_with["alignment_sample_weight"], 300.0 + 50.0)
+        # ...and move the blended slot rate meaningfully toward the
+        # postseason game's own much-higher slot rate, not stay pinned to
+        # the season-only 0.30.
+        assert row_with["slot_alignment_rate"] > row_without["slot_alignment_rate"]
+        assert with_post.metadata["postseason_weeks_included"] == (19,)
+        assert "19" in with_post.profiles.iloc[0]["source_notes"] or "Supplemented" in with_post.profiles.iloc[0]["source_notes"]
+
+        # historical_backtest must never pull in postseason weeks, regardless
+        # of include_postseason_weeks, since they have no time_valid audit.
+        historical = pa.load_season_alignment_prior(
+            2025, 2026, 1, pff_root=root, include_postseason_weeks=True,
+            historical_backtest=True, source_metadata={"regular_season": True, "time_valid": True},
+        )
+        assert historical.metadata.get("postseason_weeks_included", ()) == ()
+
+
+def _alignment_profile(slot_rate, weight, **overrides):
+    profile = dict(pa.neutral_alignment_profile())
+    profile.update({
+        "slot_alignment_rate": slot_rate, "non_slot_alignment_rate": 1.0 - slot_rate,
+        "wide_alignment_rate": None, "inline_alignment_rate": None,
+        "alignment_sample_weight": weight,
+    })
+    profile.update(overrides)
+    return profile
+
+
+def test_alignment_prior2_blend_pulls_a_thin_in_season_read_toward_last_year():
+    # A rookie-year-two receiver 2 games into the season (thin sample, only
+    # 40 snaps) read as a heavy slot player (0.70) so far, vs. a full 2024
+    # season (300 snaps) that had him much more outside (0.30 slot). The
+    # blend should pull the 2025 read down toward 0.30, not leave it at 0.70.
+    current = _alignment_profile(0.70, 40.0)
+    prior2 = _alignment_profile(0.30, 300.0)
+
+    blended = pa.blend_alignment_profile_toward_prior2(current, prior2)
+
+    assert blended["slot_alignment_rate"] < 0.70
+    assert blended["slot_alignment_rate"] > 0.30
+    # Thin current sample (40 of a 250 "full" sample) should land near the
+    # curve's max pull, not its base floor.
+    assert blended["alignment_prior2_weight"] > pa.ALIGNMENT_PRIOR2_BASE_WEIGHT
+    assert blended["alignment_prior2_weight"] <= pa.ALIGNMENT_PRIOR2_MAX_WEIGHT
+    # Identity/team fields and every other column must pass through untouched.
+    assert blended["alignment_sample_weight"] == 40.0
+
+
+def test_alignment_prior2_blend_is_only_a_slight_floor_pull_at_a_full_season():
+    # A full, well-established 2025 season (300 snaps) should barely move
+    # even against a very different 2024 read - only the small base floor.
+    current = _alignment_profile(0.70, 300.0)
+    prior2 = _alignment_profile(0.20, 300.0)
+
+    blended = pa.blend_alignment_profile_toward_prior2(current, prior2)
+
+    assert math.isclose(blended["alignment_prior2_weight"], pa.ALIGNMENT_PRIOR2_BASE_WEIGHT)
+    expected = (1.0 - pa.ALIGNMENT_PRIOR2_BASE_WEIGHT) * 0.70 + pa.ALIGNMENT_PRIOR2_BASE_WEIGHT * 0.20
+    assert math.isclose(blended["slot_alignment_rate"], expected)
+
+
+def test_alignment_prior2_blend_is_symmetric_not_dampened_on_a_decrease():
+    # Unlike QB_PRIOR2, a FALL toward the prior year must get the exact same
+    # weight as a rise would - no directional dampening, since alignment has
+    # no inherent "higher is better" direction.
+    rising = pa.blend_alignment_profile_toward_prior2(
+        _alignment_profile(0.20, 40.0), _alignment_profile(0.60, 300.0))
+    falling = pa.blend_alignment_profile_toward_prior2(
+        _alignment_profile(0.60, 40.0), _alignment_profile(0.20, 300.0))
+    assert math.isclose(rising["alignment_prior2_weight"], falling["alignment_prior2_weight"])
+
+
+def test_alignment_prior2_blend_is_a_no_op_without_usable_samples():
+    # No current-season sample at all (a rookie's debut week) - nothing to
+    # ground yet, must pass through unchanged.
+    no_current = pa.blend_alignment_profile_toward_prior2(
+        _alignment_profile(0.5, 0.0), _alignment_profile(0.3, 300.0))
+    assert no_current["slot_alignment_rate"] == 0.5
+    assert "alignment_prior2_weight" not in no_current
+
+    # A too-thin 2024 read (a 3-snap cameo) must not count as a real season
+    # to ground against.
+    thin_prior2 = pa.blend_alignment_profile_toward_prior2(
+        _alignment_profile(0.5, 40.0), _alignment_profile(0.3, 5.0))
+    assert thin_prior2["slot_alignment_rate"] == 0.5
+    assert "alignment_prior2_weight" not in thin_prior2
+
+    # Missing 2024 entirely (neutral_alignment_profile's None rates) is the
+    # same no-op, not a crash.
+    missing_prior2 = pa.blend_alignment_profile_toward_prior2(
+        _alignment_profile(0.5, 40.0), pa.neutral_alignment_profile())
+    assert missing_prior2["slot_alignment_rate"] == 0.5
 
 
 def main():

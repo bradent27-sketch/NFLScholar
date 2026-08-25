@@ -291,6 +291,252 @@ def test_returning_role_recovery_is_continuous_on_both_sides_of_old_sixty_percen
     assert 0.0 <= above - below < 0.08
 
 
+def test_depth_rank_nudge_pulls_a_high_share_rb3_toward_rb1_and_leaves_rb2_alone():
+    """Explicit 2026-08-24 request: even a credible RB3 with real standalone
+    evidence should not typically clear ~10% of team snaps the way an RB1 or
+    RB2 would - "generally an RB3 is not going to get more than 10% of snaps
+    unless an injury or huge blowout." Verified by comparing the module's
+    real RB_DEPTH_RANK_SNAP_PULL default against PULL=0 (nudge disabled) on
+    the identical inputs, isolating exactly what the nudge itself changed.
+    """
+    candidates = [
+        _candidate('NDG', 'Lead Back', ourlads_depth_rank=1, same_team=True, prior_games=14,
+                   prior_active_snap_share=0.55, prior_whole_snap_share=0.50,
+                   prior_active_carry_share=0.45, prior_active_target_share=0.25),
+        _candidate('NDG', 'Second Back', ourlads_depth_rank=2, same_team=True, prior_games=13,
+                   prior_active_snap_share=0.32, prior_whole_snap_share=0.28,
+                   prior_active_carry_share=0.22, prior_active_target_share=0.15),
+        _candidate('NDG', 'Committee Third', ourlads_depth_rank=3, same_team=True, prior_games=12,
+                   prior_active_snap_share=0.30, prior_whole_snap_share=0.26,
+                   prior_active_carry_share=0.15, prior_active_target_share=0.20),
+    ]
+    nudged, ledger = _allocation_and_ledger(candidates)
+    _assert_team_capacity_conservation(nudged, ledger, 'NDG')
+
+    original_pull = rba.RB_DEPTH_RANK_SNAP_PULL
+    try:
+        rba.RB_DEPTH_RANK_SNAP_PULL = 0.0
+        unnudged, _ = _allocation_and_ledger(candidates)
+    finally:
+        rba.RB_DEPTH_RANK_SNAP_PULL = original_pull
+
+    nudged_rb1 = float(_player_row(nudged, 'Lead Back')['expected_snap_share'])
+    nudged_rb2 = float(_player_row(nudged, 'Second Back')['expected_snap_share'])
+    nudged_rb3 = float(_player_row(nudged, 'Committee Third')['expected_snap_share'])
+    unnudged_rb1 = float(_player_row(unnudged, 'Lead Back')['expected_snap_share'])
+    unnudged_rb2 = float(_player_row(unnudged, 'Second Back')['expected_snap_share'])
+    unnudged_rb3 = float(_player_row(unnudged, 'Committee Third')['expected_snap_share'])
+
+    # Precondition: this fixture's RB3 really does clear the target without
+    # the nudge - otherwise the rest of this test would pass for the wrong
+    # reason (nothing to pull down in the first place).
+    assert unnudged_rb3 > rba.RB_DEPTH_RANK_SNAP_TARGET_RANK3 + 0.03
+
+    assert nudged_rb3 < unnudged_rb3
+    assert nudged_rb1 > unnudged_rb1
+    assert np.isclose(nudged_rb2, unnudged_rb2, atol=1e-9)
+    # A transfer between exactly the two participants, not new capacity.
+    assert np.isclose((nudged_rb1 - unnudged_rb1), (unnudged_rb3 - nudged_rb3), atol=1e-9)
+    # Bounded and partial - RB_DEPTH_RANK_SNAP_PULL < 1 means a real
+    # committee back never gets flattened all the way down to the target.
+    assert nudged_rb3 > rba.RB_DEPTH_RANK_SNAP_TARGET_RANK3
+    # The final 100%-team-share rescale (see RB_TEAM_SNAP_SHARE_TARGET) is
+    # downstream of the nudge and scales every player's share up by the same
+    # team-wide factor, so the absolute cap - expressed against the
+    # PRE-rescale conserved total - scales up with it too.
+    entry = ledger.loc[(ledger['team'] == 'NDG') & (ledger['resource'] == 'core_rb_snaps')].iloc[0]
+    pre_rescale_total = 0.90 * (1.0 - float(entry['other_fraction']))  # fixture's core_rb_snap_capacity default
+    rescale_factor = float(entry['capacity']) / pre_rescale_total
+    assert (unnudged_rb3 - nudged_rb3) <= rba.RB_DEPTH_RANK_SNAP_NUDGE_CAP * rescale_factor + 1e-9
+
+
+def test_depth_rank_nudge_leaves_an_already_modest_rb3_untouched():
+    """No excess above the target -> no transfer at all, not even a token
+    one - a deep, thin third back should be left exactly as the evidence-
+    based score already had him, per the explicit "a few outliers is fine
+    to leave" instruction (this is the mirror case: nothing to correct)."""
+    candidates = [
+        _candidate('MOD', 'Lead Back', ourlads_depth_rank=1, same_team=True, prior_games=14,
+                   prior_active_snap_share=0.60, prior_whole_snap_share=0.55,
+                   prior_active_carry_share=0.50, prior_active_target_share=0.30),
+        _candidate('MOD', 'Second Back', ourlads_depth_rank=2, same_team=True, prior_games=13,
+                   prior_active_snap_share=0.30, prior_whole_snap_share=0.28,
+                   prior_active_carry_share=0.25, prior_active_target_share=0.15),
+        # draft_capital is explicit (not the _candidate default of 0.0, which
+        # the allocator's low-evidence draft_bonus path would misread as an
+        # elite/first-overall pick) - this player has no real draft signal,
+        # same convention test_uncharted_team_... already uses for the same
+        # reason.
+        _candidate('MOD', 'Deep Third', ourlads_depth_rank=3, same_team=True, prior_games=8,
+                   prior_active_snap_share=0.06, prior_whole_snap_share=0.05,
+                   prior_active_carry_share=0.03, prior_active_target_share=0.02,
+                   draft_capital=np.nan),
+    ]
+    nudged, _ = _allocation_and_ledger(candidates)
+
+    original_pull = rba.RB_DEPTH_RANK_SNAP_PULL
+    try:
+        rba.RB_DEPTH_RANK_SNAP_PULL = 0.0
+        unnudged, _ = _allocation_and_ledger(candidates)
+    finally:
+        rba.RB_DEPTH_RANK_SNAP_PULL = original_pull
+
+    rb3_share = float(_player_row(nudged, 'Deep Third')['expected_snap_share'])
+    assert rb3_share <= rba.RB_DEPTH_RANK_SNAP_TARGET_RANK3
+    assert np.isclose(rb3_share, float(_player_row(unnudged, 'Deep Third')['expected_snap_share']), atol=1e-9)
+
+
+def test_rank2_order_nudge_pulls_a_high_share_rb3_toward_rb2():
+    """Explicit 2026-08-24 request, mirroring the RB1 nudge above: a chart
+    RB3 with real standalone evidence should not typically clear the chart
+    RB2 next to him - "the RB3 listed should not be so much higher than the
+    RB2 listed" (the real Kimani Vidal/Keaton Mitchell case)."""
+    candidates = [
+        _candidate('ORD', 'Lead Back', ourlads_depth_rank=1, same_team=True, prior_games=15,
+                   prior_active_snap_share=0.62, prior_whole_snap_share=0.58,
+                   prior_active_carry_share=0.50, prior_active_target_share=0.28),
+        _candidate('ORD', 'Chart Second', ourlads_depth_rank=2, same_team=True, prior_games=6,
+                   prior_active_snap_share=0.10, prior_whole_snap_share=0.09,
+                   prior_active_carry_share=0.07, prior_active_target_share=0.04,
+                   draft_capital=np.nan),
+        _candidate('ORD', 'Evidenced Third', ourlads_depth_rank=3, same_team=True, prior_games=14,
+                   prior_active_snap_share=0.38, prior_whole_snap_share=0.34,
+                   prior_active_carry_share=0.30, prior_active_target_share=0.18),
+    ]
+    nudged, _ = _allocation_and_ledger(candidates)
+
+    original_pull = rba.RB_DEPTH_RANK2_ORDER_PULL
+    try:
+        rba.RB_DEPTH_RANK2_ORDER_PULL = 0.0
+        unnudged, _ = _allocation_and_ledger(candidates)
+    finally:
+        rba.RB_DEPTH_RANK2_ORDER_PULL = original_pull
+
+    nudged_rb1 = float(_player_row(nudged, 'Lead Back')['expected_snap_share'])
+    nudged_rb2 = float(_player_row(nudged, 'Chart Second')['expected_snap_share'])
+    nudged_rb3 = float(_player_row(nudged, 'Evidenced Third')['expected_snap_share'])
+    unnudged_rb1 = float(_player_row(unnudged, 'Lead Back')['expected_snap_share'])
+    unnudged_rb2 = float(_player_row(unnudged, 'Chart Second')['expected_snap_share'])
+    unnudged_rb3 = float(_player_row(unnudged, 'Evidenced Third')['expected_snap_share'])
+
+    # Precondition: RB3 really does outshare RB2 without this specific nudge.
+    assert unnudged_rb3 > unnudged_rb2 + 0.03
+
+    assert nudged_rb3 < unnudged_rb3
+    assert nudged_rb2 > unnudged_rb2
+    # RB1 (the other nudge's receiver, not this one's) is unaffected by
+    # toggling RB_DEPTH_RANK2_ORDER_PULL specifically.
+    assert np.isclose(nudged_rb1, unnudged_rb1, atol=1e-9)
+    assert np.isclose((nudged_rb2 - unnudged_rb2), (unnudged_rb3 - nudged_rb3), atol=1e-6)
+
+
+def test_team_snap_shares_rescale_to_a_full_backfield():
+    """Explicit 2026-08-24 request: a clean, fully-charted room's own listed
+    core RBs must sum their snap shares to (at least) the team's real
+    capacity - previously the `other RB` residual and the capacity/100% gap
+    were left permanently unclaimed by anyone (measured live - a clean
+    3-man Bears room summed to ~92%, about 8 points short of "a full
+    backfield")."""
+    candidates = [
+        _candidate('SUM', 'Lead Back', ourlads_depth_rank=1, same_team=True, prior_games=15,
+                   prior_active_snap_share=0.55, prior_whole_snap_share=0.50,
+                   prior_active_carry_share=0.45, prior_active_target_share=0.28),
+        _candidate('SUM', 'Second Back', ourlads_depth_rank=2, same_team=True, prior_games=12,
+                   prior_active_snap_share=0.30, prior_whole_snap_share=0.27,
+                   prior_active_carry_share=0.24, prior_active_target_share=0.15),
+        _candidate('SUM', 'Third Back', ourlads_depth_rank=3, same_team=True, prior_games=10,
+                   prior_active_snap_share=0.10, prior_whole_snap_share=0.09,
+                   prior_active_carry_share=0.08, prior_active_target_share=0.05,
+                   draft_capital=np.nan),
+    ]
+    allocations, ledger = _allocation_and_ledger(candidates)
+    team_rows = _team_rows(allocations, 'SUM')
+    core = team_rows.loc[team_rows['core_rb'].astype(bool)]
+    total_share = float(core['expected_snap_share'].sum())
+    assert np.isclose(total_share, 1.0, atol=1e-6)
+
+    entry = ledger.loc[(ledger['team'] == 'SUM') & (ledger['resource'] == 'core_rb_snaps')].iloc[0]
+    assert np.isclose(float(entry['allocated']), 1.0, atol=1e-6)
+    assert np.isclose(float(entry['unallocated']), 0.0, atol=1e-6)
+
+
+def test_vacancy_admits_the_next_chart_slot_when_a_higher_rank_is_unavailable():
+    """Explicit 2026-08-24 request (the real Jadarian Price/George Holani
+    case): a real target-week 'out' at chart rank 1 should let chart rank 4
+    - previously locked out entirely - compete for a real, if modest, share
+    as a genuine next-man-up. A fully healthy backfield's ranks are
+    unaffected (covered by every other test in this file)."""
+    candidates = [
+        _candidate('VAC', 'Starter', ourlads_depth_rank=1, same_team=True, prior_games=16,
+                   prior_active_snap_share=0.60, prior_whole_snap_share=0.55,
+                   prior_active_carry_share=0.50, prior_active_target_share=0.30,
+                   availability=0.0),
+        _candidate('VAC', 'Next Man Up', ourlads_depth_rank=2, same_team=True, prior_games=10,
+                   prior_active_snap_share=0.20, prior_whole_snap_share=0.18,
+                   prior_active_carry_share=0.16, prior_active_target_share=0.10),
+        _candidate('VAC', 'Third String', ourlads_depth_rank=3, same_team=True, prior_games=8,
+                   prior_active_snap_share=0.10, prior_whole_snap_share=0.09,
+                   prior_active_carry_share=0.08, prior_active_target_share=0.05,
+                   draft_capital=np.nan),
+        _candidate('VAC', 'Emergency Fourth', ourlads_depth_rank=4, same_team=True, prior_games=1,
+                   prior_active_snap_share=0.03, prior_whole_snap_share=0.02,
+                   prior_active_carry_share=0.02, prior_active_target_share=0.01,
+                   draft_capital=np.nan),
+    ]
+    allocations, _ = _allocation_and_ledger(candidates)
+    starter = _player_row(allocations, 'Starter')
+    fourth = _player_row(allocations, 'Emergency Fourth')
+    assert float(starter['expected_snap_share']) == 0.0
+    assert bool(fourth['eligible_core_rb'])
+    assert float(fourth['expected_snap_share']) > 0.0
+    # "A little" of the work, not a real committee share.
+    assert float(fourth['expected_snap_share']) < 0.15
+
+
+def test_weak_ourlads_fullback_evidence_is_excluded_despite_broad_rb_position():
+    """The D.J. Herman / Max Bredeson-shaped case: `functional_position`
+    still resolves 'RB' when the roster's own depth_chart_position disagrees
+    with Ourlads (see classify_functional_position's own docstring/tests
+    above), so a narrower allocator-level guard is needed specifically for a
+    player with an explicit Ourlads FB listing and no offsetting prior RB
+    role evidence."""
+    candidates = [
+        _candidate('WFB', 'Lead Back', ourlads_depth_rank=1, same_team=True, prior_games=15,
+                   prior_active_snap_share=0.60, prior_whole_snap_share=0.55,
+                   prior_active_carry_share=0.50, prior_active_target_share=0.30),
+        _candidate('WFB', 'Backup Fullback', ourlads_depth_rank=2, same_team=False,
+                   depth_chart_position='RB', ourlads_position='FB',
+                   prior_active_snap_share=np.nan, prior_whole_snap_share=np.nan,
+                   prior_games=0, draft_capital=np.nan),
+    ]
+    allocations, _ = _allocation_and_ledger(candidates)
+    fb = _player_row(allocations, 'Backup Fullback')
+    assert not bool(fb['eligible_core_rb'])
+    assert float(fb['expected_snap_share']) == 0.0
+    assert 'fullback listing' in str(fb['allocation_eligibility_reason']).lower()
+
+
+def test_established_rb_evidence_stays_eligible_despite_a_conflicting_ourlads_fullback_listing():
+    """The inverse of the weak-evidence case above: a real, evidenced RB
+    incumbent must not lose eligibility just because one Ourlads listing
+    says FB - only a player with NO offsetting role evidence is excluded by
+    the narrower guard (classify_functional_position's own "Core Back" test
+    already covers the pure position-label side of this)."""
+    candidates = [
+        _candidate('CVT', 'Lead Back', ourlads_depth_rank=1, same_team=True, prior_games=15,
+                   prior_active_snap_share=0.55, prior_whole_snap_share=0.50,
+                   prior_active_carry_share=0.45, prior_active_target_share=0.28),
+        _candidate('CVT', 'Converted Back', ourlads_depth_rank=2, same_team=True,
+                   depth_chart_position='RB', ourlads_position='FB',
+                   prior_games=14, prior_active_snap_share=0.35, prior_whole_snap_share=0.30,
+                   prior_active_carry_share=0.28, prior_active_target_share=0.15),
+    ]
+    allocations, _ = _allocation_and_ledger(candidates)
+    converted = _player_row(allocations, 'Converted Back')
+    assert bool(converted['eligible_core_rb'])
+    assert float(converted['expected_snap_share']) > 0.0
+
+
 def _vacancy_result_frame():
     """A narrow MIA frame that isolates improper FB/WR -> RB vacancy leakage."""
     frame = pd.DataFrame([
@@ -521,6 +767,114 @@ def test_role_segment_allocator_fields_expose_incumbent_credit_and_replacement_d
     assert float(hampton['replacement_only_era_downweight']) == 0.0
     assert float(vidal['shared_healthy_lead_score']) < -0.65
     assert float(vidal['replacement_only_era_downweight']) > 0.25
+
+
+def _skattebo_tracy_season_ending_history():
+    """A rookie winning the job, then a season-ending injury, no return.
+
+    Shaped after the real 2025 Giants case (Cam Skattebo/Tyrone Tracy Jr.):
+    the rookie's role climbs to borderline-workhorse across weeks 5-8, then
+    he never plays again that season; the teammate who was clearly secondary
+    while the rookie was healthy becomes the guy with all the volume for the
+    rest of the year, purely because the rookie is gone.
+    """
+    rookie_snaps = {1: 35, 2: 50, 3: 58, 4: 62, 5: 65, 6: 68, 7: 70, 8: 66}
+    vet_snaps = {1: 45, 2: 30, 3: 25, 4: 20, 5: 18, 6: 15, 7: 15, 8: 18,
+                9: 75, 10: 78, 11: 80, 12: 74, 13: 77, 14: 79, 15: 81}
+    rows = []
+    for player, player_id, snaps in (
+        ('Rookie Back', '00-0050001', rookie_snaps),
+        ('Vet Back', '00-0050002', vet_snaps),
+    ):
+        for week, snap in snaps.items():
+            rows.append({
+                'player_display_name': player, 'player_id': player_id, 'position': 'RB',
+                'team': 'NYG', 'game_team': 'NYG', 'season': 2025, 'week': week,
+                'weekly_snap_pct': snap, 'has_snap_match': True,
+                'rushing_attempts': max(1, round(snap / 5)), 'targets': max(0, round(snap / 25)),
+            })
+    calendar = pd.DataFrame({'game_team': ['NYG'] * 15, 'season': [2025] * 15, 'week': list(range(1, 16))})
+    return pd.DataFrame(rows), calendar
+
+
+def test_role_segments_credit_a_season_ending_absence_with_no_observed_return():
+    history, calendar = _skattebo_tracy_season_ending_history()
+    segments, context = rba.analyze_rb_role_segments(history, team_game_calendar=calendar)
+    rookie = segments.loc[segments['rb_segment_player'].eq('Rookie Back')].iloc[0]
+    assert rookie['rb_segment_status'] == 'clear_internal_absence_season_ended'
+    assert bool(rookie['interrupted_season'])
+    assert int(rookie['absence_team_games']) == 7
+    # Last four pre-gap games: (65+68+70+66)/4 = 67.25%.
+    assert np.isclose(float(rookie['pre_absence_snap_share']), 0.6725)
+    assert int(rookie['return_recovery_games']) == 0
+    assert pd.isna(rookie['return_recovery_snap_share']) or rookie['return_recovery_snap_share'] == 0
+    # No return-games confidence factor to dock here - a season that simply
+    # never resumes is not weaker evidence than an observed return.
+    assert float(rookie['interrupted_incumbent_role_credit']) > 0.90
+
+    pair = context.loc[(context['incumbent_player'].eq('Rookie Back'))
+                       & (context['teammate_player'].eq('Vet Back'))].iloc[0]
+    # The vet was clearly secondary in every shared healthy week...
+    assert float(pair['shared_healthy_lead_score']) > 0.30
+    # ...then inherited a starter's workload only once the rookie was gone.
+    assert float(pair['teammate_absence_replacement_snap_share']) > 0.70
+    assert float(pair['replacement_only_era_downweight']) > 0.15
+    # This IS a real earned role, not a vacancy fill - the vet was never the
+    # more-established back before the rookie's pre-gap window even began
+    # (45% vs. the rookie's contemporaneous 35% week 1), so the vacancy
+    # guard must not discount the rookie's own credit.
+    assert float(rookie['pre_window_teammate_vacancy_downweight']) < 0.20
+
+
+def _committee_vacancy_fill_history():
+    """A clear starter who gets hurt mid-season, and a benchwarmer backup who
+    only ever sees a real snap share once the starter is out.
+
+    Shaped after the real 2025 Saints backfield (Alvin Kamara/Devin Neal):
+    the backup's only involvement while the starter is healthy is a couple
+    of token single-digit-percent appearances (weeks 1 and 7); he then
+    inherits the job purely because the starter's role collapses (weeks
+    8-15), and the season ends with him still up there. In isolation his own
+    game log - a rise to a ~65% snap share, then nothing - looks identical
+    in SHAPE to a real earned, restorable incumbency (Cam Skattebo's shape
+    above); it only reads as a vacancy fill once compared against the
+    starter's own snap-share collapse over the exact same weeks.
+    """
+    starter_snaps = {1: 79, 2: 86, 3: 74, 4: 73, 5: 56, 6: 63, 7: 84, 8: 51, 9: 59, 10: 63, 12: 14}
+    # Backup's real last game is week 15, same as the real Neal case - the
+    # calendar has to run past it (a normal 18-week season) for a
+    # season-ending gap to even be detectable; cutting the calendar off
+    # exactly at his last game leaves no room to represent "then nothing".
+    backup_snaps = {1: 9, 7: 13, 8: 46, 9: 39, 10: 35, 12: 74, 13: 82, 14: 71, 15: 32}
+    rows = []
+    for player, player_id, snaps in (
+        ('Starter Back', '00-0060001', starter_snaps),
+        ('Backup Back', '00-0060002', backup_snaps),
+    ):
+        for week, snap in snaps.items():
+            rows.append({
+                'player_display_name': player, 'player_id': player_id, 'position': 'RB',
+                'team': 'NO', 'game_team': 'NO', 'season': 2025, 'week': week,
+                'weekly_snap_pct': snap, 'has_snap_match': True,
+                'rushing_attempts': max(1, round(snap / 5)), 'targets': max(0, round(snap / 25)),
+            })
+    calendar = pd.DataFrame({'game_team': ['NO'] * 18, 'season': [2025] * 18, 'week': list(range(1, 19))})
+    return pd.DataFrame(rows), calendar
+
+
+def test_role_segments_do_not_credit_a_vacancy_fill_as_an_earned_incumbency():
+    history, calendar = _committee_vacancy_fill_history()
+    segments, _ = rba.analyze_rb_role_segments(history, team_game_calendar=calendar)
+    backup = segments.loc[segments['rb_segment_player'].eq('Backup Back')].iloc[0]
+    assert backup['rb_segment_status'] == 'clear_internal_absence_season_ended'
+    # The backup's own last-four-games snap share still looks like a real
+    # role on paper...
+    assert float(backup['pre_absence_snap_share']) > 0.55
+    # ...but the starter was clearly the more established back before that
+    # window even began, and collapsed almost exactly when it started - the
+    # vacancy guard should catch this and effectively zero the credit.
+    assert float(backup['pre_window_teammate_vacancy_downweight']) > 0.8
+    assert float(backup['interrupted_incumbent_role_credit']) < 0.10
 
 
 def test_role_segments_do_not_infer_absence_without_snap_coverage_or_for_two_game_rotation_gap():

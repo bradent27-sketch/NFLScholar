@@ -82,6 +82,16 @@ NEEDS_REFIT = False  # re-fit under the consolidated TIER_BOUNDS below, 2021-202
 TIER_BOUNDS = (('Starter', 1, 30), ('Streamer/Bench', 31, 10_000))
 MIN_WIDTH_SCALE, MAX_WIDTH_SCALE = 0.7, 1.4
 
+# player_width_scale's real-evidence path (own game-to-game variance vs. the
+# tier's own implied variance) is allowed a wider range than the
+# role_confidence-only fallback above: it's measuring something real rather
+# than inferring width from a single proxy, so it should be able to show a
+# genuinely metronomic bell-cow or a genuinely chaotic committee/boom-bust
+# player as visibly different from the tier average, not just mildly so.
+REAL_MIN_WIDTH_SCALE, REAL_MAX_WIDTH_SCALE = 0.5, 1.8
+MIN_GAMES_FOR_OWN_VARIANCE = 4  # below this, own variance isn't trusted at all
+GAMES_FOR_FULL_TRUST = 12  # at/above this many eligible games, own variance fully replaces the heuristic
+
 
 def tier_for_rank(rank_within_position: int | float | None) -> str:
     """Which usage tier a projected positional rank falls into - the SAME
@@ -115,8 +125,64 @@ def _width_scale(role_confidence: float | None) -> float:
     return float(np.clip(1.3 - 0.6 * float(role_confidence), MIN_WIDTH_SCALE, MAX_WIDTH_SCALE))
 
 
+def _tier_cv(ratios: dict) -> float:
+    """The tier's own implied coefficient of variation, off the SAME fitted
+    ratio ladder - averages an IQR-based and a P10-P90-based robust std
+    estimate (both converted to a normal-equivalent std, then to a median-
+    relative CV) so it's one number on the same footing as a real player's
+    std(points)/mean(points), for player_width_scale to compare against."""
+    median = ratios.get(50) or 1.0
+    iqr_std = (ratios.get(75, median) - ratios.get(25, median)) / 1.349
+    p1090_std = (ratios.get(90, median) - ratios.get(10, median)) / 2.563
+    avg_std = (iqr_std + p1090_std) / 2.0
+    return max(avg_std / max(median, 1e-6), 1e-3)
+
+
+def player_width_scale(role_confidence: float | None, tier_ratios: dict,
+                       own_game_points=None) -> float:
+    """How much wider/narrower THIS player's band should be than the
+    position/tier average.
+
+    REDONE 2026-08-24 per explicit request: 'This player' curves were
+    reading as visually near-identical to each other across genuinely
+    different players, because the only per-player signal was
+    role_confidence squeezed into a narrow multiplier on the SAME
+    tier-average shape - two players in the same tier with similar
+    role_confidence produced almost the same curve regardless of how
+    differently they'd actually performed (e.g. real 2025 data: CeeDee Lamb
+    and Ja'Marr Chase both carry role_confidence ~0.9, but Lamb's own
+    game-to-game CV was 0.27 against Chase's 0.50 - genuinely different
+    boom/bust profiles the old heuristic couldn't see).
+
+    Now: when the player has enough of his own real per-game fantasy-point
+    history (own_game_points - current+prior season, partial-game-screened,
+    same scoring mode as this run), his OWN coefficient of variation vs. the
+    tier's own implied CV (_tier_cv, off the same fitted ratio ladder)
+    becomes the primary signal - shrunk toward the existing
+    role_confidence-based heuristic as the sample drops below
+    GAMES_FOR_FULL_TRUST games, and falling back to that heuristic
+    unchanged below MIN_GAMES_FOR_OWN_VARIANCE (a rookie or anyone else
+    with too little history keeps exactly the previous behavior).
+    """
+    heuristic = _width_scale(role_confidence)
+    pts = np.asarray(own_game_points, dtype=float) if own_game_points is not None else np.array([])
+    pts = pts[np.isfinite(pts)]
+    n = len(pts)
+    if n < MIN_GAMES_FOR_OWN_VARIANCE:
+        return heuristic
+    mean = float(pts.mean())
+    if mean <= 0.5:
+        return heuristic
+    player_cv = float(pts.std()) / mean
+    tier_cv = _tier_cv(tier_ratios)
+    real_scale = float(np.clip(player_cv / tier_cv, REAL_MIN_WIDTH_SCALE, REAL_MAX_WIDTH_SCALE))
+    weight = float(np.clip(
+        (n - MIN_GAMES_FOR_OWN_VARIANCE) / (GAMES_FOR_FULL_TRUST - MIN_GAMES_FOR_OWN_VARIANCE), 0.0, 1.0))
+    return weight * real_scale + (1.0 - weight) * heuristic
+
+
 def player_distribution(position: str, rank_within_position, calibrated_points: float,
-                        role_confidence: float | None = None) -> dict | None:
+                        role_confidence: float | None = None, own_game_points=None) -> dict | None:
     """This player's own boom/bust band, in real points.
 
     Returns {'tier', 'width_scale', 'points': {10: v, 25: v, 50: v, 75: v, 90: v},
@@ -130,7 +196,7 @@ def player_distribution(position: str, rank_within_position, calibrated_points: 
     ratios = position_band_ratios(position, rank_within_position)
     if not ratios or calibrated_points is None or not np.isfinite(calibrated_points):
         return None
-    scale = _width_scale(role_confidence)
+    scale = player_width_scale(role_confidence, ratios, own_game_points)
     median_ratio = ratios[50]
     points = {}
     position_points = {}

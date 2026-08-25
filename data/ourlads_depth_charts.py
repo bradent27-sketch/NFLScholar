@@ -164,7 +164,21 @@ def _resolved_functional_position(match: pd.Series, source_position: str) -> str
     that is more specific than the broad group.  If the roster lacks that
     field, an Ourlads FB row is still sufficient evidence to keep the player
     out of core RB allocation.
+
+    An explicit Ourlads FB listing wins outright, fixed 2026-08-24 after a
+    real miscall: D.J. Herman is Ourlads' literal MIA FB2 (``source_position
+    == "FB"``), but the current roster's own ``depth_chart_position`` field
+    still carried a stale/generic "RB" for him, and the old precedence order
+    trusted that roster field unconditionally whenever it held ANY of the
+    five source positions - discarding Ourlads' more specific, more current
+    signal and letting a backup fullback compete for real core-RB snaps. A
+    literal Ourlads FB row is a narrow, deliberate source label (unlike a
+    roster's broad/possibly-stale depth field), so it is trusted first; the
+    original precedence (roster depth role, then source position, then
+    roster's broad position) is unchanged for every other case.
     """
+    if source_position == "FB":
+        return "FB"
     # Nullable pandas strings use ``pd.NA``, whose boolean value is
     # intentionally ambiguous.  Normalize before testing the current
     # roster's more-specific depth role.

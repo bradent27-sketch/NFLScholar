@@ -1706,32 +1706,62 @@ def assign_tiers(board, tiers_per_position=8):
     return out
 
 
-def tier_by_position(df, value_col, pos_col='Pos', max_tiers=6):
-    """
-    Per-position tiers by clustering `value_col`, wherever a significant
-    cutoff actually occurs - the same `_kmeans_1d` clustering assign_tiers
-    uses for the draft board, generalized for any per-position points
-    table rather than one that also needs VORP/replacement-level filtering.
+# Roughly where a real lineup stops reaching for a player at each position
+# in a single week - not the same as draft_board's broader `draftable_depth`
+# (which sizes a whole SEASON-LONG draft pool, bench stashes included). Used
+# only to split tier_by_position's two regimes below.
+WEEKLY_STARTABLE_DEPTH = {'QB': 24, 'RB': 36, 'WR': 40, 'TE': 24, 'K': 14, 'DST': 14}
 
-    Unlike assign_tiers, every row with a real value participates (there is
-    no "below replacement" concept for a single week's projected pool - a
-    streaming DST or QB2 spot start is a legitimate tier, not noise to sweep
-    into a trailing bucket).
+
+def tier_by_position(df, value_col, pos_col='Pos', max_tiers=6, startable_depth=None):
+    """
+    Per-position tiers for a single week's projected-points pool, split into
+    two regimes rather than one flat k-means pass across the whole position.
+
+    REDONE 2026-08-24 per explicit request. The old approach ran one
+    `_kmeans_1d` pass across an entire position's points. Fantasy scoring is
+    heavily right-skewed - a handful of stars sit far above everyone else,
+    then a long, nearly-flat tail of similar-valued bench/waiver players.
+    K-means minimizes within-cluster POINT-VALUE variance, not headcount, so
+    it spent most of its tiers separating that small elite head and left the
+    entire deep bench - players nobody would ever actually start - packed
+    into whatever tier(s) were left over. The visible result was a Rank
+    column that read almost entirely blue/light-blue/green even for
+    streaming-only or waiver players, with red rarely reached.
+
+    Now: everyone at/under `startable_depth`'s position-rank cutoff (roughly
+    the range a real lineup would ever reach for - see
+    WEEKLY_STARTABLE_DEPTH) gets clustered into up to `max_tiers - 1` bands
+    by real point gaps, same `_kmeans_1d` technique as before - this is
+    where a start/sit decision actually happens, so this is where the color
+    range should do its work. Everyone past that depth shares one flat
+    tier (tier `max_tiers`, the last color in TIER_COLORS - red) since
+    "never worth starting" doesn't need finer grading than that.
 
     Returns a Series of tier ints aligned to df's index, NaN where `pos_col`
     or `value_col` is missing for that row.
     """
     if df.empty or value_col not in df.columns or pos_col not in df.columns:
         return pd.Series(np.nan, index=df.index)
+    depth_map = startable_depth or WEEKLY_STARTABLE_DEPTH
     out = pd.Series(np.nan, index=df.index)
     pos_upper = df[pos_col].astype(str).str.upper()
+    startable_tiers = max(1, max_tiers - 1)
     for pos in pos_upper.unique():
         mask = (pos_upper == pos) & df[value_col].notna()
         if not mask.any():
             continue
-        vals = df.loc[mask, value_col].to_numpy()
-        k = int(np.clip(len(vals) // 3, 1, max_tiers))
-        out.loc[mask] = _kmeans_1d(vals, k)
+        sub = df.loc[mask]
+        depth = depth_map.get(pos, 40)
+        pos_rank = sub[value_col].rank(ascending=False, method='first')
+        idx_startable = sub.index[pos_rank <= depth]
+        idx_deep = sub.index[pos_rank > depth]
+        if len(idx_startable):
+            vals = sub.loc[idx_startable, value_col].to_numpy()
+            k = int(np.clip(len(vals) // 3, 1, startable_tiers))
+            out.loc[idx_startable] = _kmeans_1d(vals, k)
+        if len(idx_deep):
+            out.loc[idx_deep] = startable_tiers + 1
     return out
 
 

@@ -38,6 +38,7 @@ from typing import Any, Mapping, Sequence
 import hashlib
 import re
 
+import numpy as np
 import pandas as pd
 
 
@@ -185,6 +186,7 @@ ALIGNMENT_DEFENSE_PROFILE_COLUMNS = [
     "shrinkage_weight",
     "alignment_confidence",
     "position_normal_slot_rate",
+    "position_normal_alignment_rate",
     "normal_alignment_source",
     "baseline_source",
     "fallback_reason",
@@ -545,6 +547,7 @@ def neutral_alignment_defense_profile(
         "shrinkage_weight": 0.0,
         "alignment_confidence": 0.0,
         "position_normal_slot_rate": None,
+        "position_normal_alignment_rate": None,
         "normal_alignment_source": "unavailable",
         "baseline_source": "neutral_fallback",
         "fallback_reason": reason,
@@ -658,9 +661,18 @@ def _normalise_alignment(value: Any) -> str:
     raw = _clean_text(value).lower().replace("-", "_").replace(" ", "_")
     if raw in {"slot", "inside"}:
         return "slot"
-    if raw in {"non_slot", "nonslot", "wide", "outside", "inline", "other"}:
-        # The archive can only truthfully promise the complement of the real
-        # PFF slot events.  Do not re-label it as literal wide or inline.
+    if raw in {"wide", "outside"}:
+        return "wide"
+    if raw in {"inline"}:
+        return "inline"
+    if raw in {"non_slot", "nonslot", "other"}:
+        # The remaining catch-all complement of real PFF slot events, kept
+        # for callers that only ever distinguished slot vs everything else.
+        # ``wide``/``inline`` above are now their own first-class buckets
+        # (added 2026-08-24, see _prepare_alignment_team_games) rather than
+        # being folded into this one, since receiving_summary.csv carries
+        # real per-player wide_snaps/inline_snaps - this label no longer
+        # needs to stand in for both.
         return "non_slot"
     return raw
 
@@ -782,12 +794,22 @@ def discover_weekly_alignment_exports(
     year: int,
     as_of_week: int | None = None,
     pff_root: str | Path = DEFAULT_PFF_ROOT,
+    *,
+    include_postseason: bool = False,
 ) -> AlignmentLoadResult:
     """Discover local weekly PFF export pairs and mark their as-of eligibility.
 
     Discovery is read-only and returns all observed week folders.  The
     ``eligible_as_of`` flag is true only for complete, non-rejected pairs
-    strictly before ``as_of_week``.  Unknown regular-season status remains
+    strictly before ``as_of_week`` - "non-rejected" means a manifest row
+    explicitly marked ``regular_season=False`` (a known postseason or
+    preseason export) is excluded, UNLESS ``include_postseason=True``, added
+    2026-08-25 for the WC/DIV/CONF/SB weekly archives (weeks 19-22 by the
+    same nflverse convention this app uses elsewhere) so a caller can opt
+    into real postseason alignment evidence without silently mislabeling it
+    as regular-season. Default stays ``False`` so every existing caller's
+    behavior is unchanged; only the two explicit cold-start call sites in
+    ``weekly_projections.py`` turn this on. Unknown regular-season status remains
     visibly *unverified* rather than being mislabeled; it is allowed for a
     manually archived weekly report because the time cutoff is still exact.
     A known POST/preseason source is always rejected.
@@ -831,7 +853,7 @@ def discover_weekly_alignment_exports(
             complete
             and target_week is not None
             and week < target_week
-            and regular is not False
+            and (regular is not False or include_postseason)
             and schema_status is not False
         )
         row = {
@@ -868,7 +890,10 @@ def discover_weekly_alignment_exports(
                 "(the archive rule is strictly week < as_of_week)."
             )
         if regular is False:
-            issues.append(f"PFF Week {week} is marked non-regular-season in the manifest and is ignored.")
+            issues.append(
+                f"PFF Week {week} is marked non-regular-season (postseason) in the manifest and is "
+                + ("explicitly included as postseason alignment evidence." if include_postseason else "ignored.")
+            )
         if schema_status is False:
             issues.append(f"PFF Week {week} is marked schema-invalid in the manifest and is ignored.")
 
@@ -881,6 +906,7 @@ def discover_weekly_alignment_exports(
         "manifest_path": str(weekly_dir / "manifest.csv") if manifest_present else "",
         "manifest_present": manifest_present,
         "discovered_weeks": tuple(archives["week"].tolist()) if not archives.empty else (),
+        "include_postseason": bool(include_postseason),
     }
     return AlignmentLoadResult(
         profiles=pd.DataFrame(columns=PROFILE_COLUMNS),
@@ -1363,6 +1389,8 @@ def load_weekly_alignment_profiles(
     year: int,
     as_of_week: int,
     pff_root: str | Path = DEFAULT_PFF_ROOT,
+    *,
+    include_postseason: bool = False,
 ) -> AlignmentLoadResult:
     """Load only time-valid weekly PFF player alignment profiles.
 
@@ -1370,10 +1398,12 @@ def load_weekly_alignment_profiles(
     accidentally build a historical profile from a completed season.  The
     loader accepts an absent manifest but marks its regular-season status as
     unverified in both profile and result metadata; known non-regular reports
-    are excluded.
+    are excluded unless ``include_postseason=True`` (see
+    ``discover_weekly_alignment_exports``).
     """
     target_week = _validate_week_number(as_of_week)
-    discovered = discover_weekly_alignment_exports(year, target_week, pff_root)
+    discovered = discover_weekly_alignment_exports(
+        year, target_week, pff_root, include_postseason=include_postseason)
     archives = discovered.archives.copy()
     issues = list(discovered.issues)
     records: list[pd.DataFrame] = []
@@ -1710,6 +1740,34 @@ def _prepare_alignment_team_games(
     players["_slot_exposure"] = slot_snaps.where(reported_total.gt(0.0), fallback_slot)
     players["_non_slot_exposure"] = (wide_snaps + inline_snaps).where(reported_total.gt(0.0), fallback_non_slot)
     players["_derived_alignment_exposure"] = reported_total.le(0.0)
+    # Wide/inline, added 2026-08-24 at the user's explicit request for a real
+    # 3-way split (slot/wide/inline), not just slot vs. everything else.
+    # receiving_summary.csv reports real wide_snaps/inline_snaps per player,
+    # but receiving_concept.csv only ever reports a SLOT event split
+    # (slot_targets/receptions/yards) - there is no separate wide_targets or
+    # inline_targets column to read a literal wide/inline production total
+    # from. Rather than invent one, each player-row's already-real non-slot
+    # PRODUCTION total (_{stat}_non_slot, computed above from the concept
+    # report) is apportioned between wide and inline in proportion to that
+    # SAME player-row's real wide_snaps/inline_snaps split - an honest,
+    # clearly-labelled approximation (a route run wide or inline earns
+    # production at roughly that player's own overall non-slot rate), not a
+    # second independently-measured event count. Unlike slot/non-slot above,
+    # this has NO rate-weight fallback for a row with no reported snaps at
+    # all: a player with zero real wide_snaps+inline_snaps evidence simply
+    # does not contribute a wide/inline row rather than guessing a 50/50 (or
+    # position-typical) split for him.
+    non_slot_snap_total = wide_snaps + inline_snaps
+    has_wide_inline_split = non_slot_snap_total.gt(0.0)
+    players["_wide_share_of_non_slot"] = (wide_snaps / non_slot_snap_total).where(has_wide_inline_split)
+    players["_inline_share_of_non_slot"] = (inline_snaps / non_slot_snap_total).where(has_wide_inline_split)
+    players["_wide_exposure"] = wide_snaps.where(has_wide_inline_split)
+    players["_inline_exposure"] = inline_snaps.where(has_wide_inline_split)
+    for stat in ALIGNMENT_DEFENSE_STATS:
+        non_slot_value = players[f"_{stat}_non_slot"]
+        valid = players[f"_{stat}_valid"] & has_wide_inline_split
+        players[f"_{stat}_wide"] = (non_slot_value * players["_wide_share_of_non_slot"]).where(valid)
+        players[f"_{stat}_inline"] = (non_slot_value * players["_inline_share_of_non_slot"]).where(valid)
 
     records: list[dict[str, Any]] = []
     unmapped: set[tuple[int, str]] = set()
@@ -1732,14 +1790,29 @@ def _prepare_alignment_team_games(
             "reported_alignment_snaps" if derived_count == 0 else
             ("alignment_rate_weight_fallback" if derived_count == player_rows else "mixed_reported_and_rate_weight")
         )
-        for alignment, exposure_col in (("slot", "_slot_exposure"), ("non_slot", "_non_slot_exposure")):
+        for alignment, exposure_col in (
+            ("slot", "_slot_exposure"), ("non_slot", "_non_slot_exposure"),
+            ("wide", "_wide_exposure"), ("inline", "_inline_exposure"),
+        ):
             exposure = pd.to_numeric(group[exposure_col], errors="coerce")
             alignment_snaps = float(exposure.sum(min_count=1)) if exposure.notna().any() else 0.0
             for stat in ALIGNMENT_DEFENSE_STATS:
                 value_col = f"_{stat}_{alignment}"
                 values = pd.to_numeric(group[value_col], errors="coerce")
                 valid_rows = int(values.notna().sum())
-                complete = bool(player_rows > 0 and valid_rows == player_rows)
+                if alignment in ("wide", "inline"):
+                    # Unlike slot/non-slot (which always has a rate-weight
+                    # fallback, so a genuinely partial export is the only way
+                    # a row goes missing), a wide/inline row is legitimately
+                    # absent for any player with no reported wide_snaps/
+                    # inline_snaps - see the exposure comment above. Requiring
+                    # every row in the group would make this alignment nearly
+                    # always "incomplete" in a normal multi-receiver game, so
+                    # completeness here means "at least one real apportioned
+                    # row", not "every row".
+                    complete = valid_rows > 0
+                else:
+                    complete = bool(player_rows > 0 and valid_rows == player_rows)
                 records.append({
                     "source_year": int(source_year),
                     "source_week": week,
@@ -1762,6 +1835,11 @@ def _prepare_alignment_team_games(
                     "concept_path": "; ".join(concept_paths),
                     "source_paths": source_paths,
                     "source_notes": (
+                        "Team-game event from the manual weekly offensive PFF receiving_summary and "
+                        "receiving_concept reports; non_slot is total minus real slot. wide/inline further "
+                        "apportion that real non_slot production by each row's own real wide_snaps/"
+                        "inline_snaps split - a labelled approximation, not a separately measured PFF event."
+                        if alignment in ("wide", "inline") else
                         "Team-game event from the manual weekly offensive PFF receiving_summary and "
                         "receiving_concept reports; non_slot is total minus real slot, not literal wide/inline."
                     ),
@@ -1809,12 +1887,20 @@ def _attach_offense_leave_one_out_baselines(team_games: pd.DataFrame) -> pd.Data
     return out
 
 
-def _position_normal_slot_rates(team_games: pd.DataFrame) -> dict[str, float | None]:
-    """Return the observed position-normal slot mix from alignment exposure.
+def _position_normal_alignment_rates(team_games: pd.DataFrame) -> dict[tuple[str, str], float | None]:
+    """Return the observed position-normal alignment mix from exposure.
 
     This is not a defense stat.  It supplies the neutral reference mix used
-    by the later residual preview, so a defense's broad WR matchup is not
-    counted a second time merely because one player is more slot-heavy.
+    by the later residual preview, so a defense's broad WR/TE matchup is not
+    counted a second time merely because one player is more slot- (or wide-,
+    or inline-) heavy than typical.
+
+    Keyed by ``(position, alignment)`` and denominated over slot+wide+inline
+    exposure (identical to slot+non_slot, since non_slot is always exactly
+    wide+inline) - added 2026-08-24 to generalize the original slot-only
+    version for the new wide/inline buckets; a slot/non_slot-only caller
+    gets numerically identical values to before, since the denominator is
+    unchanged.
     """
     if team_games is None or team_games.empty:
         return {}
@@ -1823,12 +1909,24 @@ def _position_normal_slot_rates(team_games: pd.DataFrame) -> dict[str, float | N
     unique = team_games.drop_duplicates(subset=existing).copy() if existing else team_games.copy()
     exposure = pd.to_numeric(unique.get("alignment_snaps", pd.Series(float("nan"), index=unique.index)), errors="coerce")
     unique["_alignment_exposure"] = exposure.where(exposure.ge(0.0), 0.0)
-    rates: dict[str, float | None] = {}
+    rates: dict[tuple[str, str], float | None] = {}
     for position, group in unique.groupby("position", sort=False, observed=True):
+        pos = _normalise_position(position)
         slot = float(group.loc[group["alignment"].eq("slot"), "_alignment_exposure"].sum())
+        wide = float(group.loc[group["alignment"].eq("wide"), "_alignment_exposure"].sum())
+        inline = float(group.loc[group["alignment"].eq("inline"), "_alignment_exposure"].sum())
         non_slot = float(group.loc[group["alignment"].eq("non_slot"), "_alignment_exposure"].sum())
         total = slot + non_slot
-        rates[_normalise_position(position)] = (slot / total) if total > 0.0 else None
+        rates[(pos, "slot")] = (slot / total) if total > 0.0 else None
+        rates[(pos, "non_slot")] = (non_slot / total) if total > 0.0 else None
+        # wide/inline exposure only exists for the subset of player-rows with
+        # real reported wide_snaps/inline_snaps (see _prepare_alignment_team_
+        # games); their own total can legitimately be smaller than slot+
+        # non_slot's total (built with the rate-weight fallback), so this
+        # uses ITS OWN denominator rather than reusing `total` above.
+        wide_inline_total = wide + inline
+        rates[(pos, "wide")] = (wide / wide_inline_total) if wide_inline_total > 0.0 else None
+        rates[(pos, "inline")] = (inline / wide_inline_total) if wide_inline_total > 0.0 else None
     return rates
 
 
@@ -1866,14 +1964,14 @@ def aggregate_alignment_defense_profiles(
     rows = rows.loc[
         rows["defense_team"].ne("")
         & rows["offense_team"].ne("")
-        & rows["alignment"].isin({"slot", "non_slot"})
+        & rows["alignment"].isin({"slot", "non_slot", "wide", "inline"})
         & rows["stat"].isin(ALIGNMENT_DEFENSE_STATS)
     ].copy()
     if rows.empty:
         return empty_alignment_defense_profiles()
 
     rows = _attach_offense_leave_one_out_baselines(rows)
-    normal_slot_rates = _position_normal_slot_rates(rows)
+    normal_alignment_rates = _position_normal_alignment_rates(rows)
     records: list[dict[str, Any]] = []
     group_columns = ["defense_team", "position", "alignment", "stat"]
     for (defense_team, position, alignment, stat), group in rows.groupby(group_columns, sort=True, observed=True):
@@ -1911,7 +2009,16 @@ def aggregate_alignment_defense_profiles(
             if expected_total is not None and expected_total > 0.0 else 0.0
         )
         confidence = float(shrinkage_weight * event_weight)
-        normal_slot_rate = normal_slot_rates.get(position)
+        # ALWAYS the position's SLOT rate, regardless of which alignment
+        # group this particular row belongs to - unchanged from before
+        # wide/inline existed, so every existing slot/non_slot consumer
+        # (including alignment_defense_residual_multiplier's 2-way path)
+        # keeps reading exactly the same value it always has.
+        normal_slot_rate = normal_alignment_rates.get((position, "slot"))
+        # This row's OWN alignment normal rate (slot rate for a slot row,
+        # wide rate for a wide row, etc.) - new 2026-08-24, additive only,
+        # used by the 3-way slot/wide/inline blend below.
+        normal_own_alignment_rate = normal_alignment_rates.get((position, alignment))
         regular = _group_regular_season_status(group.get("source_regular_season", pd.Series(dtype=object)))
         source_weeks = tuple(sorted({int(value) for value in group["source_week"].tolist()}))
         source_year_series = group.get("source_year", pd.Series(float("nan"), index=group.index))
@@ -1933,6 +2040,7 @@ def aggregate_alignment_defense_profiles(
             and position in ALIGNMENT_DEFENSE_SUPPORTED_POSITIONS
             and stat != "touchdowns"
             and normal_slot_rate is not None
+            and normal_own_alignment_rate is not None
         )
         if stat == "touchdowns":
             fallback_reason = "Touchdown alignment residuals are deliberately neutral pending a dedicated backtest."
@@ -1941,7 +2049,7 @@ def aggregate_alignment_defense_profiles(
                 "No other time-valid game for this offense/position/alignment/stat; "
                 "the candidate residual remains neutral."
             )
-        elif normal_slot_rate is None:
+        elif normal_slot_rate is None or normal_own_alignment_rate is None:
             fallback_reason = "Position-normal alignment exposure is unavailable; the candidate residual remains neutral."
         elif position not in ALIGNMENT_DEFENSE_SUPPORTED_POSITIONS:
             fallback_reason = (
@@ -1971,6 +2079,7 @@ def aggregate_alignment_defense_profiles(
             "shrinkage_weight": float(shrinkage_weight),
             "alignment_confidence": confidence,
             "position_normal_slot_rate": normal_slot_rate,
+            "position_normal_alignment_rate": normal_own_alignment_rate,
             "normal_alignment_source": "league_alignment_snaps" if normal_slot_rate is not None else "unavailable",
             "baseline_source": "; ".join(baseline_sources) if baseline_sources else "neutral_no_offense_comparison",
             "fallback_reason": fallback_reason,
@@ -1999,6 +2108,7 @@ def load_weekly_alignment_defense_profiles(
     pff_root: str | Path = DEFAULT_PFF_ROOT,
     *,
     shrinkage_games: float = ALIGNMENT_DEFENSE_SHRINKAGE_GAMES,
+    include_postseason: bool = False,
 ) -> AlignmentDefenseLoadResult:
     """Load a neutral-by-default alignment-defense evidence set.
 
@@ -2006,8 +2116,9 @@ def load_weekly_alignment_defense_profiles(
     weekly report must pass both the player-role schema and the additional
     total-vs-slot event schema, then map through the provided schedule before
     it can affect a defense record.  An absent schedule, incomplete report,
-    non-regular manifest row, or ambiguous team mapping produces a visible
-    neutral fallback rather than guessed matchup data.
+    non-regular manifest row (unless ``include_postseason=True`` - see
+    ``discover_weekly_alignment_exports``), or ambiguous team mapping
+    produces a visible neutral fallback rather than guessed matchup data.
 
     This function intentionally has no dependency on ``data.loaders`` or
     PFF's defender coverage exports.  The caller supplies the schedule it
@@ -2016,7 +2127,8 @@ def load_weekly_alignment_defense_profiles(
     """
     target_week = _validate_week_number(as_of_week)
     source_year = int(year)
-    discovered = discover_weekly_alignment_exports(source_year, target_week, pff_root)
+    discovered = discover_weekly_alignment_exports(
+        source_year, target_week, pff_root, include_postseason=include_postseason)
     archives = discovered.archives.copy()
     issues = list(discovered.issues)
     opponent_map = _schedule_opponent_map(schedule_df, issues)
@@ -2140,6 +2252,11 @@ def lookup_alignment_defense_profile(
     return neutral_alignment_defense_profile(reason, **wanted)
 
 
+def _confidence_of(profile: dict[str, Any] | None) -> float:
+    value = pd.to_numeric(pd.Series([(profile or {}).get("alignment_confidence")]), errors="coerce").iloc[0]
+    return 0.0 if pd.isna(value) else float(value)
+
+
 def alignment_defense_residual_multiplier(
     profiles: pd.DataFrame | None,
     *,
@@ -2147,6 +2264,8 @@ def alignment_defense_residual_multiplier(
     position: Any,
     player_slot_rate: Any,
     stat: Any,
+    player_wide_rate: Any = None,
+    player_inline_rate: Any = None,
 ) -> dict[str, Any]:
     """Preview a bounded alignment residual while always returning 1.0 to score.
 
@@ -2154,7 +2273,17 @@ def alignment_defense_residual_multiplier(
     matchup.  A future experiment may use this helper's
     ``candidate_multiplier`` as the *incremental* alignment effect:
 
-    ``player weighted slot/non-slot factor / position-normal factor``.
+    ``player weighted alignment factor / position-normal alignment factor``.
+
+    Added 2026-08-24: a real 3-way slot/wide/inline blend, not just slot vs.
+    everything else, when ``player_wide_rate``/``player_inline_rate`` are
+    supplied AND this defense has candidate-available wide and inline
+    evidence (see ``_prepare_alignment_team_games`` - wide/inline defense
+    evidence only exists for team-games built from real reported
+    wide_snaps/inline_snaps, a stricter bar than slot/non-slot's rate-weight
+    fallback). Falls back to the original slot/non-slot blend whenever
+    either caller argument is omitted or that evidence is unavailable, so an
+    existing 2-way caller is completely unaffected.
 
     For now, ``multiplier`` is deliberately and unconditionally ``1.0``.
     This gives the UI/decomposition a transparent preview without allowing an
@@ -2173,10 +2302,15 @@ def alignment_defense_residual_multiplier(
         "defense_team": _canonical_team_key(defense_team),
         "position": normalized_position,
         "stat": normalized_stat,
+        "blend_mode": "slot_non_slot",
         "player_slot_rate": None,
+        "player_wide_rate": None,
+        "player_inline_rate": None,
         "position_normal_slot_rate": None,
         "slot_profile": None,
         "non_slot_profile": None,
+        "wide_profile": None,
+        "inline_profile": None,
         "raw_residual": None,
         "effect_weight": 0.0,
         "residual_clip": ALIGNMENT_DEFENSE_RESIDUAL_CLIP,
@@ -2197,59 +2331,101 @@ def alignment_defense_residual_multiplier(
         return result
     result["player_slot_rate"] = slot_rate
     slot_profile = lookup_alignment_defense_profile(
-        profiles,
-        defense_team=defense_team,
-        position=normalized_position,
-        alignment="slot",
-        stat=normalized_stat,
+        profiles, defense_team=defense_team, position=normalized_position, alignment="slot", stat=normalized_stat,
     )
     non_slot_profile = lookup_alignment_defense_profile(
-        profiles,
-        defense_team=defense_team,
-        position=normalized_position,
-        alignment="non_slot",
-        stat=normalized_stat,
+        profiles, defense_team=defense_team, position=normalized_position, alignment="non_slot", stat=normalized_stat,
     )
     result["slot_profile"] = slot_profile
     result["non_slot_profile"] = non_slot_profile
-    if not (slot_profile.get("candidate_available") and non_slot_profile.get("candidate_available")):
-        result["reason"] = "Slot/non-slot comparison evidence is unavailable; alignment residual remains neutral."
-        return result
-    normal_slot = slot_profile.get("position_normal_slot_rate")
-    if normal_slot is None:
-        normal_slot = non_slot_profile.get("position_normal_slot_rate")
-    try:
-        normal_slot = float(normal_slot)
-        slot_factor = float(slot_profile.get("shrunk_allowed_ratio"))
-        non_slot_factor = float(non_slot_profile.get("shrunk_allowed_ratio"))
-    except (TypeError, ValueError):
-        result["reason"] = "Alignment-defense evidence is incomplete; residual remains neutral."
-        return result
-    if any(pd.isna(value) for value in (normal_slot, slot_factor, non_slot_factor)) or not 0.0 <= normal_slot <= 1.0:
-        result["reason"] = "Alignment-defense evidence is invalid; residual remains neutral."
-        return result
-    player_factor = slot_rate * slot_factor + (1.0 - slot_rate) * non_slot_factor
-    normal_factor = normal_slot * slot_factor + (1.0 - normal_slot) * non_slot_factor
-    if normal_factor <= 0.0:
+
+    # Try the 3-way slot/wide/inline blend first; it only activates when the
+    # caller supplied both rates AND this defense has real wide/inline
+    # comparison evidence for them.
+    wide_rate = inline_rate = None
+    if player_wide_rate is not None and player_inline_rate is not None:
+        try:
+            candidate_wide = float(player_wide_rate)
+            candidate_inline = float(player_inline_rate)
+        except (TypeError, ValueError):
+            candidate_wide = candidate_inline = float("nan")
+        if (not pd.isna(candidate_wide) and not pd.isna(candidate_inline)
+                and 0.0 <= candidate_wide <= 1.0 and 0.0 <= candidate_inline <= 1.0):
+            wide_rate, inline_rate = candidate_wide, candidate_inline
+
+    player_factor = normal_factor = None
+    confidence_terms: list[float] = []
+    if wide_rate is not None and inline_rate is not None:
+        wide_profile = lookup_alignment_defense_profile(
+            profiles, defense_team=defense_team, position=normalized_position, alignment="wide", stat=normalized_stat,
+        )
+        inline_profile = lookup_alignment_defense_profile(
+            profiles, defense_team=defense_team, position=normalized_position, alignment="inline", stat=normalized_stat,
+        )
+        result["wide_profile"] = wide_profile
+        result["inline_profile"] = inline_profile
+        if (slot_profile.get("candidate_available") and wide_profile.get("candidate_available")
+                and inline_profile.get("candidate_available")):
+            try:
+                slot_factor = float(slot_profile.get("shrunk_allowed_ratio"))
+                wide_factor = float(wide_profile.get("shrunk_allowed_ratio"))
+                inline_factor = float(inline_profile.get("shrunk_allowed_ratio"))
+                n_slot = float(slot_profile.get("position_normal_alignment_rate"))
+                n_wide = float(wide_profile.get("position_normal_alignment_rate"))
+                n_inline = float(inline_profile.get("position_normal_alignment_rate"))
+            except (TypeError, ValueError):
+                slot_factor = wide_factor = inline_factor = n_slot = n_wide = n_inline = float("nan")
+            player_total = slot_rate + wide_rate + inline_rate
+            normal_total = n_slot + n_wide + n_inline if not any(
+                pd.isna(v) for v in (n_slot, n_wide, n_inline)) else float("nan")
+            if (not any(pd.isna(v) for v in (slot_factor, wide_factor, inline_factor, n_slot, n_wide, n_inline))
+                    and player_total > 0.0 and normal_total > 0.0):
+                p_slot, p_wide, p_inline = slot_rate / player_total, wide_rate / player_total, inline_rate / player_total
+                n_slot, n_wide, n_inline = n_slot / normal_total, n_wide / normal_total, n_inline / normal_total
+                player_factor = p_slot * slot_factor + p_wide * wide_factor + p_inline * inline_factor
+                normal_factor = n_slot * slot_factor + n_wide * wide_factor + n_inline * inline_factor
+                confidence_terms = [_confidence_of(slot_profile), _confidence_of(wide_profile), _confidence_of(inline_profile)]
+                result["blend_mode"] = "slot_wide_inline"
+                result["player_wide_rate"] = wide_rate
+                result["player_inline_rate"] = inline_rate
+                result["position_normal_slot_rate"] = n_slot
+
+    if player_factor is None:
+        # Fall back to the original 2-way slot/non-slot blend.
+        if not (slot_profile.get("candidate_available") and non_slot_profile.get("candidate_available")):
+            result["reason"] = "Slot/non-slot comparison evidence is unavailable; alignment residual remains neutral."
+            return result
+        normal_slot = slot_profile.get("position_normal_slot_rate")
+        if normal_slot is None:
+            normal_slot = non_slot_profile.get("position_normal_slot_rate")
+        try:
+            normal_slot = float(normal_slot)
+            slot_factor = float(slot_profile.get("shrunk_allowed_ratio"))
+            non_slot_factor = float(non_slot_profile.get("shrunk_allowed_ratio"))
+        except (TypeError, ValueError):
+            result["reason"] = "Alignment-defense evidence is incomplete; residual remains neutral."
+            return result
+        if any(pd.isna(value) for value in (normal_slot, slot_factor, non_slot_factor)) or not 0.0 <= normal_slot <= 1.0:
+            result["reason"] = "Alignment-defense evidence is invalid; residual remains neutral."
+            return result
+        player_factor = slot_rate * slot_factor + (1.0 - slot_rate) * non_slot_factor
+        normal_factor = normal_slot * slot_factor + (1.0 - normal_slot) * non_slot_factor
+        confidence_terms = [_confidence_of(slot_profile), _confidence_of(non_slot_profile)]
+        result["position_normal_slot_rate"] = normal_slot
+
+    if normal_factor is None or normal_factor <= 0.0:
         result["reason"] = "Position-normal alignment factor is non-positive; residual remains neutral."
         return result
     raw_residual = player_factor / normal_factor
-    slot_confidence_value = pd.to_numeric(
-        pd.Series([slot_profile.get("alignment_confidence")]), errors="coerce"
-    ).iloc[0]
-    non_slot_confidence_value = pd.to_numeric(
-        pd.Series([non_slot_profile.get("alignment_confidence")]), errors="coerce"
-    ).iloc[0]
-    slot_confidence = 0.0 if pd.isna(slot_confidence_value) else float(slot_confidence_value)
-    non_slot_confidence = 0.0 if pd.isna(non_slot_confidence_value) else float(non_slot_confidence_value)
-    effect_weight = min(max(slot_confidence, 0.0), max(non_slot_confidence, 0.0), 1.0)
+    effect_weight = min(*(max(term, 0.0) for term in confidence_terms), 1.0) if confidence_terms else 0.0
     candidate = 1.0 + effect_weight * (raw_residual - 1.0)
     candidate = float(min(max(candidate, ALIGNMENT_DEFENSE_RESIDUAL_CLIP[0]), ALIGNMENT_DEFENSE_RESIDUAL_CLIP[1]))
     result.update({
         "candidate_multiplier": candidate,
         "candidate_available": True,
-        "reason": "Candidate alignment residual preview only; no scoring multiplier is active.",
-        "position_normal_slot_rate": normal_slot,
+        "reason": ("Candidate 3-way slot/wide/inline alignment residual preview only; no scoring multiplier is active."
+                   if result["blend_mode"] == "slot_wide_inline" else
+                   "Candidate alignment residual preview only; no scoring multiplier is active."),
         "raw_residual": float(raw_residual),
         "effect_weight": effect_weight,
     })
@@ -2969,6 +3145,7 @@ def load_season_alignment_prior(
     source_metadata: Mapping[str, Any] | None = None,
     *,
     historical_backtest: bool = False,
+    include_postseason_weeks: bool = False,
 ) -> AlignmentLoadResult:
     """Load an explicitly audited prior-season Week 1 player-role prior.
 
@@ -2977,6 +3154,18 @@ def load_season_alignment_prior(
     ``pff_imports/{source_year}/season_manifest.csv`` with that field.  A
     historical backtest additionally requires ``time_valid: true`` because a
     later downloaded total cannot be assumed available at the historical run.
+
+    ``include_postseason_weeks`` (added 2026-08-25, default False) additionally
+    folds the source season's own postseason weekly archive
+    (``pff_imports/{source_year}/weekly/19..22/``, manifest-marked
+    ``regular_season=False``) into this prior as SUPPLEMENTARY real evidence
+    on top of the regular-season total - a WR/TE's slot/wide/inline tendency
+    is not "contaminated" by playoff opponent quality the way a box-score
+    rate is, so more real snaps only sharpens this specific prior. Disabled
+    for a historical backtest regardless of this flag: the postseason weeks
+    have no independent ``time_valid`` audit of their own the way the season
+    total does, so a backtest cannot assume they were knowable at the
+    historical run.
     """
     target_week = _validate_week_number(target_week)
     source_year, target_year = int(source_year), int(target_year)
@@ -3037,6 +3226,43 @@ def load_season_alignment_prior(
     )
     concept_rows = _prepare_concept_rows(concept, week=0)
     combined = _merge_week_pair(summary_rows, concept_rows)
+
+    postseason_weeks: tuple[int, ...] = ()
+    postseason_records: list[dict[str, Any]] = []
+    if include_postseason_weeks and not historical_backtest:
+        # A big sentinel as_of_week so every real postseason week (19-22)
+        # passes discovery's own `week < as_of_week` cutoff - mirrors the
+        # PFF_ALIGNMENT_DEFENSE_COLD_START_AS_OF_WEEK pattern in
+        # weekly_projections.py.
+        post_discovered = discover_weekly_alignment_exports(
+            source_year, 100, pff_root, include_postseason=True)
+        post_archives = post_discovered.archives
+        issues.extend(post_discovered.issues)
+        eligible_postseason = post_archives.loc[
+            post_archives["eligible_as_of"].astype(bool) & post_archives["regular_season"].eq(False)
+        ] if not post_archives.empty else post_archives
+        post_frames = []
+        for _, archive in eligible_postseason.iterrows():
+            week = int(archive["week"])
+            local_issues: list[str] = []
+            p_summary = _safe_read_csv(archive["summary_path"], f"PFF postseason Week {week} receiving_summary", local_issues)
+            p_concept = _safe_read_csv(archive["concept_path"], f"PFF postseason Week {week} receiving_concept", local_issues)
+            p_summary, p_summary_valid = _validate_summary(p_summary, f"PFF postseason Week {week} receiving_summary", local_issues)
+            p_concept, p_concept_valid = _validate_concept(p_concept, f"PFF postseason Week {week} receiving_concept", local_issues)
+            issues.extend(local_issues)
+            if not (p_summary_valid and p_concept_valid):
+                continue
+            p_summary_rows = _prepare_summary_rows(
+                p_summary, week=week, path=archive["summary_path"],
+                regular_season=False, source_confidence=archive.get("manifest_source_confidence") or "postseason_weekly_archive",
+            )
+            p_concept_rows = _prepare_concept_rows(p_concept, week=week)
+            post_frames.append(_merge_week_pair(p_summary_rows, p_concept_rows))
+            postseason_records.append(archive.to_dict())
+        if post_frames:
+            combined = pd.concat([combined] + post_frames, ignore_index=True)
+            postseason_weeks = tuple(sorted(int(r["week"]) for r in postseason_records))
+
     profiles = _aggregate_profiles(
         combined,
         source_kind="season_prior",
@@ -3045,6 +3271,8 @@ def load_season_alignment_prior(
         source_notes=(
             f"Audited regular-season-only {source_year} PFF player-alignment prior for "
             f"Week {target_week} of {target_year}."
+            + (f" Supplemented with postseason weeks {list(postseason_weeks)} (WC/DIV/CONF/SB)."
+               if postseason_weeks else "")
         ),
     )
     season_record = {
@@ -3063,7 +3291,7 @@ def load_season_alignment_prior(
         "schema_valid": True,
         "schema_issues": "",
     }
-    archives = pd.DataFrame([season_record], columns=ARCHIVE_COLUMNS)
+    archives = pd.DataFrame([season_record, *postseason_records], columns=ARCHIVE_COLUMNS)
     final_metadata = {
         **base_metadata,
         "available": not profiles.empty,
@@ -3071,8 +3299,70 @@ def load_season_alignment_prior(
         "time_valid": True,
         "source_confidence": confidence,
         "source_paths": (str(summary_path), str(concept_path)),
+        "postseason_weeks_included": postseason_weeks,
     }
     return AlignmentLoadResult(profiles, archives, _unique_issues(issues), final_metadata)
+
+
+# Slight, sample-size-scaled grounding of an in-season alignment read toward
+# the player's OWN prior-year full-season tendency (added 2026-08-25, same
+# "similar to 2024 stats for other stats we used" request that motivated the
+# 2024 weekly archive itself). ALIGNMENT_PRIOR2_BASE_WEIGHT is the floor pull
+# even at a full current-season sample - alignment role is genuinely sticky
+# year to year, so a small residual anchor stays even once real evidence
+# dominates. ALIGNMENT_PRIOR2_MAX_WEIGHT caps the pull at a bare few games
+# into the season, when the current read is itself barely more than noise.
+# ALIGNMENT_PRIOR2_FULL_SAMPLE_WEIGHT is in alignment_sample_weight units
+# (real slot+wide+inline snaps), not games - the same evidence unit this
+# whole module already scores confidence by. Deliberately SYMMETRIC (no
+# QB_PRIOR2-style directional dampening): a rise or fall in slot/wide/inline
+# share carries no inherent "more fantasy value" direction to stay bullish
+# about the way QB rush share or a scoring rate does.
+ALIGNMENT_PRIOR2_BASE_WEIGHT = 0.10
+ALIGNMENT_PRIOR2_MAX_WEIGHT = 0.40
+ALIGNMENT_PRIOR2_FULL_SAMPLE_WEIGHT = 250.0
+# A prior-year read this thin (a late-season call-up, a practice-squad
+# stint) is not a season to ground against - treated as no read at all.
+ALIGNMENT_PRIOR2_MIN_SAMPLE_WEIGHT = 20.0
+
+
+def blend_alignment_profile_toward_prior2(
+    current: dict[str, Any], prior2: dict[str, Any],
+) -> dict[str, Any]:
+    """Pull ``current``'s slot/wide/inline rates slightly toward ``prior2``.
+
+    Both are profile dicts shaped like ``lookup_alignment_profile``'s return
+    value (``current`` from this season so far, ``prior2`` from two years
+    back - e.g. 2024 grounding a 2026 in-season read). Returns a NEW dict
+    (identity/team/position and every other field copied from ``current``
+    unchanged) with the rate fields blended and two audit fields added
+    (``alignment_prior2_weight``, ``alignment_prior2_sample_weight``) - only
+    when both sides have a usable sample; otherwise ``current`` is returned
+    untouched (via a plain dict copy) so a missing 2024 read is a no-op, not
+    a penalty.
+    """
+    out = dict(current)
+    cur_weight = float(current.get('alignment_sample_weight') or 0.0)
+    prior_weight = float(prior2.get('alignment_sample_weight') or 0.0)
+    if cur_weight <= 0 or prior_weight < ALIGNMENT_PRIOR2_MIN_SAMPLE_WEIGHT:
+        return out
+    fraction_missing = float(np.clip(
+        (ALIGNMENT_PRIOR2_FULL_SAMPLE_WEIGHT - cur_weight) / ALIGNMENT_PRIOR2_FULL_SAMPLE_WEIGHT,
+        0.0, 1.0))
+    weight = (ALIGNMENT_PRIOR2_BASE_WEIGHT
+              + (ALIGNMENT_PRIOR2_MAX_WEIGHT - ALIGNMENT_PRIOR2_BASE_WEIGHT) * fraction_missing)
+    blended_any = False
+    for field in ('slot_alignment_rate', 'non_slot_alignment_rate',
+                  'wide_alignment_rate', 'inline_alignment_rate'):
+        cur_val, prior_val = current.get(field), prior2.get(field)
+        if cur_val is None or prior_val is None:
+            continue
+        out[field] = (1.0 - weight) * float(cur_val) + weight * float(prior_val)
+        blended_any = True
+    if blended_any:
+        out['alignment_prior2_weight'] = weight
+        out['alignment_prior2_sample_weight'] = prior_weight
+    return out
 
 
 def lookup_alignment_profile(

@@ -40,6 +40,11 @@ def _prior_history_row(team, week, passing_attempts, targets):
     return {'game_team': team, 'week': week, 'passing_attempts': passing_attempts, 'targets': targets}
 
 
+def _prior_position_history_row(team, week, position, targets, passing_attempts=0.0):
+    return {'game_team': team, 'week': week, 'position': position,
+            'targets': targets, 'passing_attempts': passing_attempts}
+
+
 def _approx(actual, expected, rel=1e-6):
     if expected == 0:
         return abs(actual) < 1e-9
@@ -135,9 +140,15 @@ def test_no_capacity_signal_leaves_team_unmodified():
     assert (wr_rows['targets'] == 3.0).all()
 
 
-def test_trusted_tier_alone_over_budget_scales_down_and_zeros_tail():
-    # An extreme, deliberately pathological input: even the "trusted" top
-    # tier alone claims more than the team could possibly throw.
+def test_trusted_tier_alone_over_budget_scales_everyone_proportionally():
+    # An extreme input where even the "trusted" top tier alone claims more
+    # than the team could possibly throw. This used to zero every player
+    # outside the trusted tier outright - found live on 2026-08-24 to hard-
+    # zero a real, established RB's (Derrick Henry / Kenneth Walker-shaped)
+    # modest-but-genuine receiving role whenever a run-heavy team's trusted
+    # tier was already exhausted by its WR/TE names alone. The fix: scale
+    # EVERY catcher (trusted and tail) down by the same factor instead, so a
+    # real tail player degrades proportionally rather than vanishing.
     rows = [_board_row('CHI', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=20.0)]
     for i in range(3):
         rows.append(_board_row('CHI', f'Trusted{i}', 'WR', 15.0))
@@ -148,10 +159,93 @@ def test_trusted_tier_alone_over_budget_scales_down_and_zeros_tail():
 
     entry = ledger.iloc[0]
     assert 'scaled down' in entry['reason']
+    current_total = 3 * 15.0 + 2.0
+    factor = entry['capacity'] / current_total
     tail_row = out[out['Player'].eq('Tail0')].iloc[0]
-    assert tail_row['targets'] == 0.0
-    trusted_total = out[out['Player'].str.startswith('Trusted')]['targets'].sum()
-    assert _approx(trusted_total, entry['capacity'], rel=0.01)
+    assert tail_row['targets'] > 0.0
+    assert _approx(tail_row['targets'], 2.0 * factor, rel=1e-2)
+    trusted_rows = out[out['Player'].str.startswith('Trusted')]
+    for _, row in trusted_rows.iterrows():
+        assert _approx(row['targets'], 15.0 * factor, rel=1e-2)
+    allocated_total = trusted_rows['targets'].sum() + tail_row['targets']
+    assert _approx(allocated_total, entry['capacity'], rel=0.01)
+
+
+def test_rb_targets_are_unaffected_by_a_wr_te_only_roster_change():
+    """The core defect this split fixes (explicit 2026-08-24 request): a
+    WR/TE personnel change - a new signing, an injury, a rookie promoted -
+    must never move a running back's conserved target value. Same QB
+    attempts, same RB row, same (absent) prior history; only the WR/TE rows
+    differ between the two boards."""
+    def _board(wr_te_rows):
+        rows = [_board_row('SEA', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=34.0),
+               _board_row('SEA', 'Lead RB', 'RB', 4.0)]
+        rows.extend(wr_te_rows)
+        return pd.DataFrame(rows)
+
+    modest_wr_te = [_board_row('SEA', 'WR1', 'WR', 7.0), _board_row('SEA', 'WR2', 'WR', 5.0)]
+    busy_wr_te = [
+        _board_row('SEA', 'WR1', 'WR', 9.0), _board_row('SEA', 'WR2', 'WR', 7.0),
+        _board_row('SEA', 'NewSigning', 'WR', 6.0), _board_row('SEA', 'TE1', 'TE', 5.0),
+        _board_row('SEA', 'RookieWR', 'WR', 3.0),
+    ]
+
+    out_modest, _ = pca.apply_pass_capacity_conservation(_board(modest_wr_te), prior_history=None, tier_size=8)
+    out_busy, _ = pca.apply_pass_capacity_conservation(_board(busy_wr_te), prior_history=None, tier_size=8)
+
+    rb_modest = out_modest[out_modest['Player'].eq('Lead RB')].iloc[0]['targets']
+    rb_busy = out_busy[out_busy['Player'].eq('Lead RB')].iloc[0]['targets']
+    assert _approx(rb_modest, rb_busy)
+    # Not just coincidentally equal - the WR/TE side DID move in response to
+    # its own roster change, so this test would have caught the original
+    # defect (a shared trusted/tail pool moving the RB's factor too).
+    wr1_modest = out_modest[out_modest['Player'].eq('WR1')].iloc[0]['targets']
+    wr1_busy = out_busy[out_busy['Player'].eq('WR1')].iloc[0]['targets']
+    assert not _approx(wr1_modest, wr1_busy)
+
+
+def test_rb_group_is_still_scaled_to_its_own_sub_budget_when_it_over_claims():
+    """"A slight ding in some cases" is still expected - explicit ask - when
+    the RB group's OWN claim exceeds ITS OWN sub-budget. Two backs each
+    drawing implausibly high receiving volume must shrink using the RB-only
+    trusted tier (2) and RB-only sub-budget, while the untouched WR/TE room
+    on the same team proves the two groups are fit independently."""
+    rows = [
+        _board_row('MIA', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=30.0),
+        _board_row('MIA', 'RB1', 'RB', 12.0),
+        _board_row('MIA', 'RB2', 'RB', 10.0),
+        _board_row('MIA', 'WR1', 'WR', 6.0),
+        _board_row('MIA', 'WR2', 'WR', 5.0),
+    ]
+    board = pd.DataFrame(rows)
+
+    out, ledger = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=8)
+
+    rb_rows = out[out['Player'].str.startswith('RB')]
+    assert rb_rows['targets'].sum() < 22.0
+    assert (rb_rows['targets'] < pd.Series([12.0, 10.0]).to_numpy()).all()
+    rb_entry = ledger[ledger['position_group'].eq('RB')].iloc[0]
+    assert rb_entry['trusted_count'] == 2
+    assert 'scaled down' in rb_entry['reason']
+    # The WR/TE room's own budget was never touched by RB's overflow.
+    wr_rows = out[out['Player'].str.startswith('WR')]
+    assert _approx(wr_rows['targets'].sum(), 11.0)
+
+
+def test_derive_team_rb_catcher_share_reads_real_history_and_falls_back_league_wide():
+    history = pd.DataFrame(
+        [_prior_position_history_row('BUF', w, 'RB', targets=6.0) for w in range(1, 5)]
+        + [_prior_position_history_row('BUF', w, 'WR', targets=20.0) for w in range(1, 5)]
+        + [_prior_position_history_row('BUF', w, 'TE', targets=4.0) for w in range(1, 5)]
+    )
+    team_share, league_share = pca.derive_team_rb_catcher_share(history)
+    # 6 / (6 + 20 + 4) = 0.2 for every one of BUF's team-games.
+    assert _approx(team_share['BUF'], 0.2, rel=1e-6)
+    assert _approx(league_share, 0.2, rel=1e-6)
+
+    empty_team_share, empty_league_share = pca.derive_team_rb_catcher_share(pd.DataFrame())
+    assert empty_team_share == {}
+    assert _approx(empty_league_share, pca.FALLBACK_RB_CATCHER_SHARE)
 
 
 def main():

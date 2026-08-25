@@ -75,13 +75,11 @@ external_data/prizepicks_weekly_projections.json
 external_data/draftkings_weekly_props.json
 external_data/weekly_props_snapshot.json
 
-# Locally saved public depth-chart exports and the normalized personal-use
-# snapshot derived from them.  The app can import these from the Depth Charts
-# tab, but raw browser exports / regularly refreshed source snapshots should
-# not churn a public repository.
-external_data/ourlads_depth_charts/
-external_data/ourlads_depth_charts.csv
-external_data/ourlads_depth_chart_key.txt
+# Ourlads depth-chart snapshot: previously excluded so raw browser exports
+# never churned a public repository. Tracking restored 2026-08-24 at the
+# user's explicit request so the imported snapshot survives into git instead
+# of silently vanishing on every fresh clone/branch/worktree.
+
 
 # Weekly PFF alignment exports are locally licensed source material.  Keep
 # the small manifest/provenance record reviewable if desired, but never stage

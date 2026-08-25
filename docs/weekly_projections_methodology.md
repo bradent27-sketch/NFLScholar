@@ -448,6 +448,57 @@ is empty. Recorded so the next person to spot the wind column knows it was
 measured, and why it was left out anyway. A real forecast feed would make
 this the most valuable single addition available to this model.
 
+### `v2_pff_alignment_matchup` (WR/TE slot/non-slot defense residual) — BUILT, MEASURED, REJECTED
+
+The user's proposed design, built as specified: a WR/TE's own slot-rate /
+non-slot-rate mix (`data.pff_alignment.load_weekly_alignment_profiles`, time-
+valid weekly-grain PFF data, in-season only — 2025 is the only year with
+weekly-grain files, see `pff_imports/`) run through the opponent's shrunk
+slot vs. non-slot allowed rate (`aggregate_alignment_defense_profiles`),
+blended as `player_factor = slot_rate * defense_slot_ratio + (1 - slot_rate)
+* defense_non_slot_ratio`, expressed as an incremental residual against the
+position-normal blend, double-shrunk toward 1.0 by both sides' confidence,
+and clipped to `ALIGNMENT_DEFENSE_RESIDUAL_CLIP = (0.90, 1.10)`
+(`alignment_defense_residual_multiplier` in `data/pff_alignment.py`). Wired
+into the existing matchup step for targets/receptions/receiving_yards only —
+touchdowns stay neutral, same reasoning as everywhere else in this model.
+
+```
+                                          MAE       rank-corr   weeks won
+WR (whole pool)                        -0.003        -0.000      11 / 17
+TE (whole pool)                        +0.001        +0.000       6 / 17
+START-WR (startable, decision pool)    +0.022        -0.004       7 / 17
+START-TE (startable, decision pool)    +0.082        -0.026       4 / 17
+```
+
+Paired A/B, `DEFAULT_FEATURES` vs `DEFAULT_FEATURES + v2_pff_alignment_matchup`,
+2025 weeks 2-18 (week 1 excluded: cold start / season-prior fallback is a
+separate code path). Rejected. The whole-pool WR number looks like a win but
+is exactly the false signal `scripts/eval_weekly_model.py`'s own docstring
+warns about — a pool dominated by bench players who are trivially easy to
+rank. The population that actually drives a start/sit decision lost on both
+metrics, worst on START-TE (4-13 losing weeks, +0.082 MAE — a larger loss
+than either whole-pool WR gained). Most likely cause: 2025 is the only season
+with weekly-grain PFF alignment data, so even with
+`ALIGNMENT_DEFENSE_SHRINKAGE_GAMES=4` the defense-side slot/non-slot split is
+built on a handful of games per team at this point in the season — thinner
+than what `role_matchup`'s existing defense-vs-position table already has to
+work with. Not a parameter to retune (the shrinkage/clip constants are
+already conservative starting defaults, not fitted claims); more likely just
+needs more weekly-grain seasons before this evidence is worth trusting. The
+code stays in place, reachable by the explicit feature name, for a future
+re-study.
+
+**Update, 2026-08-24, same day:** re-enabled in `V2_EXPERIMENTAL_FEATURES`
+(only — `DEFAULT_FEATURES` is unchanged) at the user's explicit request, to
+inspect real per-player/week numbers on a live V2 board while looking for a
+fixable upstream cause rather than accepting the rejection at face value.
+The Weekly Rankings decomposition table shows an "Alignment residual" column
+whenever it's active. This is a diagnostic convenience, not a reversal of
+the result above — if a real cause is found and fixed, re-measure before
+promoting it anywhere; if the re-look just confirms the rejection, pull it
+back out of `V2_EXPERIMENTAL_FEATURES` too.
+
 ## Backtest — one honest pass, not an iterated one
 
 `scripts/validate_weekly_projections.py`. Every week in 2025 weeks 5–17,

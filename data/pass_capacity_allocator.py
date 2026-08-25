@@ -63,8 +63,36 @@ PASS_CAPACITY_TRUSTED_TIER = 8
 # than a silent zero budget that would wipe out a team's receivers).
 FALLBACK_TARGET_PER_ATTEMPT = 0.95
 
+# RUNNING BACKS GET THEIR OWN SUB-BUDGET, SEPARATE FROM WR/TE. Added
+# 2026-08-24 per a real, reported defect: this module used to rank a team's
+# RB/WR/TE pass catchers TOGETHER by current target value and fit ONE shared
+# trusted/tail split to the WHOLE group. That means a WR/TE-only change - a
+# new signing, an injury, a rookie promoted - shifts who's "trusted" and how
+# big the tail's claim is, which changes the tail's rescale factor for
+# EVERY tail player, RB included, even though a real NFL running back's
+# receiving role is governed by his own role on his own team and has
+# essentially nothing to do with which wideouts/tight ends are on the roster
+# ("running backs are chronically getting their receiving work negatively
+# affected... entirely occurring due to change in the team's receiving
+# depth/players (WR/TE), which truly doesn't really affect running backs").
+# The fix: split the team's overall capacity (derived exactly as before, from
+# live QB attempts or prior-season history - NOT from this week's WR/TE
+# board) into an RB slice and a WR/TE slice using the team's own PRIOR-SEASON
+# RB share of catcher targets, then run the identical trusted/tail fit
+# separately within each slice. A WR/TE roster change can still move the
+# WR/TE trusted/tail split same as before ("a slight ding in some cases" is
+# still possible if the RB group's OWN claim exceeds ITS OWN sub-budget) but
+# can never again move an RB's number by itself.
+FALLBACK_RB_CATCHER_SHARE = 0.14
+# A team essentially never fields more than one or two backs with a real
+# receiving role - unlike WR/TE's trusted tier of 8, RB's is deliberately
+# small so a genuine committee (2 backs both catching passes) still keeps
+# both untouched, while a 3rd/4th reserve's incidental target draws from the
+# same real budget instead of a fabricated league-average share.
+PASS_CAPACITY_TRUSTED_TIER_RB = 2
+
 CAPACITY_LEDGER_COLUMNS = [
-    'team', 'capacity', 'capacity_source', 'trusted_claim', 'tail_claim',
+    'team', 'position_group', 'capacity', 'capacity_source', 'trusted_claim', 'tail_claim',
     'allocated', 'unallocated', 'trusted_count', 'tail_count', 'reason',
 ]
 
@@ -118,6 +146,47 @@ def derive_team_target_capacity(history: pd.DataFrame, team_col: str = 'team') -
     return result
 
 
+def derive_team_rb_catcher_share(history: pd.DataFrame, team_col: str = 'team') -> tuple[dict, float]:
+    """Each team's own prior-season RB share of its RB+WR+TE target total,
+    plus a league-wide average as the fallback for a team with no such
+    history. See PASS_CAPACITY_TRUSTED_TIER_RB's comment above for why this
+    exists: it sizes an RB sub-budget that is independent of this week's
+    WR/TE board.
+
+    Team-game averaged, keyed on the immutable ``game_team`` field, for the
+    same reason ``derive_team_target_capacity`` already is - a mid-season
+    trade must not misattribute a game's targets to the wrong team.
+    """
+    if history is None or history.empty or 'week' not in history.columns or 'position' not in history.columns:
+        return {}, FALLBACK_RB_CATCHER_SHARE
+    frame = history.copy()
+    game_team_col = 'game_team' if 'game_team' in frame.columns else team_col
+    if game_team_col not in frame.columns:
+        return {}, FALLBACK_RB_CATCHER_SHARE
+    frame['_team'] = frame[game_team_col].astype(object).where(
+        frame[game_team_col].notna(), '').astype(str).str.strip().str.upper()
+    frame['_week'] = pd.to_numeric(frame['week'], errors='coerce')
+    frame['_pos'] = frame['position'].astype(str).str.upper()
+    frame = frame[(frame['_team'] != '') & frame['_week'].notna() & frame['_pos'].isin(['RB', 'WR', 'TE'])]
+    if frame.empty:
+        return {}, FALLBACK_RB_CATCHER_SHARE
+    frame['targets'] = pd.to_numeric(frame.get('targets', 0.0), errors='coerce').fillna(0.0)
+    team_week = frame.groupby(['_team', '_week', '_pos'], observed=True)['targets'].sum().unstack('_pos', fill_value=0.0)
+    for col in ('RB', 'WR', 'TE'):
+        if col not in team_week.columns:
+            team_week[col] = 0.0
+    catcher_total = team_week[['RB', 'WR', 'TE']].sum(axis=1)
+    valid = catcher_total > 0
+    if not valid.any():
+        return {}, FALLBACK_RB_CATCHER_SHARE
+    game_share = team_week.loc[valid, 'RB'] / catcher_total.loc[valid]
+    league_share = float(game_share.mean())
+    if not np.isfinite(league_share) or league_share <= 0:
+        league_share = FALLBACK_RB_CATCHER_SHARE
+    team_share = game_share.groupby(level='_team').mean().to_dict()
+    return team_share, league_share
+
+
 def apply_pass_capacity_conservation(
         result: pd.DataFrame, prior_history: pd.DataFrame | None = None,
         team_col: str = 'team', tier_size: int = PASS_CAPACITY_TRUSTED_TIER,
@@ -149,10 +218,58 @@ def apply_pass_capacity_conservation(
     capacity_by_team = (team_capacity.set_index('team')['team_target_capacity'].to_dict()
                         if not team_capacity.empty else {})
     league_target_ratio = float(team_capacity.attrs.get('target_per_attempt', FALLBACK_TARGET_PER_ATTEMPT))
+    rb_share_by_team, league_rb_share = derive_team_rb_catcher_share(prior_history, team_col=team_col)
+
+    def _fit_group(idx: pd.Index, group_capacity: float, group_tier: int) -> tuple[pd.Series, dict]:
+        """The trusted/tail fit, unchanged math, parameterized to run once
+        per position group instead of once per team."""
+        current = out.loc[idx, 'targets']
+        order = current.sort_values(ascending=False)
+        trusted_idx = order.index[:group_tier]
+        tail_idx = order.index[group_tier:]
+        trusted_claim = float(current.loc[trusted_idx].sum())
+        tail_claim = float(current.loc[tail_idx].sum())
+        current_total = float(current.sum())
+
+        allocated = current.copy()
+        if trusted_claim > group_capacity:
+            # Even the trusted tier alone exceeds this group's realistic
+            # budget. Originally this zeroed everyone outside the trusted
+            # tier outright, on the assumption the case was rare and
+            # pathological (an unresolved QB room forcing a low historical-
+            # fallback budget). A real-data audit (2026-08-24, user-reported:
+            # Derrick Henry and Kenneth Walker's receiving lines reading as
+            # fully zeroed) found it is NOT rare - a run-heavy team with an
+            # established low-target-share workhorse RB routinely has its
+            # "trusted" top slots filled by WR/TE names alone (a lead back's
+            # raw target rate is naturally lower than a team's top
+            # wideouts), so the tail is not always the fringe of the roster;
+            # it can contain a real, established player whose receiving role
+            # is modest but genuine. Zeroing him outright was never intended
+            # - now every catcher (trusted and tail alike) is scaled down by
+            # the same factor, so a real-but-modest role degrades
+            # proportionally instead of vanishing.
+            factor = group_capacity / current_total if current_total > 0 else 0.0
+            allocated.loc[:] = current.loc[:] * factor
+            reason = 'Total claim exceeded its own sub-budget; everyone in this group scaled down proportionally.'
+        else:
+            remaining = group_capacity - trusted_claim
+            allocated.loc[trusted_idx] = current.loc[trusted_idx]
+            if tail_claim > 0:
+                allocated.loc[tail_idx] = current.loc[tail_idx] * (remaining / tail_claim)
+            reason = 'Trusted tier retained; remaining tail scaled to this group\'s own sub-budget.'
+        ledger_row = {
+            'capacity': round(group_capacity, 2), 'trusted_claim': round(trusted_claim, 2),
+            'tail_claim': round(tail_claim, 2), 'allocated': round(float(allocated.sum()), 2),
+            'unallocated': round(max(0.0, group_capacity - float(allocated.sum())), 2),
+            'trusted_count': int(len(trusted_idx)), 'tail_count': int(len(tail_idx)), 'reason': reason,
+        }
+        return allocated, ledger_row
 
     teams = out['Team'].astype(str)
-    catcher_mask = out['Pos'].isin(['RB', 'WR', 'TE'])
-    qb_mask = out['Pos'].eq('QB')
+    positions = out['Pos'].astype(str)
+    catcher_mask = positions.isin(['RB', 'WR', 'TE'])
+    qb_mask = positions.eq('QB')
     ledger: list[dict] = []
 
     for team, idx in out.index[catcher_mask].to_series().groupby(teams[catcher_mask]).groups.items():
@@ -166,50 +283,45 @@ def apply_pass_capacity_conservation(
             capacity = float(fallback) if fallback is not None and np.isfinite(fallback) else np.nan
             capacity_source = "prior-season team-game targets (no live QB attempts)"
         if not np.isfinite(capacity) or capacity <= 0:
-            ledger.append({'team': team, 'capacity': None, 'capacity_source': 'no capacity signal',
+            ledger.append({'team': team, 'position_group': 'ALL', 'capacity': None,
+                          'capacity_source': 'no capacity signal',
                           'trusted_claim': None, 'tail_claim': None, 'allocated': None, 'unallocated': None,
                           'trusted_count': 0, 'tail_count': 0,
                           'reason': 'No live QB attempts and no prior-season team history; left unmodified.'})
             continue
 
-        current = out.loc[idx, 'targets']
-        current_total = float(current.sum())
-        if current_total <= 0:
-            continue
-        order = current.sort_values(ascending=False)
-        trusted_idx = order.index[:tier_size]
-        tail_idx = order.index[tier_size:]
-        trusted_claim = float(current.loc[trusted_idx].sum())
-        tail_claim = float(current.loc[tail_idx].sum())
-
-        allocated = current.copy()
-        if trusted_claim > capacity:
-            # Even the trusted tier alone exceeds this team's realistic
-            # budget (rare - e.g. an unresolved QB room forced the historical
-            # fallback low). Scale the trusted tier down rather than pretend
-            # the tail can still receive a share of an already-exhausted pool.
-            factor = capacity / trusted_claim if trusted_claim > 0 else 0.0
-            allocated.loc[:] = 0.0
-            allocated.loc[trusted_idx] = current.loc[trusted_idx] * factor
-            reason = 'Trusted tier alone exceeded capacity; scaled down, tail zeroed.'
+        # RB gets an independent slice of this SAME team-wide capacity - sized
+        # from prior-season history, never from this week's WR/TE board - so
+        # a WR/TE roster change can shift the WR/TE trusted/tail split without
+        # ever touching an RB's number. See PASS_CAPACITY_TRUSTED_TIER_RB's
+        # module comment for the full rationale.
+        team_pos = positions.loc[idx]
+        rb_idx = idx[team_pos.eq('RB').to_numpy()]
+        other_idx = idx[team_pos.isin(['WR', 'TE']).to_numpy()]
+        # Only carve out an RB slice when the team actually HAS a rostered RB
+        # catcher this week - reserving a share for a position group with
+        # nobody in it would just shrink WR/TE's real budget for nothing.
+        if len(rb_idx) and len(other_idx):
+            rb_share = float(rb_share_by_team.get(str(team), league_rb_share))
+            rb_capacity = capacity * rb_share
+        elif len(rb_idx):
+            rb_capacity = capacity
         else:
-            remaining = capacity - trusted_claim
-            allocated.loc[trusted_idx] = current.loc[trusted_idx]
-            if tail_claim > 0:
-                allocated.loc[tail_idx] = current.loc[tail_idx] * (remaining / tail_claim)
-            reason = 'Trusted tier retained; remaining tail scaled to the team budget.'
+            rb_capacity = 0.0
+        other_capacity = capacity - rb_capacity
 
-        factor_series = (allocated / current.replace(0.0, np.nan)).fillna(1.0)
-        out.loc[idx, 'targets'] = allocated.round(3)
-        for col in dependent_cols:
-            out.loc[idx, col] = (out.loc[idx, col] * factor_series).round(3)
-
-        ledger.append({
-            'team': team, 'capacity': round(capacity, 2), 'capacity_source': capacity_source,
-            'trusted_claim': round(trusted_claim, 2), 'tail_claim': round(tail_claim, 2),
-            'allocated': round(float(allocated.sum()), 2),
-            'unallocated': round(max(0.0, capacity - float(allocated.sum())), 2),
-            'trusted_count': int(len(trusted_idx)), 'tail_count': int(len(tail_idx)), 'reason': reason,
-        })
+        for group_idx, group_capacity, group_tier, group_label in (
+                (rb_idx, rb_capacity, PASS_CAPACITY_TRUSTED_TIER_RB, 'RB'),
+                (other_idx, other_capacity, tier_size, 'WR/TE'),
+        ):
+            if not len(group_idx) or float(out.loc[group_idx, 'targets'].sum()) <= 0:
+                continue
+            allocated, ledger_row = _fit_group(group_idx, group_capacity, group_tier)
+            factor_series = (allocated / out.loc[group_idx, 'targets'].replace(0.0, np.nan)).fillna(1.0)
+            out.loc[group_idx, 'targets'] = allocated.round(3)
+            for col in dependent_cols:
+                out.loc[group_idx, col] = (out.loc[group_idx, col] * factor_series).round(3)
+            ledger.append({'team': team, 'position_group': group_label,
+                          'capacity_source': capacity_source, **ledger_row})
 
     return out, pd.DataFrame(ledger, columns=CAPACITY_LEDGER_COLUMNS)

@@ -122,6 +122,76 @@ def load_availability_overrides(year: int, week: int,
     return selected.reset_index(drop=True), None
 
 
+def _read_all_overrides(path: str | Path = AVAILABILITY_OVERRIDE_PATH) -> pd.DataFrame:
+    """Every saved row, any year/week - the raw table an edit upserts into."""
+    target = Path(path)
+    if not target.is_file():
+        return _empty_override_table()
+    try:
+        frame = pd.read_csv(target, dtype=str, keep_default_na=False)
+    except Exception:
+        return _empty_override_table()
+    for column in AVAILABILITY_OVERRIDE_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = ""
+    return frame.loc[:, list(AVAILABILITY_OVERRIDE_COLUMNS)].copy()
+
+
+def save_availability_override(year: int, week: int, team: str, player: str, status: str,
+                               note: str = "", path: str | Path = AVAILABILITY_OVERRIDE_PATH) -> str | None:
+    """Add or replace one manual (year, week, team, player) availability row.
+
+    A second save for the same (year, week, team, player) REPLACES the first
+    rather than duplicating it - this is a user editing their own call, not a
+    growing log. Returns an error string, or None on success.
+    """
+    player = str(player).strip()
+    team = str(team).strip().upper()
+    if not player or not team:
+        return "A team and player are required."
+    existing = _read_all_overrides(path)
+    key_match = (
+        pd.to_numeric(existing["year"], errors="coerce").eq(int(year))
+        & pd.to_numeric(existing["week"], errors="coerce").eq(int(week))
+        & existing["team"].str.upper().eq(team)
+        & existing["player"].str.strip().eq(player)
+    )
+    existing = existing.loc[~key_match].copy()
+    new_row = pd.DataFrame([{
+        "year": int(year), "week": int(week), "team": team, "player": player,
+        "status": str(status).strip().lower(), "plays_probability": "", "workload_if_active": "",
+        "note": str(note).strip(),
+    }])
+    combined = pd.concat([existing, new_row], ignore_index=True)
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        combined.to_csv(path, index=False)
+    except Exception as exc:
+        return f"Could not save the override: {exc}"
+    return None
+
+
+def remove_availability_override(year: int, week: int, team: str, player: str,
+                                 path: str | Path = AVAILABILITY_OVERRIDE_PATH) -> str | None:
+    """Delete one manual (year, week, team, player) row. Returns an error, or None."""
+    existing = _read_all_overrides(path)
+    if existing.empty:
+        return None
+    key_match = (
+        pd.to_numeric(existing["year"], errors="coerce").eq(int(year))
+        & pd.to_numeric(existing["week"], errors="coerce").eq(int(week))
+        & existing["team"].str.upper().eq(str(team).strip().upper())
+        & existing["player"].str.strip().eq(str(player).strip())
+    )
+    remaining = existing.loc[~key_match].copy()
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        remaining.to_csv(path, index=False)
+    except Exception as exc:
+        return f"Could not remove the override: {exc}"
+    return None
+
+
 def _roster_identity_pool(roster: pd.DataFrame, name_col: str, team_col: str) -> pd.DataFrame:
     if roster is None or roster.empty or name_col not in roster.columns or team_col not in roster.columns:
         return pd.DataFrame()

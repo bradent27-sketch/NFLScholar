@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from config import AVAILABLE_SEASONS_WITH_UPCOMING
+from config import AVAILABLE_SEASONS_WITH_UPCOMING, TEAM_CONFIG
 from data.draft_board import DEFAULT_SCORING, tier_by_position
 from data.transforms import load_and_merge_data, build_recent_form_rank, build_form_series
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
@@ -90,9 +90,24 @@ def _render_distribution_chart(distribution, position_label):
     player_points, position_points = distribution['points'], distribution['position_points']
     player_samples = sample_from_band(player_points, seed=42)
     position_samples = sample_from_band(position_points, seed=43)
-    lo = max(0.0, min(player_samples.min(), position_samples.min()) - 1.0)
-    hi = max(player_samples.max(), position_samples.max()) + 1.0
-    grid = np.linspace(lo, hi, 300)
+    # Anchored at 0, not at this player's own min minus a margin. The
+    # underlying band genuinely differs player to player (verified against
+    # real data - a Henry-tier back's median sits well above a streaming
+    # back's), but a per-player floating window rescales every curve to
+    # fill the same physical chart width, so a low-volume player's narrow,
+    # low band and a workhorse's wide, high one end up LOOKING like the
+    # same generic hump at a glance. A shared zero start lets magnitude
+    # show up as curve POSITION/width, not just axis tick labels.
+    #
+    # 'axis_max' (this position's real widest band this week, set once by
+    # build_weekly_projections) fixes the RIGHT edge too - explicit request,
+    # since even a shared-zero start still let matplotlib stretch each
+    # player's own curve out to fill the same physical width, which is
+    # exactly what made two very differently-sized bands look like the same
+    # shape at a glance. Falls back to the old per-player computation only
+    # for a distribution dict built before this field existed.
+    hi = distribution.get('axis_max') or max(player_samples.max(), position_samples.max()) + 1.0
+    grid = np.linspace(0.0, hi, 300)
     player_density = kde_curve(player_samples, grid)
     position_density = kde_curve(position_samples, grid)
 
@@ -201,6 +216,60 @@ def _render_decomposition_header(detail):
         st.info("Experimental V2 run — this decomposition is auditable, but its components are not yet default-on.")
 
 
+def _render_alignment_mix(detail):
+    """Player slot/wide/inline alignment mix + the defense-allowed residual
+    that mix feeds - WR/TE only, and only when a PFF alignment archive is
+    actually loaded for this run. Added 2026-08-24 per an explicit request
+    that the data driving 'v2_pff_alignment_matchup' be visible here, not
+    just baked silently into 'Alignment residual' in the table below."""
+    if detail.get('position') not in ('WR', 'TE'):
+        return
+    role = detail.get('role', {})
+    if not role.get('alignment_available'):
+        return
+    slot = role.get('slot_alignment_rate')
+    wide = role.get('wide_alignment_rate')
+    inline = role.get('inline_alignment_rate')
+    if slot is None and wide is None and inline is None:
+        return
+    with st.expander("Alignment mix (slot / wide / inline)", expanded=False):
+        parts = []
+        if slot is not None:
+            parts.append(f"Slot {slot:.0%}")
+        if wide is not None:
+            parts.append(f"Wide {wide:.0%}")
+        if inline is not None:
+            parts.append(f"Inline {inline:.0%}")
+        st.markdown(f"**Player mix:** {' · '.join(parts) if parts else 'unavailable'}")
+        weeks = role.get('source_week_count')
+        st.caption(
+            f"Source: {role.get('source_kind', 'unknown')}, {weeks if weeks else 0} week(s) "
+            f"({role.get('source_weeks', '')}), confidence {role.get('alignment_confidence', 0.0):.2f}. "
+            f"{role.get('alignment_semantics', '')}."
+        )
+        blend_mode = role.get('alignment_defense_blend_mode', 'slot_non_slot')
+        blend_label = "slot / wide / inline (3-way)" if blend_mode == 'slot_wide_inline' else "slot / non-slot (2-way)"
+        st.markdown(f"**{detail.get('opponent', 'Defense')} allowed-by-alignment blend:** {blend_label}")
+        if role.get('alignment_defense_candidate_available'):
+            mult_cols = st.columns(3)
+            for col, (label, key) in zip(mult_cols, (
+                ('Targets', 'alignment_defense_targets_candidate_multiplier'),
+                ('Receptions', 'alignment_defense_receptions_candidate_multiplier'),
+                ('Yards', 'alignment_defense_yards_candidate_multiplier'),
+            )):
+                value = role.get(key)
+                col.metric(label, f"{value:.3f}×" if value is not None else "—")
+            st.caption(
+                "Candidate residual only - already folded into 'Defense multiplier' below when "
+                "'v2_pff_alignment_matchup' is active for this run, not a second independent adjustment."
+            )
+        else:
+            st.caption(
+                "Defense-allowed-by-alignment residual is neutral (1.0×) for this matchup: "
+                f"{role.get('alignment_defense_reason') or 'insufficient comparison evidence.'}"
+            )
+
+
 def _render_decomposition_primary_table(detail):
     """The at-a-glance table: one row per projected stat, left-to-right
     exactly stat -> projected value -> raw (season-blended) average ->
@@ -227,6 +296,16 @@ def _render_decomposition_primary_table(detail):
             season_note = (f"{cur_w:.0%} {season_year} ({cur_games:.0f} gm) + {1 - cur_w:.0%} prior"
                           if season_year else f"{cur_w:.0%} this season")
         vacancy_raw = float(values.get('vacancy_delta', 0.0) or 0.0)
+        # Split 2026-08-24: this used to be one 'vacancy_delta' number that
+        # silently conflated two unrelated mechanisms - an OUT teammate's
+        # volume actually being redistributed, and apply_pass_capacity_
+        # conservation's team-target-budget fit, which runs on every V2 board
+        # with 'v2_pass_capacity' on regardless of injuries and can visibly
+        # squeeze a low-usage receiver (e.g. a bruising RB) even with nobody
+        # out. See data/weekly_projections.py's post_capacity_snapshot
+        # comment for the full story - this was a real mislabeling bug.
+        capacity_raw = float(values.get('pass_capacity_delta', 0.0) or 0.0)
+        alignment_available = bool(values.get('alignment_residual_available', False))
         rows.append({
             'Stat': stat.replace('_', ' ').title(),
             'Projected value': _fmt_stat(stat, values.get('final_projection', values.get('projection'))),
@@ -234,38 +313,144 @@ def _render_decomposition_primary_table(detail):
             'Season mix': season_note,
             'Weighted average': _fmt_stat(stat, values.get('current_rate')),
             'Defense multiplier': round(float(values.get('matchup_multiplier', 1.0)), 3),
+            # WR/TE slot/non-slot alignment residual (v2_pff_alignment_matchup,
+            # rejected 2026-08-24 - see docs/weekly_projections_methodology.md -
+            # but kept in V2_EXPERIMENTAL_FEATURES on the user's own request to
+            # keep digging for a fixable cause). Already baked into 'Defense
+            # multiplier' above; shown separately here ONLY so it's possible to
+            # see how much of that number came from this one component, not as
+            # a second independent adjustment.
+            'Alignment residual': (round(float(values.get('alignment_residual_multiplier', 1.0)), 3)
+                                   if alignment_available else np.nan),
             'Context multiplier': round(float(context_mult), 3),
+            'Team capacity Δ': _fmt_stat(stat, capacity_raw, signed=True),
             'Vacancy Δ': _fmt_stat(stat, vacancy_raw, signed=True),
             '_vacancy_raw': vacancy_raw,
+            '_capacity_raw': capacity_raw,
         })
     table = pd.DataFrame(rows)
     vacancy_vals = table['_vacancy_raw'].tolist()
+    capacity_vals = table['_capacity_raw'].tolist()
     display_cols = ['Stat', 'Projected value', 'Raw average', 'Season mix',
-                    'Weighted average', 'Defense multiplier', 'Context multiplier', 'Vacancy Δ']
+                    'Weighted average', 'Defense multiplier']
+    if table['Alignment residual'].notna().any():
+        display_cols.append('Alignment residual')
+    display_cols.append('Context multiplier')
+    if any(abs(v) > 0.0005 for v in capacity_vals):
+        display_cols.append('Team capacity Δ')
+    display_cols.append('Vacancy Δ')
     display_table = table[display_cols]
 
     # Local Styler, not a style_plain_dataframe extension - that helper is
     # shared by every other table in the app, and this coloring rule
     # (multiplier columns centered on 1.0) is specific to this one table.
     def _style_column(col):
-        if col in ('Defense multiplier', 'Context multiplier'):
+        if col in ('Defense multiplier', 'Context multiplier', 'Alignment residual'):
             return [f'background-color:{get_multiplier_color(v)}; color:#ffffff; font-weight:bold;'
-                   for v in display_table[col]]
+                   if pd.notna(v) else '' for v in display_table[col]]
         if col == 'Vacancy Δ':
             return [f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;'
                    for v in vacancy_vals]
+        if col == 'Team capacity Δ':
+            return [f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;'
+                   for v in capacity_vals]
         return [''] * len(display_table)
 
     style_grid = pd.DataFrame({col: _style_column(col) for col in display_cols})
-    styler = (display_table.style.apply(lambda _: style_grid, axis=None)
-             .format({'Defense multiplier': '{:.3f}×', 'Context multiplier': '{:.3f}×'}))
+    number_format = {'Defense multiplier': '{:.3f}×', 'Context multiplier': '{:.3f}×'}
+    if 'Alignment residual' in display_cols:
+        number_format['Alignment residual'] = '{:.3f}×'
+    styler = (display_table.style.apply(lambda _: style_grid, axis=None).format(number_format, na_rep='—'))
     st.dataframe(styler, hide_index=True, width="stretch", height=df_auto_height(len(display_table)))
     st.caption("Context multiplier = game script × pace × availability × Vegas-implied game environment.")
+    if 'Team capacity Δ' in display_cols:
+        st.caption(
+            "Team capacity Δ: this team's RB/WR/TE targets refit to a realistic pass-attempt budget "
+            "(top 8 pass catchers by current projection keep their own value; the rest share what's left). "
+            "Runs on every V2 board with nobody hurt - separate from Vacancy Δ below, which is only an "
+            "actual OUT teammate's volume moving. Both used to be shown as one 'Vacancy Δ' number; split "
+            "2026-08-24 because that conflation was misleading a low-usage receiver's real story."
+        )
+    if 'Alignment residual' in display_cols:
+        st.caption(
+            "Alignment residual: the WR/TE slot/non-slot PFF matchup component, active in this V2 run. "
+            "Backtested 2026-08-24 as a net loss on the startable WR/TE pool (see the methodology doc) - "
+            "shown here so it can be inspected per player/week rather than taken on the aggregate number alone."
+        )
 
 
-def _render_stat_deep_dive(detail, stat, game_log, defense_log, season_year=None):
+def _team_cell_style(team_code):
+    color = TEAM_CONFIG.get(str(team_code).strip().upper(), {}).get('color')
+    return f'background-color:{color}; color:#ffffff; font-weight:bold;' if color else ''
+
+
+def _style_team_column(df, col):
+    """A local Styler coloring one team-code column by TEAM_CONFIG - same
+    convention as the Team column elsewhere and the sticky game log's
+    opponent cell (ui.styling.render_game_log_html_table), just applied to
+    a plain st.dataframe table here instead of that raw-HTML one."""
+    grid = pd.DataFrame('', index=df.index, columns=df.columns)
+    grid[col] = [_team_cell_style(v) for v in df[col]]
+    return df.style.apply(lambda _: grid, axis=None)
+
+
+def _append_average_row(df, label_col, label, avg_cols, stat=None, avg_mask=None):
+    """One trailing row averaging each of ``avg_cols`` - explicit request so
+    a Deep Dive table's raw/defense-adjusted (or allowed/baseline) columns
+    show their own column average without the reader doing that math.
+    ``stat`` (the raw stat key, e.g. 'rushing_tds') picks the same 1-vs-2
+    decimal formatting _fmt_stat already uses for that stat's real values,
+    so the AVG row's precision matches the rows above it.
+
+    ``avg_mask`` (optional, same length/index as ``df``) restricts the mean
+    to the True rows only - every row still prints in the table above (an
+    excluded game is "marked, not hidden", per the caption below this call),
+    but a game already labelled "Excluded" in the Included column must not
+    also silently pull its own row's average down. Found real 2026-08-25 on
+    Jayden Daniels: the unmasked AVG mixed in his 2 QB-split relief games and
+    landed at 180.3, vs. 205.6 across only his 5 full-role starts."""
+    row = {c: '' for c in df.columns}
+    row[label_col] = label
+    avg_df = df if avg_mask is None else df[np.asarray(avg_mask, dtype=bool)]
+    for col in avg_cols:
+        numeric = pd.to_numeric(avg_df[col].astype(str).str.replace('+', '', regex=False), errors='coerce')
+        row[col] = _fmt_stat(stat, float(numeric.mean())) if numeric.notna().any() else '—'
+    # The label column (e.g. Week) is a real int column above this row and
+    # a literal "AVG" string on it - cast to str BEFORE concatenating so
+    # pandas keeps one consistent dtype throughout, not a numeric column
+    # that only turns to mixed-type object once "AVG" lands in it. Arrow
+    # serialization tolerates the latter (with a fallback + a noisy
+    # traceback logged on every single render) but never actually needs to.
+    out = df.copy()
+    out[label_col] = out[label_col].astype(str)
+    return pd.concat([out, pd.DataFrame([row])], ignore_index=True)
+
+
+def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_season, default_year=None):
+    """Per-stat tab, including its OWN season selector - explicit request,
+    since a single season control shared across every stat tab meant
+    switching season on one stat (e.g. to see last year's rushing yards)
+    silently moved every OTHER stat's tab to that season too."""
     values = detail.get('stats', {}).get(stat, {})
     label = stat.replace('_', ' ').title()
+    season_years = sorted(set(game_log_by_season) | set(defense_log_by_season), reverse=True)
+    if len(season_years) > 1:
+        current_year = detail.get('season_year')
+        season_labels = {
+            yr: (f"{yr} (this season)" if yr == current_year else f"{yr} (last season)")
+            for yr in season_years
+        }
+        default_year = default_year if default_year in season_years else season_years[0]
+        season_year = st.radio(
+            "Season", season_years, index=season_years.index(default_year),
+            format_func=lambda yr: season_labels[yr], horizontal=True,
+            key=(f"weekly_rank_deepdive_season_{stat}_{detail['player']}_{detail['team']}_"
+                f"{detail['target_week']}_{detail['as_of_week']}"),
+        )
+    else:
+        season_year = season_years[0] if season_years else detail.get('season_year')
+    game_log = game_log_by_season.get(season_year) or []
+    defense_log = defense_log_by_season.get(season_year) or []
     season_label = season_year if season_year is not None else (detail.get('season_year') or 'current')
 
     player_rows = [g for g in game_log if stat in g]
@@ -279,9 +464,16 @@ def _render_stat_deep_dive(detail, stat, game_log, defense_log, season_year=None
                  else pd.Series('', index=pgl.index))
         included = [('Yes' if e else f'Excluded — {r}') for e, r in zip(eligible, reason)]
         adj_col = f'_defadj_{stat}'
+        team_score = pd.to_numeric(pgl.get('_team_score', pd.Series(dtype=float)), errors='coerce')
+        opp_score = pd.to_numeric(pgl.get('_opp_score', pd.Series(dtype=float)), errors='coerce')
+        score = [f"{int(t)}-{int(o)}" if pd.notna(t) and pd.notna(o) else '—'
+                for t, o in zip(team_score, opp_score)]
+        result = pgl.get('_result', pd.Series('', index=pgl.index)).fillna('').replace('', '—')
         pgl_display = pd.DataFrame({
             'Week': pgl['_week_num'].astype(int),
             'Opponent': pgl.get('opponent_team', ''),
+            'Score': score,
+            'Result': result,
             f'Raw {label}': [_fmt_stat(stat, v) for v in pgl[stat]],
             f'Defense-adj {label}': [_fmt_stat(stat, v) for v in pgl.get(adj_col, pd.Series(dtype=float))],
             'Included': included,
@@ -292,7 +484,12 @@ def _render_stat_deep_dive(detail, stat, game_log, defense_log, season_year=None
             f"<img src='{sparkline_data_uri(spark_values, season_avg, width=260, height=60)}'>",
             unsafe_allow_html=True,
         )
-        st.dataframe(pgl_display, hide_index=True, width="stretch", height=df_auto_height(len(pgl_display)))
+        pgl_with_avg = _append_average_row(
+            pgl_display, 'Week', 'AVG', [f'Raw {label}', f'Defense-adj {label}'], stat=stat,
+            avg_mask=eligible)
+        st.dataframe(
+            _style_team_column(pgl_with_avg, 'Opponent'), hide_index=True,
+            width="stretch", height=df_auto_height(len(pgl_with_avg)))
         n_excluded = int((~eligible.astype(bool)).sum())
         if n_excluded:
             st.caption(f"{n_excluded} game(s) excluded from this player's rate evidence (marked above, not hidden).")
@@ -313,7 +510,11 @@ def _render_stat_deep_dive(detail, stat, game_log, defense_log, season_year=None
             "That offense's own average": [_fmt_stat(stat, v) for v in dgl.get(baseline_col, pd.Series(dtype=float))],
             'Recency weight': [f"{v:.2f}" if pd.notna(v) else '—' for v in dgl.get('_weight', pd.Series(dtype=float))],
         })
-        st.dataframe(dgl_display, hide_index=True, width="stretch", height=df_auto_height(len(dgl_display)))
+        dgl_with_avg = _append_average_row(
+            dgl_display, 'Week', 'AVG', [f'Allowed {label}', "That offense's own average"], stat=stat)
+        st.dataframe(
+            _style_team_column(dgl_with_avg, 'Offense faced'), hide_index=True,
+            width="stretch", height=df_auto_height(len(dgl_with_avg)))
         st.caption(
             f"Defense multiplier ({values.get('matchup_multiplier', 1.0):.3f}×): each week above compares what "
             f"{detail['opponent']} allowed to that offense's own average, recency-weighted, then re-centered "
@@ -380,9 +581,14 @@ def _render_context_deep_dive(detail):
         if alignment_bits:
             st.markdown("**PFF alignment role**")
             st.caption(" · ".join(alignment_bits))
-    if role.get('alignment_defense_candidate_available'):
-        st.caption("PFF alignment-defense residual: audit-only, not yet scoring this projection (needs "
-                  "enough weekly PFF archives, then a predeclared backtest to authorize it).")
+    if role.get('alignment_defense_scoring_active'):
+        st.caption("PFF alignment-defense residual: ACTIVE in this V2 run (v2_pff_alignment_matchup). "
+                  "Backtested 2026-08-24 and found to be a net loss on the startable WR/TE pool - re-enabled "
+                  "here for inspection, not because the backtest reversed. See the 'Alignment residual' "
+                  "column above and docs/weekly_projections_methodology.md for the numbers.")
+    elif role.get('alignment_defense_candidate_available'):
+        st.caption("PFF alignment-defense residual: audit-only, not scoring this projection (switch to the "
+                  "V2 experimental model to activate it for inspection).")
 
     evidence = detail.get('alignment_scheme_evidence', {})
     if evidence.get('player_scheme_available'):
@@ -392,241 +598,411 @@ def _render_context_deep_dive(detail):
             st.caption(f"Man: {float(man):.0%}"
                       + (f" · Zone: {float(zone):.0%}" if zone is not None and pd.notna(zone) else ""))
     defense_bits = []
+    slot_applied = bool(role.get('alignment_defense_scoring_active'))
     if evidence.get('defense_alignment_candidate_available'):
         mult = evidence.get('defense_slot_candidate_multiplier')
         if mult is not None and pd.notna(mult):
-            defense_bits.append(f"slot-weighted {float(mult):.3f}×")
+            defense_bits.append(f"slot-weighted {float(mult):.3f}×" + (" (applied)" if slot_applied else " (candidate)"))
     if evidence.get('defense_scheme_candidate_available'):
         mult = evidence.get('defense_man_candidate_multiplier')
         if mult is not None and pd.notna(mult):
-            defense_bits.append(f"man-weighted {float(mult):.3f}×")
+            defense_bits.append(f"man-weighted {float(mult):.3f}× (candidate)")
     if defense_bits:
-        st.markdown("**Opponent alignment/scheme vulnerability (candidate only)**")
+        st.markdown("**Opponent alignment/scheme vulnerability**")
         st.caption(
             f"{detail['opponent']}'s defense, back-calculated from every offense it actually faced this "
-            f"season — " + " · ".join(defense_bits) + ". Audit-only: not applied to this projection, pending "
-            "a predeclared out-of-sample backtest."
+            f"season — " + " · ".join(defense_bits) + ". "
+            + ("'Applied' is already folded into this stat's Defense multiplier above. "
+               if slot_applied else "")
+            + "'Candidate' entries remain audit-only (man/zone scheme is dormant everywhere; slot/non-slot "
+              "is audit-only outside V2)."
         )
 
 
-def _render_decomposition_audit_expander(detail):
-    """Everything that isn't needed at a glance, preserved rather than
-    dropped - role/depth-chart provenance, the RB allocator ledger, the
-    availability and calibration sources, the injury/vacancy ledger, and the
-    data-confidence/cutoff safeguards. One collapsed expander instead of
-    being permanently on-page, which is what actually fixes 'too much text,
-    hard to track' without losing any of the underlying audit trail."""
-    with st.expander("Role, audit & data sources", expanded=False):
-        role = detail.get('role', {})
-        role_bits = []
-        for label, key, fmt in (
-            ('Expected snaps', 'expected_snap_share', '.0%'),
-            ('Role confidence', 'role_confidence', '.0%'),
-            ('Role-change evidence', 'role_change_confidence', '.0%'),
-            ('Target-earner score', 'target_earner_score', '.2f'),
-            ('Target share', 'target_share', '.1%'),
-            ('Carry share', 'carry_share', '.1%'),
-            ('ADOT', 'adot', '.1f'),
-        ):
-            value = role.get(key)
-            if value is not None and pd.notna(value):
-                role_bits.append(f"{label}: {float(value):{fmt}}")
-        st.markdown("**Expected role**")
-        st.caption(" · ".join(role_bits) if role_bits else "No time-valid role profile was available.")
-        if detail.get('position') == 'QB' and role.get('qb_projected_starter'):
-            st.success(f"Expected QB1: full workload from {role.get('starter_source', 'QB1 selection')}.")
-        elif detail.get('position') == 'QB' and role.get('qb1_selection_required'):
-            st.warning("QB1 selection required: this room receives no normal QB volume until one player is selected.")
-        elif detail.get('position') == 'QB':
-            st.caption("QB status: not the expected starter; projected QB volume is held at zero.")
-        elif role.get('starter_source'):
-            st.caption(f"Starter/workload source: {role['starter_source']}.")
-        if role.get('partial_game_exclusions'):
-            st.caption(f"Partial-game screen: {role['partial_game_exclusions']} clearly interrupted current-season sample(s) were excluded from rate evidence.")
-        if role.get('returning_role_restored'):
-            st.info(
-                'Preseason role restoration: prior missed games were not treated as a reduced Week 1 workload; '
-                f"the player's proven active-game role was used ({role.get('returning_role_reason', 'role recovery')})."
-            )
-        elif role.get('preseason_role_source') not in (None, 'Not applicable'):
-            st.caption(f"Preseason role source: {role['preseason_role_source']}.")
-        if role.get('ourlads_role_floor_applied'):
-            label = role.get('ourlads_role_position_label') or detail.get('position')
-            rank = role.get('ourlads_role_available_rank')
-            floor = role.get('ourlads_role_floor')
-            st.caption(
-                f"Imported Ourlads evidence: available {label} depth rank "
-                f"{int(rank) if rank is not None else '—'} supplied a conservative "
-                f"{floor:.0%} role floor; it did not set full snaps or target share."
-                if floor is not None else
-                f"Imported Ourlads evidence: available {label} depth role was considered."
-            )
-        if role.get('identity_match_method'):
-            source_name = role.get('ourlads_source_name') or detail['player']
-            st.caption(
-                f"Depth-chart identity: {source_name} → {detail['player']} "
-                f"via {role.get('identity_match_method')} "
-                f"({role.get('identity_match_confidence') or 'unrated'} confidence)."
-            )
-        if role.get('identity_match_warning'):
-            st.warning(f"Depth-chart identity warning: {role['identity_match_warning']}")
-        if role.get('ourlads_source_status_warning'):
-            st.warning(
-                f"Depth-chart status flag: {role['ourlads_source_status_warning']}. "
-                "It is a chart-source warning only; current availability controls the projection."
-            )
-        if role.get('alignment_note'):
-            st.caption(f"Alignment: {role['alignment_note']}")
+def _render_pipeline_diagnostics(model_meta):
+    """Run-level data-pipeline notes - NOT about any one player.
 
-        if detail.get('position') == 'RB' and (
-                role.get('rb_allocator_applied')
-                or role.get('rb_allocation_eligibility_reason')
-                or role.get('rb_allocation_source')):
-            st.markdown("**Preseason RB allocation**")
-            st.caption(
-                "Core-RB snaps, carries, and targets are reconciled separately. "
-                "The residual is an explicit other/unallocated bucket rather than a hidden role for every reserve."
-            )
-            capacity = detail.get('rb_capacity_ledger', [])
-            if capacity:
-                capacity_frame = pd.DataFrame(capacity)
-                display_columns = [
-                    column for column in ('resource', 'capacity', 'allocated', 'unallocated',
-                                           'candidate_count', 'other_fraction', 'reason')
-                    if column in capacity_frame.columns
-                ]
-                st.dataframe(capacity_frame[display_columns], hide_index=True, width="stretch")
-            allocation = detail.get('rb_team_allocation', [])
-            if allocation:
-                with st.expander("Team RB allocation and projected opportunities"):
-                    st.dataframe(pd.DataFrame(allocation), hide_index=True, width="stretch")
-            source = role.get('rb_allocation_source') or 'not recorded'
-            reason = role.get('rb_allocation_eligibility_reason') or 'not recorded'
-            st.caption(f"Allocator eligibility: {reason}. Source: {source}.")
-            if role.get('rb_established_incumbent_backstop'):
-                st.info("Established-incumbent safety backstop kept this active same-team RB eligible despite a source-match issue.")
-            segment_status = role.get('rb_role_segment_status')
-            if segment_status and segment_status != 'no_clear_internal_gap':
-                segment_bits = [f"status {segment_status}"]
-                for label, key, fmt in (
-                    ('pre-gap snaps', 'rb_segment_pre_absence_snap_share', '.0%'),
-                    ('gap games', 'rb_segment_gap_games', '.0f'),
-                    ('return snaps', 'rb_segment_return_snap_share', '.0%'),
-                    ('incumbent credit', 'rb_interrupted_incumbent_credit', '.2f'),
-                    ('shared-healthy lead', 'rb_shared_healthy_lead_score', '+.2f'),
-                    ('replacement downweight', 'rb_replacement_only_downweight', '.2f'),
-                ):
-                    value = role.get(key)
-                    if value is not None and pd.notna(value):
-                        segment_bits.append(f"{label} {float(value):{fmt}}")
-                st.caption("Role-segment evidence: " + " · ".join(segment_bits))
+    ADDED 2026-08-24 per explicit request. This content used to live inside
+    EVERY player's 'Role, audit & data sources' expander via
+    _render_contract_field, even though almost all of it - the Ourlads
+    import's warnings list, the availability-resolution warnings, QB1
+    selection state, role-segment counts, the raw pace/injury/market_script
+    mode tags - is identical for all ~900 players in a run: it describes the
+    pipeline that built the whole board, not the one row someone opened.
+    Shown once here instead, so the per-player panel can stay about that
+    player. Reads model_meta['source_contract'], the same dict each
+    player's data_contract is a shallow copy of.
 
-        availability = detail['availability']
-        st.markdown("**Availability and workload**")
+    MOVED 2026-08-24 into the last tab of the "Live data pulls" expander
+    (previously its own standalone expander right below it) - per explicit
+    request, so the page carries one accordion for run-level info instead of
+    two back-to-back. No longer opens its own st.expander: the caller
+    already provides the surrounding tab."""
+    contract = (model_meta or {}).get('source_contract') or {}
+    if not contract:
+        st.caption("No pipeline notes for this run.")
+        return
+    st.caption("Applies to every player below - not specific to any one of them.")
+
+    backtest_bits = []
+    if contract.get('pace') == 'weekly_box_score_proxy':
+        backtest_bits.append("pace uses a same-week box-score proxy")
+    if contract.get('injury') == 'disabled_historical':
+        backtest_bits.append("injury discount disabled")
+    if contract.get('market_script') == 'disabled_historical':
+        backtest_bits.append("market script disabled")
+    if backtest_bits:
+        st.warning("Backtest mode: " + "; ".join(backtest_bits) +
+                   " - this run is validating a past week, not projecting a live one.")
+    if contract.get('prior_defense_recency'):
+        st.caption(f"Prior-season defense recency weighting: {contract['prior_defense_recency']}.")
+
+    ourlads = contract.get('ourlads_preseason_depth_chart')
+    if isinstance(ourlads, dict) and ourlads:
+        st.markdown("**Ourlads preseason depth chart import**")
         st.caption(
-            f"{availability['status'] or 'No current designation'} — "
-            f"plays probability {availability['plays_probability']:.0%}; "
-            f"workload if active {availability['workload_if_active']:.0%}."
+            f"{ourlads.get('status', 'unknown')} — "
+            f"{ourlads.get('matched_teams', 0)}/{ourlads.get('snapshot_teams', 0)} teams matched, "
+            f"{ourlads.get('matched_players', 0)} players, {ourlads.get('matched_qb1s', 0)} QB1s."
         )
-        if availability.get('source'):
-            availability_note = availability.get('note') or ''
-            st.caption(
-                f"Availability source: {availability['source']} "
-                f"({availability.get('match_method', 'not recorded')})"
-                f"{f'; {availability_note}' if availability_note else ''}."
-            )
+        overlay = ourlads.get('roster_overlay_changes') or []
+        if overlay:
+            with st.expander(f"Roster overlay changes ({len(overlay)})", expanded=False):
+                st.dataframe(pd.DataFrame(overlay), hide_index=True, width="stretch")
+        issues = ourlads.get('warnings') or []
+        if issues:
+            with st.expander(f"Depth-chart warnings ({len(issues)})", expanded=False):
+                for issue in issues:
+                    st.caption(f"• {issue}")
 
-        calibration = detail.get('calibration', {})
-        if calibration:
-            if calibration.get('enabled'):
+    availability = contract.get('availability')
+    if isinstance(availability, dict) and availability:
+        st.markdown("**Availability resolution**")
+        st.caption(
+            f"{availability.get('policy', 'unknown policy')} — "
+            f"{availability.get('resolved_profiles', 0)} profiles resolved, "
+            f"{availability.get('manual_overrides', 0)} manual override(s) active this week."
+        )
+        issues = availability.get('warnings') or []
+        if issues:
+            with st.expander(f"Unmatched availability sources ({len(issues)})", expanded=False):
+                for issue in issues:
+                    st.caption(f"• {issue}")
+
+    if contract.get('qb1_selection_required_teams'):
+        st.warning(
+            "QB1 selection required for: " + ", ".join(contract['qb1_selection_required_teams']) +
+            " - those teams' QB rooms receive no normal QB volume until one player is selected."
+        )
+
+    segments = contract.get('rb_role_segments')
+    if isinstance(segments, dict) and segments:
+        st.caption(
+            f"RB role-segment detector: {segments.get('clear_interrupted_returners', 0)} players credited "
+            f"with a clear interrupted/returned or season-ending role, "
+            f"{segments.get('teammate_context_rows', 0)} teammate-context rows built."
+        )
+
+    if contract.get('qb_starter_source'):
+        st.caption(f"QB1 selection source: {contract['qb_starter_source']}.")
+    if contract.get('preseason_skill_role_policy'):
+        st.caption(f"Preseason role policy: {contract['preseason_skill_role_policy']}.")
+    if contract.get('partial_game_history_filter'):
+        st.caption(f"Partial-game history filter: {contract['partial_game_history_filter']}.")
+
+
+def _render_decomposition_audit_body(detail):
+    """Everything about THIS player that isn't needed at a glance -
+    role/depth-chart provenance, the RB allocator ledger, availability, and
+    the injury/vacancy ledger. Lives in its own "Role, audit & data sources"
+    tab (moved out of a same-page expander 2026-08-25) instead of being
+    permanently on-page.
+
+    TRIMMED 2026-08-24 per explicit request. This used to also carry a
+    'Data confidence and cutoff safeguards' block that dumped ~12 fields on
+    every single player, most of which were identical across the entire
+    ~900-player pool (raw pipeline-mode tags, the full Ourlads/availability
+    warning lists, QB1-selection state, role-segment counts) - real audit
+    trail, but about the pipeline that built the whole board, not about
+    whichever player happened to be open. That content now lives once, in
+    _render_pipeline_diagnostics (the last tab of the "Live data pulls"
+    expander). What's left
+    here only ever prints when it has something to say about THIS player:
+    zero-value branches (no role change detected, no alignment profile
+    active, a routine exact-name depth-chart match, no real availability
+    source) are skipped rather than printed as boilerplate "nothing to
+    report" lines."""
+    role = detail.get('role', {})
+    role_bits = []
+    for label, key, fmt in (
+        ('Expected snaps', 'expected_snap_share', '.0%'),
+        ('Role confidence', 'role_confidence', '.0%'),
+        ('Target-earner score', 'target_earner_score', '.2f'),
+        ('Target share', 'target_share', '.1%'),
+        ('Carry share', 'carry_share', '.1%'),
+        ('ADOT', 'adot', '.1f'),
+    ):
+        value = role.get(key)
+        if value is not None and pd.notna(value):
+            role_bits.append(f"{label}: {float(value):{fmt}}")
+    # Role-change evidence is 0% for nearly every player (it only fires
+    # when the allocator actually detected a change) - showing it only
+    # when non-zero turns a near-universal "0%" line into a real signal.
+    role_change = role.get('role_change_confidence')
+    if role_change is not None and pd.notna(role_change) and float(role_change) > 0:
+        role_bits.append(f"Role-change evidence: {float(role_change):.0%}")
+    st.markdown("**Expected role**")
+    st.caption(" · ".join(role_bits) if role_bits else "No time-valid role profile was available.")
+    if detail.get('position') == 'QB' and role.get('qb_projected_starter'):
+        st.success(f"Expected QB1: full workload from {role.get('starter_source', 'QB1 selection')}.")
+    elif detail.get('position') == 'QB' and role.get('qb1_selection_required'):
+        st.warning("QB1 selection required: this room receives no normal QB volume until one player is selected.")
+    elif detail.get('position') == 'QB':
+        st.caption("QB status: not the expected starter; projected QB volume is held at zero.")
+    elif role.get('starter_source') and role.get('starter_source') != 'Not applicable':
+        st.caption(f"Starter/workload source: {role['starter_source']}.")
+    if role.get('partial_game_exclusions'):
+        st.caption(f"Partial-game screen: {role['partial_game_exclusions']} clearly interrupted current-season sample(s) were excluded from rate evidence.")
+    if role.get('returning_role_restored'):
+        st.info(
+            'Preseason role restoration: prior missed games were not treated as a reduced Week 1 workload; '
+            f"the player's proven active-game role was used ({role.get('returning_role_reason', 'role recovery')})."
+        )
+    elif role.get('preseason_role_source') not in (None, 'Not applicable'):
+        st.caption(f"Preseason role source: {role['preseason_role_source']}.")
+    if role.get('ourlads_role_floor_applied'):
+        label = role.get('ourlads_role_position_label') or detail.get('position')
+        rank = role.get('ourlads_role_available_rank')
+        floor = role.get('ourlads_role_floor')
+        st.caption(
+            f"Imported Ourlads evidence: available {label} depth rank "
+            f"{int(rank) if rank is not None else '—'} supplied a conservative "
+            f"{floor:.0%} role floor; it did not set full snaps or target share."
+            if floor is not None else
+            f"Imported Ourlads evidence: available {label} depth role was considered."
+        )
+    # A routine exact-name/high-confidence match is the expected case
+    # for the vast majority of players and says nothing worth reading -
+    # only surface this line when the match itself is uncertain.
+    match_method = role.get('identity_match_method')
+    match_confidence = role.get('identity_match_confidence')
+    if match_method and not (match_method == 'exact name' and match_confidence == 'high'):
+        source_name = role.get('ourlads_source_name') or detail['player']
+        st.caption(
+            f"Depth-chart identity: {source_name} → {detail['player']} "
+            f"via {match_method} ({match_confidence or 'unrated'} confidence)."
+        )
+    if role.get('identity_match_warning'):
+        st.warning(f"Depth-chart identity warning: {role['identity_match_warning']}")
+    if role.get('ourlads_source_status_warning'):
+        st.warning(
+            f"Depth-chart status flag: {role['ourlads_source_status_warning']}. "
+            "It is a chart-source warning only; current availability controls the projection."
+        )
+    # alignment_note reads "...alignment matchup is neutral" for
+    # essentially every player right now (no 2026 alignment data is
+    # loaded yet) - only worth a line once the underlying profile is
+    # actually available and doing something.
+    if role.get('alignment_available') and role.get('alignment_note'):
+        st.caption(f"Alignment: {role['alignment_note']}")
+
+    if detail.get('position') == 'RB' and (
+            role.get('rb_allocator_applied')
+            or role.get('rb_allocation_eligibility_reason')
+            or role.get('rb_allocation_source')):
+        st.markdown("**Preseason RB allocation**")
+        st.caption(
+            "Core-RB snaps, carries, and targets are reconciled separately. "
+            "The residual is an explicit other/unallocated bucket rather than a hidden role for every reserve."
+        )
+        capacity = detail.get('rb_capacity_ledger', [])
+        if capacity:
+            capacity_frame = pd.DataFrame(capacity)
+            display_columns = [
+                column for column in ('resource', 'capacity', 'allocated', 'unallocated',
+                                       'candidate_count', 'other_fraction', 'reason')
+                if column in capacity_frame.columns
+            ]
+            st.dataframe(capacity_frame[display_columns], hide_index=True, width="stretch")
+        allocation = detail.get('rb_team_allocation', [])
+        if allocation:
+            with st.expander("Team RB allocation and projected opportunities"):
+                st.dataframe(pd.DataFrame(allocation), hide_index=True, width="stretch")
+        source = role.get('rb_allocation_source') or 'not recorded'
+        reason = role.get('rb_allocation_eligibility_reason') or 'not recorded'
+        st.caption(f"Allocator eligibility: {reason}. Source: {source}.")
+        if role.get('rb_established_incumbent_backstop'):
+            st.info("Established-incumbent safety backstop kept this active same-team RB eligible despite a source-match issue.")
+        segment_status = role.get('rb_role_segment_status')
+        if segment_status and segment_status != 'no_clear_internal_gap':
+            segment_bits = [f"status {segment_status}"]
+            for label, key, fmt in (
+                ('pre-gap snaps', 'rb_segment_pre_absence_snap_share', '.0%'),
+                ('gap games', 'rb_segment_gap_games', '.0f'),
+                ('return snaps', 'rb_segment_return_snap_share', '.0%'),
+                ('incumbent credit', 'rb_interrupted_incumbent_credit', '.2f'),
+                ('shared-healthy lead', 'rb_shared_healthy_lead_score', '+.2f'),
+                ('replacement downweight', 'rb_replacement_only_downweight', '.2f'),
+            ):
+                value = role.get(key)
+                if value is not None and pd.notna(value):
+                    segment_bits.append(f"{label} {float(value):{fmt}}")
+            st.caption("Role-segment evidence: " + " · ".join(segment_bits))
+
+    if detail.get('position') == 'QB':
+        qb_stats_detail = detail.get('stats', {})
+        blend_source = next(
+            (v for v in qb_stats_detail.values() if v.get('qb1_blend_applied')), None)
+        if blend_source:
+            st.markdown("**QB1 volume blend**")
+            st.caption(
+                "Passing/rushing attempts are rebuilt from team dropback capacity (raw team-game "
+                "history) and this QB's own rush-share tendency, not carried forward as a flat "
+                "per-game rate - a real rushing floor lowers projected passing volume even when the "
+                "underlying per-game passing history is completely clean."
+            )
+            capacity = blend_source.get('qb1_blend_team_dropback_capacity')
+            personal_db = blend_source.get('qb1_blend_personal_dropbacks')
+            personal_share = blend_source.get('qb1_blend_personal_rush_share')
+            league_share = blend_source.get('qb1_blend_league_rush_share')
+            evidence_w = blend_source.get('qb1_blend_evidence_weight')
+            bits = []
+            if capacity is not None:
+                bits.append(f"team dropback capacity {capacity:.1f}/game")
+            if personal_db is not None:
+                bits.append(f"personal sample {personal_db:.0f} dropbacks")
+            if personal_share is not None and league_share is not None:
+                bits.append(f"rush share {personal_share:.0%} (league avg {league_share:.0%})")
+            if evidence_w is not None:
+                bits.append(f"self-weight {evidence_w:.0%}")
+            st.caption(" · ".join(bits))
+            prior2_w = blend_source.get('qb1_blend_prior2_weight')
+            prior2_db = blend_source.get('qb1_blend_personal_dropbacks_2024')
+            if prior2_w:
                 st.caption(
-                    f"Point calibration only: raw {calibration.get('raw_points', detail['raw_points']):.2f} → "
-                    f"displayed {calibration.get('displayed_points', detail['calibrated_points']):.2f} "
-                    f"({calibration.get('delta', 0.0):+.2f}); "
-                    f"slope {calibration.get('slope', 1.0):.3f}, intercept {calibration.get('intercept', 0.0):.3f}."
+                    f"Two-years-back grounding: {prior2_w:.0%} weight toward the prior2 season"
+                    f"{f' ({prior2_db:.0f} dropbacks that year)' if prior2_db else ''} - active "
+                    "because this QB's own prior-season sample is thin relative to a full season."
                 )
-            else:
-                st.caption("Point calibration is disabled for this model run; the stat line itself is unchanged either way.")
 
-        vacancy = detail.get('vacancy', [])
-        if vacancy:
-            st.markdown("**Injury/vacancy ledger**")
-            st.dataframe(pd.DataFrame(vacancy), hide_index=True, width="stretch")
-
-        contract = detail.get('data_contract', {})
-        st.markdown("**Data confidence and cutoff safeguards**")
+    availability = detail['availability']
+    st.markdown("**Availability and workload**")
+    st.caption(
+        f"{availability['status'] or 'No current designation'} — "
+        f"plays probability {availability['plays_probability']:.0%}; "
+        f"workload if active {availability['workload_if_active']:.0%}."
+    )
+    # 'no current availability source' is the sentinel for "nothing
+    # to report" - printing it as if it were a real source just
+    # restates the line above in a more confusing way.
+    if availability.get('source') and availability['source'] != 'no current availability source':
+        availability_note = availability.get('note') or ''
         st.caption(
-            f"Target classified as {'historical' if contract.get('historical_target') else 'live/upcoming'}; "
+            f"Availability source: {availability['source']} "
+            f"({availability.get('match_method', 'not recorded')})"
+            f"{f'; {availability_note}' if availability_note else ''}."
+        )
+
+    calibration = detail.get('calibration', {})
+    if calibration.get('enabled'):
+        st.caption(
+            f"Point calibration: raw {calibration.get('raw_points', detail['raw_points']):.2f} → "
+            f"displayed {calibration.get('displayed_points', detail['calibrated_points']):.2f} "
+            f"({calibration.get('delta', 0.0):+.2f}); "
+            f"slope {calibration.get('slope', 1.0):.3f}, intercept {calibration.get('intercept', 0.0):.3f}."
+        )
+
+    vacancy = detail.get('vacancy', [])
+    if vacancy:
+        st.markdown("**Injury/vacancy ledger**")
+        st.dataframe(pd.DataFrame(vacancy), hide_index=True, width="stretch")
+
+    # Historical/backtest classification only matters in the deviant
+    # case - a live/upcoming target is the default for every normal
+    # session and doesn't need a line saying so on every player.
+    contract = detail.get('data_contract', {})
+    if contract.get('historical_target'):
+        st.caption(
+            "Target classified as historical/backtest; "
             f"latest observed week: {contract.get('latest_observed_week') or 'none'}."
         )
-        for label in ('pff_season_totals', 'pff_alignment', 'pace', 'injury', 'market_script',
-                      'prior_defense_recency', 'qb_starter_source',
-                      'preseason_skill_role_policy', 'ourlads_preseason_depth_chart',
-                      'availability', 'rb_role_segments',
-                      'partial_game_history_filter'):
-            st.write(f"{label.replace('_', ' ').title()}: {contract.get(label, 'unknown')}")
-        st.caption("Market and FantasyPros values in the ranking table are comparisons, never inputs to this projection.")
+    # PFF alignment/scheme fields only print once there's a real
+    # profile behind them - right now none of these have data loaded
+    # for any player, so none of these lines appear yet; they'll start
+    # showing per-player once a real archive is imported.
+    for label, key, has_signal in (
+        ('PFF alignment (offense)', 'pff_alignment', lambda v: bool(v.get('included_weeks'))),
+        ('PFF alignment (defense)', 'pff_alignment_defense', lambda v: (v.get('profile_rows') or 0) > 0),
+        ('PFF scheme (offense)', 'pff_scheme', lambda v: bool(v.get('included_weeks'))),
+        ('PFF scheme (defense)', 'pff_scheme_defense', lambda v: (v.get('profile_rows') or 0) > 0),
+    ):
+        value = contract.get(key)
+        if isinstance(value, dict) and has_signal(value):
+            st.caption(f"{label}: {value.get('adjustment', value.get('status'))}.")
+    st.caption("Market and FantasyPros values in the ranking table are comparisons, never inputs to this projection.")
 
 
 def _open_projection_dialog(detail):
-    """Open the backend-produced weekly projection decomposition: header ->
-    primary at-a-glance table -> range of outcomes -> tabbed Deep Dive ->
-    role/audit detail, in that order - explicit request, replacing what was
-    previously a long flat stack of mostly free-text captions."""
+    """Open the backend-produced weekly projection decomposition: a header
+    (identity, top-line points, matchup toughness) always on top, then three
+    tabs - Overview (primary at-a-glance table + tabbed Deep Dive), Range of
+    outcomes (bust/median/boom), and Role, audit & data sources - replacing
+    what was previously one long scroll of every section stacked in a row
+    (explicit request, 2026-08-25: same content, organized so a specific
+    question - "what's my range of outcomes," "why this role" - is one click
+    instead of a long scroll)."""
     if not detail:
         return
 
     def _body():
         _render_decomposition_header(detail)
-        _render_decomposition_primary_table(detail)
 
-        distribution = detail.get('distribution')
-        if distribution:
-            st.markdown("**Range of outcomes**")
-            _render_distribution_chart(distribution, detail['position'])
-        else:
-            st.caption(
-                "Range of outcomes: not available yet for this run — needs scripts/fit_weekly_"
-                "distribution.py's bands (see data/weekly_distribution.py)."
-            )
+        tab_overview, tab_outcomes, tab_audit = st.tabs(
+            ["Overview", "Range of outcomes", "Role, audit & data sources"])
 
-        stats = detail.get('stats', {})
-        if stats:
-            st.markdown("**Deep dive**")
-            game_log_by_season = detail.get('game_log_by_season') or {}
-            defense_log_by_season = detail.get('defense_weekly_log_by_season') or {}
-            season_years = sorted(set(game_log_by_season) | set(defense_log_by_season), reverse=True)
-            if len(season_years) > 1:
-                current_year = detail.get('season_year')
-                season_labels = {
-                    yr: (f"{yr} (this season)" if yr == current_year else f"{yr} (last season)")
-                    for yr in season_years
-                }
+        with tab_overview:
+            _render_decomposition_primary_table(detail)
+            _render_alignment_mix(detail)
+
+            stats = detail.get('stats', {})
+            if stats:
+                st.markdown("**Deep dive**")
+                game_log_by_season = detail.get('game_log_by_season') or {}
+                defense_log_by_season = detail.get('defense_weekly_log_by_season') or {}
                 # Default to whichever season actually has games logged - the
                 # honest empty case is a cold-start CURRENT season, and
                 # there's no reason to land the user on a blank tab by
                 # default when last season's full log is one click away.
+                # Each stat tab owns its OWN season selector below (explicit
+                # request - a single shared control meant switching season
+                # on one stat silently moved every other stat's tab too), so
+                # this is only the shared starting point, not a value that
+                # controls every tab at once.
+                all_years = sorted(set(game_log_by_season) | set(defense_log_by_season), reverse=True)
                 default_year = next(
-                    (yr for yr in season_years if game_log_by_season.get(yr)), season_years[0])
-                selected_year = st.radio(
-                    "Season", season_years, index=season_years.index(default_year),
-                    format_func=lambda yr: season_labels[yr], horizontal=True,
-                    key=(f"weekly_rank_deepdive_season_{detail['player']}_{detail['team']}_"
-                        f"{detail['target_week']}_{detail['as_of_week']}"),
-                )
-            else:
-                selected_year = season_years[0] if season_years else detail.get('season_year')
-            game_log = game_log_by_season.get(selected_year) or []
-            defense_log = defense_log_by_season.get(selected_year) or []
-            stat_keys = list(stats.keys())
-            tabs = st.tabs([s.replace('_', ' ').title() for s in stat_keys] + ['Context'])
-            for stat, tab in zip(stat_keys, tabs[:-1]):
-                with tab:
-                    _render_stat_deep_dive(detail, stat, game_log, defense_log, selected_year)
-            with tabs[-1]:
-                _render_context_deep_dive(detail)
+                    (yr for yr in all_years if game_log_by_season.get(yr)),
+                    all_years[0] if all_years else detail.get('season_year'))
+                stat_keys = list(stats.keys())
+                deep_dive_tabs = st.tabs([s.replace('_', ' ').title() for s in stat_keys] + ['Context'])
+                for stat, tab in zip(stat_keys, deep_dive_tabs[:-1]):
+                    with tab:
+                        _render_stat_deep_dive(
+                            detail, stat, game_log_by_season, defense_log_by_season, default_year)
+                with deep_dive_tabs[-1]:
+                    _render_context_deep_dive(detail)
 
-        _render_decomposition_audit_expander(detail)
+        with tab_outcomes:
+            distribution = detail.get('distribution')
+            if distribution:
+                _render_distribution_chart(distribution, detail['position'])
+            else:
+                st.caption(
+                    "Range of outcomes: not available yet for this run — needs scripts/fit_weekly_"
+                    "distribution.py's bands (see data/weekly_distribution.py)."
+                )
+
+        with tab_audit:
+            _render_decomposition_audit_body(detail)
 
     dialog = st.dialog(f"Projection decomposition — {detail['player']}", width="large",
                        on_dismiss=_close_projection_dialog)(_body)
@@ -728,7 +1104,80 @@ def _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring):
     return None
 
 
-def _render_fantasypros_injury_pull(wk_year, wk_week):
+def _render_manual_availability_override(wk_year, wk_week, roster_df):
+    """Let the user directly say 'this player is out' for one target week.
+
+    Distinct from the FantasyPros pull next to it: that's an external feed
+    that can lag real news (see the 2026-08-24 James Conner case - a real,
+    still-unresolved 2025 season-ending foot injury that no live feed had
+    flagged for Week 1 yet). This writes straight to data.availability_
+    overrides' own reviewable CSV, which the model already reads FIRST -
+    resolve_target_week_availability documents manual overrides winning over
+    the injury report on the same player - this UI was the only missing
+    piece, not new model logic.
+    """
+    from data.availability_overrides import (
+        load_availability_overrides, save_availability_override, remove_availability_override,
+    )
+    st.caption(
+        "Your own call for this exact week - wins over the FantasyPros feed for the same player. "
+        "Use this when you know something the feed hasn't caught up to yet."
+    )
+    roster = roster_df if isinstance(roster_df, pd.DataFrame) else pd.DataFrame()
+    players = roster['Player'].dropna().astype(str).sort_values().tolist() if 'Player' in roster.columns else []
+    team_by_player = (dict(zip(roster['Player'], roster['Team']))
+                      if {'Player', 'Team'}.issubset(roster.columns) else {})
+    with st.form(key=f"wr_manual_availability_form_{wk_year}_{wk_week}", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            player = st.selectbox("Player", players, index=None, placeholder="Search this week's board…",
+                                  key=f"wr_manual_avail_player_{wk_year}_{wk_week}")
+        with c2:
+            status = st.selectbox(
+                "Status", ["Out", "Doubtful", "Questionable", "Healthy (clear any override)"],
+                key=f"wr_manual_avail_status_{wk_year}_{wk_week}")
+        note = st.text_input("Note (optional)", key=f"wr_manual_avail_note_{wk_year}_{wk_week}",
+                             placeholder="e.g. still recovering from 2025 foot surgery, no return timetable")
+        submitted = st.form_submit_button("Save override")
+        if submitted:
+            if not player:
+                st.error("Pick a player first.")
+            else:
+                team = team_by_player.get(player, "")
+                error = save_availability_override(
+                    wk_year, wk_week, team, player, status.split(" ")[0], note=note)
+                if error:
+                    st.error(error)
+                else:
+                    st.success(f"{player} ({team}) set to {status.split(' ')[0]} for Week {wk_week}.")
+                    # build_weekly_projections is @st.cache_data'd on
+                    # (year, week, scoring, ...) alone - it has no idea this
+                    # CSV just changed, so without an explicit clear() the
+                    # rerun below would just re-serve the pre-edit cached
+                    # board for up to CACHE_TTL_SECONDS (1 hour). Confirmed
+                    # live 2026-08-24: a Zach Charbonnet 'Out' override saved
+                    # here did not move his projection until this was added.
+                    build_weekly_projections.clear()
+                    st.rerun()
+
+    current, _err = load_availability_overrides(wk_year, wk_week)
+    if current.empty:
+        st.caption(f"No manual overrides set for Week {wk_week}.")
+        return
+    st.caption(f"Manual overrides for Week {wk_week}:")
+    for _, row in current.iterrows():
+        row_c1, row_c2 = st.columns([5, 1])
+        with row_c1:
+            note_suffix = f" — {row['note']}" if str(row.get('note', '')).strip() else ""
+            st.markdown(f"**{row['player']}** ({row['team']}) — {str(row['status']).title()}{note_suffix}")
+        with row_c2:
+            if st.button("Clear", key=f"wr_manual_avail_clear_{wk_year}_{wk_week}_{row['player']}_{row['team']}"):
+                remove_availability_override(wk_year, wk_week, row['team'], row['player'])
+                build_weekly_projections.clear()
+                st.rerun()
+
+
+def _render_fantasypros_injury_pull(wk_year, wk_week, roster_df=None):
     """
     FantasyPros-sourced injury/availability for the V2 model
     (v2_fantasypros_availability - see data.fantasypros_availability's own
@@ -751,7 +1200,7 @@ def _render_fantasypros_injury_pull(wk_year, wk_week):
         "Feeds the V2 model's availability discount. No report for a player this week means "
         "healthy - never a stale carry-over from a prior week."
     )
-    tab_api, tab_upload = st.tabs(["Live API pull", "Upload export"])
+    tab_api, tab_upload, tab_manual = st.tabs(["Live API pull", "Upload export", "Manual override"])
     with tab_api:
         secret_key, key_source = get_fantasypros_api_key()
         if key_source == 'secrets':
@@ -770,6 +1219,10 @@ def _render_fantasypros_injury_pull(wk_year, wk_week):
                 st.error(f"FantasyPros API: {error}")
             else:
                 st.success(f"Loaded {n} flagged player{'s' if n != 1 else ''} for week {wk_week}.")
+                # Same stale-cache trap as the manual override below - this
+                # CSV feeds build_weekly_projections but isn't one of its
+                # cached arguments, so the model has to be told explicitly.
+                build_weekly_projections.clear()
                 st.rerun()
     with tab_upload:
         up = st.file_uploader("FantasyPros injury export (CSV)", type=["csv"], key="wr_fp_injury_upload")
@@ -779,7 +1232,10 @@ def _render_fantasypros_injury_pull(wk_year, wk_week):
                 st.error(error)
             else:
                 st.success(f"Loaded {n} flagged player{'s' if n != 1 else ''} for week {wk_week}.")
+                build_weekly_projections.clear()
                 st.rerun()
+    with tab_manual:
+        _render_manual_availability_override(wk_year, wk_week, roster_df)
 
     profiles, _err = load_fantasypros_availability(wk_year, wk_week)
     if profiles:
@@ -1016,13 +1472,15 @@ def _woven_rank(df, value_col, pos_col='Pos'):
     return encoded, labels
 
 
-def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, model_version, name_pool):
+def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, model_version, name_pool,
+                          roster_df=None, model_meta=None):
     """
-    One expander, four tabs - consolidates what used to be four separate
+    One expander, five tabs - consolidates what used to be four separate
     stacked accordions (FantasyPros weekly projection, FantasyPros injury/
     availability, PFF weekly alignment archive, market player-prop
-    projection) so a page visit isn't four collapsed boxes deep before any
-    model output appears.
+    projection) plus the standalone "Data pipeline notes" expander that used
+    to sit right below this one, so a page visit isn't multiple collapsed
+    boxes deep before any model output appears.
 
     Streamlit tabs can't be conditionally hidden once declared, so the two
     gates that used to hide a whole expander (V2-only for injury/PFF,
@@ -1035,13 +1493,14 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, model
     session state and have no return-value contract of their own.
     """
     with st.expander("📡 Live data pulls", expanded=False):
-        tab_fp, tab_injury, tab_pff, tab_market = st.tabs(
-            ["FantasyPros projections", "Injury/availability", "PFF alignment", "Market props"])
+        tab_fp, tab_injury, tab_pff, tab_market, tab_pipeline = st.tabs(
+            ["FantasyPros projections", "Injury/availability", "PFF alignment", "Market props",
+             "Data pipeline notes"])
         with tab_fp:
             fp_weekly = _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring)
         with tab_injury:
             if model_version == 'v2':
-                _render_fantasypros_injury_pull(wk_year, wk_week)
+                _render_fantasypros_injury_pull(wk_year, wk_week, roster_df)
             else:
                 st.caption("Feeds the V2 model's availability discount — switch Projection model "
                           "to V2 above to use this.")
@@ -1064,6 +1523,8 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, model
                 market_df = None
             else:
                 market_df = _render_weekly_market_pull(wk_scoring, name_pool)
+        with tab_pipeline:
+            _render_pipeline_diagnostics(model_meta)
     return fp_weekly, market_df
 
 
@@ -1113,7 +1574,9 @@ def render():
         )
     fp_weekly, market_df = _render_live_data_hub(
         wk_year, wk_week, wk_scoring, wk_week_completed, model_version,
-        model_df[['Player']] if not model_df.empty else None)
+        model_df[['Player']] if not model_df.empty else None,
+        roster_df=model_df[['Player', 'Team', 'Pos']] if not model_df.empty else None,
+        model_meta=model_meta)
     _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring)
 
     if model_df.empty:

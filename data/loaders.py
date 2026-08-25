@@ -1146,10 +1146,10 @@ def load_team_weekly_plays(year):
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
-def load_schedule(year):
+def load_schedule(year, include_postseason=False):
     """
-    Full season schedule, REG season only - feeds the strength-of-schedule
-    tables in data/draft_sos.py.
+    Full season schedule, REG season only by default - feeds the
+    strength-of-schedule tables in data/draft_sos.py.
 
     TWO SOURCES FOR ONE FILE, and the fallback is not theoretical. nflreadpy
     fetches nflverse's release ASSETS, which live on github.com proper; the
@@ -1160,10 +1160,21 @@ def load_schedule(year):
     empty frame too, and the board's SOS column rendered blank for every
     player with no error anywhere. A column that is quietly always empty is
     worse than one that is missing, because nothing about the screen says so.
+
+    ``include_postseason`` (added 2026-08-25, default False - every existing
+    caller is unaffected) keeps WC/DIV/CON/SB rows (``game_type`` != 'REG')
+    too, using nflreadpy's own week numbering (19/20/21/22). The only
+    current caller is the PFF alignment-defense cold-start path in
+    weekly_projections.py, which needs those games to map a completed prior
+    season's postseason PFF weekly archive to the defense each offense
+    actually faced - the odds-market fallback below has no postseason
+    equivalent, so that branch stays REG-only regardless of this flag.
     """
     try:
         df = nflreadpy.load_schedules([year]).to_pandas()
         if df is not None and not df.empty:
+            if include_postseason:
+                return df.copy()
             return df[df['game_type'] == 'REG'].copy()
     except Exception:
         pass

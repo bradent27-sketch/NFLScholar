@@ -1459,17 +1459,29 @@ _FORCED_DECIMALS = {
 # BETWEEN two is a real cliff. A smooth gradient would draw the cliff as a
 # gentle slope, which is the one thing the column exists to contradict.
 #
-# Ordered cool-to-warm so the eye reads "elite -> deep" without a legend,
-# and the band boundaries land where a scan naturally stops.
+# REDONE AGAIN 2026-08-24 per explicit follow-up request: the previous
+# six-band version (blue/light blue/dark green/yellow/orange/red) still
+# read as almost entirely blue/light-blue/green in practice, because
+# data.draft_board.tier_by_position was clustering an entire position's
+# points in one pass - see that function's docstring for why a right-skewed
+# points distribution starves the lower tiers of any real separation, so
+# tiers 4-6 (yellow/orange/red) almost never got used. tier_by_position now
+# reserves the LAST tier specifically for "past the real startable cutoff -
+# never worth plugging into a lineup" (~QB24/RB36/WR40/TE24), so that tier
+# should read as an unambiguous stop sign: red. Tiers 1 through 5 are the
+# startable range, where the actual start/sit judgment calls live, so that
+# whole range is spent moving from blue (elite) to yellow (the deepest
+# player still ever worth starting) - no green or orange in the ramp at all
+# now, per the request to keep it a blue-to-yellow spread. Every shade is
+# still dark enough to hold the white, bold cell text every caller here
+# already forces (see style_column below).
 TIER_COLORS = [
-    '#1b6ac9',  # 1 - elite
-    '#1f8a70',  # 2
-    '#3f9d3a',  # 3
-    '#8a9a1e',  # 4
-    '#b8860b',  # 5
-    '#c26a1c',  # 6
-    '#b3452c',  # 7
-    '#8e3b52',  # 8+
+    '#1b4fa0',  # 1 - deep blue (elite starter)
+    '#1b6ac9',  # 2 - blue
+    '#4fa8dc',  # 3 - light blue (solid starter)
+    '#c9a227',  # 4 - gold (streaming/matchup-dependent starter)
+    '#8a6d1a',  # 5 - dark yellow (deepest player still ever worth starting)
+    '#b3302c',  # 6 - red (past the startable cutoff - never worth starting)
 ]
 
 

@@ -31,9 +31,14 @@ This module is that blend, decomposed into three independent pieces:
   Willis actually does run more than a typical NFL QB - but a 4-game backup
   sample is thin evidence, so it is shrunk toward the league mean by how much
   evidence actually exists: ``w_self = personal_dropbacks / (personal_dropbacks + K)``.
-  At K=200 dropbacks, Willis's 57-dropback sample carries about 22% weight,
-  landing his blended rush share at roughly 3x Miami's own 2025 rate (0.061)
-  without simply inheriting a backup's small-sample extremes.
+  At K=10 dropbacks (lowered from 200, then 30, on 2026-08-25 - see
+  QB_STYLE_BLEND_K), even a moderate half-season sample already carries
+  ~96% self-weight, and Willis's 56-dropback backup-relief sample still
+  gets a real, if much lighter, correction (~85% self-weight) rather than
+  inheriting its small-sample extreme at full confidence - QB rushing is
+  overwhelmingly an individual athleticism/willingness trait, not a team-
+  scheme effect, so an established rusher's own measured share should
+  barely be diluted at all.
 
   EFFICIENCY (yards/attempt, completion%, TD rate, INT rate, yards/carry) is
   a PLAYER property, but it needs the SAME evidence discipline as style: his
@@ -67,14 +72,22 @@ from data.player_aliases import stable_roster_identity_keys
 
 
 # Dropback-equivalents of evidence for a 50/50 weight between a QB's own
-# measured rush share and the league mean. Measured against
-# stats_player_week_2025.csv: league mean rush share of dropbacks is 0.117
-# (std 0.068), and a starter's full season runs ~550-650 dropbacks, so K=200
-# lets a half-season of starts already carry most of the weight while a
-# handful of relief appearances cannot. Re-verify with
+# measured rush share and the league mean. First lowered from 200 to 30 on
+# 2026-08-25, then to 10 the same day after the user reviewed the board and
+# said it still wasn't trusting a QB's own raw rushing numbers enough: QB
+# rushing is almost entirely an athleticism/willingness trait of the
+# individual player, not a team-scheme effect, so it should barely be
+# blended toward the league mean at all once there is a real sample. At
+# K=10, even a moderate half-season sample (~250 dropbacks) already reaches
+# w_self~=0.96, and a full season (~600) is ~0.98 - essentially his own
+# number. A genuine thin backup-relief sample (the Malik Willis case this
+# constant was originally built for, ~56 dropbacks) still gets a real but
+# now much lighter correction (w_self~=0.85) - this constant is no longer
+# the primary defense against a small-sample outlier reading as gospel; it
+# only softens the most extreme cases. Re-verify with
 # scripts/check_volume_conservation.py / scripts/compare_model_vs_market.py
 # if this ever needs retuning.
-QB_STYLE_BLEND_K = 200.0
+QB_STYLE_BLEND_K = 10.0
 
 # A QB needs at least this many career dropback-equivalents on record before
 # his own rush share counts toward the LEAGUE mean used to shrink everyone
@@ -82,21 +95,59 @@ QB_STYLE_BLEND_K = 200.0
 # league reference point.
 QB_LEAGUE_QUALIFY_DROPBACKS = 30.0
 
-# Attempts/carries of evidence for a 50/50 weight between a QB's own
-# per-unit efficiency (yards/attempt, TD rate, INT rate, completion rate,
-# yards/carry) and the league mean. Deliberately smaller than
-# QB_STYLE_BLEND_K: efficiency rates stabilize faster than a shot-selection
-# tendency like rush share, and this is a materially lighter shrink than the
-# volume side - it exists to tame a 3-5 game outlier sample, not to erase a
-# real half-season efficiency signal the way the volume fix must for a raw
+# Attempts of evidence for a 50/50 weight between a QB's own per-unit
+# PASSING efficiency (yards/attempt, TD rate, INT rate, completion rate) and
+# the league mean. It exists to tame a 3-5 game outlier sample, not to erase
+# a real half-season efficiency signal the way the volume fix must for a raw
 # backup-appearance rate.
-QB_EFFICIENCY_BLEND_K = 100.0
+QB_PASS_EFFICIENCY_BLEND_K = 100.0
+
+# Carries of evidence for the same 50/50 weight, but for RUSHING efficiency
+# (yards/carry, rush TD rate) specifically. Split out from the passing
+# constant on 2026-08-25, then lowered further the same day (20 -> 5) after
+# the user reviewed the board and said the model still wasn't trusting a
+# QB's own raw rushing numbers enough. A QB's per-carry rushing average is
+# almost entirely his own athleticism/running style, not something that
+# should regress toward a league mean off any real sample. At K=5, Kyler
+# Murray's real 5.97 YPC on a thin 29-carry 2025 sample lands at ~5.66 (a
+# ~5% pull, down from a 27% pull at the original shared K=100) - a real
+# rushing QB with even a modest carry total now reads at close to his own
+# number. A truly token sample (Joe Burrow's real 14 non-rushing-QB
+# carries) still shrinks meaningfully (~74% self-weight, not full trust in
+# 14 carries) since the evidence-weight formula is still in effect - it is
+# just a much lighter touch than before.
+QB_RUSH_EFFICIENCY_BLEND_K = 5.0
 
 # Used only when a team has no prior-season passing history at all (an
 # expansion scenario, never observed in practice) - an explicit, documented
 # last resort rather than a silent zero.
 FALLBACK_LEAGUE_RUSH_SHARE = 0.12
 FALLBACK_TEAM_DROPBACKS = 34.0
+
+# Two-season (2024) personal-style/efficiency blend, added 2026-08-24. Mirrors
+# weekly_projections.py's PRIOR2_BLEND_* constants (same values, kept as
+# independent constants here so this module stays self-contained rather than
+# reaching back into its caller) - see that module's comment for the full
+# rationale. Applied to PERSONAL rush share and PERSONAL per-unit efficiency
+# BEFORE league shrinkage below, not to team dropback capacity (a team
+# property, not something a QB's own down year should distort). This is the
+# fix for a QB1 whose OWN prior-season sample was itself thin or depressed -
+# Lamar Jackson/Jayden Daniels, an injury-shortened 2025 off a full, strong
+# 2024 - which QB_STYLE_BLEND_K/QB_PASS_EFFICIENCY_BLEND_K/
+# QB_RUSH_EFFICIENCY_BLEND_K alone cannot fix: they only shrink a thin
+# sample toward the LEAGUE mean, never toward what this specific player has
+# actually shown before.
+QB_PRIOR2_FULL_SEASON_GAMES = 8.0
+QB_PRIOR2_BASE_WEIGHT = 0.20
+QB_PRIOR2_MAX_WEIGHT = 0.55
+# Stay bullish on an ascending player: a blend that would LOWER a component
+# (his 2024 was worse - e.g. a breakout 2025 off a thin/backup 2024) is cut
+# to roughly a third weight; one that RAISES it (Lamar/Daniels) keeps the
+# full weight above.
+QB_PRIOR2_DECREASE_DAMPENING = 0.35
+# A 2024 row under this many games is a practice-squad/inactive-all-year
+# entry, not a season - ignored entirely, same as no row at all.
+QB_PRIOR2_MIN_GAMES = 1.0
 
 QB_BLEND_VOLUME_STATS = ('passing_attempts', 'rushing_attempts')
 QB_BLEND_DEPENDENT_STATS = {
@@ -142,9 +193,69 @@ def derive_team_dropback_capacity(history: pd.DataFrame, team_col: str = 'team')
     return capacity.reindex(columns=columns)
 
 
+def _prior2_personal(prior2_history: pd.DataFrame | None, value_cols: tuple) -> tuple[pd.DataFrame, pd.Series]:
+    """2024 per-identity summed stats + game counts, or empty if unusable.
+
+    Mirrors the ``frame``/``personal`` construction for ``prior_history``
+    below, kept as its own helper since it is optional and independent of
+    the 2025 league/team-capacity computations.
+    """
+    empty_personal = pd.DataFrame(columns=list(value_cols) + ['_dropback'])
+    empty_games = pd.Series(dtype=float)
+    if prior2_history is None or prior2_history.empty:
+        return empty_personal, empty_games
+    frame2 = prior2_history
+    if 'position' in frame2.columns:
+        frame2 = frame2[frame2['position'].astype(str).str.upper().eq('QB')]
+    if frame2.empty or 'week' not in frame2.columns:
+        return empty_personal, empty_games
+    name_col2 = next((c for c in ('player_display_name', 'Player', 'player', 'name') if c in frame2.columns), None)
+    if name_col2 is None:
+        return empty_personal, empty_games
+    frame2 = frame2.copy()
+    frame2['_identity_key'] = stable_roster_identity_keys(frame2, name_col2).astype(str)
+    for col in value_cols:
+        if col not in frame2.columns:
+            frame2[col] = 0.0
+        frame2[col] = pd.to_numeric(frame2[col], errors='coerce').fillna(0.0)
+    frame2['_dropback'] = frame2['passing_attempts'] + frame2['rushing_attempts']
+    personal2 = frame2.groupby('_identity_key', observed=True)[list(value_cols) + ['_dropback']].sum()
+    games2 = frame2.groupby('_identity_key', observed=True)['week'].nunique()
+    return personal2, games2
+
+
+def _prior2_component_weight(games_2025: float, games_2024: float, dropbacks_2024: float) -> float:
+    """0 if no usable 2024 read, else the base (pre-asymmetry) blend weight.
+
+    Same shape as weekly_projections.py's PRIOR2_BLEND base-weight curve:
+    flat QB_PRIOR2_BASE_WEIGHT for a normal 2025 sample, rising toward
+    QB_PRIOR2_MAX_WEIGHT as 2025 games played falls toward zero.
+    """
+    if dropbacks_2024 <= 0 or games_2024 < QB_PRIOR2_MIN_GAMES:
+        return 0.0
+    fraction_missing = float(np.clip(
+        (QB_PRIOR2_FULL_SEASON_GAMES - games_2025) / QB_PRIOR2_FULL_SEASON_GAMES, 0.0, 1.0))
+    return QB_PRIOR2_BASE_WEIGHT + (QB_PRIOR2_MAX_WEIGHT - QB_PRIOR2_BASE_WEIGHT) * fraction_missing
+
+
+def _blend_component_toward_prior2(current: float, prior2_value: float, weight_base: float) -> float:
+    """Blend one personal share/rate toward its 2024 value, asymmetrically.
+
+    A blend that would LOWER ``current`` (2024 was worse) is cut to
+    QB_PRIOR2_DECREASE_DAMPENING of ``weight_base``; one that RAISES it
+    keeps the full base weight - see the constants' module docstring.
+    """
+    if weight_base <= 0:
+        return current
+    weight = weight_base * QB_PRIOR2_DECREASE_DAMPENING if prior2_value < current else weight_base
+    return (1.0 - weight) * current + weight * prior2_value
+
+
 def blend_qb1_volume(
         identity_keys: np.ndarray, team_keys: np.ndarray, qb1_mask: np.ndarray,
         prior_history: pd.DataFrame | None, k: float = QB_STYLE_BLEND_K,
+        prior2_history: pd.DataFrame | None = None,
+        prior_history_team: pd.DataFrame | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Blended per-game rates for QB1-selected rows; NaN (not applicable) elsewhere.
 
@@ -152,6 +263,34 @@ def blend_qb1_volume(
     positionally aligned to the caller's current-position frame (``cur`` in
     ``build_weekly_projections``) - pass ``.to_numpy()`` views, not pandas
     Series, so integer position indexing below is unambiguous.
+
+    ``prior_history`` (and ``prior2_history``) must already be filtered to
+    the caller's own player-history eligibility flag (the same
+    ``player_prior``/``player_prior2`` frames every other stat's prior-season
+    rate uses - see ``annotate_player_history_participation`` in
+    weekly_projections.py) before reaching this function. This function only
+    reads PERSONAL per-player sums from them (``personal``/``personal2``,
+    the qualified league pool for ``league_rush_share``/``league_pass_rate``/
+    ``league_rush_rate``) - a QB-split/relief partial game left in here
+    silently drags his own personal per-attempt rate toward that thin,
+    low-usage relief line (confirmed real on Jayden Daniels' 2025: 205.6
+    YPG over his 5 full-role games vs. 180.3 including his 2 QB-split relief
+    games - almost exactly the gap this filtering closes).
+
+    ``prior_history_team`` (optional, defaults to ``prior_history`` when not
+    given - kept for any caller/test that only has one frame to give) is
+    used ONLY for team dropback capacity below, and should be the RAW,
+    UNFILTERED team-game history instead: an injured starter and his relief
+    replacement still together describe the team's real dropback total that
+    game, the same "raw team-game history" principle
+    ``annotate_player_history_participation`` documents for defense profiles.
+
+    ``prior2_history`` (2024, optional) blends into the PERSONAL rush share
+    and PERSONAL per-unit efficiency below - before league shrinkage, never
+    into team dropback capacity - so a QB1 whose own 2025 sample was itself
+    thin or depressed (Lamar Jackson/Jayden Daniels: an injury-shortened
+    2025 off a full, strong 2024) is read as more than just "shrink harder
+    toward the league mean." See QB_PRIOR2_* above for the weight curve.
 
     Returns ``(rates, audit)``: ``rates`` maps each of the 6 QB stats this
     blend touches to a per-game rate array; ``audit`` carries the same shape
@@ -165,6 +304,7 @@ def blend_qb1_volume(
         'league_rush_share': np.full(n, np.nan), 'evidence_weight': np.full(n, np.nan),
         'blended_rush_share': np.full(n, np.nan), 'team_dropback_capacity': np.full(n, np.nan),
         'team_capacity_source': np.full(n, '', dtype=object),
+        'prior2_weight': np.full(n, np.nan), 'personal_dropbacks_2024': np.full(n, np.nan),
     }
     qb1_mask = np.asarray(qb1_mask, dtype=bool)
     if not qb1_mask.any() or prior_history is None or prior_history.empty:
@@ -188,6 +328,8 @@ def blend_qb1_volume(
     frame['_dropback'] = frame['passing_attempts'] + frame['rushing_attempts']
 
     personal = frame.groupby('_identity_key', observed=True)[list(value_cols) + ['_dropback']].sum()
+    games = frame.groupby('_identity_key', observed=True)['week'].nunique()
+    personal2, games2 = _prior2_personal(prior2_history, value_cols)
     qualified = personal[personal['_dropback'] >= QB_LEAGUE_QUALIFY_DROPBACKS]
     league_rush_share = (float((qualified['rushing_attempts'] / qualified['_dropback']).mean())
                          if not qualified.empty else FALLBACK_LEAGUE_RUSH_SHARE)
@@ -208,7 +350,15 @@ def blend_qb1_volume(
         for dep in QB_BLEND_DEPENDENT_STATS['rushing_attempts']
     }
 
-    team_capacity = derive_team_dropback_capacity(frame, team_col='game_team')
+    # Team dropback capacity deliberately reads the RAW (unfiltered) history,
+    # not the eligibility-filtered `frame` used for personal/league rates
+    # above: a QB-split game's two rows (starter's partial line + reliever's
+    # partial line) still sum to the team's one real dropback total that
+    # game, same as any other team-game aggregate in this app.
+    team_source = prior_history_team if prior_history_team is not None else prior_history
+    if 'position' in team_source.columns:
+        team_source = team_source[team_source['position'].astype(str).str.upper().eq('QB')]
+    team_capacity = derive_team_dropback_capacity(team_source, team_col='game_team')
     capacity_by_team = (team_capacity.set_index('team')['team_dropback_capacity'].to_dict()
                         if not team_capacity.empty else {})
     league_dropback_mean = (float(team_capacity['team_dropback_capacity'].mean())
@@ -223,6 +373,16 @@ def blend_qb1_volume(
         if dropbacks <= 0:
             continue
         personal_rush_share = float(row['rushing_attempts'] / dropbacks)
+
+        row2 = personal2.loc[key] if key in personal2.index else None
+        dropbacks2 = float(row2['_dropback']) if row2 is not None else 0.0
+        prior2_weight = _prior2_component_weight(
+            float(games.get(key, 0.0)), float(games2.get(key, 0.0)), dropbacks2)
+        if prior2_weight > 0:
+            personal_rush_share_2024 = float(row2['rushing_attempts'] / dropbacks2)
+            personal_rush_share = _blend_component_toward_prior2(
+                personal_rush_share, personal_rush_share_2024, prior2_weight)
+
         w_self = dropbacks / (dropbacks + k)
         blended_share = float(np.clip(w_self * personal_rush_share + (1 - w_self) * league_rush_share, 0.0, 0.95))
 
@@ -238,21 +398,29 @@ def blend_qb1_volume(
         rates['passing_attempts'][i] = blended_pass_attempts
         rates['rushing_attempts'][i] = blended_rush_attempts
         if row['passing_attempts'] > 0:
-            w_eff = float(row['passing_attempts'] / (row['passing_attempts'] + QB_EFFICIENCY_BLEND_K))
+            w_eff = float(row['passing_attempts'] / (row['passing_attempts'] + QB_PASS_EFFICIENCY_BLEND_K))
             for dep in QB_BLEND_DEPENDENT_STATS['passing_attempts']:
                 personal_rate = float(row[dep] / row['passing_attempts'])
+                if prior2_weight > 0 and row2 is not None and row2['passing_attempts'] > 0:
+                    personal_rate_2024 = float(row2[dep] / row2['passing_attempts'])
+                    personal_rate = _blend_component_toward_prior2(personal_rate, personal_rate_2024, prior2_weight)
                 blended_rate = w_eff * personal_rate + (1 - w_eff) * league_pass_rate[dep]
                 rates[dep][i] = blended_rate * blended_pass_attempts
         if row['rushing_attempts'] > 0:
-            w_eff_rush = float(row['rushing_attempts'] / (row['rushing_attempts'] + QB_EFFICIENCY_BLEND_K))
+            w_eff_rush = float(row['rushing_attempts'] / (row['rushing_attempts'] + QB_RUSH_EFFICIENCY_BLEND_K))
             for dep in QB_BLEND_DEPENDENT_STATS['rushing_attempts']:
                 personal_rate = float(row[dep] / row['rushing_attempts'])
+                if prior2_weight > 0 and row2 is not None and row2['rushing_attempts'] > 0:
+                    personal_rate_2024 = float(row2[dep] / row2['rushing_attempts'])
+                    personal_rate = _blend_component_toward_prior2(personal_rate, personal_rate_2024, prior2_weight)
                 blended_rate = w_eff_rush * personal_rate + (1 - w_eff_rush) * league_rush_rate[dep]
                 rates[dep][i] = blended_rate * blended_rush_attempts
 
         audit['personal_dropbacks'][i] = dropbacks
         audit['personal_rush_share'][i] = personal_rush_share
         audit['league_rush_share'][i] = league_rush_share
+        audit['prior2_weight'][i] = prior2_weight
+        audit['personal_dropbacks_2024'][i] = dropbacks2 if row2 is not None else np.nan
         audit['evidence_weight'][i] = w_self
         audit['blended_rush_share'][i] = blended_share
         audit['team_dropback_capacity'][i] = team_dropbacks

@@ -77,7 +77,7 @@ def main():
             continue
         for week in weeks:
             proj, meta = build_weekly_projections(year, week, args.scoring, as_of_week=week,
-                                                   apply_injury=False, model_version='v2')
+                                                   apply_injury=False)
             actual = _actual_points(stats_df, name_col, week, scoring_col)
             if proj.empty or actual.empty:
                 continue

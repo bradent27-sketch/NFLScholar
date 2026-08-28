@@ -399,7 +399,8 @@ def _render_fantasypros_api_import(cfg):
     """
     from data.draft_sources import (
         get_fantasypros_api_key, save_fantasypros_api_key,
-        fantasypros_api_calls_this_month, fetch_fantasypros_players,
+        fantasypros_api_calls_today, fetch_fantasypros_players,
+        FANTASYPROS_API_DAILY_LIMIT,
     )
     st.caption(
         "**FantasyPros API** — one call pulls ECR *and* ADP for the whole player pool at "
@@ -426,8 +427,9 @@ def _render_fantasypros_api_import(cfg):
         if api_key and api_key != secret_key:
             save_fantasypros_api_key(api_key)
 
-    used = fantasypros_api_calls_this_month()
-    st.caption(f"{used} call{'s' if used != 1 else ''} made this month.")
+    used_today = fantasypros_api_calls_today()
+    st.caption(f"{used_today} call{'s' if used_today != 1 else ''} made today "
+              f"(this account's real cap is {FANTASYPROS_API_DAILY_LIMIT}/day, not the free tier's 50/month).")
 
     fetch = st.button("📡 Fetch ECR + ADP from FantasyPros API", key="dhq_fp_api_fetch",
                       disabled=not api_key)

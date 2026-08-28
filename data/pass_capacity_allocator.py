@@ -220,6 +220,8 @@ def apply_pass_capacity_conservation(
     league_target_ratio = float(team_capacity.attrs.get('target_per_attempt', FALLBACK_TARGET_PER_ATTEMPT))
     rb_share_by_team, league_rb_share = derive_team_rb_catcher_share(prior_history, team_col=team_col)
 
+    player_detail: list[dict] = []
+
     def _fit_group(idx: pd.Index, group_capacity: float, group_tier: int) -> tuple[pd.Series, dict]:
         """The trusted/tail fit, unchanged math, parameterized to run once
         per position group instead of once per team."""
@@ -264,6 +266,22 @@ def apply_pass_capacity_conservation(
             'unallocated': round(max(0.0, group_capacity - float(allocated.sum())), 2),
             'trusted_count': int(len(trusted_idx)), 'tail_count': int(len(tail_idx)), 'reason': reason,
         }
+        # Per-player room detail - who's actually in this team/group and
+        # what the conservation pass did to each of them, not just the
+        # team-level totals above. `team`/`group_label` are read from the
+        # enclosing loop's current iteration (see call site) - safe because
+        # _fit_group is always called and fully consumed within the same
+        # iteration, never stored for later.
+        tier_by_idx = {**{j: 'trusted' for j in trusted_idx}, **{j: 'tail' for j in tail_idx}}
+        for j in idx:
+            player_detail.append({
+                'team': team, 'position_group': group_label,
+                'player': out.loc[j, 'Player'] if 'Player' in out.columns else str(j),
+                'position': out.loc[j, 'Pos'] if 'Pos' in out.columns else '',
+                'tier': tier_by_idx.get(j, 'tail'),
+                'targets_before': round(float(current.loc[j]), 3),
+                'targets_after': round(float(allocated.loc[j]), 3),
+            })
         return allocated, ledger_row
 
     teams = out['Team'].astype(str)
@@ -324,4 +342,14 @@ def apply_pass_capacity_conservation(
             ledger.append({'team': team, 'position_group': group_label,
                           'capacity_source': capacity_source, **ledger_row})
 
-    return out, pd.DataFrame(ledger, columns=CAPACITY_LEDGER_COLUMNS)
+    ledger_df = pd.DataFrame(ledger, columns=CAPACITY_LEDGER_COLUMNS)
+    # Attached via .attrs rather than a third return value so every existing
+    # `out, ledger = apply_pass_capacity_conservation(...)` call site (the
+    # real caller in weekly_projections.py and every test in
+    # tests/test_pass_capacity_allocator.py) keeps working unchanged - same
+    # pattern derive_team_target_capacity already uses for target_per_attempt.
+    ledger_df.attrs['player_detail'] = pd.DataFrame(
+        player_detail,
+        columns=['team', 'position_group', 'player', 'position', 'tier',
+                 'targets_before', 'targets_after'])
+    return out, ledger_df

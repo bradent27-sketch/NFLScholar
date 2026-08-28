@@ -794,26 +794,40 @@ def ffa_adp_frame(ffa_df):
 # load_ecr_raw's docstring); this is FantasyPros' own endpoint, hit only
 # when the user asks for it.
 #
-# THE CALL BUDGET IS THE WHOLE DESIGN CONSTRAINT. 50/month is ~1.6/day, and
-# there's no quota header to read back on this tier - so nothing here is
-# auto-fetched on a rerun timer the way the DP mirror or Odds API are. One
-# endpoint, GET /nfl/players?ecr=included&show=pos_rank, returns ECR AND ADP
-# (both a standard-scoring number and a PPR-scoring number) for the ENTIRE
-# player pool in a SINGLE call - that's why it's the one used here rather
-# than /rankings or /consensus-rankings, which are paginated per POSITION
-# per FORMAT and would cost 6-12+ calls for the same refresh. This module
-# never calls the network on its own; fetch_fantasypros_players is only
-# ever invoked from a button click (ui.tabs.draft_hq), and the result is
-# dropped straight into the same session-held ECR_UPLOAD_KEY / ADP_UPLOAD_KEY
-# slots a pasted CSV export already uses - "a deliberate act by someone who
-# has just looked at the board" applies just as much to a button press as a
-# file upload, and reusing those slots means every downstream consumer
+# THE CALL BUDGET IS THE WHOLE DESIGN CONSTRAINT, and this app's account is
+# NOT on the free tier - confirmed by the user 2026-08-27: the real cap is
+# 500 CALLS/DAY, not FantasyPros' documented free-tier 50/month (a ~10x/day
+# difference from what this file assumed until now). Usage tracking below
+# was rebuilt around a daily window to match (was monthly, matching the free
+# tier's own reset cadence, which is now the wrong cadence to track against).
+# There's still no quota header to read back on any tier, so nothing here is
+# auto-fetched on a rerun timer the way the DP mirror or Odds API are - it's
+# a much bigger budget, not an unlimited one. One endpoint,
+# GET /nfl/players?ecr=included&show=pos_rank, returns ECR AND ADP (both a
+# standard-scoring number and a PPR-scoring number) for the ENTIRE player
+# pool in a SINGLE call - that's why it's the one used here rather than
+# /rankings or /consensus-rankings, which are paginated per POSITION per
+# FORMAT and would cost 6-12+ calls for the same refresh. This module never
+# calls the network on its own; fetch_fantasypros_players is only ever
+# invoked from a button click (ui.tabs.draft_hq), and the result is dropped
+# straight into the same session-held ECR_UPLOAD_KEY / ADP_UPLOAD_KEY slots a
+# pasted CSV export already uses - "a deliberate act by someone who has just
+# looked at the board" applies just as much to a button press as a file
+# upload, and reusing those slots means every downstream consumer
 # (build_ecr_board's caller, fetch_adp's 'Uploaded CSV' branch, the imports
-# status table) needed zero changes to pick this source up.
+# status table) needed zero changes to pick this source up. The per-player
+# news pull added 2026-08-27 (data.fantasypros_availability.
+# fetch_fantasypros_player_news) is the first consumer that relaxes the
+# button-only rule - see that module's own note on why the daily budget
+# comfortably supports loading news as a player is viewed.
 FANTASYPROS_API_BASE = "https://api.fantasypros.com/public/v2/json"
 FANTASYPROS_API_KEY_FILE = os.path.join('.streamlit', 'fantasypros_api_key.txt')
 FANTASYPROS_API_USAGE_FILE = os.path.join('.streamlit', 'fantasypros_api_usage.json')
-FANTASYPROS_API_MONTHLY_LIMIT = 50
+FANTASYPROS_API_MONTHLY_LIMIT = 50  # the FREE tier's documented cap - kept only as
+                                     # the fallback fantasypros_effective_limit() uses
+                                     # before any real response has confirmed a
+                                     # different tier; NOT this account's actual limit.
+FANTASYPROS_API_DAILY_LIMIT = 500   # this account's real, user-confirmed cap
 
 
 def load_saved_fantasypros_api_key():
@@ -891,30 +905,49 @@ def fantasypros_api_calls_this_month():
     """
     Calls actually made against the live API so far this calendar month.
 
-    The free tier resets on the calendar month, not a rolling 30 days, and
-    there is no response header reporting remaining quota on this tier - so
-    usage is tracked locally in a small JSON file, incremented only by
-    fetch_fantasypros_players right before it makes a real request. Reading
-    this never costs a call.
+    Kept for the free-tier fallback path (fantasypros_effective_limit() still
+    checks this against FANTASYPROS_API_MONTHLY_LIMIT before any response has
+    confirmed a different tier). This account's real cap is DAILY - see
+    fantasypros_api_calls_today() - not monthly; this number is no longer
+    what actually gates anything on a known non-free key.
     """
     import datetime
     month_key = datetime.date.today().strftime('%Y-%m')
     return int(_load_fantasypros_api_usage().get(month_key, 0))
 
 
+def fantasypros_api_calls_today():
+    """
+    Calls actually made against the live API so far today - the window this
+    account's real 500/day cap (FANTASYPROS_API_DAILY_LIMIT) resets on.
+    There is still no response header reporting remaining quota on any tier,
+    so usage is tracked locally in the same small JSON file
+    _record_fantasypros_api_call already writes to. Reading this never costs
+    a call.
+    """
+    import datetime
+    day_key = datetime.date.today().strftime('%Y-%m-%d')
+    return int(_load_fantasypros_api_usage().get(f'day:{day_key}', 0))
+
+
 def _record_fantasypros_api_call():
+    """Increments both the monthly key (free-tier fallback bookkeeping) and
+    the daily key (this account's real budget window) on every real request,
+    so whichever one a caller actually enforces stays accurate."""
     import datetime
     import json
     month_key = datetime.date.today().strftime('%Y-%m')
+    day_key = f"day:{datetime.date.today().strftime('%Y-%m-%d')}"
     usage = _load_fantasypros_api_usage()
     usage[month_key] = int(usage.get(month_key, 0)) + 1
+    usage[day_key] = int(usage.get(day_key, 0)) + 1
     try:
         os.makedirs('.streamlit', exist_ok=True)
         with open(FANTASYPROS_API_USAGE_FILE, 'w', encoding='utf-8') as fh:
             json.dump(usage, fh)
     except Exception:
         pass
-    return usage[month_key]
+    return usage[day_key]
 
 
 def _record_fantasypros_tier(tier):
@@ -944,22 +977,26 @@ def fantasypros_last_known_tier():
 
 def fantasypros_effective_limit():
     """
-    The call-budget cap the UI should actually enforce.
+    The call-budget cap the UI should actually enforce, and which usage
+    counter (daily vs monthly) it's measured against.
 
-    FANTASYPROS_API_MONTHLY_LIMIT (50) is the FREE tier's documented cap.
-    Once a real response has told us this key reports a non-free tier (e.g.
-    'premium' - confirmed live: a paid key returns the full player pool in
-    one call with no 10-row preview truncation), continuing to hard-block
-    fetches at 50/month would be enforcing a limit that key isn't actually
-    on, off nothing but an unverified guess. There's still no quota header
-    on this API to read a real paid-tier cap back from, so this doesn't
-    invent a specific higher number - it just stops blocking, and the call
-    counter above keeps counting so the usage caption stays honest either way.
+    Returns (limit, calls_so_far, window) - window is 'day' or 'month' so a
+    caller can print an accurate caption ("12/500 today" vs "3/50 this
+    month") instead of assuming one cadence.
+
+    FANTASYPROS_API_MONTHLY_LIMIT (50) is the FREE tier's documented cap,
+    kept only as the fallback before any real response has told us this key
+    is on a different tier. This account is confirmed non-free (user,
+    2026-08-27): the real cap is FANTASYPROS_API_DAILY_LIMIT (500/day), a
+    daily window, not monthly - continuing to check the free tier's monthly
+    50 would both use the wrong number AND the wrong reset cadence. There's
+    still no quota header on this API to read a cap back from live, so this
+    doesn't invent a number beyond what the user has actually confirmed.
     """
     tier = fantasypros_last_known_tier()
-    if tier and tier.lower() != 'free':
-        return None  # no enforced cap - unlimited so far as this app knows
-    return FANTASYPROS_API_MONTHLY_LIMIT
+    if tier and tier.lower() == 'free':
+        return FANTASYPROS_API_MONTHLY_LIMIT, fantasypros_api_calls_this_month(), 'month'
+    return FANTASYPROS_API_DAILY_LIMIT, fantasypros_api_calls_today(), 'day'
 
 
 def _rank_or_unranked(series):

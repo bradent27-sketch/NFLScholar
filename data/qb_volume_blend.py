@@ -102,8 +102,8 @@ QB_LEAGUE_QUALIFY_DROPBACKS = 30.0
 # backup-appearance rate.
 QB_PASS_EFFICIENCY_BLEND_K = 100.0
 
-# Carries of evidence for the same 50/50 weight, but for RUSHING efficiency
-# (yards/carry, rush TD rate) specifically. Split out from the passing
+# Carries of evidence for the same 50/50 weight, but for RUSHING YARDAGE
+# efficiency (yards/carry) specifically. Split out from the passing
 # constant on 2026-08-25, then lowered further the same day (20 -> 5) after
 # the user reviewed the board and said the model still wasn't trusting a
 # QB's own raw rushing numbers enough. A QB's per-carry rushing average is
@@ -116,13 +116,78 @@ QB_PASS_EFFICIENCY_BLEND_K = 100.0
 # carries) still shrinks meaningfully (~74% self-weight, not full trust in
 # 14 carries) since the evidence-weight formula is still in effect - it is
 # just a much lighter touch than before.
+#
+# Deliberately NOT used for rushing_tds - see QB_RUSH_TD_BLEND_K below. A
+# rush TD is a rare, lumpy binary event (yards/carry is continuous and far
+# less volatile at the same sample size); reusing this K for the TD-rate
+# dependent let a handful of carries set the rate almost entirely at face
+# value.
 QB_RUSH_EFFICIENCY_BLEND_K = 5.0
+
+# Carries of evidence for the rush-TD-RATE dependent specifically, split out
+# from QB_RUSH_EFFICIENCY_BLEND_K on 2026-08-25. Found on Malik Willis: his
+# filtered 2025 relief sample was ~12 eligible carries (one higher-volume,
+# zero-TD game got excluded as a QB split/relief game, leaving 2 TDs sitting
+# over the remaining ~12 carries - a 16.7% personal TD/carry rate, next to a
+# real starter's typical mid-single-digit-percent rate) - at the yardage K of
+# 5, w_self was already ~0.70, driving a 1.25 projected rushing TD off a
+# ~0.5-per-game raw history. The main pipeline's own STAT_K already encodes
+# this same asymmetry (TD stats get roughly 2x a yardage stat's shrinkage, in
+# GAMES; see its "scoring stats are lumpy" comment) but attempts and games
+# are different units, and a QB rushing TD is rarer per-opportunity than a
+# QB rushing YARD, so a flat 2x wasn't enough here - retuned directly against
+# the Willis case until its blended per-game rate landed back near his real
+# ~0.5/game history (K=40 => ~0.57 pre-matchup, vs. K=5's 1.0). A full
+# starting season of rushing (100+ carries) still lands close to the QB's own
+# rate; a single-digit-carry sample is now actually treated as the thin
+# evidence it is.
+QB_RUSH_TD_BLEND_K = 40.0
 
 # Used only when a team has no prior-season passing history at all (an
 # expansion scenario, never observed in practice) - an explicit, documented
 # last resort rather than a silent zero.
 FALLBACK_LEAGUE_RUSH_SHARE = 0.12
 FALLBACK_TEAM_DROPBACKS = 34.0
+
+# Dropback-equivalents of evidence for a 50/50 weight between the new team's
+# OWN prior-season total dropback capacity and the incoming QB1's OWN
+# established per-game dropback rate. Added 2026-08-25: VOLUME was the one
+# component of this whole blend that never got the evidence-weighted
+# personal correction STYLE/EFFICIENCY already have - it was 100% team
+# history, 0% the player, no matter how much of a proven workload he
+# personally carries. That is exactly backwards for a QB1 who changes teams
+# via free agency/trade WITH a substantial track record of his own: Kyler
+# Murray joining Minnesota for 2026 off a real 190-dropback/5-game 2025
+# Arizona sample (38.0/game, a full-starter workload) was still being
+# projected off Minnesota's OWN 2025 team dropback total alone (31.6/game -
+# low, from that team's prior bad/young QB play), discarding his own
+# established volume entirely. Per the user's own diagnosis: "minnesota had
+# severely low passing volume last season because they started young bad
+# quarterbacks...volume is being mixed with Kyler Murray's volume." A team's
+# total dropbacks/game is still real signal (pace, game script, opponent
+# quality aren't the QB's doing), so this blends rather than replaces - just
+# no longer ignores a QB1's own credible sample the way the pre-fix version
+# did. Deliberately a bit more conservative (higher K, more team weight at
+# the same sample size) than QB_STYLE_BLEND_K's K=10: overall play volume is
+# more genuinely a shared team/QB property than which of his own dropbacks
+# a QB chooses to run rather than throw.
+QB_VOLUME_BLEND_K = 60.0
+
+# A hard floor, not just a soft evidence weight: a QB1's own per-game
+# dropback rate must itself look like real starter usage before it is
+# trusted for the volume blend above. Raw dropback COUNT alone cannot tell
+# apart Kyler Murray's real case (190 dropbacks over 5 games he clearly
+# started, 38.0/game) from a thin backup's relief cameos (this module's own
+# Malik Willis test fixture: 56 dropbacks over 4 games, but only 14.0/game -
+# a plainly sub-starter workload) - the two samples are only ~3x apart in
+# raw count despite meaning opposite things, so no single QB_VOLUME_BLEND_K
+# can correctly weight both off count alone (verified: the K needed to keep
+# the relief case near its team anchor left the real-starter case almost
+# unmoved, and vice versa). Below this rate, the sample simply is not
+# evidence of an established workload no matter how many such games exist,
+# so the volume blend does not apply at all (w_vol = 0, unchanged from
+# before this fix) - only the STYLE/EFFICIENCY blends above still see it.
+QB_VOLUME_STARTER_FLOOR_DROPBACKS_PER_GAME = 20.0
 
 # Two-season (2024) personal-style/efficiency blend, added 2026-08-24. Mirrors
 # weekly_projections.py's PRIOR2_BLEND_* constants (same values, kept as
@@ -305,6 +370,8 @@ def blend_qb1_volume(
         'blended_rush_share': np.full(n, np.nan), 'team_dropback_capacity': np.full(n, np.nan),
         'team_capacity_source': np.full(n, '', dtype=object),
         'prior2_weight': np.full(n, np.nan), 'personal_dropbacks_2024': np.full(n, np.nan),
+        'personal_dropback_rate': np.full(n, np.nan), 'volume_evidence_weight': np.full(n, np.nan),
+        'blended_team_dropback_capacity': np.full(n, np.nan),
     }
     qb1_mask = np.asarray(qb1_mask, dtype=bool)
     if not qb1_mask.any() or prior_history is None or prior_history.empty:
@@ -393,8 +460,20 @@ def blend_qb1_volume(
         else:
             capacity_source = 'prior-season team-game dropbacks'
 
-        blended_rush_attempts = team_dropbacks * blended_share
-        blended_pass_attempts = team_dropbacks * (1.0 - blended_share)
+        # Blend the new team's own dropback total toward this QB1's own
+        # established per-game workload, weighted by how much of his own
+        # evidence actually exists - see QB_VOLUME_BLEND_K's module comment.
+        # A thin backup-relief sample (few dropbacks) still lands almost
+        # entirely on the team number, same as before this fix; a real
+        # starter's sample (Murray's 190/5 games) now pulls the total volume
+        # toward what he has actually, personally been doing.
+        personal_dropback_rate = dropbacks / max(float(games.get(key, 0.0)), 1.0)
+        w_vol = (dropbacks / (dropbacks + QB_VOLUME_BLEND_K)
+                 if personal_dropback_rate >= QB_VOLUME_STARTER_FLOOR_DROPBACKS_PER_GAME else 0.0)
+        blended_team_dropbacks = w_vol * personal_dropback_rate + (1 - w_vol) * team_dropbacks
+
+        blended_rush_attempts = blended_team_dropbacks * blended_share
+        blended_pass_attempts = blended_team_dropbacks * (1.0 - blended_share)
         rates['passing_attempts'][i] = blended_pass_attempts
         rates['rushing_attempts'][i] = blended_rush_attempts
         if row['passing_attempts'] > 0:
@@ -407,8 +486,9 @@ def blend_qb1_volume(
                 blended_rate = w_eff * personal_rate + (1 - w_eff) * league_pass_rate[dep]
                 rates[dep][i] = blended_rate * blended_pass_attempts
         if row['rushing_attempts'] > 0:
-            w_eff_rush = float(row['rushing_attempts'] / (row['rushing_attempts'] + QB_RUSH_EFFICIENCY_BLEND_K))
+            rush_dep_k = {'rushing_yards': QB_RUSH_EFFICIENCY_BLEND_K, 'rushing_tds': QB_RUSH_TD_BLEND_K}
             for dep in QB_BLEND_DEPENDENT_STATS['rushing_attempts']:
+                w_eff_rush = float(row['rushing_attempts'] / (row['rushing_attempts'] + rush_dep_k[dep]))
                 personal_rate = float(row[dep] / row['rushing_attempts'])
                 if prior2_weight > 0 and row2 is not None and row2['rushing_attempts'] > 0:
                     personal_rate_2024 = float(row2[dep] / row2['rushing_attempts'])
@@ -425,5 +505,8 @@ def blend_qb1_volume(
         audit['blended_rush_share'][i] = blended_share
         audit['team_dropback_capacity'][i] = team_dropbacks
         audit['team_capacity_source'][i] = capacity_source
+        audit['personal_dropback_rate'][i] = personal_dropback_rate
+        audit['volume_evidence_weight'][i] = w_vol
+        audit['blended_team_dropback_capacity'][i] = blended_team_dropbacks
 
     return rates, audit

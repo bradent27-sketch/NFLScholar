@@ -311,3 +311,123 @@ def load_fantasypros_availability(year: int, week: int,
             'source': 'FantasyPros injury report',
         }
     return profiles, error
+
+
+# ---------------------------------------------------------------------------
+# PLAYER NEWS (added 2026-08-27, explicit request)
+#
+# Real field names below are from FantasyPros' own OpenAPI spec
+# (api.fantasypros.com/public/v2/docs, GET /{sport}/news), read live via a
+# browser 2026-08-27 - not a guess, same discipline as the injuries endpoint
+# above. Full response shape confirmed from that spec's own example:
+#
+#   {"sport": "NFL", "title": "...", "description": "...", "count": 25,
+#    "items": [{"id": 51970, "created": "2025-05-12 07:29:02",
+#               "created_formated": "Mon, May 12th 7:29am UTC",
+#               "author": "...", "player_id": 6880, "team_id": "IND",
+#               "title": "...", "sport_id": "NFL", "categories": [],
+#               "link": "https://...", "desc": "...", "impact": "..."}]}
+#
+# (note FantasyPros' own field is "created_formated", one t - not a typo on
+# this side, kept exactly as the API spells it so a raw response maps 1:1.)
+#
+# WHY A PER-PLAYER CALL, NOT ONE BULK PULL: /nfl/news has no way to ask for
+# "each player's own last 6" in one request - `limit` caps at 100 items
+# total, league-wide, sorted by recency. A single generic pull would surface
+# whichever handful of players are in the news RIGHT NOW and nothing at all
+# for most others, not 6 items for whoever's actually being viewed. `fpid=`
+# is the only way to guarantee a SPECIFIC player's own recent items, so this
+# is one call per player. That was a hard constraint on FantasyPros' free
+# tier (50/month, ~1.6/day - see data.draft_sources' own module comment) but
+# this account is confirmed non-free at 500/day (user, 2026-08-27), which
+# comfortably covers loading news as a player is actually viewed - see
+# _render_player_news in ui/tabs/rankings.py for where this auto-fires
+# (still cached per player per session, so revisiting the same player in one
+# sitting costs nothing further).
+FANTASYPROS_NEWS_DEFAULT_LIMIT = 6
+
+
+def fetch_fantasypros_player_news(api_key: str, fantasypros_player_id, limit: int = FANTASYPROS_NEWS_DEFAULT_LIMIT):
+    """Live pull from GET /nfl/news?fpid=<id>&limit=<n>&order_by=created.
+
+    Returns (news, error) where news is a list of dicts (newest first,
+    sorted defensively even though order_by=created should already do this -
+    see the module comment above for why trusting an unverified default
+    silently isn't this app's style) with keys: id, created, created_formatted,
+    author, title, desc, impact, link, categories. A player with zero recent
+    news is success, not an error - empty list, no error message, same
+    convention as fetch_fantasypros_injury_report's "a clean report is not a
+    failure" rule.
+    """
+    if not api_key:
+        return [], 'no API key set'
+    try:
+        fpid = int(fantasypros_player_id)
+    except (TypeError, ValueError):
+        return [], 'no FantasyPros player ID for this player'
+    _record_fantasypros_api_call()
+    try:
+        resp = requests.get(
+            f"{FANTASYPROS_API_BASE}/nfl/news",
+            params={'fpid': fpid, 'limit': int(limit), 'order_by': 'created'},
+            headers={**_REQUEST_HEADERS, 'x-api-key': api_key},
+            timeout=25,
+        )
+    except Exception as exc:
+        return [], f"{type(exc).__name__}: {exc}"
+    if resp.status_code == 401:
+        return [], 'API key rejected (401).'
+    if resp.status_code == 403:
+        return [], "API key valid but not authorized for this endpoint (403)."
+    if resp.status_code == 429:
+        return [], 'rate limited (429).'
+    if resp.status_code != 200:
+        return [], f'HTTP {resp.status_code}: {resp.text[:200]}'
+    try:
+        items = resp.json().get('items', [])
+    except Exception as exc:
+        return [], f'parse failed: {exc}'
+    news = [{
+        'id': it.get('id'),
+        'created': it.get('created', '') or '',
+        'created_formatted': it.get('created_formated', '') or '',
+        'author': it.get('author', '') or '',
+        'title': it.get('title', '') or '',
+        'desc': it.get('desc', '') or '',
+        'impact': it.get('impact', '') or '',
+        'link': it.get('link', '') or '',
+        'categories': it.get('categories') or [],
+    } for it in items]
+    news.sort(key=lambda n: n['created'], reverse=True)
+    return news[:limit], None
+
+
+def resolve_fantasypros_player_id(player_name: str, id_map_df):
+    """Match this app's player display name to a FantasyPros numeric
+    player_id via the DynastyProcess crosswalk
+    (data.draft_sources.load_player_id_map, its own 'fantasypros_id'
+    column) - same two-tier exact-then-loose matching as every other
+    cross-source name join in this app (data.utils.clean_name_exact /
+    clean_name_for_merge), so a suffix mismatch ("Michael Pittman" vs
+    "Michael Pittman Jr.") falls back the same way it does everywhere else
+    rather than silently failing to match. Returns None (not a guess) when
+    no confident match exists.
+    """
+    if id_map_df is None or id_map_df.empty or 'fantasypros_id' not in id_map_df.columns:
+        return None
+    name_col = 'name' if 'name' in id_map_df.columns else None
+    if name_col is None or not player_name:
+        return None
+    from data.utils import clean_name_exact, clean_name_for_merge
+
+    key = clean_name_exact(pd.Series([player_name])).iloc[0]
+    exact_keys = clean_name_exact(id_map_df[name_col])
+    match = id_map_df[exact_keys == key]
+    if match.empty:
+        loose_key = clean_name_for_merge(pd.Series([player_name])).iloc[0]
+        loose_keys = clean_name_for_merge(id_map_df[name_col])
+        match = id_map_df[loose_keys == loose_key]
+    if match.empty:
+        return None
+    fpid = pd.to_numeric(match['fantasypros_id'].iloc[0], errors='coerce')
+    return int(fpid) if pd.notna(fpid) else None

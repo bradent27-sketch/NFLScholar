@@ -499,6 +499,67 @@ the result above — if a real cause is found and fixed, re-measure before
 promoting it anywhere; if the re-look just confirms the rejection, pull it
 back out of `V2_EXPERIMENTAL_FEATURES` too.
 
+**Update, 2026-08-26:** two changes, both per explicit request, neither yet
+re-measured against `scripts/validate_weekly_projections.py`.
+
+First, `v2_pff_alignment_matchup` was folded into `DEFAULT_FEATURES` when the
+separate V1/V2 toggle was retired (see that commit) — it now ships live, not
+experimental, despite the measured loss above.
+
+Second, the mechanism itself was redesigned the same day, for two stated
+reasons: (a) it was "normalizing too aggressively back to league average"
+for a model that should be confident in its reads, and (b) multiplying an
+alignment residual on top of the broad role/defense matchup was two
+independent opinions of the same WR/TE matchup stacked together —
+redundant. Fix: `alignment_defense_residual_multiplier` (in
+`data/pff_alignment.py`) no longer divides by a position-normal alignment
+mix, and no longer applies a second confidence-based shrink toward 1.0 on
+top of each alignment's own sample-size shrinkage — see that function's own
+docstring. And in `data/weekly_projections.py`, its output now REPLACES the
+broad matchup multiplier for a WR/TE stat with available alignment evidence,
+rather than multiplying alongside it. Separately, the 2024 weekly-grain PFF
+archive (`pff_imports/2024/weekly/`) — the "more seasons of evidence" fix
+the original rejection's own "likely cause" pointed at — is now present and
+loaded (previously excluded even at cold start; see
+`ALIGNMENT_PRIOR2_MAX_WEIGHT`'s own comment).
+
+The A/B numbers above describe the OLD incremental design measured against
+2025-only evidence. They do not describe current behavior. Re-run the
+backtest before drawing any conclusion about this component's accuracy —
+in either direction.
+
+**Update, 2026-08-26, same day, re-measured:** paired A/B via
+`scripts/eval_weekly_model.py`, isolating exactly `v2_pff_alignment_matchup`
+(`DEFAULT_FEATURES` with vs. without that one flag — every other component
+held identical), 2025 weeks 2-18, same window as the original measurement
+above.
+
+```
+                                          MAE       rank-corr   weeks won
+WR (whole pool)                        -0.001        -0.001       8 / 17
+TE (whole pool)                        -0.018        +0.000       8 / 17
+START-WR (startable, decision pool)    -0.069        +0.024      11 / 17
+START-TE (startable, decision pool)    +0.025        +0.002       8 / 17
+```
+(Sign convention here: negative MAE / positive rank-corr = alignment wins.
+"weeks won" = weeks alignment's own MAE beat the without-alignment variant's.)
+
+START-WR — the scope the original 2026-08-24 rejection failed worst on after
+whole-pool WR's misleading near-zero "win" — reverses outright: -0.069 MAE,
++0.024 rank-corr, winning 11 of 17 weeks. START-TE moves the other way, a
+small MAE loss (+0.025) though its rank-corr still edges in alignment's favor
+(+0.002) — a much smaller and more ambiguous effect than the old design's
++0.082 MAE / 4-13 losing weeks on the same scope. Whole-pool WR/TE are
+essentially a wash either way, consistent with those pools being bench-heavy
+and easy to rank regardless of matchup detail. QB/RB are unaffected, as
+expected (alignment only ever touches WR/TE targets/receptions/receiving_yards).
+
+Kept ON in `DEFAULT_FEATURES` either way, per explicit instruction: "if it
+doesn't pass don't just remove it, just report the statistics." This is not
+a pass/fail gate — these are the current honest numbers, not a claim the
+component is settled. Re-run this A/B again after any future change to
+`alignment_defense_residual_multiplier` or its inputs.
+
 ## Backtest — one honest pass, not an iterated one
 
 `scripts/validate_weekly_projections.py`. Every week in 2025 weeks 5–17,

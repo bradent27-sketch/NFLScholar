@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from data.weekly_projections import build_weekly_projections, resolve_model_features  # noqa: E402
+from data.weekly_projections import build_weekly_projections  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
 
 pd.set_option('display.width', 200)
@@ -153,16 +153,14 @@ def team_conservation(result, year, meta=None):
     return out, league_row
 
 
-def run_one(year, week, as_of_week, model_version, apply_injury):
-    feats = resolve_model_features(model_version)
+def run_one(year, week, as_of_week, apply_injury):
     result, meta = build_weekly_projections(
-        year, week, as_of_week=as_of_week, apply_injury=apply_injury,
-        model_version=model_version)
+        year, week, as_of_week=as_of_week, apply_injury=apply_injury)
     if result is None or result.empty:
-        print(f'  {year} week {week} ({model_version}): EMPTY BOARD - {meta.get("reason")}')
+        print(f'  {year} week {week}: EMPTY BOARD - {meta.get("reason")}')
         return None
     per_team, league_row = team_conservation(result, year, meta)
-    print(f'\n=== {year} week {week} (as-of {as_of_week}), model={model_version}, '
+    print(f'\n=== {year} week {week} (as-of {as_of_week}), '
          f'cold_start={meta.get("cold_start", "?")} ===')
     print(f'  players: {len(result)}, teams: {result["Team"].nunique()}')
     unresolved = league_row.pop('_unresolved_qb1_teams', [])
@@ -176,7 +174,7 @@ def run_one(year, week, as_of_week, model_version, apply_injury):
     worst = per_team.sort_values(per_team.columns[0], ascending=False).head(5)
     print('  worst 5 teams (targets/attempts):')
     print(worst.to_string(float_format=lambda x: f'{x:6.2f}'))
-    return {'year': year, 'week': week, 'model_version': model_version,
+    return {'year': year, 'week': week,
            'league': league_row, 'per_team': per_team}
 
 
@@ -187,7 +185,6 @@ def main():
     parser.add_argument('--as-of-week', type=int, default=None)
     parser.add_argument('--years', type=str, default=None, help='comma-separated, paired with --weeks')
     parser.add_argument('--weeks', type=str, default=None, help='comma-separated, paired with --years')
-    parser.add_argument('--model-version', type=str, default='v2', choices=['v1', 'v2'])
     parser.add_argument('--apply-injury', action='store_true', default=False)
     args = parser.parse_args()
 
@@ -209,7 +206,7 @@ def main():
     results = []
     for year, week in runs:
         as_of = args.as_of_week if args.as_of_week is not None else week
-        results.append(run_one(year, week, as_of, args.model_version, args.apply_injury))
+        results.append(run_one(year, week, as_of, args.apply_injury))
     return results
 
 

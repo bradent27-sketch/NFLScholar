@@ -35,6 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+import functools
 import hashlib
 import re
 
@@ -59,6 +60,16 @@ ALIGNMENT_CONFIDENCE_HALF_WEIGHT = 60.0
 ALIGNMENT_DEFENSE_SHRINKAGE_GAMES = 4.0
 ALIGNMENT_DEFENSE_RAW_RATIO_CLIP = (0.50, 1.75)
 ALIGNMENT_DEFENSE_RESIDUAL_CLIP = (0.90, 1.10)
+# Final safety clip for alignment_defense_residual_multiplier's own
+# candidate_multiplier, added 2026-08-26 when that function stopped being an
+# incremental nudge on top of the broad role/defense matchup (see its own
+# docstring) and started being weekly_projections.py's FULL WR/TE targets/
+# receptions/receiving_yards matchup multiplier. ALIGNMENT_DEFENSE_RESIDUAL_
+# CLIP stays narrow and is now used by scheme_defense_residual_multiplier
+# only (still an incremental, unscored candidate there - unaffected by this
+# change); a full replacement multiplier needs the same wider band the broad
+# matchup it replaces already used (MATCHUP_CLIP in weekly_projections.py).
+ALIGNMENT_DEFENSE_MULTIPLIER_CLIP = (0.75, 1.30)
 ALIGNMENT_DEFENSE_EVENT_HALF_WEIGHT = 20.0
 ALIGNMENT_DEFENSE_STATS = ("targets", "receptions", "yards", "touchdowns")
 ALIGNMENT_DEFENSE_SUPPORTED_POSITIONS = {"WR", "TE"}
@@ -634,6 +645,7 @@ def _name_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", _clean_text(value).lower())
 
 
+@functools.lru_cache(maxsize=4096)
 def _team_key(value: Any) -> str:
     return re.sub(r"[^A-Z0-9]", "", _clean_text(value).upper())
 
@@ -653,10 +665,13 @@ _TEAM_CODE_ALIASES = {
 }
 
 
+@functools.lru_cache(maxsize=4096)
 def _canonical_team_key(value: Any) -> str:
-    return _TEAM_CODE_ALIASES.get(_team_key(value), _team_key(value))
+    key = _team_key(value)
+    return _TEAM_CODE_ALIASES.get(key, key)
 
 
+@functools.lru_cache(maxsize=4096)
 def _normalise_alignment(value: Any) -> str:
     raw = _clean_text(value).lower().replace("-", "_").replace(" ", "_")
     if raw in {"slot", "inside"}:
@@ -677,6 +692,7 @@ def _normalise_alignment(value: Any) -> str:
     return raw
 
 
+@functools.lru_cache(maxsize=4096)
 def _normalise_alignment_stat(value: Any) -> str:
     raw = _clean_text(value).lower().replace("-", "_").replace(" ", "_")
     aliases = {
@@ -695,6 +711,7 @@ def _normalise_alignment_stat(value: Any) -> str:
     return aliases.get(raw, raw)
 
 
+@functools.lru_cache(maxsize=4096)
 def _normalise_position(value: Any) -> str:
     raw = _clean_text(value).upper()
     return _PFF_POSITION_MAP.get(raw, raw)
@@ -1716,6 +1733,26 @@ def _prepare_alignment_team_games(
     # export should not quietly understate a team game just because one row
     # lacks an event field.
     for stat in ALIGNMENT_DEFENSE_STATS:
+        if stat == "yards":
+            # SIGNED, unlike targets/receptions/touchdowns: a reception
+            # behind the line of scrimmage (a stuffed screen, a tackle for
+            # loss) is a real, legitimate outcome, not bad data. Neither the
+            # nonnegative floor below nor the slot<=total "impossible"
+            # ordering check are valid invariants once yards can go negative
+            # - both were silently NaNing out that one player-row and, via
+            # the all-or-nothing completeness check further down
+            # (valid_rows == player_rows), failing the WHOLE team-game's
+            # slot-yards-allowed event over a single legitimate negative
+            # game. Confirmed real: TB 2025 Week 1 vs ATL and Week 11 vs BUF
+            # both lost their slot receiving-yards-allowed number to exactly
+            # this. Only require both numbers to be present.
+            total = _numeric_column(players, stat)
+            slot = _numeric_column(players, f"slot_{stat}")
+            valid = total.notna() & slot.notna()
+            players[f"_{stat}_slot"] = slot.where(valid)
+            players[f"_{stat}_non_slot"] = (total - slot).where(valid)
+            players[f"_{stat}_valid"] = valid
+            continue
         total = _nonnegative_numeric(players, stat)
         slot = _nonnegative_numeric(players, f"slot_{stat}")
         valid = total.notna() & slot.notna() & slot.le(total + 1e-8)
@@ -1859,6 +1896,22 @@ def _attach_offense_leave_one_out_baselines(team_games: pd.DataFrame) -> pd.Data
     only with the same offense/position/alignment/stat in *other* archived
     weeks.  If no comparison exists, it is deliberately neutral instead of
     borrowing a completed-season value or a defender-level report.
+
+    Vectorized (2026-08-26): the original computed this with a per-row
+    `group.loc[group["source_week"].ne(row["source_week"])]` rescan inside a
+    double loop - O(group size squared) per (offense_team, position,
+    alignment, stat) group, profiled at ~60s of a ~242s cold Week 1 build.
+    Every row sharing a source_week gets an IDENTICAL leave-one-out result
+    (it only ever depended on `row['source_week']`, never the specific row),
+    so this is exactly a group-sum-minus-own-week transform: sum/count the
+    whole group once, sum/count each week once, subtract. `others_weeks`
+    (the exact `others['source_week'].nunique()` the loop computed) is
+    always `group's distinct week count - 1`, since a row's own week is
+    always present in its group with count >= 1 (the row itself) and gets
+    fully removed. Values, grouping, and the neutral/no-comparison default
+    for rows outside the day-one `valid` filter are otherwise unchanged -
+    see tests/test_pff_alignment.py for the fixtures this must keep
+    matching exactly.
     """
     out = team_games.copy()
     out["_expected_value"] = float("nan")
@@ -1869,21 +1922,32 @@ def _attach_offense_leave_one_out_baselines(team_games: pd.DataFrame) -> pd.Data
     available = out["event_available"].fillna(False).astype(bool)
     observed = pd.to_numeric(out["observed_value"], errors="coerce")
     valid = available & observed.notna() & observed.ge(0.0)
+    if not valid.any():
+        return out
     group_columns = ["offense_team", "position", "alignment", "stat"]
-    for _key, group in out.loc[valid].groupby(group_columns, sort=False, observed=True):
-        group = group.sort_values(["source_week", "defense_team"], kind="stable")
-        for index, row in group.iterrows():
-            # Excluding the current source week protects against an accidental
-            # duplicated row and prevents an offense's one game from being its
-            # own quality comparison.
-            others = group.loc[group["source_week"].ne(row["source_week"])]
-            values = pd.to_numeric(others["observed_value"], errors="coerce")
-            values = values[values.notna() & values.ge(0.0)]
-            if values.empty:
-                continue
-            out.at[index, "_expected_value"] = float(values.mean())
-            out.at[index, "_baseline_games"] = int(others["source_week"].nunique())
-            out.at[index, "_baseline_source"] = "offense_leave_one_out_time_valid"
+    valid_idx = out.index[valid]
+    subset = out.loc[valid_idx, group_columns + ["source_week"]].copy()
+    subset["_observed"] = observed.loc[valid_idx]
+
+    group_key = subset.groupby(group_columns, sort=False, observed=True)
+    group_sum = group_key["_observed"].transform("sum")
+    group_count = group_key["_observed"].transform("count")
+    group_week_nunique = group_key["source_week"].transform("nunique")
+
+    week_key = subset.groupby(group_columns + ["source_week"], sort=False, observed=True)
+    week_sum = week_key["_observed"].transform("sum")
+    week_count = week_key["_observed"].transform("count")
+
+    others_sum = group_sum - week_sum
+    others_count = group_count - week_count
+    others_weeks = group_week_nunique - 1
+    has_comparison = (others_count > 0).to_numpy()
+
+    out.loc[valid_idx, "_expected_value"] = np.where(
+        has_comparison, (others_sum / others_count).to_numpy(), float("nan"))
+    out.loc[valid_idx, "_baseline_games"] = np.where(has_comparison, others_weeks.to_numpy(), 0)
+    out.loc[valid_idx, "_baseline_source"] = np.where(
+        has_comparison, "offense_leave_one_out_time_valid", "neutral_no_offense_comparison")
     return out
 
 
@@ -2217,6 +2281,41 @@ def load_weekly_alignment_defense_profiles(
     )
 
 
+# Single-slot, object-identity cache: `profiles` is built once per
+# build_weekly_projections call and then handed to
+# lookup_alignment_defense_profile up to ~2,700 times (up to 4 per player
+# per stat, from alignment_defense_residual_multiplier) against that exact
+# same DataFrame. The lookup used to `profiles.copy()` and re-normalize
+# every row of all four key columns on EVERY call - profiled at ~52s of a
+# ~242s cold Week 1 build, with the normalizer functions alone (_team_key/
+# _canonical_team_key) called >15 million times. Keyed by `is` identity
+# (not a content hash) and holding a strong reference to `profiles` itself
+# guards against a stale hit from an unrelated DataFrame reusing a GC'd
+# object's id() - a real risk with id()-keyed caches that a same-object
+# identity check avoids entirely. Building this index costs one pass over
+# `profiles` (there are only ever a few thousand rows), after which every
+# lookup is an O(1) dict access instead of an O(n) table scan.
+_ALIGNMENT_PROFILE_INDEX_CACHE: dict[str, Any] = {"profiles": None, "index": None}
+
+
+def _alignment_profile_index(profiles: pd.DataFrame) -> dict[tuple[str, str, str, str], list[dict[str, Any]]]:
+    cache = _ALIGNMENT_PROFILE_INDEX_CACHE
+    if cache["profiles"] is profiles:
+        return cache["index"]
+    index: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    keys = zip(
+        profiles["defense_team"].map(_canonical_team_key),
+        profiles["position"].map(_normalise_position),
+        profiles["alignment"].map(_normalise_alignment),
+        profiles["stat"].map(_normalise_alignment_stat),
+    )
+    for key, record in zip(keys, profiles.to_dict("records")):
+        index.setdefault(key, []).append(record)
+    cache["profiles"] = profiles
+    cache["index"] = index
+    return index
+
+
 def lookup_alignment_defense_profile(
     profiles: pd.DataFrame | None,
     *,
@@ -2225,7 +2324,11 @@ def lookup_alignment_defense_profile(
     alignment: Any,
     stat: Any,
 ) -> dict[str, Any]:
-    """Find exactly one defense evidence record or return a neutral fallback."""
+    """Find exactly one defense evidence record or return a neutral fallback.
+
+    Hot path - see _alignment_profile_index's comment for why this is
+    indexed once per `profiles` object rather than scanned per call.
+    """
     wanted = {
         "defense_team": _canonical_team_key(defense_team),
         "position": _normalise_position(position),
@@ -2237,18 +2340,10 @@ def lookup_alignment_defense_profile(
     required = set(wanted)
     if not required.issubset(profiles.columns):
         return neutral_alignment_defense_profile("Alignment-defense profile schema is unavailable", **wanted)
-    matches = profiles.copy()
-    for column, value in wanted.items():
-        normalizer = {
-            "defense_team": _canonical_team_key,
-            "position": _normalise_position,
-            "alignment": _normalise_alignment,
-            "stat": _normalise_alignment_stat,
-        }[column]
-        matches = matches[matches[column].map(normalizer).eq(value)]
+    matches = _alignment_profile_index(profiles).get(tuple(wanted.values()), [])
     if len(matches) == 1:
-        return matches.iloc[0].to_dict()
-    reason = "No matching alignment-defense profile" if matches.empty else "Ambiguous alignment-defense profile"
+        return dict(matches[0])
+    reason = "No matching alignment-defense profile" if not matches else "Ambiguous alignment-defense profile"
     return neutral_alignment_defense_profile(reason, **wanted)
 
 
@@ -2267,28 +2362,39 @@ def alignment_defense_residual_multiplier(
     player_wide_rate: Any = None,
     player_inline_rate: Any = None,
 ) -> dict[str, Any]:
-    """Preview a bounded alignment residual while always returning 1.0 to score.
+    """The player's own weighted allowed-by-alignment multiplier for one stat.
 
-    The broad weekly defense model already owns the overall positional
-    matchup.  A future experiment may use this helper's
-    ``candidate_multiplier`` as the *incremental* alignment effect:
+    REDESIGNED 2026-08-26 per explicit request: this used to compute an
+    INCREMENTAL residual against the position-normal alignment mix
+    (``player weighted factor / position-normal weighted factor``), then
+    shrink that residual toward 1.0 by a separate confidence term, clipped to
+    a narrow +/-10%, and get multiplied ON TOP OF the broad role/defense
+    matchup in weekly_projections.py - two independent opinions of the same
+    matchup stacked together. That normal-mix division and the extra
+    confidence shrink are BOTH removed now: this function's
+    ``candidate_multiplier`` is simply the player's own slot/wide/inline (or
+    slot/non-slot) shares weighted against each alignment's own
+    ``shrunk_allowed_ratio`` - already sample-size-shrunk toward neutral 1.0
+    per alignment (see ``aggregate_alignment_defense_profiles``'s
+    ``shrinkage_weight`` - naturally strong early in a season/archive when
+    ``comparison_games`` is low, weak once real evidence accumulates, which
+    is exactly the "trust it more once there's a real sample" behavior asked
+    for - no separate mechanism needed for that). The caller
+    (``weekly_projections.py``) now uses this as the FULL WR/TE targets/
+    receptions/receiving_yards matchup multiplier for a player/defense/stat
+    with available evidence, replacing rather than stacking on the broad
+    matchup - see ``ALIGNMENT_SCORING_STAT_MAP``'s application site there.
 
-    ``player weighted alignment factor / position-normal alignment factor``.
+    3-way slot/wide/inline blend (added 2026-08-24) when
+    ``player_wide_rate``/``player_inline_rate`` are supplied AND this defense
+    has candidate-available wide and inline evidence (see
+    ``_prepare_alignment_team_games`` - wide/inline defense evidence only
+    exists for team-games built from real reported wide_snaps/inline_snaps,
+    a stricter bar than slot/non-slot's rate-weight fallback). Falls back to
+    the original slot/non-slot blend whenever either caller argument is
+    omitted or that evidence is unavailable.
 
-    Added 2026-08-24: a real 3-way slot/wide/inline blend, not just slot vs.
-    everything else, when ``player_wide_rate``/``player_inline_rate`` are
-    supplied AND this defense has candidate-available wide and inline
-    evidence (see ``_prepare_alignment_team_games`` - wide/inline defense
-    evidence only exists for team-games built from real reported
-    wide_snaps/inline_snaps, a stricter bar than slot/non-slot's rate-weight
-    fallback). Falls back to the original slot/non-slot blend whenever
-    either caller argument is omitted or that evidence is unavailable, so an
-    existing 2-way caller is completely unaffected.
-
-    For now, ``multiplier`` is deliberately and unconditionally ``1.0``.
-    This gives the UI/decomposition a transparent preview without allowing an
-    unvalidated component to alter rankings.  Touchdown statistics and
-    unavailable/experimental data remain neutral even in the preview.
+    Touchdown statistics and unavailable/experimental data remain neutral.
     """
     normalized_position = _normalise_position(position)
     normalized_stat = _normalise_alignment_stat(stat)
@@ -2313,7 +2419,7 @@ def alignment_defense_residual_multiplier(
         "inline_profile": None,
         "raw_residual": None,
         "effect_weight": 0.0,
-        "residual_clip": ALIGNMENT_DEFENSE_RESIDUAL_CLIP,
+        "residual_clip": ALIGNMENT_DEFENSE_MULTIPLIER_CLIP,
     }
     if normalized_stat == "touchdowns":
         result["reason"] = "Touchdown alignment residuals are intentionally neutral."
@@ -2353,7 +2459,7 @@ def alignment_defense_residual_multiplier(
                 and 0.0 <= candidate_wide <= 1.0 and 0.0 <= candidate_inline <= 1.0):
             wide_rate, inline_rate = candidate_wide, candidate_inline
 
-    player_factor = normal_factor = None
+    player_factor = None
     confidence_terms: list[float] = []
     if wide_rate is not None and inline_rate is not None:
         wide_profile = lookup_alignment_defense_profile(
@@ -2370,63 +2476,49 @@ def alignment_defense_residual_multiplier(
                 slot_factor = float(slot_profile.get("shrunk_allowed_ratio"))
                 wide_factor = float(wide_profile.get("shrunk_allowed_ratio"))
                 inline_factor = float(inline_profile.get("shrunk_allowed_ratio"))
-                n_slot = float(slot_profile.get("position_normal_alignment_rate"))
-                n_wide = float(wide_profile.get("position_normal_alignment_rate"))
-                n_inline = float(inline_profile.get("position_normal_alignment_rate"))
             except (TypeError, ValueError):
-                slot_factor = wide_factor = inline_factor = n_slot = n_wide = n_inline = float("nan")
+                slot_factor = wide_factor = inline_factor = float("nan")
             player_total = slot_rate + wide_rate + inline_rate
-            normal_total = n_slot + n_wide + n_inline if not any(
-                pd.isna(v) for v in (n_slot, n_wide, n_inline)) else float("nan")
-            if (not any(pd.isna(v) for v in (slot_factor, wide_factor, inline_factor, n_slot, n_wide, n_inline))
-                    and player_total > 0.0 and normal_total > 0.0):
+            if (not any(pd.isna(v) for v in (slot_factor, wide_factor, inline_factor)) and player_total > 0.0):
                 p_slot, p_wide, p_inline = slot_rate / player_total, wide_rate / player_total, inline_rate / player_total
-                n_slot, n_wide, n_inline = n_slot / normal_total, n_wide / normal_total, n_inline / normal_total
                 player_factor = p_slot * slot_factor + p_wide * wide_factor + p_inline * inline_factor
-                normal_factor = n_slot * slot_factor + n_wide * wide_factor + n_inline * inline_factor
                 confidence_terms = [_confidence_of(slot_profile), _confidence_of(wide_profile), _confidence_of(inline_profile)]
                 result["blend_mode"] = "slot_wide_inline"
                 result["player_wide_rate"] = wide_rate
                 result["player_inline_rate"] = inline_rate
-                result["position_normal_slot_rate"] = n_slot
 
     if player_factor is None:
         # Fall back to the original 2-way slot/non-slot blend.
         if not (slot_profile.get("candidate_available") and non_slot_profile.get("candidate_available")):
             result["reason"] = "Slot/non-slot comparison evidence is unavailable; alignment residual remains neutral."
             return result
-        normal_slot = slot_profile.get("position_normal_slot_rate")
-        if normal_slot is None:
-            normal_slot = non_slot_profile.get("position_normal_slot_rate")
         try:
-            normal_slot = float(normal_slot)
             slot_factor = float(slot_profile.get("shrunk_allowed_ratio"))
             non_slot_factor = float(non_slot_profile.get("shrunk_allowed_ratio"))
         except (TypeError, ValueError):
             result["reason"] = "Alignment-defense evidence is incomplete; residual remains neutral."
             return result
-        if any(pd.isna(value) for value in (normal_slot, slot_factor, non_slot_factor)) or not 0.0 <= normal_slot <= 1.0:
+        if any(pd.isna(value) for value in (slot_factor, non_slot_factor)):
             result["reason"] = "Alignment-defense evidence is invalid; residual remains neutral."
             return result
         player_factor = slot_rate * slot_factor + (1.0 - slot_rate) * non_slot_factor
-        normal_factor = normal_slot * slot_factor + (1.0 - normal_slot) * non_slot_factor
         confidence_terms = [_confidence_of(slot_profile), _confidence_of(non_slot_profile)]
-        result["position_normal_slot_rate"] = normal_slot
 
-    if normal_factor is None or normal_factor <= 0.0:
-        result["reason"] = "Position-normal alignment factor is non-positive; residual remains neutral."
-        return result
-    raw_residual = player_factor / normal_factor
+    # effect_weight is now purely informational (the weakest per-alignment
+    # confidence feeding this blend) - it no longer shrinks the multiplier
+    # toward 1.0 itself. Each shrunk_allowed_ratio already carries its own
+    # sample-size shrinkage, and stacking a second confidence-based pull on
+    # top of that was exactly the "too aggressively normalized back to
+    # average" behavior this redesign removes.
     effect_weight = min(*(max(term, 0.0) for term in confidence_terms), 1.0) if confidence_terms else 0.0
-    candidate = 1.0 + effect_weight * (raw_residual - 1.0)
-    candidate = float(min(max(candidate, ALIGNMENT_DEFENSE_RESIDUAL_CLIP[0]), ALIGNMENT_DEFENSE_RESIDUAL_CLIP[1]))
+    candidate = float(min(max(player_factor, ALIGNMENT_DEFENSE_MULTIPLIER_CLIP[0]), ALIGNMENT_DEFENSE_MULTIPLIER_CLIP[1]))
     result.update({
         "candidate_multiplier": candidate,
         "candidate_available": True,
-        "reason": ("Candidate 3-way slot/wide/inline alignment residual preview only; no scoring multiplier is active."
+        "reason": ("3-way slot/wide/inline allowed-by-alignment multiplier, weighted by this player's own mix."
                    if result["blend_mode"] == "slot_wide_inline" else
-                   "Candidate alignment residual preview only; no scoring multiplier is active."),
-        "raw_residual": float(raw_residual),
+                   "Slot/non-slot allowed-by-alignment multiplier, weighted by this player's own mix."),
+        "raw_residual": float(player_factor),
         "effect_weight": effect_weight,
     })
     return result
@@ -2995,10 +3087,23 @@ def scheme_defense_residual_multiplier(
 ) -> dict[str, Any]:
     """Preview a bounded man/zone residual while always returning 1.0 to score.
 
-    Exact structural mirror of alignment_defense_residual_multiplier: the
-    broad weekly defense model already owns the overall positional matchup;
-    ``multiplier`` stays unconditionally 1.0, ``candidate_multiplier`` is a
-    transparent preview only.
+    REDESIGNED 2026-08-27, before this component's first-ever backtest: the
+    original version (built after alignment_defense_residual_multiplier's
+    2026-08-24 design but never updated) divided the player's factor by a
+    position-normal man-rate baseline, then shrank that residual toward 1.0
+    by a separate confidence term - the exact two mechanisms identified as
+    noise sources in alignment's ORIGINAL design (see that function's own
+    2026-08-26 redesign note) and removed from it. This function inherited
+    both flaws on the old template without ever being measured. Fixed here
+    to match alignment's current shape exactly rather than backtesting a
+    known-bad design a second time: ``candidate_multiplier`` is simply the
+    player's own man/zone-weighted allowed-ratio, no division, no separate
+    shrink - sample-size trust already lives in ``shrunk_allowed_ratio``
+    (``aggregate_scheme_defense_profiles``'s own shrinkage_weight).
+
+    Still a preview only: ``multiplier`` stays unconditionally 1.0. Whether
+    ``candidate_multiplier`` reaches the score is a caller decision, gated on
+    the caller's own flag (see weekly_projections.py) - not decided here.
     """
     normalized_position = _normalise_position(position)
     normalized_stat = _normalise_alignment_stat(stat)
@@ -3013,7 +3118,6 @@ def scheme_defense_residual_multiplier(
         "position": normalized_position,
         "stat": normalized_stat,
         "player_man_rate": None,
-        "position_normal_man_rate": None,
         "man_profile": None,
         "zone_profile": None,
         "raw_residual": None,
@@ -3044,38 +3148,32 @@ def scheme_defense_residual_multiplier(
     if not (man_profile.get("candidate_available") and zone_profile.get("candidate_available")):
         result["reason"] = "Man/zone comparison evidence is unavailable; scheme residual remains neutral."
         return result
-    normal_man = man_profile.get("position_normal_man_rate")
-    if normal_man is None:
-        normal_man = zone_profile.get("position_normal_man_rate")
     try:
-        normal_man = float(normal_man)
         man_factor = float(man_profile.get("shrunk_allowed_ratio"))
         zone_factor = float(zone_profile.get("shrunk_allowed_ratio"))
     except (TypeError, ValueError):
         result["reason"] = "Scheme-defense evidence is incomplete; residual remains neutral."
         return result
-    if any(pd.isna(value) for value in (normal_man, man_factor, zone_factor)) or not 0.0 <= normal_man <= 1.0:
+    if any(pd.isna(value) for value in (man_factor, zone_factor)):
         result["reason"] = "Scheme-defense evidence is invalid; residual remains neutral."
         return result
     player_factor = man_rate * man_factor + (1.0 - man_rate) * zone_factor
-    normal_factor = normal_man * man_factor + (1.0 - normal_man) * zone_factor
-    if normal_factor <= 0.0:
-        result["reason"] = "Position-normal scheme factor is non-positive; residual remains neutral."
-        return result
-    raw_residual = player_factor / normal_factor
+    # effect_weight is informational only (the weaker of the two per-scheme
+    # confidences) - it no longer shrinks the multiplier toward 1.0. Each
+    # shrunk_allowed_ratio already carries its own sample-size shrinkage;
+    # see this function's docstring for why a second confidence-based pull
+    # was removed rather than kept.
     man_confidence_value = pd.to_numeric(pd.Series([man_profile.get("scheme_confidence")]), errors="coerce").iloc[0]
     zone_confidence_value = pd.to_numeric(pd.Series([zone_profile.get("scheme_confidence")]), errors="coerce").iloc[0]
     man_confidence = 0.0 if pd.isna(man_confidence_value) else float(man_confidence_value)
     zone_confidence = 0.0 if pd.isna(zone_confidence_value) else float(zone_confidence_value)
     effect_weight = min(max(man_confidence, 0.0), max(zone_confidence, 0.0), 1.0)
-    candidate = 1.0 + effect_weight * (raw_residual - 1.0)
-    candidate = float(min(max(candidate, ALIGNMENT_DEFENSE_RESIDUAL_CLIP[0]), ALIGNMENT_DEFENSE_RESIDUAL_CLIP[1]))
+    candidate = float(min(max(player_factor, ALIGNMENT_DEFENSE_RESIDUAL_CLIP[0]), ALIGNMENT_DEFENSE_RESIDUAL_CLIP[1]))
     result.update({
         "candidate_multiplier": candidate,
         "candidate_available": True,
-        "reason": "Candidate scheme residual preview only; no scoring multiplier is active.",
-        "position_normal_man_rate": normal_man,
-        "raw_residual": float(raw_residual),
+        "reason": "Man/zone allowed-by-scheme multiplier, weighted by this player's own mix.",
+        "raw_residual": float(player_factor),
         "effect_weight": effect_weight,
     })
     return result
@@ -3318,8 +3416,19 @@ def load_season_alignment_prior(
 # QB_PRIOR2-style directional dampening): a rise or fall in slot/wide/inline
 # share carries no inherent "more fantasy value" direction to stay bullish
 # about the way QB rush share or a scoring rate does.
+#
+# MAX_WEIGHT lowered from 0.40 to 0.18 on 2026-08-26 per explicit request to
+# keep this whole grounding request inside a "roughly 10-20%" band - 0.40 was
+# too strong a pull toward 2024 for a thin-sample player. Also enabled at
+# cold start (see build_weekly_projections' prior2_alignment_profiles load,
+# no longer gated behind `not cold_start`): at Week 1, "current" here is the
+# prior season's OWN full total via load_season_alignment_prior, which is
+# already a large sample (e.g. 589 snaps for a full-time WR1), so
+# fraction_missing lands near 0 and the pull sits at BASE_WEIGHT (~10%) - a
+# light, sensible anchor, not the MAX_WEIGHT this formula reserves for a
+# genuinely thin in-season sample.
 ALIGNMENT_PRIOR2_BASE_WEIGHT = 0.10
-ALIGNMENT_PRIOR2_MAX_WEIGHT = 0.40
+ALIGNMENT_PRIOR2_MAX_WEIGHT = 0.18
 ALIGNMENT_PRIOR2_FULL_SAMPLE_WEIGHT = 250.0
 # A prior-year read this thin (a late-season call-up, a practice-squad
 # stint) is not a season to ground against - treated as no read at all.

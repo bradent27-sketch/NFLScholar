@@ -24,12 +24,14 @@ import streamlit as st
 
 from config import AVAILABLE_SEASONS_WITH_UPCOMING, TEAM_CONFIG
 from data.draft_board import DEFAULT_SCORING, tier_by_position
-from data.transforms import load_and_merge_data, build_recent_form_rank, build_form_series
+from data.transforms import (load_and_merge_data, build_recent_form_rank, build_form_series,
+                             score_projected_stats)
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
 from data.weekly_projections import build_weekly_projections
 from data.odds_weekly import weekly_props, weekly_market_projection
-from data.fantasypros_availability import canonical_status
+from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
+from data.availability_overrides import availability_fingerprint, AVAILABILITY_OVERRIDE_PATH
 from ui.charts import sparkline_data_uri
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
                         get_diverging_color, get_multiplier_color)
@@ -67,6 +69,32 @@ RECENT_FORM_GAMES = 5
 # hiding the full pool from anyone who wants it.
 _SHOW_N_OPTIONS = [25, 50, 100, 200, "All"]
 _PROJECTION_DETAIL_KEY = 'weekly_rank_projection_detail'
+_PLAYER_DETAIL_CACHE_KEY = 'weekly_rank_player_detail_cache'
+
+
+def _selected_player_detail(model_meta, detail_config, key):
+    """A player's decomposition detail, memoized in st.session_state for the
+    rest of THIS session - not just for the current build_weekly_projections
+    cache lifetime.
+
+    model_meta['explanations'] itself lives inside a @st.cache_data return
+    value, so Streamlit hands back a deep COPY of it on every cache hit (by
+    design, so callers can't mutate the canonical cached object) - a plain
+    dict lookup there is fresh work every rerun, it just happens to be cheap
+    today. Keying by (detail_config, key) here means a player already opened
+    once this session is a session_state dict lookup on every later rerun,
+    including after the underlying board itself gets rebuilt (TTL expiry, a
+    week/scoring/model switch and back, etc.) - explicit request: "once
+    loaded...it remains cached for the rest of the session".
+    """
+    cache = st.session_state.setdefault(_PLAYER_DETAIL_CACHE_KEY, {})
+    cache_key = (detail_config, key)
+    if cache_key in cache:
+        return cache[cache_key]
+    detail = model_meta.get('explanations', {}).get(key)
+    if detail is not None:
+        cache[cache_key] = detail
+    return detail
 
 
 def _render_distribution_chart(distribution, position_label):
@@ -212,16 +240,35 @@ def _render_decomposition_header(detail):
     else:
         st.caption("Defense matchup rank: not enough prior weeks of data yet to rank this opponent against this position.")
 
-    if detail.get('experimental'):
-        st.info("Experimental V2 run — this decomposition is auditable, but its components are not yet default-on.")
+
+_ALIGNMENT_MIX_STATS = (
+    ('targets', 'targets', 'Tgts'),
+    ('receptions', 'receptions', 'Rec'),
+    ('receiving_yards', 'yards', 'Rec Yds'),
+)
 
 
 def _render_alignment_mix(detail):
-    """Player slot/wide/inline alignment mix + the defense-allowed residual
-    that mix feeds - WR/TE only, and only when a PFF alignment archive is
-    actually loaded for this run. Added 2026-08-24 per an explicit request
-    that the data driving 'v2_pff_alignment_matchup' be visible here, not
-    just baked silently into 'Alignment residual' in the table below."""
+    """Player slot/wide/inline alignment mix + the worked calculation behind
+    the defense-allowed multiplier that mix produces - WR/TE only, and only
+    when a PFF alignment archive is actually loaded for this run.
+
+    ALWAYS VISIBLE (no expander) as of 2026-08-26, per explicit request -
+    this used to be collapsed by default. The table below shows, for each
+    alignment this player uses: his own per-game rate at that alignment
+    (his overall per-game rate for the stat, split by his own slot/wide/
+    inline share - NOT a separately measured per-alignment rate, since a
+    single-digit weekly target count per alignment would be noise; see
+    _alignment_efficiency's own docstring in data/pff_alignment.py for why
+    this app already withholds raw per-alignment efficiency below a minimum
+    sample), the defense's allowed-by-alignment multiplier for that
+    alignment, and the two multiplied together. The bottom row's multiplier
+    is the SHARE-WEIGHTED blend (by this player's own alignment mix, not a
+    plain average of the per-alignment multipliers) - the same number
+    'Defense multiplier' uses above when this replaces it - so the bottom
+    row's Combined value reconciles exactly with that stat's own after-
+    defense value in the main table.
+    """
     if detail.get('position') not in ('WR', 'TE'):
         return
     role = detail.get('role', {})
@@ -230,63 +277,178 @@ def _render_alignment_mix(detail):
     slot = role.get('slot_alignment_rate')
     wide = role.get('wide_alignment_rate')
     inline = role.get('inline_alignment_rate')
+    non_slot = role.get('non_slot_alignment_rate')
     if slot is None and wide is None and inline is None:
         return
-    with st.expander("Alignment mix (slot / wide / inline)", expanded=False):
-        parts = []
-        if slot is not None:
-            parts.append(f"Slot {slot:.0%}")
-        if wide is not None:
-            parts.append(f"Wide {wide:.0%}")
-        if inline is not None:
-            parts.append(f"Inline {inline:.0%}")
-        st.markdown(f"**Player mix:** {' · '.join(parts) if parts else 'unavailable'}")
-        weeks = role.get('source_week_count')
+    st.markdown("**Alignment mix (slot / wide / inline)**")
+    weeks = role.get('source_week_count')
+    st.caption(
+        f"Source: {role.get('source_kind', 'unknown')}, {weeks if weeks else 0} week(s) "
+        f"({role.get('source_weeks', '')}), confidence {role.get('alignment_confidence', 0.0):.2f}. "
+        f"{role.get('alignment_semantics', '')}."
+    )
+    blend_mode = role.get('alignment_defense_blend_mode', 'slot_non_slot')
+    if blend_mode == 'slot_wide_inline':
+        aligns = [('slot', 'Slot', slot), ('wide', 'Wide', wide), ('inline', 'Inline', inline)]
+    else:
+        aligns = [('slot', 'Slot', slot), ('non_slot', 'Non-slot', non_slot)]
+    rates = {key: (float(rate) if rate is not None and pd.notna(rate) else 0.0) for key, _, rate in aligns}
+    rate_total = sum(rates.values())
+    shares = ({key: (rates[key] / rate_total if rate_total > 0 else 0.0) for key, _, _ in aligns}
+              if rate_total > 0 else {key: 0.0 for key, _, _ in aligns})
+    if not role.get('alignment_defense_candidate_available'):
         st.caption(
-            f"Source: {role.get('source_kind', 'unknown')}, {weeks if weeks else 0} week(s) "
-            f"({role.get('source_weeks', '')}), confidence {role.get('alignment_confidence', 0.0):.2f}. "
-            f"{role.get('alignment_semantics', '')}."
+            "Defense-allowed-by-alignment residual is neutral (1.0×) for this matchup: "
+            f"{role.get('alignment_defense_reason') or 'insufficient comparison evidence.'}"
         )
-        blend_mode = role.get('alignment_defense_blend_mode', 'slot_non_slot')
-        blend_label = "slot / wide / inline (3-way)" if blend_mode == 'slot_wide_inline' else "slot / non-slot (2-way)"
-        st.markdown(f"**{detail.get('opponent', 'Defense')} allowed-by-alignment blend:** {blend_label}")
-        if role.get('alignment_defense_candidate_available'):
-            mult_cols = st.columns(3)
-            for col, (label, key) in zip(mult_cols, (
-                ('Targets', 'alignment_defense_targets_candidate_multiplier'),
-                ('Receptions', 'alignment_defense_receptions_candidate_multiplier'),
-                ('Yards', 'alignment_defense_yards_candidate_multiplier'),
-            )):
-                value = role.get(key)
-                col.metric(label, f"{value:.3f}×" if value is not None else "—")
-            st.caption(
-                "Candidate residual only - already folded into 'Defense multiplier' below when "
-                "'v2_pff_alignment_matchup' is active for this run, not a second independent adjustment."
-            )
-        else:
-            st.caption(
-                "Defense-allowed-by-alignment residual is neutral (1.0×) for this matchup: "
-                f"{role.get('alignment_defense_reason') or 'insufficient comparison evidence.'}"
-            )
+        return
+
+    player_label = detail.get('player', 'Player')
+    splits_col = f"{player_label}'s Splits"
+    table_rows = []
+    for key, row_label, rate in aligns:
+        row = {splits_col: f"{row_label} — {rate:.1%}" if rate is not None and pd.notna(rate) else f"{row_label} — —"}
+        table_rows.append(row)
+    totals_row = {splits_col: "Blend (all)"}
+
+    for stat, pff_stat, stat_label in _ALIGNMENT_MIX_STATS:
+        # NOTE: the underlying columns are named with pff_alignment.py's own
+        # stat vocabulary ('targets'/'receptions'/'yards'), not this app's
+        # ('receiving_yards') - use pff_stat for every role.get() lookup
+        # here, same fix as _render_defense_allowed_by_alignment's
+        # 2026-08-26 bug (found again while building this table: it's easy
+        # to repeat since 'targets'/'receptions' happen to be spelled the
+        # same in both vocabularies and only 'yards' differs).
+        blended_rate = detail.get('stats', {}).get(stat, {}).get('blended_rate')
+        blended_mult = role.get(f'alignment_defense_{pff_stat}_candidate_multiplier')
+        per_game_col = f'{stat_label} /Game'
+        mult_col = f'{stat_label} Allowed×'
+        combined_col = f'{stat_label} Combined'
+        stage_total = 0.0
+        combined_total = 0.0
+        combined_has_gap = False
+        for row, (key, row_label, _) in zip(table_rows, aligns):
+            ratio = role.get(f'alignment_defense_{pff_stat}_{key}_ratio')
+            per_game = (blended_rate * shares[key]) if blended_rate is not None else None
+            row[per_game_col] = _fmt_stat(stat, per_game)
+            row[mult_col] = f"{ratio:.3f}×" if ratio is not None and pd.notna(ratio) else '—'
+            if per_game is not None:
+                stage_total += per_game
+            if per_game is not None and ratio is not None and pd.notna(ratio):
+                combined = per_game * ratio
+                row[combined_col] = _fmt_stat(stat, combined)
+                combined_total += combined
+            else:
+                row[combined_col] = '—'
+                combined_has_gap = True
+        totals_row[per_game_col] = _fmt_stat(stat, blended_rate)
+        totals_row[mult_col] = f"{blended_mult:.3f}×" if blended_mult is not None else '—'
+        # The bottom row always uses the authoritative season-aggregate
+        # blend (blended_rate * blended_mult), not a re-sum of the per-row
+        # Combined cells above - those can individually show '—' (e.g. one
+        # alignment's own comparison evidence is thin) while the aggregate
+        # blend that actually scores the projection is still available.
+        totals_row[combined_col] = (
+            _fmt_stat(stat, blended_rate * blended_mult)
+            if blended_rate is not None and blended_mult is not None else '—')
+        # Added 2026-08-27 per explicit request: 'Combined' is the AFTER-
+        # DEFENSE checkpoint (Player Projection x Defense multiplier), the
+        # same stage the primary table's own 'After defense' column stops
+        # at - it is NOT the final projected value, since context (script/
+        # pace/availability/environment), pass-capacity, and vacancy all
+        # still apply downstream in the primary table. Comparing 'Combined'
+        # against that table's final 'Projected value' will look "slightly
+        # off" for a real, structural reason, not a bug - showing the actual
+        # final value alongside it here so that gap is visible rather than
+        # something the reader has to cross-reference another table to find.
+        final_val = detail.get('stats', {}).get(stat, {}).get('final_projection')
+        if final_val is None:
+            final_val = detail.get('stats', {}).get(stat, {}).get('projection')
+        final_col = f'{stat_label} Final proj'
+        totals_row[final_col] = _fmt_stat(stat, final_val) if final_val is not None else '—'
+        for row in table_rows:
+            row[final_col] = ''
+
+    table = pd.DataFrame(table_rows + [totals_row])
+    st.dataframe(table, hide_index=True, width="stretch", height=df_auto_height(len(table)))
+    st.caption(
+        "/Game = this player's own per-game projected rate for that stat, split by his own alignment "
+        "share (not a separately measured per-alignment rate). 'Allowed×' = the opponent's allowed-by-"
+        "alignment multiplier for that alignment. 'Combined' = the two multiplied. The bottom row's "
+        "multiplier is the blend weighted by this player's own alignment mix (not a plain average) - "
+        "REPLACES 'Defense multiplier' in the table above for this stat when active, not a second "
+        "adjustment on top of it. 'Combined' stops at that after-defense checkpoint, matching the primary "
+        "table's own 'After defense' stage exactly - it is deliberately NOT the final projected value shown "
+        "as 'Final proj' just after it, since context/capacity/vacancy adjustments still apply downstream."
+    )
 
 
 def _render_decomposition_primary_table(detail):
-    """The at-a-glance table: one row per projected stat, left-to-right
-    exactly stat -> projected value -> raw (season-blended) average ->
-    weighted (defense-adjusted) average -> defense multiplier -> context
-    multiplier -> vacancy delta - explicit request, replacing both the old
-    plain stat-line table and the old 'Projection path by stat' expander."""
+    """The at-a-glance table: one row per projected stat, left-to-right in
+    build order - Raw Average -> Season average (adj) -> Player Projection
+    -> [Weighted average, only in-season] -> Defense multiplier -> Context
+    multiplier -> [Team capacity Δ] -> Vacancy Δ -> Projected value - plus a
+    trailing "Fantasy points at this stage" row, inside this SAME table,
+    showing what the whole stat line was worth at each checkpoint above.
+
+    A WR/TE 'Defense multiplier' IS the alignment-specific number whenever
+    alignment evidence is available (see alignment_player_factor in
+    data/weekly_projections.py - it replaces the broad matchup outright, not
+    a separate factor multiplied alongside it) - a redundant "Alignment
+    residual" column that duplicated this same number was removed
+    2026-08-26. The always-visible "Alignment mix" section below this table
+    breaks it down by slot/wide/inline for whoever wants that detail.
+
+    RESTRUCTURED 2026-08-25 (second pass) per explicit request to walk the
+    columns in build order and fold the points readout into the table
+    itself rather than a second one underneath.
+
+    Raw Average = `raw_prior_rate` - this player's own plain per-game
+    history, no adjustment of any kind (see the caption below for exactly
+    which seasons/weights fed it). Season average (adj) = the SAME history
+    after removing each past game's own opponent's specific strength
+    (`defense_adjusted_prior_rate` - literally the average of the per-game
+    "Defense-adj" values the Deep Dive tab already shows) - about defenses
+    ALREADY PLAYED, not the upcoming one, so it is deliberately a different
+    number from 'Defense multiplier' further right. Player Projection =
+    `blended_rate`, that history after role/snap-share normalization and
+    (once real current-season games exist) blending with this season's own
+    rate - not yet adjusted for the upcoming matchup or game context.
+    'Weighted average' (`current_rate`) is only ever non-zero once real
+    current-season games exist, so it's hidden entirely at cold start
+    instead of printing a column of dashes."""
     stats = detail.get('stats', {})
     if not stats:
         st.caption("No projected stat line for this player.")
         return
     season_year = detail.get('season_year')
+    scoring_mode = detail.get('scoring_mode') or 'Full PPR'
+    has_current_season_data = any(
+        (values.get('current_games') or 0.0) > 0 for values in stats.values())
     rows = []
+    stage_totals = {stage: {} for stage in (
+        'raw_average', 'season_adj', 'player_projection', 'after_defense',
+        'after_context', 'after_capacity', 'after_vacancy', 'final')}
+    raw_average_notes = set()
+    prior2_weights = []
+    context_ingredients = None
     for stat, values in stats.items():
         context_mult = (
             values.get('script_multiplier', 1.0) * values.get('pace_multiplier', 1.0)
             * values.get('availability_multiplier', 1.0) * values.get('environment_multiplier', 1.0)
         )
+        if context_ingredients is None:
+            # Player/game-level, not per-stat - every stat's dict carries
+            # the same 4 numbers, so the first one seen is representative;
+            # feeds the standalone "thin" table right after this one.
+            context_ingredients = {
+                'script': float(values.get('script_multiplier', 1.0)),
+                'pace': float(values.get('pace_multiplier', 1.0)),
+                'availability': float(values.get('availability_multiplier', 1.0)),
+                'environment': float(values.get('environment_multiplier', 1.0)),
+                'combined': float(context_mult),
+            }
+        matchup_mult = float(values.get('matchup_multiplier', 1.0))
         cur_w, cur_games = values.get('current_weight'), values.get('current_games') or 0.0
         if cur_w is None:
             season_note = ''
@@ -295,6 +457,19 @@ def _render_decomposition_primary_table(detail):
         else:
             season_note = (f"{cur_w:.0%} {season_year} ({cur_games:.0f} gm) + {1 - cur_w:.0%} prior"
                           if season_year else f"{cur_w:.0%} this season")
+        if season_note:
+            raw_average_notes.add(season_note)
+        # Independent axis from season_note above - THAT note is current
+        # (2026) vs. prior (2025) season weight; this is how much of the
+        # "prior" share shown there is itself 2025 blended with 2024. Added
+        # 2026-08-25: without this, "100% 2025 season" reads as "0% 2024",
+        # when 2024 is very likely blended in underneath it (see
+        # data.weekly_projections._blend_with_prior2). NaN for a TD-type
+        # stat (those use a separate two-year path) or a player with no
+        # usable 2024 read.
+        stat_prior2_weight = values.get('prior2_weight')
+        if stat_prior2_weight is not None and pd.notna(stat_prior2_weight):
+            prior2_weights.append(float(stat_prior2_weight))
         vacancy_raw = float(values.get('vacancy_delta', 0.0) or 0.0)
         # Split 2026-08-24: this used to be one 'vacancy_delta' number that
         # silently conflated two unrelated mechanisms - an OUT teammate's
@@ -305,64 +480,147 @@ def _render_decomposition_primary_table(detail):
         # out. See data/weekly_projections.py's post_capacity_snapshot
         # comment for the full story - this was a real mislabeling bug.
         capacity_raw = float(values.get('pass_capacity_delta', 0.0) or 0.0)
-        alignment_available = bool(values.get('alignment_residual_available', False))
+
+        raw_avg_val = values.get('raw_prior_rate')
+        season_adj_val = values.get('defense_adjusted_prior_rate')
+        player_proj_val = values.get('blended_rate')
+        weighted_avg_val = values.get('current_rate')
+        pre_vacancy = values.get('pre_vacancy_projection')
+        after_defense_val = (player_proj_val * matchup_mult
+                             if player_proj_val is not None else None)
+        after_context_val = pre_vacancy if pre_vacancy is not None else (
+            after_defense_val * context_mult if after_defense_val is not None else None)
+        after_capacity_val = (after_context_val + capacity_raw
+                              if after_context_val is not None else None)
+        after_vacancy_val = (after_capacity_val + vacancy_raw
+                             if after_capacity_val is not None else None)
+        final_val = values.get('final_projection', values.get('projection'))
+        for stage, val in (
+            ('raw_average', raw_avg_val), ('season_adj', season_adj_val),
+            ('player_projection', player_proj_val), ('after_defense', after_defense_val),
+            ('after_context', after_context_val), ('after_capacity', after_capacity_val),
+            ('after_vacancy', after_vacancy_val), ('final', final_val),
+        ):
+            if val is not None and pd.notna(val):
+                stage_totals[stage][stat] = float(val)
+
         rows.append({
             'Stat': stat.replace('_', ' ').title(),
-            'Projected value': _fmt_stat(stat, values.get('final_projection', values.get('projection'))),
-            'Raw average': _fmt_stat(stat, values.get('blended_rate')),
-            'Season mix': season_note,
-            'Weighted average': _fmt_stat(stat, values.get('current_rate')),
-            'Defense multiplier': round(float(values.get('matchup_multiplier', 1.0)), 3),
-            # WR/TE slot/non-slot alignment residual (v2_pff_alignment_matchup,
-            # rejected 2026-08-24 - see docs/weekly_projections_methodology.md -
-            # but kept in V2_EXPERIMENTAL_FEATURES on the user's own request to
-            # keep digging for a fixable cause). Already baked into 'Defense
-            # multiplier' above; shown separately here ONLY so it's possible to
-            # see how much of that number came from this one component, not as
-            # a second independent adjustment.
-            'Alignment residual': (round(float(values.get('alignment_residual_multiplier', 1.0)), 3)
-                                   if alignment_available else np.nan),
-            'Context multiplier': round(float(context_mult), 3),
+            'Raw Average': _fmt_stat(stat, raw_avg_val),
+            'Season average (adj)': _fmt_stat(stat, season_adj_val),
+            'Player Projection': _fmt_stat(stat, player_proj_val),
+            'Weighted average': _fmt_stat(stat, weighted_avg_val),
+            # Defense multiplier already IS the alignment-specific number for
+            # a WR/TE row with available alignment evidence (it replaces the
+            # broad role/defense matchup outright since the 2026-08-26
+            # redesign - see alignment_player_factor in
+            # data/weekly_projections.py) - a separate "Alignment residual"
+            # column used to show here too, but it was always identical to
+            # this one and was removed 2026-08-26 as pure redundancy. The
+            # always-visible "Alignment mix" section below breaks this same
+            # number down by slot/wide/inline for whoever wants that detail.
+            'Defense multiplier': f"{matchup_mult:.3f}×",
+            'Context multiplier': f"{context_mult:.3f}×",
             'Team capacity Δ': _fmt_stat(stat, capacity_raw, signed=True),
             'Vacancy Δ': _fmt_stat(stat, vacancy_raw, signed=True),
+            'Projected value': _fmt_stat(stat, final_val),
             '_vacancy_raw': vacancy_raw,
             '_capacity_raw': capacity_raw,
+            '_defense_mult': matchup_mult,
+            '_context_mult': context_mult,
         })
     table = pd.DataFrame(rows)
     vacancy_vals = table['_vacancy_raw'].tolist()
     capacity_vals = table['_capacity_raw'].tolist()
-    display_cols = ['Stat', 'Projected value', 'Raw average', 'Season mix',
-                    'Weighted average', 'Defense multiplier']
-    if table['Alignment residual'].notna().any():
-        display_cols.append('Alignment residual')
+    show_capacity = any(abs(v) > 0.0005 for v in capacity_vals)
+    display_cols = ['Stat', 'Raw Average', 'Season average (adj)', 'Player Projection']
+    if has_current_season_data:
+        display_cols.append('Weighted average')
+    display_cols.append('Defense multiplier')
     display_cols.append('Context multiplier')
-    if any(abs(v) > 0.0005 for v in capacity_vals):
+    if show_capacity:
         display_cols.append('Team capacity Δ')
     display_cols.append('Vacancy Δ')
-    display_table = table[display_cols]
+    display_cols.append('Projected value')
+
+    # Trailing "Fantasy points at this stage" row, inside this same table
+    # per explicit request ("not a separate table... it should be within
+    # the table"). Only columns that represent an actual running LEVEL of
+    # the stat line (not a bare multiplier/ingredient column) get a number -
+    # Weighted average is a side ingredient already folded into Player
+    # Projection, not a sequential checkpoint, so it stays blank here to
+    # avoid double-counting.
+    stage_by_col = {
+        'Raw Average': 'raw_average', 'Season average (adj)': 'season_adj',
+        'Player Projection': 'player_projection', 'Defense multiplier': 'after_defense',
+        'Context multiplier': 'after_context', 'Team capacity Δ': 'after_capacity',
+        'Vacancy Δ': 'after_vacancy', 'Projected value': 'final',
+    }
+    points_row = {'Stat': 'Fantasy points at this stage'}
+    for col in display_cols[1:]:
+        stage_key = stage_by_col.get(col)
+        stat_dict = stage_totals.get(stage_key, {}) if stage_key else {}
+        points_row[col] = (f"{max(0.0, score_projected_stats(stat_dict, scoring_mode)):.1f} pts"
+                           if stat_dict else '—')
+    display_table = pd.concat([table[display_cols], pd.DataFrame([points_row])], ignore_index=True)
+    points_row_idx = len(display_table) - 1
 
     # Local Styler, not a style_plain_dataframe extension - that helper is
     # shared by every other table in the app, and this coloring rule
     # (multiplier columns centered on 1.0) is specific to this one table.
+    # Colors read off the hidden numeric _*  columns (kept alongside the
+    # already-formatted display strings above) rather than the display
+    # column itself, since every cell in the table is now pre-formatted
+    # text - and the trailing points row has no multiplier/delta value at
+    # all, so it falls through to '' (no color) via the pd.notna guard.
     def _style_column(col):
-        if col in ('Defense multiplier', 'Context multiplier', 'Alignment residual'):
-            return [f'background-color:{get_multiplier_color(v)}; color:#ffffff; font-weight:bold;'
-                   if pd.notna(v) else '' for v in display_table[col]]
-        if col == 'Vacancy Δ':
-            return [f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;'
-                   for v in vacancy_vals]
-        if col == 'Team capacity Δ':
-            return [f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;'
-                   for v in capacity_vals]
-        return [''] * len(display_table)
+        out = []
+        for i in range(len(display_table)):
+            if i == points_row_idx:
+                out.append('font-weight:bold; border-top:2px solid rgba(128,128,128,0.5);')
+                continue
+            if col == 'Defense multiplier':
+                v = table['_defense_mult'].iloc[i]
+            elif col == 'Context multiplier':
+                v = table['_context_mult'].iloc[i]
+            elif col == 'Vacancy Δ':
+                v = vacancy_vals[i]
+                out.append(f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;')
+                continue
+            elif col == 'Team capacity Δ':
+                v = capacity_vals[i]
+                out.append(f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;')
+                continue
+            else:
+                out.append('')
+                continue
+            out.append(f'background-color:{get_multiplier_color(v)}; color:#ffffff; font-weight:bold;'
+                       if pd.notna(v) else '')
+        return out
 
     style_grid = pd.DataFrame({col: _style_column(col) for col in display_cols})
-    number_format = {'Defense multiplier': '{:.3f}×', 'Context multiplier': '{:.3f}×'}
-    if 'Alignment residual' in display_cols:
-        number_format['Alignment residual'] = '{:.3f}×'
-    styler = (display_table.style.apply(lambda _: style_grid, axis=None).format(number_format, na_rep='—'))
+    styler = display_table.style.apply(lambda _: style_grid, axis=None)
     st.dataframe(styler, hide_index=True, width="stretch", height=df_auto_height(len(display_table)))
-    st.caption("Context multiplier = game script × pace × availability × Vegas-implied game environment.")
+
+    note_text = " / ".join(sorted(raw_average_notes)) if raw_average_notes else "prior-season history"
+    st.caption(
+        f"Raw Average = this player's own plain per-game history, no adjustment ({note_text}). "
+        "Season average (adj) = that same history with each past game's OWN opponent's strength removed "
+        "(what he'd average against a neutral defense) - about defenses already played, not the upcoming "
+        "one. Player Projection = Raw Average after role/snap-share normalization (and, once real "
+        "current-season games exist, blended with this season's own rate)."
+    )
+    if prior2_weights:
+        lo, hi = min(prior2_weights), max(prior2_weights)
+        two_years_back = (season_year - 2) if season_year else "two seasons back"
+        weight_text = f"~{lo:.0%}" if abs(hi - lo) < 0.01 else f"{lo:.0%}-{hi:.0%}"
+        st.caption(
+            f"That \"prior season\" figure above is itself already blended with {two_years_back} "
+            f"({weight_text} weight on this player's volume/yardage stats, more if 2025 was thin or a down "
+            "year for him, less if 2025 was clearly the better read) - a separate axis from the current-vs-"
+            "prior-season split noted above, not visible in it. TD-type stats use a different two-year "
+            "blend (see the Role/audit/data sources tab) and aren't included in this weight."
+        )
     if 'Team capacity Δ' in display_cols:
         st.caption(
             "Team capacity Δ: this team's RB/WR/TE targets refit to a realistic pass-attempt budget "
@@ -371,12 +629,33 @@ def _render_decomposition_primary_table(detail):
             "actual OUT teammate's volume moving. Both used to be shown as one 'Vacancy Δ' number; split "
             "2026-08-24 because that conflation was misleading a low-usage receiver's real story."
         )
-    if 'Alignment residual' in display_cols:
-        st.caption(
-            "Alignment residual: the WR/TE slot/non-slot PFF matchup component, active in this V2 run. "
-            "Backtested 2026-08-24 as a net loss on the startable WR/TE pool (see the methodology doc) - "
-            "shown here so it can be inspected per player/week rather than taken on the aggregate number alone."
-        )
+    st.caption(
+        f"Fantasy points row: same scoring rule as the board ({scoring_mode}), applied to the whole stat "
+        "line frozen at each checkpoint above - a running total, not a per-stat breakdown. 'Projected "
+        "value' should match this player's Raw Model Proj Pts; a mismatch would mean a stat is missing "
+        "from the table above, not a scoring bug."
+    )
+
+    if context_ingredients is not None:
+        _render_context_multiplier_table(context_ingredients)
+
+
+def _render_context_multiplier_table(ingredients):
+    """Standalone "thin" table of the actual numbers behind the Context
+    multiplier column - added 2026-08-25 per explicit request ("right in
+    that spot include the actual numbers that are being used"). One row,
+    since script/pace/availability/environment are player/game-level, the
+    same for every stat in the line above."""
+    st.markdown("**Context multiplier - what it's made of**")
+    thin = pd.DataFrame([{
+        'Game script ×': f"{ingredients['script']:.3f}",
+        'Pace ×': f"{ingredients['pace']:.3f}",
+        'Availability ×': f"{ingredients['availability']:.3f}",
+        'Vegas environment ×': f"{ingredients['environment']:.3f}",
+        'Combined (Context multiplier) ×': f"{ingredients['combined']:.3f}",
+    }])
+    st.dataframe(thin, hide_index=True, width="stretch", height=df_auto_height(1))
+    st.caption("Context multiplier = Game script × Pace × Availability × Vegas-implied game environment.")
 
 
 def _team_cell_style(team_code):
@@ -394,13 +673,21 @@ def _style_team_column(df, col):
     return df.style.apply(lambda _: grid, axis=None)
 
 
-def _append_average_row(df, label_col, label, avg_cols, stat=None, avg_mask=None):
+def _append_average_row(df, label_col, label, avg_cols, stat=None, avg_mask=None, ratio_cols=None):
     """One trailing row averaging each of ``avg_cols`` - explicit request so
     a Deep Dive table's raw/defense-adjusted (or allowed/baseline) columns
     show their own column average without the reader doing that math.
     ``stat`` (the raw stat key, e.g. 'rushing_tds') picks the same 1-vs-2
     decimal formatting _fmt_stat already uses for that stat's real values,
     so the AVG row's precision matches the rows above it.
+
+    ``ratio_cols`` (optional) are averaged the same way but formatted as a
+    plain 3-decimal x-suffixed multiplier ("1.234x"), matching how each
+    row's own ratio cell is already formatted - _fmt_stat's stat-specific
+    rounding is for a raw stat value, not a ratio, and would both mis-round
+    it and fail to parse the trailing "x" back out. Added 2026-08-27 per
+    explicit request: the allowed/offense-avg columns already got an AVG row,
+    the ratio column next to them silently didn't.
 
     ``avg_mask`` (optional, same length/index as ``df``) restricts the mean
     to the True rows only - every row still prints in the table above (an
@@ -415,6 +702,9 @@ def _append_average_row(df, label_col, label, avg_cols, stat=None, avg_mask=None
     for col in avg_cols:
         numeric = pd.to_numeric(avg_df[col].astype(str).str.replace('+', '', regex=False), errors='coerce')
         row[col] = _fmt_stat(stat, float(numeric.mean())) if numeric.notna().any() else '—'
+    for col in (ratio_cols or ()):
+        numeric = pd.to_numeric(avg_df[col].astype(str).str.replace('×', '', regex=False), errors='coerce')
+        row[col] = f"{numeric.mean():.3f}×" if numeric.notna().any() else '—'
     # The label column (e.g. Week) is a real int column above this row and
     # a literal "AVG" string on it - cast to str BEFORE concatenating so
     # pandas keeps one consistent dtype throughout, not a numeric column
@@ -424,6 +714,94 @@ def _append_average_row(df, label_col, label, avg_cols, stat=None, avg_mask=None
     out = df.copy()
     out[label_col] = out[label_col].astype(str)
     return pd.concat([out, pd.DataFrame([row])], ignore_index=True)
+
+
+def _render_defense_allowed_by_alignment(detail, stat, label, log):
+    """Slot/wide/inline breakout of the SAME defense-allowed evidence the
+    whole-position weekly table just above already shows in aggregate -
+    added 2026-08-25 per explicit request ("there should be 'allowed' logs
+    for each alignment... it should look exactly as the [whole-position]
+    defense - what it's allowed to ___, by week"). WR/TE only (the only
+    positions PFF alignment data covers).
+
+    ``log`` is the SEASON-SPECIFIC list the caller already selected via the
+    Deep Dive tab's own season radio (`defense_alignment_weekly_log_by_season`
+    in data/weekly_projections.py) - added 2026-08-26 to fix this table
+    silently never changing when a different season (e.g. 2024) was picked,
+    since it used to always read the single season loaded for SCORING
+    regardless of the selector.
+
+    This is the RAW pre-shrinkage evidence, not the season-aggregate
+    candidate_multiplier shown in the Alignment mix section above - that
+    number is heavily shrunk toward 1.0 for any team/stat/alignment combo
+    with a thin sample (see data/pff_alignment.py's
+    aggregate_alignment_defense_profiles), which is why it can read close to
+    1.000 even when the raw per-week numbers below show real spread. The
+    Non-slot column was dropped 2026-08-26 (per explicit request) - it only
+    exists internally to let the wide/inline split be derived; once that
+    split exists, non-slot itself isn't a real alignment a player lines up
+    in, unlike slot/wide/inline.
+    """
+    if detail.get('position') not in ('WR', 'TE'):
+        return
+    # The log's own 'stat' values come straight from pff_alignment.py's
+    # ALIGNMENT_DEFENSE_STATS naming ('targets'/'receptions'/'yards'), not
+    # this app's stat keys ('receiving_yards') - targets/receptions happen
+    # to be spelled the same in both places, which is exactly why this table
+    # silently rendered for those two stats but never for receiving_yards
+    # until this mapping was added (found 2026-08-26: matches
+    # ALIGNMENT_SCORING_STAT_MAP in data/weekly_projections.py).
+    log_stat = {'receiving_yards': 'yards'}.get(stat, stat)
+    rows = [r for r in log if r.get('stat') == log_stat]
+    if not rows:
+        return
+    adf = pd.DataFrame(rows)
+    index_cols = ['source_week', 'offense_team']
+    pivot_obs = adf.pivot_table(index=index_cols, columns='alignment', values='observed_value', aggfunc='mean')
+    pivot_exp = adf.pivot_table(index=index_cols, columns='alignment', values='_expected_value', aggfunc='mean')
+    week_weight = adf.drop_duplicates('source_week').set_index('source_week')['_recency_weight']
+    alignment_cols = [c for c in ('slot', 'wide', 'inline') if c in pivot_obs.columns]
+    if not alignment_cols:
+        return
+    pivot_obs = pivot_obs.reset_index().sort_values('source_week')
+    pivot_exp = pivot_exp.reset_index()
+    merged = pivot_obs.merge(pivot_exp, on=index_cols, how='left', suffixes=('', '_exp'))
+    display_data = {
+        'Week': merged['source_week'].astype(int),
+        'Offense faced': merged['offense_team'],
+    }
+    avg_cols = []
+    ratio_cols = []
+    for col in alignment_cols:
+        title = col.title()
+        allowed_col, avg_col, ratio_col = f'{title} Allowed', f'{title} Offense Avg', f'{title} Ratio'
+        observed = merged[col]
+        expected = merged.get(f'{col}_exp', pd.Series(float('nan'), index=merged.index))
+        display_data[allowed_col] = [_fmt_stat(stat, v) for v in observed]
+        display_data[avg_col] = [_fmt_stat(stat, v) for v in expected]
+        ratio = observed / expected.where(expected > 0.0)
+        display_data[ratio_col] = [f"{v:.3f}×" if pd.notna(v) else '—' for v in ratio]
+        avg_cols.extend([allowed_col, avg_col])
+        ratio_cols.append(ratio_col)
+    display_data['Recency weight'] = [
+        f"{week_weight.get(w, float('nan')):.2f}" if pd.notna(week_weight.get(w, float('nan'))) else '—'
+        for w in merged['source_week']
+    ]
+    display = pd.DataFrame(display_data)
+    st.markdown(f"**{detail['opponent']} defense — what it's allowed to {label.lower()}, by alignment, by week**")
+    st.dataframe(
+        _style_team_column(_append_average_row(display, 'Week', 'AVG', avg_cols, stat=stat, ratio_cols=ratio_cols), 'Offense faced'),
+        hide_index=True, width="stretch", height=df_auto_height(len(display) + 1))
+    st.caption(
+        "Raw per-week evidence, not the shrunk candidate multiplier shown in the Alignment mix section above "
+        "- a thin per-alignment sample there gets pulled most of the way back to a neutral 1.000× until more "
+        "weeks of PFF data exist, even when the per-week Ratio here shows real spread. 'Offense Avg' is that "
+        "SAME offense's own average in its other games that season (not this defense) - the baseline 'Ratio' "
+        "is compared against, same convention as the non-alignment table above. 'Recency weight' matches this "
+        "app's usual within-season decay for reference; the alignment aggregation itself does not currently "
+        "apply it (it weights every included game equally, using game-count shrinkage instead - see "
+        "aggregate_alignment_defense_profiles's own shrinkage_weight)."
+    )
 
 
 def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_season, default_year=None):
@@ -437,7 +815,9 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
     if len(season_years) > 1:
         current_year = detail.get('season_year')
         season_labels = {
-            yr: (f"{yr} (this season)" if yr == current_year else f"{yr} (last season)")
+            yr: (f"{yr} (this season)" if yr == current_year
+                 else f"{yr} (last season)" if yr == current_year - 1
+                 else f"{yr} (two years back)")
             for yr in season_years
         }
         default_year = default_year if default_year in season_years else season_years[0]
@@ -523,6 +903,10 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
     else:
         st.caption(f"No {label.lower()} matchup evidence available for {detail['opponent']} yet.")
 
+    _render_defense_allowed_by_alignment(
+        detail, stat, label,
+        detail.get('defense_alignment_weekly_log_by_season', {}).get(season_year, []))
+
     notes = []
     if values.get('prior_source'):
         role_scale = values.get('role_scale')
@@ -581,14 +965,20 @@ def _render_context_deep_dive(detail):
         if alignment_bits:
             st.markdown("**PFF alignment role**")
             st.caption(" · ".join(alignment_bits))
-    if role.get('alignment_defense_scoring_active'):
-        st.caption("PFF alignment-defense residual: ACTIVE in this V2 run (v2_pff_alignment_matchup). "
-                  "Backtested 2026-08-24 and found to be a net loss on the startable WR/TE pool - re-enabled "
-                  "here for inspection, not because the backtest reversed. See the 'Alignment residual' "
-                  "column above and docs/weekly_projections_methodology.md for the numbers.")
-    elif role.get('alignment_defense_candidate_available'):
-        st.caption("PFF alignment-defense residual: audit-only, not scoring this projection (switch to the "
-                  "V2 experimental model to activate it for inspection).")
+    # alignment_defense_scoring_active is a dead lower-level flag (always
+    # False - see aggregate_alignment_defense_profiles's own hardcoded
+    # 'scoring_active': False, a foundation field never actually flipped).
+    # candidate_available is the real "is this replacing the general defense
+    # multiplier right now" signal since the 2026-08-26 redesign - see the
+    # np.where in weekly_projections.py's alignment_player_factor block.
+    if role.get('alignment_defense_candidate_available'):
+        st.caption("PFF alignment-defense residual: ACTIVE (v2_pff_alignment_matchup) - this player's own "
+                  "allowed-by-alignment mix is replacing the general defense/role matchup for this stat, "
+                  "not adding to it. See 'Defense multiplier' in the table above and the always-visible "
+                  "Alignment mix section for the full breakdown.")
+    elif role.get('alignment_available'):
+        st.caption("PFF alignment-defense residual: no comparison evidence for this defense/stat yet - "
+                  "falling back to the general defense/role matchup.")
 
     evidence = detail.get('alignment_scheme_evidence', {})
     if evidence.get('player_scheme_available'):
@@ -598,7 +988,7 @@ def _render_context_deep_dive(detail):
             st.caption(f"Man: {float(man):.0%}"
                       + (f" · Zone: {float(zone):.0%}" if zone is not None and pd.notna(zone) else ""))
     defense_bits = []
-    slot_applied = bool(role.get('alignment_defense_scoring_active'))
+    slot_applied = bool(role.get('alignment_defense_candidate_available'))
     if evidence.get('defense_alignment_candidate_available'):
         mult = evidence.get('defense_slot_candidate_multiplier')
         if mult is not None and pd.notna(mult):
@@ -614,8 +1004,7 @@ def _render_context_deep_dive(detail):
             f"season — " + " · ".join(defense_bits) + ". "
             + ("'Applied' is already folded into this stat's Defense multiplier above. "
                if slot_applied else "")
-            + "'Candidate' entries remain audit-only (man/zone scheme is dormant everywhere; slot/non-slot "
-              "is audit-only outside V2)."
+            + "'Candidate' entries remain audit-only (man/zone scheme is dormant everywhere)."
         )
 
 
@@ -709,6 +1098,114 @@ def _render_pipeline_diagnostics(model_meta):
         st.caption(f"Preseason role policy: {contract['preseason_skill_role_policy']}.")
     if contract.get('partial_game_history_filter'):
         st.caption(f"Partial-game history filter: {contract['partial_game_history_filter']}.")
+    exclusions = contract.get('partial_game_history_exclusions')
+    if isinstance(exclusions, dict) and exclusions:
+        # Confirms the SAME filter above runs on all three inputs, not just
+        # the current/prior pair - explicit request 2026-08-25 ("make sure
+        # the 2024 season stats are being checked... as the 2025 season
+        # currently does"). two_year_prior's count here is exactly
+        # (~prior2_annotated['_player_history_eligible']).sum() from
+        # weekly_projections.py - the same function call as prior_season's.
+        st.dataframe(pd.DataFrame([{
+            'This season': exclusions.get('current_season', 0),
+            'Prior season': exclusions.get('prior_season', 0),
+            'Two years back': exclusions.get('two_year_prior', 0),
+        }]), hide_index=True, width="stretch", height=df_auto_height(1))
+        st.caption(
+            "Games excluded from rate evidence by the same partial-game filter above, per season - all "
+            "three seasons run through the identical eligibility check, so a 2024 QB-split or blowout-rest "
+            "game is screened out exactly like a 2025 one would be."
+        )
+
+
+def _render_role_confidence_table(role):
+    """What role_confidence (data/weekly_projections.py's `_role_confidence`)
+    actually read to produce its 0-1 number, and what that number then does
+    downstream - added 2026-08-25 per explicit request ("I have no idea
+    what is going into this calculation"). The ingredients
+    (role_confidence_recent_snap_pct/games_sampled/route_rate/method) are
+    audit-only companions computed by `_role_confidence_detail`, a
+    deliberate near-duplicate of the real function so a bug here can never
+    change a scored value - see that function's own docstring."""
+    confidence = role.get('role_confidence')
+    if confidence is None or pd.isna(confidence):
+        return
+    snap_pct = role.get('role_confidence_recent_snap_pct')
+    games_sampled = role.get('role_confidence_games_sampled')
+    route_rate = role.get('role_confidence_route_rate')
+    method = role.get('role_confidence_method') or 'unknown'
+    st.markdown("**Role confidence — what fed this number**")
+    ingredient_rows = [{
+        'Ingredient': 'Recent snap share',
+        'Value': f"{float(snap_pct):.0%}" if snap_pct is not None and pd.notna(snap_pct) else '—',
+        'Detail': (f"mean of the last {int(games_sampled)} played game(s) before this week"
+                  if games_sampled is not None and pd.notna(games_sampled) and games_sampled > 0
+                  else 'no played games available'),
+    }]
+    if route_rate is not None and pd.notna(route_rate):
+        ingredient_rows.append({
+            'Ingredient': 'PFF route rate',
+            'Value': f"{float(route_rate):.0%}",
+            'Detail': 'season-to-date route participation (WR/TE only)',
+        })
+    ingredient_rows.append({
+        'Ingredient': 'Role confidence (used below)',
+        'Value': f"{float(confidence):.0%}",
+        'Detail': method,
+    })
+    st.dataframe(pd.DataFrame(ingredient_rows), hide_index=True, width="stretch",
+                height=df_auto_height(len(ingredient_rows)))
+    st.caption(
+        "How it's used: role confidence shrinks how fast a stat trusts THIS player's own rate over the "
+        "positional baseline. Higher confidence (closer to 100%) means his own history is trusted sooner "
+        "as real current-season games accumulate; lower confidence (closer to 0%) leans harder on the "
+        "position-average fallback for longer. It has no effect at cold start itself (no current-season "
+        "games exist yet to blend in) - its effect shows up once the season is underway."
+    )
+
+
+def _render_pass_capacity_room(detail):
+    """Who else shares this player's team-capacity budget, and what the
+    conservation pass did to each of them - added 2026-08-25 per explicit
+    request ("tell what the issue is... and show how each player in that
+    room is affected"). `pass_capacity_ledger` (team-level totals) already
+    existed; `pass_capacity_room` (the per-player before/after list) is new
+    - see apply_pass_capacity_conservation's player_detail .attrs."""
+    ledger = detail.get('pass_capacity_ledger', [])
+    room = detail.get('pass_capacity_room', [])
+    if not ledger and not room:
+        return
+    st.markdown("**Team pass-capacity room**")
+    for entry in ledger:
+        group = entry.get('position_group', '')
+        capacity = entry.get('capacity')
+        trusted = entry.get('trusted_claim')
+        tail = entry.get('tail_claim')
+        if capacity is None:
+            st.caption(f"{group}: {entry.get('reason', 'no capacity signal')}")
+            continue
+        claimed = (trusted or 0.0) + (tail or 0.0)
+        over_budget = claimed > capacity + 0.01
+        issue = (f"claimed {claimed:.1f} targets against a {capacity:.1f} budget - "
+                f"{'over' if over_budget else 'within'} budget by {abs(claimed - capacity):.1f}")
+        (st.warning if over_budget else st.caption)(f"{group} room: {issue}. {entry.get('reason', '')}")
+    if room:
+        room_df = pd.DataFrame(room)
+        room_df['Δ targets'] = (room_df['targets_after'] - room_df['targets_before']).round(3)
+        display = room_df.rename(columns={
+            'player': 'Player', 'position': 'Pos', 'tier': 'Tier',
+            'targets_before': 'Targets before', 'targets_after': 'Targets after',
+        })[['Player', 'Pos', 'Tier', 'Targets before', 'Targets after', 'Δ targets']]
+        this_player = detail.get('player')
+        style_grid = pd.DataFrame('', index=display.index, columns=display.columns)
+        highlight_rows = room_df['player'].astype(str).eq(str(this_player))
+        style_grid.loc[highlight_rows, :] = 'font-weight:bold; background-color:rgba(127,127,127,0.15);'
+        st.dataframe(
+            display.style.apply(lambda _: style_grid, axis=None).format(
+                {'Targets before': '{:.2f}', 'Targets after': '{:.2f}', 'Δ targets': '{:+.2f}'}),
+            hide_index=True, width="stretch", height=df_auto_height(len(display)))
+        st.caption("This player's row is highlighted. 'Trusted' tier keeps its own value; 'tail' shares "
+                  "whatever budget the trusted tier leaves behind.")
 
 
 def _render_decomposition_audit_body(detail):
@@ -753,6 +1250,9 @@ def _render_decomposition_audit_body(detail):
         role_bits.append(f"Role-change evidence: {float(role_change):.0%}")
     st.markdown("**Expected role**")
     st.caption(" · ".join(role_bits) if role_bits else "No time-valid role profile was available.")
+
+    _render_role_confidence_table(role)
+
     if detail.get('position') == 'QB' and role.get('qb_projected_starter'):
         st.success(f"Expected QB1: full workload from {role.get('starter_source', 'QB1 selection')}.")
     elif detail.get('position') == 'QB' and role.get('qb1_selection_required'):
@@ -866,24 +1366,38 @@ def _render_decomposition_audit_body(detail):
             personal_share = blend_source.get('qb1_blend_personal_rush_share')
             league_share = blend_source.get('qb1_blend_league_rush_share')
             evidence_w = blend_source.get('qb1_blend_evidence_weight')
-            bits = []
-            if capacity is not None:
-                bits.append(f"team dropback capacity {capacity:.1f}/game")
-            if personal_db is not None:
-                bits.append(f"personal sample {personal_db:.0f} dropbacks")
-            if personal_share is not None and league_share is not None:
-                bits.append(f"rush share {personal_share:.0%} (league avg {league_share:.0%})")
-            if evidence_w is not None:
-                bits.append(f"self-weight {evidence_w:.0%}")
-            st.caption(" · ".join(bits))
             prior2_w = blend_source.get('qb1_blend_prior2_weight')
             prior2_db = blend_source.get('qb1_blend_personal_dropbacks_2024')
+            blend_rows = []
+            if capacity is not None:
+                blend_rows.append({
+                    'Input': 'Team dropback capacity', 'Value': f"{capacity:.1f}/game",
+                    'Source': "raw team-game history (unfiltered - see this QB's own row for why)"})
+            if personal_db is not None:
+                blend_rows.append({
+                    'Input': 'Personal dropback sample', 'Value': f"{personal_db:.0f}",
+                    'Source': 'his own prior-season pass + rush attempts, eligible games only'})
+            if personal_share is not None:
+                blend_rows.append({
+                    'Input': 'Personal rush share', 'Value': f"{personal_share:.0%}",
+                    'Source': 'his own rush attempts ÷ his own dropbacks'})
+            if league_share is not None:
+                blend_rows.append({
+                    'Input': 'League-average rush share', 'Value': f"{league_share:.0%}",
+                    'Source': 'qualified QBs, same prior season'})
+            if evidence_w is not None:
+                blend_rows.append({
+                    'Input': 'Self-weight', 'Value': f"{evidence_w:.0%}",
+                    'Source': 'how much his OWN rush share (vs. league average) counts'})
             if prior2_w:
-                st.caption(
-                    f"Two-years-back grounding: {prior2_w:.0%} weight toward the prior2 season"
-                    f"{f' ({prior2_db:.0f} dropbacks that year)' if prior2_db else ''} - active "
-                    "because this QB's own prior-season sample is thin relative to a full season."
-                )
+                blend_rows.append({
+                    'Input': 'Two-years-back grounding', 'Value': f"{prior2_w:.0%}",
+                    'Source': (f"weight toward his prior2 season ({prior2_db:.0f} dropbacks that year)"
+                              if prior2_db else 'weight toward his prior2 season')
+                    + ' - active because his prior-season sample is thin relative to a full season'})
+            if blend_rows:
+                st.dataframe(pd.DataFrame(blend_rows), hide_index=True, width="stretch",
+                            height=df_auto_height(len(blend_rows)))
 
     availability = detail['availability']
     st.markdown("**Availability and workload**")
@@ -916,6 +1430,8 @@ def _render_decomposition_audit_body(detail):
     if vacancy:
         st.markdown("**Injury/vacancy ledger**")
         st.dataframe(pd.DataFrame(vacancy), hide_index=True, width="stretch")
+
+    _render_pass_capacity_room(detail)
 
     # Historical/backtest classification only matters in the deviant
     # case - a live/upcoming target is the default for every normal
@@ -957,8 +1473,8 @@ def _open_projection_dialog(detail):
     def _body():
         _render_decomposition_header(detail)
 
-        tab_overview, tab_outcomes, tab_audit = st.tabs(
-            ["Overview", "Range of outcomes", "Role, audit & data sources"])
+        tab_overview, tab_outcomes, tab_audit, tab_news = st.tabs(
+            ["Overview", "Range of outcomes", "Role, audit & data sources", "News"])
 
         with tab_overview:
             _render_decomposition_primary_table(detail)
@@ -1004,9 +1520,84 @@ def _open_projection_dialog(detail):
         with tab_audit:
             _render_decomposition_audit_body(detail)
 
+        with tab_news:
+            _render_player_news(detail)
+
     dialog = st.dialog(f"Projection decomposition — {detail['player']}", width="large",
                        on_dismiss=_close_projection_dialog)(_body)
     dialog()
+
+
+def _render_player_news(detail):
+    """Last 6 FantasyPros news reports for this player, newest first, in one
+    scrollable feed - explicit request 2026-08-27.
+
+    AUTO-LOADS on first view of this tab (no button) and caches in
+    st.session_state per player for the rest of the session - safe given
+    this account's real 500 calls/day cap (confirmed by the user, see
+    data.draft_sources' own module comment; FantasyPros' free tier is
+    50/month and would NOT support this pattern, which is why every other
+    live pull in this app stays button-gated). Revisiting the same player
+    later in the same session costs nothing further; a fresh session re-pulls
+    once per player actually opened, not the whole pool up front.
+    """
+    player_name = detail.get('player')
+    if not player_name:
+        return
+
+    from data.draft_sources import load_player_id_map, get_fantasypros_api_key
+    from data.fantasypros_availability import fetch_fantasypros_player_news, resolve_fantasypros_player_id
+
+    api_key, _key_source = get_fantasypros_api_key()
+    if not api_key:
+        st.caption("No FantasyPros API key set (add one in the Draft HQ tab) - player news needs it.")
+        return
+
+    id_map, id_map_err = load_player_id_map()
+    fpid = resolve_fantasypros_player_id(player_name, id_map)
+    if fpid is None:
+        st.caption(
+            f"No FantasyPros player ID match for {player_name}"
+            + (f" ({id_map_err})" if id_map_err else " (crosswalk has no matching name)")
+            + " - can't fetch news for this player."
+        )
+        return
+
+    cache_key = f'_fp_news_{fpid}'
+    if cache_key not in st.session_state:
+        with st.spinner("Loading FantasyPros news…"):
+            news, error = fetch_fantasypros_player_news(api_key, fpid)
+        st.session_state[cache_key] = {'news': news, 'error': error}
+    cached = st.session_state[cache_key]
+
+    if cached.get('error'):
+        st.error(f"Couldn't fetch news: {cached['error']}")
+        if st.button("Retry", key=f'retry_news_{fpid}'):
+            del st.session_state[cache_key]
+            st.rerun()
+        return
+
+    news = cached.get('news') or []
+    if not news:
+        st.caption("No recent FantasyPros news found for this player.")
+        return
+
+    st.caption(f"Last {len(news)} FantasyPros report(s), newest first.")
+    with st.container(height=520, border=True):
+        for i, item in enumerate(news):
+            when = item.get('created_formatted') or item.get('created') or ''
+            author = item.get('author')
+            st.markdown(f"**{item.get('title') or '(untitled)'}**")
+            st.caption(when + (f" — {author}" if author else ''))
+            if item.get('desc'):
+                st.write(item['desc'])
+            if item.get('impact'):
+                st.markdown(f"*Fantasy impact:* {item['impact']}")
+            link = item.get('link')
+            if link:
+                st.markdown(f"[Full story]({link})")
+            if i < len(news) - 1:
+                st.divider()
 
 
 def _limit_rows(df, key):
@@ -1062,7 +1653,7 @@ def _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring):
     import datetime
     from data.draft_sources import (
         get_fantasypros_api_key, save_fantasypros_api_key,
-        fantasypros_api_calls_this_month,
+        fantasypros_api_calls_today, FANTASYPROS_API_DAILY_LIMIT,
         fetch_fantasypros_weekly_projections,
     )
     st.caption(
@@ -1080,9 +1671,10 @@ def _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring):
         if api_key and api_key != secret_key:
             save_fantasypros_api_key(api_key)
 
-    used = fantasypros_api_calls_this_month()
+    used_today = fantasypros_api_calls_today()
     fetch = st.button("Fetch weekly projections", key="wr_fp_fetch", disabled=not api_key)
-    st.caption(f"{used} call{'s' if used != 1 else ''} made this month - this pull costs 4.")
+    st.caption(f"{used_today} call{'s' if used_today != 1 else ''} made today "
+              f"(cap is {FANTASYPROS_API_DAILY_LIMIT}/day) - this pull costs 4.")
     if fetch:
         with st.spinner("Calling the FantasyPros API…"):
             df, meta = fetch_fantasypros_weekly_projections(api_key, wk_year, wk_week)
@@ -1150,14 +1742,15 @@ def _render_manual_availability_override(wk_year, wk_week, roster_df):
                     st.error(error)
                 else:
                     st.success(f"{player} ({team}) set to {status.split(' ')[0]} for Week {wk_week}.")
-                    # build_weekly_projections is @st.cache_data'd on
-                    # (year, week, scoring, ...) alone - it has no idea this
-                    # CSV just changed, so without an explicit clear() the
-                    # rerun below would just re-serve the pre-edit cached
-                    # board for up to CACHE_TTL_SECONDS (1 hour). Confirmed
-                    # live 2026-08-24: a Zach Charbonnet 'Out' override saved
-                    # here did not move his projection until this was added.
-                    build_weekly_projections.clear()
+                    # The next render() computes a fresh availability_fingerprint
+                    # from this same CSV and passes it into
+                    # build_weekly_projections, so the rerun below lands on a
+                    # new cache key for THIS week automatically - no .clear()
+                    # needed (that used to wipe every cached week, not just
+                    # this one - see availability_fingerprint's docstring).
+                    # Confirmed live 2026-08-24: a Zach Charbonnet 'Out'
+                    # override saved here did not move his projection until
+                    # the cache was invalidated for it.
                     st.rerun()
 
     current, _err = load_availability_overrides(wk_year, wk_week)
@@ -1173,13 +1766,12 @@ def _render_manual_availability_override(wk_year, wk_week, roster_df):
         with row_c2:
             if st.button("Clear", key=f"wr_manual_avail_clear_{wk_year}_{wk_week}_{row['player']}_{row['team']}"):
                 remove_availability_override(wk_year, wk_week, row['team'], row['player'])
-                build_weekly_projections.clear()
                 st.rerun()
 
 
 def _render_fantasypros_injury_pull(wk_year, wk_week, roster_df=None):
     """
-    FantasyPros-sourced injury/availability for the V2 model
+    FantasyPros-sourced injury/availability for this app's weekly model
     (v2_fantasypros_availability - see data.fantasypros_availability's own
     module docstring for why this replaced the nflverse last-designation
     feed). Two sources write the SAME file/schema, so either one - or both,
@@ -1197,7 +1789,7 @@ def _render_fantasypros_injury_pull(wk_year, wk_week, roster_df=None):
         save_fantasypros_injury_upload, save_fantasypros_injury_api_pull, load_fantasypros_availability,
     )
     st.caption(
-        "Feeds the V2 model's availability discount. No report for a player this week means "
+        "Feeds this app's availability discount. No report for a player this week means "
         "healthy - never a stale carry-over from a prior week."
     )
     tab_api, tab_upload, tab_manual = st.tabs(["Live API pull", "Upload export", "Manual override"])
@@ -1219,10 +1811,9 @@ def _render_fantasypros_injury_pull(wk_year, wk_week, roster_df=None):
                 st.error(f"FantasyPros API: {error}")
             else:
                 st.success(f"Loaded {n} flagged player{'s' if n != 1 else ''} for week {wk_week}.")
-                # Same stale-cache trap as the manual override below - this
-                # CSV feeds build_weekly_projections but isn't one of its
-                # cached arguments, so the model has to be told explicitly.
-                build_weekly_projections.clear()
+                # See availability_fingerprint's docstring - this CSV feeds
+                # build_weekly_projections, and the fingerprint computed on
+                # the next render() picks up this change on its own.
                 st.rerun()
     with tab_upload:
         up = st.file_uploader("FantasyPros injury export (CSV)", type=["csv"], key="wr_fp_injury_upload")
@@ -1232,7 +1823,6 @@ def _render_fantasypros_injury_pull(wk_year, wk_week, roster_df=None):
                 st.error(error)
             else:
                 st.success(f"Loaded {n} flagged player{'s' if n != 1 else ''} for week {wk_week}.")
-                build_weekly_projections.clear()
                 st.rerun()
     with tab_manual:
         _render_manual_availability_override(wk_year, wk_week, roster_df)
@@ -1472,7 +2062,7 @@ def _woven_rank(df, value_col, pos_col='Pos'):
     return encoded, labels
 
 
-def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, model_version, name_pool,
+def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, name_pool,
                           roster_df=None, model_meta=None):
     """
     One expander, five tabs - consolidates what used to be four separate
@@ -1482,11 +2072,10 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, model
     to sit right below this one, so a page visit isn't multiple collapsed
     boxes deep before any model output appears.
 
-    Streamlit tabs can't be conditionally hidden once declared, so the two
-    gates that used to hide a whole expander (V2-only for injury/PFF,
-    upcoming-week-only for market props) now show as an explanatory caption
-    INSIDE that tab instead - the tab is always there, its content just says
-    why there's nothing to do yet.
+    Streamlit tabs can't be conditionally hidden once declared, so the gate
+    that used to hide a whole expander (upcoming-week-only for market props)
+    shows as an explanatory caption INSIDE that tab instead - the tab is
+    always there, its content just says why there's nothing to do yet.
 
     Returns (fp_weekly_df, market_df), the two values render() still needs
     downstream; the injury and PFF tabs read/write straight to disk and
@@ -1499,17 +2088,9 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, model
         with tab_fp:
             fp_weekly = _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring)
         with tab_injury:
-            if model_version == 'v2':
-                _render_fantasypros_injury_pull(wk_year, wk_week, roster_df)
-            else:
-                st.caption("Feeds the V2 model's availability discount — switch Projection model "
-                          "to V2 above to use this.")
+            _render_fantasypros_injury_pull(wk_year, wk_week, roster_df)
         with tab_pff:
-            if model_version == 'v2':
-                _render_pff_weekly_alignment_upload(wk_year, wk_week)
-            else:
-                st.caption("Feeds the V2 model's future matchup work — switch Projection model "
-                          "to V2 above to use this.")
+            _render_pff_weekly_alignment_upload(wk_year, wk_week)
         with tab_market:
             # See the (former) standalone function's docstring: sportsbooks
             # only ever post the CURRENT live slate, so this can't be
@@ -1531,7 +2112,7 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, model
 def render():
     st.markdown("<div class='custom-section-header'>WEEKLY RANKINGS</div>", unsafe_allow_html=True)
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     with c1:
         # WITH_UPCOMING (not AVAILABLE_SEASONS) so the season about to start
         # is selectable and defaults FIRST (index=0) - unlike the tabs that
@@ -1551,29 +2132,24 @@ def render():
     wk_week_completed = bool(weeks[wk_week_idx].get('completed')) if weeks else False
     with c3:
         wk_scoring = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="weekly_rank_scoring")
-    with c4:
-        model_choice = st.selectbox(
-            "Projection model", ["V1 (released baseline)", "V2 (experimental)"],
-            key="weekly_rank_model_version",
-            help="V2 exposes cutoff-safe inputs and a player decomposition while it is evaluated against V1.",
-        )
-    model_version = 'v2' if model_choice.startswith('V2') else 'v1'
 
     with skeleton_loader("table", n_rows=10, n_cols=7):
         df_stats, t_col, n_col, _ = load_and_merge_data(wk_year, wk_scoring)
+        # Real cache-key input, not read inside build_weekly_projections -
+        # see availability_fingerprint's own docstring. Lets a saved
+        # override or FantasyPros pull invalidate just THIS week's cached
+        # board instead of the blanket build_weekly_projections.clear()
+        # this used to require (which evicted every other cached week too).
+        avail_fp = availability_fingerprint(wk_year, wk_week, AVAILABILITY_OVERRIDE_PATH, FANTASYPROS_INJURY_PATH)
         model_df, model_meta = build_weekly_projections(
-            wk_year, wk_week, wk_scoring, model_version=model_version)
+            wk_year, wk_week, wk_scoring,
+            availability_fingerprint=avail_fp)
 
     form_df = build_recent_form_rank(df_stats, n_col, t_col, n_weeks=RECENT_FORM_GAMES)
 
     st.markdown("### This app's weekly model")
-    if model_version == 'v2':
-        st.caption(
-            "V2 is an auditable experiment. Select a player row for its decomposition; "
-            "V1 remains the released baseline while V2 is backtested."
-        )
     fp_weekly, market_df = _render_live_data_hub(
-        wk_year, wk_week, wk_scoring, wk_week_completed, model_version,
+        wk_year, wk_week, wk_scoring, wk_week_completed,
         model_df[['Player']] if not model_df.empty else None,
         roster_df=model_df[['Player', 'Team', 'Pos']] if not model_df.empty else None,
         model_meta=model_meta)
@@ -1776,23 +2352,26 @@ def render():
                   f"({form_source_year}), with the dotted line at that season's average"),
             width="small",
         )
-        detail_config = (wk_year, wk_week, wk_scoring, model_version)
+        detail_config = (wk_year, wk_week, wk_scoring)
         selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
         if selected_state and selected_state.get('config') != detail_config:
             # A selection is meaningful only for the exact board it came
             # from.  This prevents a Week 3 explanation being displayed over
             # a Week 4 table after any selector changes.
             st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
-        details_by_row = [
-            model_meta.get('explanations', {}).get((row['Player'], row['Position'], row['Team']))
-            for _, row in display_df.iterrows()
-        ]
-        model_table_key = f"weekly_rank_model_table_{wk_year}_{wk_week}_{wk_scoring}_{model_version}"
+        # Row KEYS only here, not a model_meta['explanations'] lookup per
+        # row - that dict lookup is cheap today, but every displayed row
+        # (up to 40) was being looked up on EVERY rerun regardless of
+        # whether anyone selects a row. Deferred into
+        # _selected_player_detail below so only the one row actually
+        # clicked ever gets resolved.
+        row_keys = [(row['Player'], row['Position'], row['Team']) for _, row in display_df.iterrows()]
+        model_table_key = f"weekly_rank_model_table_{wk_year}_{wk_week}_{wk_scoring}"
 
         def _on_model_row_select():
             rows = st.session_state.get(model_table_key, {}).get('selection', {}).get('rows', [])
-            if rows and rows[0] < len(details_by_row):
-                detail = details_by_row[rows[0]]
+            if rows and rows[0] < len(row_keys):
+                detail = _selected_player_detail(model_meta, detail_config, row_keys[rows[0]])
                 if detail:
                     st.session_state[_PROJECTION_DETAIL_KEY] = {
                         'config': detail_config, 'detail': detail,

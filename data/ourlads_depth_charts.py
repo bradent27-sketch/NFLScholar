@@ -720,6 +720,33 @@ def _position_compatible(candidates: pd.DataFrame, source_position: str) -> pd.S
     return compatible
 
 
+# Single-slot, object-identity cache (see _alignment_profile_index in
+# pff_alignment.py for the same pattern, including why identity + a strong
+# reference beats a raw id()-keyed cache). _unique_match's very first line
+# is _position_compatible(pool, source_position) - a full-pool boolean scan,
+# run once per Ourlads depth-chart row, every row, always against the SAME
+# `pool` object (built once per resolve_ourlads_roster_identities call) and
+# one of only 5 possible values (_SOURCE_POSITIONS). Deliberately NOT
+# applied inside _position_compatible itself: _unique_match's SECOND call
+# (`_position_compatible(id_pool, source_position)`) passes a fresh, tiny,
+# already-ID-filtered frame every row, so a cache keyed only on
+# `(pool_identity, source_position)` at that call site would thrash on
+# every row instead of ever hitting - this wrapper is used only at the
+# full-pool call site, where the object genuinely repeats.
+_POSITION_COMPATIBLE_CACHE: dict[str, Any] = {"pool": None, "results": {}}
+
+
+def _position_compatible_for_pool(pool: pd.DataFrame, source_position: str) -> pd.Series:
+    cache = _POSITION_COMPATIBLE_CACHE
+    if cache["pool"] is not pool:
+        cache["pool"] = pool
+        cache["results"] = {}
+    results = cache["results"]
+    if source_position not in results:
+        results[source_position] = _position_compatible(pool, source_position)
+    return results[source_position]
+
+
 def _distinct_identity_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
     """Collapse duplicate rows for one identity without collapsing people."""
     if candidates.empty:
@@ -761,7 +788,7 @@ def _unique_match(pool: pd.DataFrame, chart_row: pd.Series,
     stale team assignment, but still require a compatible football position.
     """
     source_position = _position_from_value(chart_row.get("position", ""))
-    compatible = _position_compatible(pool, source_position)
+    compatible = _position_compatible_for_pool(pool, source_position)
 
     id_matches: list[tuple[str, pd.DataFrame]] = []
     for method, value, roster_columns in _source_stable_id_values(chart_row):
@@ -792,7 +819,14 @@ def _unique_match(pool: pd.DataFrame, chart_row: pd.Series,
         return None, "unmatched", "none", "no compatible roster player"
 
     source_name = _clean_text(chart_row.get("player", ""))
-    source_exact = _strict_name_key(pd.Series([source_name])).iloc[0]
+    # Prefer resolve_ourlads_roster_identities' precomputed columns (see its
+    # own comment) - fall back to computing it here directly so this
+    # function still works correctly if ever called with a bare chart_row
+    # that doesn't carry them (e.g. a future direct/standalone caller).
+    if "_source_exact_key" in chart_row.index:
+        source_exact = chart_row["_source_exact_key"]
+    else:
+        source_exact = _strict_name_key(pd.Series([source_name])).iloc[0]
     exact = _distinct_identity_candidates(candidates[candidates["_exact"].eq(source_exact)])
     if len(exact) == 1:
         return exact.iloc[0], "exact name", "high", ""
@@ -803,7 +837,10 @@ def _unique_match(pool: pd.DataFrame, chart_row: pd.Series,
     # A reviewable alias is deliberately narrower than the suffix fallback.
     # It bridges source-only spelling changes without declaring similar names
     # interchangeable players.
-    alias_key = canonical_player_key(pd.Series([source_name])).iloc[0]
+    if "_source_alias_key" in chart_row.index:
+        alias_key = chart_row["_source_alias_key"]
+    else:
+        alias_key = canonical_player_key(pd.Series([source_name])).iloc[0]
     alias = _distinct_identity_candidates(candidates[candidates["_alias_exact"].eq(alias_key)])
     if len(alias) == 1:
         return alias.iloc[0], "reviewed alias", "reviewed", ""
@@ -811,7 +848,10 @@ def _unique_match(pool: pd.DataFrame, chart_row: pd.Series,
         return None, "ambiguous reviewed alias", "none", (
             "reviewed alias maps to multiple compatible roster identities")
 
-    loose_key = clean_name_for_merge(pd.Series([source_name])).iloc[0]
+    if "_source_loose_key" in chart_row.index:
+        loose_key = chart_row["_source_loose_key"]
+    else:
+        loose_key = clean_name_for_merge(pd.Series([source_name])).iloc[0]
     loose = _distinct_identity_candidates(candidates[candidates["_loose"].eq(loose_key)])
     if len(loose) == 1:
         return loose.iloc[0], "suffix-stripped name", "medium", ""
@@ -885,6 +925,23 @@ def resolve_ourlads_roster_identities(snapshot: pd.DataFrame, roster: pd.DataFra
         return (pd.DataFrame(columns=_MATCH_COLUMNS),
                 pd.DataFrame(columns=_IDENTITY_AUDIT_COLUMNS), [])
     pool = _build_roster_identity_pool(roster, name_col, team_col)
+    # Precompute the three name-tier keys ONCE, vectorized over the whole
+    # snapshot column - _unique_match picks these up straight off chart_row
+    # below (see its own fallback) instead of recomputing them by calling
+    # _strict_name_key/canonical_player_key/clean_name_for_merge on a
+    # freshly-built ONE-ROW pd.Series every single source row. Those three
+    # are vectorized string functions (.str.normalize/.encode/.decode/...);
+    # their per-call overhead is roughly constant regardless of row count,
+    # so calling them once per Ourlads row instead of once for the whole
+    # column was paying that same fixed cost hundreds of times over -
+    # profiled at ~19s of Ourlads identity resolution just for
+    # _strict_name_key's share. Exact same normalization, same order
+    # (_clean_text first, then each key function) as the per-row path.
+    snapshot = snapshot.copy()
+    _source_names = snapshot.get("player", pd.Series("", index=snapshot.index)).map(_clean_text)
+    snapshot["_source_exact_key"] = _strict_name_key(_source_names)
+    snapshot["_source_alias_key"] = canonical_player_key(_source_names)
+    snapshot["_source_loose_key"] = clean_name_for_merge(_source_names)
     resolved, audit, warnings = [], [], []
     for _, chart_row in snapshot.iterrows():
         source_position = _position_from_value(chart_row.get("position", ""))

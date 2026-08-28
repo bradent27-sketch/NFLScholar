@@ -1,13 +1,13 @@
 """
-Five-checkpoint, no-leakage backtest of the V2 model against 2025, plus a
-TD-dependency variance breakdown by position.
+Five-checkpoint, no-leakage backtest of this app's weekly model against
+2025, plus a TD-dependency variance breakdown by position.
 
 WHAT THIS ANSWERS (two separate questions the user asked together):
 
 1. "Run the new model against 5 separate weeks of last season" - each
-   checkpoint projects week N using build_weekly_projections(as_of_week=N,
-   model_version='v2'), which by construction only reads prior-season history
-   plus weeks < N of the current season (see that function's own docstring).
+   checkpoint projects week N using build_weekly_projections(as_of_week=N),
+   which by construction only reads prior-season history plus weeks < N of
+   the current season (see that function's own docstring).
    That is exactly "a mock projection based on the previous season and the
    weeks leading up to it" - no result ever leaks into its own projection.
    Reported per week AND pooled, broken into rank-within-position tiers
@@ -89,7 +89,7 @@ def run_backtest(year, weeks, scoring='Full PPR'):
 
     for week in weeks:
         proj, meta = build_weekly_projections(year, week, scoring, as_of_week=week,
-                                               apply_injury=False, model_version='v2')
+                                               apply_injury=False)
         actual = _actual_points(stats_df, name_col, week, scoring_col)
         if proj.empty or actual.empty:
             print(f"week {week}: skipped ({meta.get('reason', 'no actuals')})")

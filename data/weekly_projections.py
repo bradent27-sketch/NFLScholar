@@ -141,7 +141,9 @@ from data.pff_alignment import (
     alignment_defense_residual_multiplier, ALIGNMENT_DEFENSE_SUPPORTED_POSITIONS,
     load_weekly_scheme_profiles, lookup_scheme_profile,
     load_weekly_scheme_defense_profiles, scheme_defense_residual_multiplier,
+    SCHEME_DEFENSE_SUPPORTED_POSITIONS,
     blend_alignment_profile_toward_prior2,
+    _attach_offense_leave_one_out_baselines,
 )
 
 # Maps this file's stat names onto pff_alignment.py's ALIGNMENT_DEFENSE_STATS
@@ -152,6 +154,26 @@ from data.pff_alignment import (
 ALIGNMENT_SCORING_STAT_MAP = {
     'targets': 'targets', 'receptions': 'receptions', 'receiving_yards': 'yards',
 }
+
+# Optional FIXED mixing weight (scheme's own share) per position, overriding
+# 'v2_scheme_alignment_blend''s default evidence-weighted blend - empty by
+# default, meaning every position uses that default. Built 2026-08-27 per
+# explicit request: the component backtest program's evidence-weighted blend
+# showed a real, positive pattern for BOTH positions but with opposite
+# implications - WR's blend beat scheme-alone outright (best of every variant
+# tested), while TE's blend was real but weaker than scheme-alone's own
+# START-TE win, i.e. alignment context was "diluting, not hurting" TE's
+# result. The user wants to KEEP alignment context for TE regardless (not
+# drop it for a pure scheme-wins-outright design) while weighting it less
+# than the ~50/50 the evidence-weighted default happened to land near - this
+# lets scripts/sweep_scheme_blend_weight.py test specific fixed ratios (e.g.
+# {'TE': 0.75}) to find where that tradeoff actually lands, rather than
+# guessing at one number. Set by a sweep script via monkeypatch + explicit
+# build_weekly_projections.clear() between runs (the cache key is `features`,
+# which does not change across weight values - mutating this dict alone
+# would silently serve a stale cached result otherwise); never set here by
+# default.
+SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT = {}
 
 # One past the last real week of a completed prior season, so every one of
 # its weeks passes discover_weekly_alignment_exports' strict
@@ -223,6 +245,26 @@ RECENCY_DECAY = 0.85
 # weight (how fast a defense profile shifts off last year onto this year's
 # games), which is its own knob elsewhere and was left exactly as it was.
 PRIOR_SEASON_DEFENSE_RECENCY_FLOOR = 0.80
+
+# CANDIDATE, built 2026-08-27 - see 'v2_cold_start_regression' in
+# MODEL_FEATURES. At true cold start (Week 1, no current-season games yet -
+# see `cold_start = hist.empty`), every matchup-side multiplier this model
+# computes (the defense/role matchup, and the script/pace/availability/
+# environment "context" group) is built entirely from LAST season's evidence,
+# with no way yet to tell whether a defense - or a game environment read off
+# a still-thin market - will actually repeat this year. Per explicit request:
+# a defense that graded as elite or as terrible last season is not equally
+# likely to repeat that exact grade, and treating the Week 1 read at full
+# strength overvalues both tails. This pulls every such multiplier a fixed
+# fraction of the way back toward neutral (1.0) ONLY at cold start - 0.25
+# means 75% of the computed multiplier's own deviation from 1.0 survives, 25%
+# regresses to "assume average until proven otherwise." Applied identically
+# to the defense-side multiplier and each context factor (not the product of
+# all of them at once) - in the near-1.0 range these multipliers normally
+# live in, the two are nearly indistinguishable, and per-factor is far
+# simpler to apply correctly across this file's several separate multiplier
+# sites. NOT YET BACKTESTED - built and gated, first measurement pending.
+COLD_START_MULTIPLIER_REGRESSION = 0.25
 
 # Preseason QB workload selection deliberately does not reuse the generated
 # Depth Charts table.  That table is useful for browsing a roster, but it
@@ -344,6 +386,27 @@ OURLADS_PRESEASON_ROLE_FLOORS = {
 }
 OURLADS_LOW_EVIDENCE_PRIOR_SHARE = 0.20
 
+# Deep-bench WR/TE receiving-volume cutoff. Added 2026-08-25 per the user's
+# own read of a real defect: a team's real WR1-4/TE1-3 each get a credible
+# share, but every player ranked below them on the SAME team still carried a
+# small nonzero share too - individually modest, but data.pass_capacity_
+# allocator's team-target fit (see its own module docstring) splits each
+# team's LEFTOVER budget proportionally across its whole tail, so a pile of
+# should-be-negligible WR6/WR7/WR8/TE4+ claims measurably shrinks what's
+# left for the real WR5/committee-TE names sharing that same tail - "team
+# capacity delta" docking legitimate players. Per the user: "the 8th WR
+# doesn't need a projection...WR5 may get about 1 a week but past that
+# probably need to cut it off...past TE3 don't need projected receiving
+# volume." Ranked by each player's own current ``player_share`` within his
+# team (already reflects any Ourlads role floor/pull applied above), so this
+# reads the model's own best current understanding of role rather than a
+# separate guess, and works identically at cold start and in-season alike.
+WR_DEPTH_RANK_SMALL_ROLE = 5              # "about 1 a week" - real but minor
+WR_DEPTH_RANK_SMALL_ROLE_SHARE_CAP = 0.05
+WR_DEPTH_RANK_CUTOFF = 6                  # rank 6 and deeper - cut off
+TE_DEPTH_RANK_CUTOFF = 4                  # rank 4 and deeper - cut off
+RECEIVER_DEPTH_CUTOFF_SHARE_CAP = 0.01
+
 # How many weeks into a season the Ourlads role floor above keeps ANY pull,
 # once real snaps exist (cold_start=False). Per the user: "the depth charts
 # are mostly for the first week to get a gauge on new players and not for
@@ -420,97 +483,154 @@ INJURY_MULTIPLIER = {'out': 0.0, 'ir': 0.0, 'doubtful': 0.4, 'questionable': 0.8
 MODEL_FEATURES = (
     'volume_efficiency',  # opportunities x per-opportunity rate, not a flat per-game rate
     'role_volume',        # baselines scaled by expected SNAP SHARE, not per game played
-    'role_matchup',       # defense ratings conditioned on the player's own ROLE
+    'role_matchup',       # defense ratings conditioned on the player's own ROLE -
+                           # superseded by 'v2_continuous_roles' in DEFAULT_FEATURES
+                           # (both gate the same branch; v2_continuous_roles adds a
+                           # continuous rather than tiered role read on top)
     'redzone_tds',        # touchdowns from red-zone opportunity, not a raw TD rate
     'role_trend',         # a step change in snap share, not a decayed average of it
     'volume_faced',       # opponent pass/rush volume faced, split (pace is one number)
     'game_env',           # market total, roof/venue, wind, rest
-    'teammate_vacancy',   # an OUT teammate's usage redistributed (live only)
+    'teammate_vacancy',   # an OUT teammate's usage redistributed (live only) -
+                           # superseded by 'v2_vacancy' in DEFAULT_FEATURES (same
+                           # gate; v2_vacancy adds the ledger tracking on top)
     'qb1_override',        # expected-QB1 selection / backup-volume gate
-    'v2_preseason_rb_allocator',  # team-constrained cold-start RB roles (V2 only)
-    'v2_pff_alignment_matchup',  # WR/TE slot/non-slot defense residual - built,
-                                  # measured, REJECTED 2026-08-24 (see
-                                  # DEFAULT_FEATURES's comment below); left in
-                                  # V2_EXPERIMENTAL_FEATURES only for the
-                                  # user's own diagnostic use (see that set's
-                                  # own comment), excluded from DEFAULT_FEATURES
-    'v2_pass_capacity',    # team-constrained WR/TE/RB target conservation (V2 only)
-    'v2_qb_volume_blend',  # QB1 volume: team dropbacks x evidence-weighted player style (V2 only)
-    'v2_fantasypros_availability',  # FantasyPros-sourced injury signal, healthy by default (V2 only)
+    'v2_output_contract',  # V2's output-column contract
+    'v2_as_of_guard',      # strict as-of-week cutoff guard
+    'v2_adaptive_volume',  # sample-size-adaptive volume blend
+    'v2_td_two_year_prior',  # two-year, not one-year, TD-rate prior
+    'v2_defense_prior',    # defense rating prior/shrinkage revision
+    'v2_continuous_roles', # continuous (not tiered) role-share read; see role_matchup above
+    'v2_channel_matchups', # per-route-channel matchup read
+    'v2_alignment_contract',  # PFF alignment data contract/validation
+    'v2_pff_alignment_matchup',  # WR/TE slot/non-slot defense residual - built and
+                                  # measured on 2025 weeks 2-18: lost on the startable
+                                  # WR/TE pool (see DEFAULT_FEATURES's comment below).
+                                  # Kept ON in DEFAULT_FEATURES anyway at the user's
+                                  # explicit request (2026-08-26) so it stays live and
+                                  # inspectable on the board while the mechanism is
+                                  # re-studied, rather than gated behind a second model.
+    'v2_availability',     # availability/injury resolver revision; see v2_fantasypros_availability
+    'v2_vacancy',           # see teammate_vacancy above
+    'v2_preseason_rb_allocator',  # team-constrained cold-start RB roles
+    'v2_pass_capacity',    # team-constrained WR/TE/RB target conservation
+    'v2_qb_volume_blend',  # QB1 volume: team dropbacks x evidence-weighted player style
+    'v2_fantasypros_availability',  # FantasyPros-sourced injury signal, healthy by default
     'calibration',        # shrink toward the positional mean, fitted out-of-sample
+    'v2_role_change_by_stat',  # per-stat ROLE_CHANGE_K_REDUCTION instead of one
+                                # shared constant - dampens RB targets AND
+                                # rushing_attempts's role-change trust-
+                                # acceleration. SHIPPED 2026-08-27 after a
+                                # corrected re-test measured a real RB win;
+                                # see ROLE_CHANGE_K_REDUCTION_RB_CARRY's own
+                                # note for the full history (a first attempt
+                                # that tested inert, and why)
+    'v2_scheme_matchup',    # WR/TE man/zone allowed-by-scheme multiplier -
+                             # built 2026-08-27 as a redesigned, wired-in
+                             # version of the man/zone "scheme_defense"
+                             # pipeline that had sat preview-only since the
+                             # 2026-08-23 commit that added it. See
+                             # scheme_defense_residual_multiplier's own
+                             # 2026-08-27 redesign note in data/pff_alignment.py
+                             # (it inherited alignment's pre-redesign flaws
+                             # and was fixed to match before ever being
+                             # backtested) and this file's own note below.
+                             # Not yet in DEFAULT_FEATURES - first backtest
+                             # pending.
+    'v2_scheme_alignment_blend',  # evidence-weighted blend of alignment and
+                             # scheme instead of either replacing the broad
+                             # matchup alone or one outright replacing the
+                             # other - see the note above
+                             # 'v2_scheme_alignment_blend' in this file's
+                             # per-stat loop for the full reasoning. Mutually
+                             # exclusive with 'v2_scheme_matchup' in practice
+                             # (both test different combination strategies);
+                             # if both are set, the blend wins.
+    'v2_cold_start_regression',  # pull every matchup/context multiplier 25%
+                             # of the way back toward neutral 1.0, but ONLY
+                             # at true cold start (Week 1) - see
+                             # COLD_START_MULTIPLIER_REGRESSION's own note.
+                             # Not yet backtested.
+    'v2_game_total_elasticity',  # implied game-total scaling ALONE, unbundled
+                             # from 'game_env' (rejected as a bundle, +0.012
+                             # MAE) - see _game_env_multiplier's own note.
+                             # Not yet backtested standalone.
+    'v2_venue_mult',        # indoor/outdoor venue scaling ALONE, same
+                             # unbundling as above. Not yet backtested
+                             # standalone.
+    'v2_defense_prior_games_override',  # sweep hook for DEFENSE_PRIOR_GAMES
+                             # (currently 4.0, never itself backtested) - see
+                             # that constant's own note and
+                             # scripts/sweep_defense_prior_games.py. A no-op
+                             # unless DEFENSE_PRIOR_GAMES_OVERRIDE is also set.
 )
-# What the app actually runs. `volume_efficiency` and `game_env` are NOT in
-# it: both were built, measured on the same 8,107 paired player-weeks, and
-# left off because they did not help (volume_efficiency +0.051 MAE / -0.005
-# rank-corr, winning 5 of 26 weeks; game_env +0.012 MAE at the measured
-# elasticity and +0.006 at half of it, winning 10-11 of 26). The code stays,
-# switchable, with the measurement written next to each - see
-# docs/weekly_projections_methodology.md.  ``qb1_override`` is a
-# participation-correctness layer for both cold starts and in-season QB rooms,
-# not a claim of a new fitted backtest improvement.
+# What the app actually runs - the single standard model. Until 2026-08-26
+# this file offered two configurations: this set (then called "V1, released
+# baseline") and a separate, larger "V2, experimental" set the UI let you
+# opt into. That toggle was retired 2026-08-26 at the user's explicit
+# request once V2 had been evaluated long enough to become the standard -
+# see git history (this file, ui/tabs/rankings.py) for the old dual-model
+# UI if it's ever needed again. DEFAULT_FEATURES is now exactly the former
+# V2_EXPERIMENTAL_FEATURES set plus 'calibration' (see that name's own note
+# below for why it's added back in). `volume_efficiency` and `game_env` are
+# NOT in it: both were built, measured on the same 8,107 paired
+# player-weeks, and left off because they did not help (volume_efficiency
+# +0.051 MAE / -0.005 rank-corr, winning 5 of 26 weeks; game_env +0.012 MAE
+# at the measured elasticity and +0.006 at half of it, winning 10-11 of 26).
+# The code stays, switchable, with the measurement written next to each -
+# see docs/weekly_projections_methodology.md. ``qb1_override`` is a
+# participation-correctness layer for both cold starts and in-season QB
+# rooms, not a claim of a new fitted backtest improvement.
 #
-# ``calibration`` RESTORED TO DEFAULT, 2026-08-23, for every position
-# including QB. It was pulled earlier the same day pending the two-year
-# (2024-2025), every-modelled-player-week backtest planned at removal time;
-# that backtest has now run (see WEEKLY_CALIBRATION's own comment for the
-# investigation and the re-fit), found the top-of-pool over-projection to be
-# real selection-effect over-dispersion rather than a fixable upstream bug,
-# and re-fitted the line against the corrected CALIBRATION_INPUT_FEATURES.
-# Applied at half strength by explicit request, so the board still mostly
-# reads as this model's own signal rather than a full statistical shrink -
-# see that same comment for the damping rationale and numbers.
+# ``calibration`` was never part of the old V2_EXPERIMENTAL_FEATURES set (it
+# shipped uncalibrated), which the 2026-08-26 retirement carried forward by
+# default - the user was asked explicitly and chose to ADD calibration to
+# the new standard rather than ship uncalibrated, since it's a measured fix
+# for a real top-of-pool over-projection bug (see WEEKLY_CALIBRATION's own
+# comment). Because the shipping component set changed substantially that
+# same day (the former V2-only components joined it), the calibration line
+# was RE-FITTED against the new CALIBRATION_INPUT_FEATURES via
+# scripts/fit_weekly_calibration.py - re-run it again any time DEFAULT_FEATURES
+# changes, since the line describes the dispersion of the model it's applied to.
 #
-# ``v2_pff_alignment_matchup``'s WR/TE slot/non-slot defense residual was
-# BUILT AND MEASURED 2026-08-24 (the blended player-role x defense-slot-rate
-# multiplier the user specifically proposed - see
-# alignment_defense_residual_multiplier in data/pff_alignment.py, applied at
-# the matchup-multiplier step just above where ALIGNMENT_SCORING_STAT_MAP is
-# used) and REJECTED, same bar as volume_efficiency/game_env: paired A/B,
-# DEFAULT_FEATURES vs DEFAULT_FEATURES+v2_pff_alignment_matchup, 2025 weeks
-# 2-18 (week 1 excluded - cold start / season-prior fallback, a different
-# code path). Whole-pool WR looked like a rounding-error win (-0.003 MAE,
-# 11-6 weeks) but that pool is dominated by bench players the eval script's
-# own docstring calls "trivially easy to rank" - exactly the failure mode it
-# warns about. The population that actually matters, the startable subset,
-# lost on both stats: START-WR +0.022 MAE / -0.004 rank-corr (7-10 weeks),
-# START-TE +0.082 MAE / -0.026 rank-corr (4-13 weeks - the worst result of
-# any scope). The mechanism itself (data/pff_alignment.py's aggregated
-# defense-side slot/non-slot rates, ALIGNMENT_DEFENSE_SHRINKAGE_GAMES=4
-# games) is likely too thin a sample this early in a single season of
-# weekly-grain PFF data (2025 only - see pff_imports/) to beat what the
-# existing role_matchup defense-vs-position table already captures; not
-# re-derived from a different upstream parameter, since the shrinkage/clip
-# constants are already conservative defaults per their own comment. The
-# code stays in place and switchable by explicit feature name for a future
-# re-study once more weekly-grain seasons exist. RE-ENABLED IN
-# V2_EXPERIMENTAL_FEATURES ONLY, 2026-08-24, at the user's explicit request:
-# still rejected for DEFAULT_FEATURES (this frozenset, unchanged), but folded
-# back into the V2 bundle so the user can pick V2 in the Weekly Rankings UI
-# and inspect real per-player/week 'Alignment residual' numbers (see
-# ui/tabs/rankings.py's decomposition table) hunting for a fixable upstream
-# cause rather than accepting the rejection at face value. If a future
-# session finds and fixes a real cause and re-measures a win, promote it to
-# DEFAULT_FEATURES with a fresh dated comment here; if the re-look confirms
-# the rejection, pull it back out of V2_EXPERIMENTAL_FEATURES too.
+# ``v2_pff_alignment_matchup``'s WR/TE allowed-by-alignment multiplier was
+# BUILT AND MEASURED 2026-08-24 as an INCREMENTAL residual multiplied on top
+# of the broad role/defense matchup, paired A/B against the rest of this set
+# on 2025 weeks 2-18 (week 1 excluded - cold start / season-prior fallback,
+# a different code path). Whole-pool WR looked like a rounding-error win
+# (-0.003 MAE) but that pool is dominated by bench players the eval script's
+# own docstring calls "trivially easy to rank." The startable subset lost on
+# both stats: START-WR +0.022 MAE, START-TE +0.082 MAE (worst result of any
+# scope measured). Likely cause at the time: only one season (2025) of
+# weekly-grain PFF data existed, and the incremental design divided by a
+# position-normal alignment mix on top of an already-thin per-alignment
+# sample - two compounding sources of noise.
+#
+# REDESIGNED 2026-08-26 per explicit request (see alignment_defense_residual_
+# multiplier's own docstring in data/pff_alignment.py): the position-normal-
+# mix division and a separate confidence-based shrink-to-1.0 were both
+# removed, and this component now REPLACES the broad role/defense matchup
+# for WR/TE targets/receptions/receiving_yards (see the alignment_player_
+# factor block just below) rather than multiplying on top of it - directly
+# addressing the "two independent opinions of the same matchup" redundancy
+# and the "normalizes too aggressively toward league average" complaint that
+# prompted this change. Same day, a full 2024 weekly-grain PFF archive
+# (pff_imports/2024/weekly/) was also confirmed present, which the original
+# rejection's own "likely cause" pointed at as the fix this needed.
+#
+# RE-MEASURED 2026-08-26 (same day as the redesign) via scripts/eval_weekly_model.py's
+# paired A/B harness, isolating exactly 'v2_pff_alignment_matchup' (DEFAULT_FEATURES
+# with vs. without that one flag) on 2025 weeks 2-18 - same window as the original
+# 2026-08-24 measurement above, now against the redesigned mechanism with 2024+2025
+# evidence. Result: START-WR - the worst scope in the original rejection - REVERSES,
+# now WINNING by -0.069 MAE / +0.024 rank-corr (11 of 17 weeks). START-TE moves the
+# other way, a small MAE loss (+0.025) though its rank-corr still edges in alignment's
+# favor (+0.002). Whole-pool WR/TE and ALL/QB/RB are a wash (as expected - QB/RB aren't
+# a targeted stat group). Kept ON per explicit user request either way ("if it doesn't
+# pass don't just remove it, just report the statistics") - this is not a pass/fail
+# gate, just the current honest numbers. Re-run this A/B again after any future change
+# to alignment_defense_residual_multiplier or its inputs.
 DEFAULT_FEATURES = frozenset({
-    'role_volume', 'role_matchup', 'teammate_vacancy',
-    'qb1_override', 'calibration',
-})
-
-# V2 is deliberately an experiment set rather than a silent replacement for
-# the measured V1 configuration above.  The UI can opt into it, a backtest can
-# pass it explicitly, and V1 remains a reproducible control.  A component
-# being present here does *not* claim that it improves accuracy yet; the
-# release gate in docs/weekly_projection_model_v2_build_handoff.md still
-# applies. ``v2_pff_alignment_matchup`` is a special case worth flagging: it
-# was built, measured, and REJECTED on 2026-08-24 (see
-# MODEL_FEATURES/DEFAULT_FEATURES's own comment for the numbers - it loses on
-# the startable WR/TE pool). It is back in this set, as of the same day, only
-# because the user asked to keep digging for a fixable cause with the real
-# board in front of them - this is a diagnostic reactivation, not a reversal
-# of the backtest result. Anyone reading a V2 board should not treat its
-# presence here as a second, more permissive endorsement than DEFAULT_FEATURES.
-V2_EXPERIMENTAL_FEATURES = frozenset({
     'role_volume', 'qb1_override',
     'v2_output_contract',
     'v2_as_of_guard',
@@ -527,41 +647,31 @@ V2_EXPERIMENTAL_FEATURES = frozenset({
     'v2_pass_capacity',
     'v2_qb_volume_blend',
     'v2_fantasypros_availability',
+    'calibration',
+    'v2_role_change_by_stat',
 })
 
 
-def resolve_model_features(model_version='v1', features=None):
+def resolve_model_features(features=None):
     """Return one explicit feature set for a reproducible model run.
 
-    ``features`` always wins so the evaluation harness can test an isolated
-    component combination.  Otherwise the public model-version choice is the
-    only switch: V1 keeps the currently shipped configuration, while V2 is
-    clearly labelled experimental in the returned metadata.
+    ``features`` always wins so the evaluation harness (and calibration fit
+    script) can test an isolated component combination. Otherwise this
+    returns DEFAULT_FEATURES - the single standard model; there is no longer
+    a second "model_version" switch (retired 2026-08-26, see
+    DEFAULT_FEATURES's own comment).
     """
     if features is not None:
         return frozenset(features)
-    return V2_EXPERIMENTAL_FEATURES if str(model_version).lower() == 'v2' else DEFAULT_FEATURES
+    return DEFAULT_FEATURES
 
 # The feature set the calibration line was FITTED against - i.e. everything
-# that ships except calibration itself, and except teammate_vacancy (which
-# only ever fires off a live injury feed and is inert in a backtest).
-# scripts/fit_weekly_calibration.py builds the model with exactly this set,
-# so the line describes the dispersion of the model it is applied to. If the
-# shipping component set changes, the line has to be re-fitted - that is
-# what makes it a measurement rather than a magic number.
-#
-# FIXED 2026-08-23: this used to hard-code 'v2_pass_capacity' and
-# 'v2_qb_volume_blend' alongside the V1 set below - both V2-only components
-# that structurally shrink volume (team-conserved targets, evidence-shrunk
-# QB1 style/efficiency), left over from the V2-build commit that introduced
-# them. DEFAULT_FEATURES has never shipped either one, so a calibration
-# fitted against that set described a model nobody was running: the extra
-# shrinkage would tune the line's crossover point for a lower raw baseline
-# than the actual V1 default ever produces, over- or under-correcting the
-# real thing depending on direction. Deriving this from DEFAULT_FEATURES
-# directly makes that drift structurally impossible - if the shipping
-# component set moves, this moves with it, which is the whole reason a
-# re-fit is required whenever it does (see WEEKLY_CALIBRATION's own comment).
+# that ships except calibration itself. scripts/fit_weekly_calibration.py
+# builds the model with exactly this set, so the line describes the
+# dispersion of the model it is applied to. If the shipping component set
+# changes, the line has to be re-fitted - that is what makes it a
+# measurement rather than a magic number (see DEFAULT_FEATURES's own
+# comment for the 2026-08-26 re-fit this triggered).
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 
 
@@ -595,31 +705,41 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 # (slope, intercept) per position, FITTED ON 2021-2023 - deliberately
 # outside the 2024-2025 window every model change here is evaluated on, so
 # this is a measurement rather than a curve fitted to its own test. Produced
-# by scripts/fit_weekly_calibration.py against CALIBRATION_INPUT_FEATURES
-# (fixed the same day - see that constant's own comment - to actually match
-# DEFAULT_FEATURES instead of a stale V2-only combination); re-run it if the
-# shipping component set changes, since the line describes the dispersion of
-# the model it is applied to. The RAW out-of-sample fit was:
+# by scripts/fit_weekly_calibration.py against CALIBRATION_INPUT_FEATURES;
+# re-run it if the shipping component set changes, since the line describes
+# the dispersion of the model it is applied to.
 #
-#   'QB': (0.522, 7.403),   'RB': (0.830, 1.704),
-#   'WR': (0.818, 1.409),   'TE': (0.827, 1.242),
+# RE-FITTED 2026-08-26 when the separate "V1 released baseline" / "V2
+# experimental" toggle was retired and DEFAULT_FEATURES grew to become
+# exactly the former V2_EXPERIMENTAL_FEATURES set plus calibration (see that
+# name's own comment) - CALIBRATION_INPUT_FEATURES moved with it, so the
+# previous fit (below what shipped 2026-08-23, against the smaller pre-V2
+# DEFAULT_FEATURES) no longer described the model it was being applied to.
+# The RAW out-of-sample fit against the NEW, larger feature set (n=11,761,
+# 2021-2023 weeks 5-17):
+#
+#   'QB': (0.467, 8.218),   'RB': (0.852, 2.038),
+#   'WR': (0.935, 1.947),   'TE': (0.945, 1.521),
+#
+# (previous 2026-08-23 fit, for reference: QB (0.522, 7.403), RB (0.830,
+# 1.704), WR (0.818, 1.409), TE (0.827, 1.242) - QB's raw slope moved
+# further from 1 this round, the others stayed in a similar range.)
 #
 # APPLIED AT HALF STRENGTH, DELIBERATELY - explicit request to keep the
 # board legible as this model's own signal rather than a full statistical
 # shrink toward the mean, even where the fitted line alone would be more
 # "accurate" by MAE. Each stored constant below blends the raw fit halfway
 # toward the identity line (b_slope = 1 + 0.5*(slope-1), b_intercept =
-# 0.5*intercept) before the one-sided clip is applied. Checked against the
-# 2024-2025 holdout at the startable tier (the population a start/sit call
-# is actually made from - see STARTABLE_N in scripts/eval_weekly_model.py):
-# half strength keeps every position's startable bias within +-0.43 of zero
-# (full strength overshoots QB to -0.98 and TE to -0.41 - the whole-pool fit
-# is dominated by the deep bench, and applying it at full strength to the
-# thinner startable slice over-corrects it) while still buying a real,
-# measured MAE improvement over uncalibrated at every position (QB 6.35 vs
-# 6.41, RB 6.01 vs 6.10, WR 6.19 vs 6.30, TE 5.40 vs 5.47). Re-run the
-# damping sweep in docs/weekly_projections_methodology.md before changing
-# this strength rather than hand-picking a new one.
+# 0.5*intercept) before the one-sided clip is applied - same formula and
+# same 0.5 strength as before, just applied to the refreshed raw fit above.
+# NOTE: the 2026-08-23 startable-tier holdout recheck described below (the
+# +-0.43 bias bound and the MAE-vs-uncalibrated comparison) was NOT re-run
+# against this new fit as part of the 2026-08-26 refactor - only the raw
+# fit + half-strength dampening was refreshed to match the new shipping
+# feature set. Re-run that startable-tier holdout check (see
+# docs/weekly_projections_methodology.md) before trusting those specific
+# numbers again; the dampening RATIONALE (why half strength, why one-sided)
+# still applies unchanged.
 #
 # APPLIED ONE-SIDED: `min(projection, line(projection))`. A slope under 1
 # shrinks above the line's identity crossover and would INFLATE below it -
@@ -649,12 +769,19 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 # docs/weekly_projections_methodology.md if the shipping feature set moves
 # again, on the STARTABLE pool specifically, not the whole pool - that
 # distinction is what produced the wrong call the first time.
+#
+# RE-FITTED 2026-08-27 when 'v2_role_change_by_stat' joined DEFAULT_FEATURES
+# (scripts/fit_weekly_calibration.py, same 2021-2023 weeks 5-17 window,
+# n=11,761). Raw fit barely moved - QB/WR/TE identical to 3 decimals, RB
+# slope 0.852->0.853 - consistent with that component's own measured effect
+# being small and RB-only. Recorded per this file's own "re-fit any time
+# DEFAULT_FEATURES changes" rule, not because anything shifted meaningfully.
 # ---------------------------------------------------------------------------
 WEEKLY_CALIBRATION = {
-    'QB': (0.761, 3.701),
-    'RB': (0.915, 0.852),
-    'WR': (0.909, 0.705),
-    'TE': (0.913, 0.621),
+    'QB': (0.734, 4.109),
+    'RB': (0.926, 1.018),
+    'WR': (0.968, 0.974),
+    'TE': (0.972, 0.760),
 }
 
 
@@ -1012,6 +1139,39 @@ def _eligible_fantasy_points(*sources) -> list:
     return out
 
 
+def _defense_adjusted_prior_average(player_game_log_prior, stats):
+    """Per-player, per-stat mean of the prior season's own per-game
+    ``_defadj_{stat}`` values (ELIGIBLE games only) - literally an average
+    of the SAME numbers the Deep Dive's per-game "Defense-adj" column
+    already shows for that season, not a new/separate adjustment. Added
+    2026-08-25 for the decomposition table's "Season average (adj)" column
+    ("this is based on the defenses a player has played" - the user's own
+    framing), distinct from `raw_prior_rate` (the plain, unadjusted
+    average) and from `blended_rate` (which is about the UPCOMING
+    opponent, not games already played). Display-only - never an input to
+    `_blended_rate` or anything downstream of it. Two-years-back is
+    deliberately excluded: no quality-adjusted matchup matrix is built for
+    that season (see `_build_player_stat_game_log`'s own comment), so its
+    "Defense-adj" already just repeats the raw value and would only dilute
+    this number toward the unadjusted one.
+    """
+    out = {stat: np.full(len(player_game_log_prior), np.nan) for stat in stats}
+    for i, log in enumerate(player_game_log_prior):
+        if not isinstance(log, pd.DataFrame) or log.empty:
+            continue
+        eligible = (log[log['_player_history_eligible'].astype(bool)]
+                   if '_player_history_eligible' in log.columns else log)
+        if eligible.empty:
+            continue
+        for stat in stats:
+            col = f'_defadj_{stat}'
+            if col in eligible.columns:
+                val = pd.to_numeric(eligible[col], errors='coerce').mean()
+                if pd.notna(val):
+                    out[stat][i] = float(val)
+    return out
+
+
 def _build_defense_weekly_log(pos_rows, team_col, stats, game_universe, as_of_week):
     """Per-week opponent-allowed rows for one position, keyed by defense team.
 
@@ -1217,6 +1377,15 @@ def build_qb_quality_adjusted_matchup(hist_qbs, name_col, team_col, stats, as_of
 # intentionally lighter than player-stat shrinkage: coordinator, personnel,
 # and scheme changes make a defense less stable across an offseason.
 DEFENSE_PRIOR_GAMES = 4.0
+# Sweep hook, built 2026-08-27 - never set outside a sweep script. This
+# constant has driven every position's defense matchup number since it was
+# set, never itself backtested against alternate values. None (default)
+# means "use DEFENSE_PRIOR_GAMES as always"; a float means "use this instead,
+# but ONLY when 'v2_defense_prior_games_override' is in feats" - gated so a
+# plain DEFAULT_FEATURES build is never affected by this constant being
+# nonzero, only a deliberate sweep variant is. See
+# scripts/sweep_defense_prior_games.py.
+DEFENSE_PRIOR_GAMES_OVERRIDE = None
 
 
 def _defense_game_evidence(hist_pos, game_universe=None, team_col=None):
@@ -1862,6 +2031,39 @@ def _efficiency_matchup(overall, role_tables, role_sizes, opponents, player_role
 
 
 ROLE_CHANGE_K_REDUCTION = 0.50
+# CANDIDATE, built 2026-08-27 - see 'v2_role_change_by_stat' in
+# MODEL_FEATURES. Built to test whether dampening RB's role-change trust-
+# acceleration fixes v2_adaptive_volume's measured RB harm (component
+# backtest program, scripts/backtest_component.py: START-RB dMAE -0.016, 95%
+# CI [-0.033,-0.003], excludes zero; 2024-2025 weeks 2-18).
+#
+# FIRST ATTEMPT (rushing_attempts only) backtested EXACTLY INERT - traced
+# and confirmed real (not a wiring bug: _blended_rate correctly received the
+# reduction and correctly moved the raw rushing_attempts number, e.g.
+# 11.98 -> 11.94 for one real player-week), but rushing_attempts barely
+# matters: rushing_yards/rushing_tds are independently blended from their
+# OWN historical rate and stayed bit-identical in that same comparison.
+#
+# A direct with/without-v2_adaptive_volume diff on real RBs (name-indexed,
+# not position-indexed - row order is not stable across separate
+# build_weekly_projections calls) found the actual channel: targets,
+# receptions, AND receiving_yards all move together when the flag is
+# toggled (e.g. Chuba Hubbard, 2024 w5: targets 2.667->2.625, receptions
+# 2.378->2.418, receiving_yards 17.64->17.934), while rushing stays fixed.
+# So the measured RB harm lives on the RECEIVING side, not the rushing side
+# - this candidate dampens 'targets' (RB only) alongside 'rushing_attempts',
+# not rushing_attempts alone.
+#
+# RE-BACKTESTED 2026-08-27 with the corrected scope (--add
+# v2_role_change_by_stat, 2024-2025 weeks 2-18): real RB win this time. RB
+# whole-pool dMAE -0.002, 95% CI [-0.004,-0.001] (excludes zero). START-RB
+# dMAE -0.013, CI [-0.030,+0.000] (same direction, right at the edge of
+# significance - not fully confirmed at this sample size). WR/QB untouched
+# as designed (gated to pos=='RB' only); TE showed a small opposite wiggle
+# on only 2 decisive weeks, almost certainly noise since TE isn't touched by
+# this mechanism at all. SHIPPED into DEFAULT_FEATURES 2026-08-27 on this
+# result, per explicit request.
+ROLE_CHANGE_K_REDUCTION_RB_CARRY = 0.0
 TD_TWO_YEAR_OLDER_WEIGHT = 0.30
 TD_OPPORTUNITY_STAT = {
     'passing_tds': 'passing_attempts',
@@ -1889,15 +2091,22 @@ def projection_channel(position, stat):
     return f'{pos} other'
 
 
-def _current_blend_weight(cur_games, stat, role_confidence, role_change_confidence=None):
-    """The current-season weight used by ``_blended_rate`` (also traced)."""
+def _current_blend_weight(cur_games, stat, role_confidence, role_change_confidence=None,
+                          role_change_reduction=ROLE_CHANGE_K_REDUCTION):
+    """The current-season weight used by ``_blended_rate`` (also traced).
+
+    ``role_change_reduction`` lets a caller use a smaller (or zero) trust-
+    acceleration than the shared ``ROLE_CHANGE_K_REDUCTION`` default for one
+    stat - see 'v2_role_change_by_stat' in DEFAULT_FEATURES's own comment for
+    why RB rushing_attempts gets its own value.
+    """
     games = np.maximum(np.asarray(cur_games, dtype=float), 0.0)
     confidence = np.clip(np.asarray(role_confidence, dtype=float), 0.0, 1.0)
     lo, hi = K_EFFECTIVE_RANGE
     k_eff = STAT_K.get(stat, 3) * (hi - (hi - lo) * confidence)
     if role_change_confidence is not None and stat in {'targets', 'rushing_attempts'}:
         change = np.clip(np.asarray(role_change_confidence, dtype=float), 0.0, 1.0)
-        k_eff = k_eff * (1.0 - ROLE_CHANGE_K_REDUCTION * change)
+        k_eff = k_eff * (1.0 - role_change_reduction * change)
     return games / (games + k_eff)
 
 
@@ -1965,7 +2174,7 @@ def prior2_blend_weight(games_2025, games_2024, current, prior2_value, games_202
 
 
 def _blended_rate(cur_rate, cur_games, prior_rate, pos_rate, stat, role_confidence,
-                  role_change_confidence=None):
+                  role_change_confidence=None, role_change_reduction=ROLE_CHANGE_K_REDUCTION):
     """
     The one shrinkage formula every stat in this module goes through - see
     the module docstring. All arguments are numpy arrays (vectorized over
@@ -1976,7 +2185,8 @@ def _blended_rate(cur_rate, cur_games, prior_rate, pos_rate, stat, role_confiden
     """
     prior = np.where(np.isnan(prior_rate), pos_rate, prior_rate)
     prior = np.where(np.isnan(prior), 0.0, prior)
-    w_current = _current_blend_weight(cur_games, stat, role_confidence, role_change_confidence)
+    w_current = _current_blend_weight(cur_games, stat, role_confidence, role_change_confidence,
+                                      role_change_reduction)
     return w_current * cur_rate + (1 - w_current) * prior
 
 
@@ -2889,6 +3099,49 @@ def _role_confidence(stats_df, name_col, as_of_week, pos, pff_rec):
     return recent.rename('role_confidence')
 
 
+def _role_confidence_detail(stats_df, name_col, as_of_week, pos, pff_rec):
+    """Audit-only companion to `_role_confidence`: the raw ingredients that
+    formula actually reads, not the 0-1 output itself. Deliberately a
+    near-duplicate of `_role_confidence` rather than a refactor of it - this
+    function is read only by the UI's decomposition audit, so a bug here
+    must never be able to change a scored role_confidence value. Returns a
+    DataFrame indexed like `_role_confidence`'s own Series, columns:
+    `recent_snap_pct` (mean of the last up to 3 played games' snap share),
+    `games_sampled` (how many of those games were available, 0-3),
+    `route_rate` (PFF season-to-date route rate, WR/TE only, NaN if no PFF
+    row matched), `method` (which ingredient(s) actually fed the number
+    _role_confidence returned for this player)."""
+    hist = _played_weeks_before(stats_df[stats_df['position'].astype(str).str.upper() == pos], as_of_week)
+    if hist.empty or 'weekly_snap_pct' not in hist.columns:
+        return pd.DataFrame(columns=['recent_snap_pct', 'games_sampled', 'route_rate', 'method'])
+    tail_games = hist.sort_values('week').groupby(name_col).tail(3)
+    recent = (tail_games.groupby(name_col)['weekly_snap_pct'].mean() / 100.0).clip(0, 1)
+    games_sampled = tail_games.groupby(name_col)['weekly_snap_pct'].count()
+    route_rate = pd.Series(dtype=float, index=recent.index)
+    method = pd.Series('snap share only (last up to 3 games)', index=recent.index)
+
+    if pos in ('WR', 'TE') and pff_rec is not None and not pff_rec.empty and 'player' in pff_rec.columns:
+        routes = pff_rec.copy()
+        routes['_key'] = clean_name_exact(routes['player'])
+        route_by_key = pd.to_numeric(
+            routes.set_index('_key')['route_rate'], errors='coerce') / 100.0
+        exact_keys = clean_name_exact(pd.Series(recent.index))
+        route_rate = pd.Series(
+            route_by_key.reindex(exact_keys.values).to_numpy(), index=recent.index)
+        method = pd.Series(
+            np.where(route_rate.notna(),
+                     'snap share + PFF route rate (averaged)',
+                     'snap share only (no PFF route row matched)'),
+            index=recent.index)
+
+    return pd.DataFrame({
+        'recent_snap_pct': recent,
+        'games_sampled': games_sampled.reindex(recent.index),
+        'route_rate': route_rate,
+        'method': method,
+    })
+
+
 def _team_week_margins(schedule_df):
     """[Team, week, margin] for every team-game in the schedule, vectorized
     (home and away rows built at once, not one team at a time) - the whole-
@@ -3019,6 +3272,26 @@ def annotate_player_history_participation(history, name_col, team_col, schedule_
         combined = float(split['_snap'].sum())
         if len(split) >= 2 and QB_SPLIT_MIN_COMBINED_SHARE <= combined <= QB_SPLIT_MAX_COMBINED_SHARE:
             mark(group['_row'].to_numpy(), 'QB split/relief game')
+
+    # A QB row where he barely touched the field is not a start by any
+    # reading, established role or not - _abrupt_partial above only fires
+    # for a PROVEN player's sudden drop, which structurally can never catch
+    # a rookie/first-time player's own opening token appearance (no prior
+    # snaps exist yet to compare against). Found 2026-08-25 on Jaxson Dart's
+    # 2025 weeks 2-3: 4%/5% snap share, 0 passing attempts, a single
+    # 1-carry garbage/gadget rush each, sitting in his rate history at full
+    # weight right next to his real starts once he actually took over in
+    # week 4 - dragging his season average down toward a game he functionally
+    # didn't play. Gated on BOTH a snap share under the same 20% floor that
+    # defines a legitimate split-start above AND zero passing attempts (when
+    # that column exists) so a real low-snap package/committee passer who
+    # still threw the ball in his limited reps is not swept in alongside him.
+    qb_token_appearance = frame['_position'].eq('QB') & frame['_snap'].lt(QB_SPLIT_MIN_SNAP_SHARE)
+    if 'passing_attempts' in frame.columns:
+        pass_att = pd.to_numeric(frame['passing_attempts'], errors='coerce').fillna(0.0)
+        qb_token_appearance &= pass_att.le(0.0)
+    mark(frame.loc[qb_token_appearance, '_row'].to_numpy(),
+         'QB token appearance (under 20% snaps, zero pass attempts)')
 
     mark(frame.loc[frame['_abrupt_partial'], '_row'].to_numpy(),
          'abrupt partial role after established workload')
@@ -3257,11 +3530,21 @@ def game_environment(schedule_df, week):
     return out
 
 
-def _game_env_multiplier(env, teams, pos, league_implied):
+def _game_env_multiplier(env, teams, pos, league_implied, use_total=True, use_venue=True):
     """Per-player game-environment multiplier: implied-total elasticity x
     venue. 1.0 for any team without a posted line (the normal case more than
     a few weeks out), same degrade-gracefully convention as every other
-    best-effort signal here."""
+    best-effort signal here.
+
+    ``use_total``/``use_venue`` let a caller apply just ONE of the two
+    factors - added 2026-08-27 for the component backtest program: the
+    BUNDLED 'game_env' feature was built, measured, and rejected (+0.012 MAE,
+    see DEFAULT_FEATURES's own comment), but a bundle that fails as a whole
+    can still be hiding one real, useful piece diluted by a non-working one -
+    exactly what happened with the original alignment mechanism before its
+    redesign. 'v2_game_total_elasticity' and 'v2_venue_mult' isolate each
+    piece for its own backtest rather than re-testing the same bundle again.
+    """
     elasticity = GAME_TOTAL_ELASTICITY.get(pos, 0.0)
     venue = VENUE_MULT.get(pos, {'indoor': 1.0, 'outdoor': 1.0})
     out = np.ones(len(teams))
@@ -3273,9 +3556,10 @@ def _game_env_multiplier(env, teams, pos, league_implied):
             continue
         mult = 1.0
         implied = entry.get('implied')
-        if implied and league_implied and league_implied > 0 and implied > 0 and elasticity:
+        if use_total and implied and league_implied and league_implied > 0 and implied > 0 and elasticity:
             mult *= float(np.clip((implied / league_implied) ** elasticity, *GAME_TOTAL_CLIP))
-        mult *= venue['indoor'] if entry.get('indoor') else venue['outdoor']
+        if use_venue:
+            mult *= venue['indoor'] if entry.get('indoor') else venue['outdoor']
         out[i] = mult
     return out
 
@@ -3680,7 +3964,13 @@ def _cold_start_pool(stats_df, name_col, team_col, as_of_week):
         # A strict hard-status filter is appropriate before a Week-1 player
         # pool is built.  It does not guess at questionable/injury status;
         # those remain the live-injury feed's responsibility.
-        status = pool['status'].fillna('').astype(str).str.strip().str.upper()
+        # .astype(object) FIRST, not after: 'status' can arrive as a pandas
+        # Categorical column (from the roster source), and .fillna('') on a
+        # Categorical raises TypeError unless '' is already one of its
+        # defined categories - found 2026-08-27, broke every true cold start
+        # (Week 1) outright. Casting to object first drops the category
+        # restriction while still preserving real NaN for fillna to catch.
+        status = pool['status'].astype(object).fillna('').astype(str).str.strip().str.upper()
         pool = pool[~status.isin({'RET', 'CUT', 'RES', 'FA'})].copy()
     return pool
 
@@ -3705,7 +3995,7 @@ def _load_pff_receiving(year, allow_season_totals=True):
 
 @st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
 def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=None, apply_injury=True,
-                             features=None, model_version='v1'):
+                             features=None, availability_fingerprint=None):
     """
     This app's own projected stat line + fantasy points for every QB/RB/WR/
     TE with usable history, for one week.
@@ -3715,6 +4005,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     `week` by the backtest harness in docs/weekly_projections_methodology.md
     to validate against a week that's already happened without leaking its
     own result into the projection that's supposed to predict it.
+
+    `availability_fingerprint` is never read inside this function - it
+    exists ONLY so the caller can pass
+    data.availability_overrides.availability_fingerprint(year, week, ...)
+    and get a real cache-key change out of an availability edit, instead of
+    the caller having to call this function's own .clear() (which wipes
+    every cached year/week/scoring/model combination, not just the edited
+    one - see that helper's own docstring). Injury/override files are still
+    read fresh from disk below regardless of what's passed here; this
+    parameter's only job is making that freshness visible to
+    @st.cache_data.
 
     `apply_injury=False` skips the injury-status discount entirely - THE
     BACKTEST NEEDS THIS. fetch_injury_report always returns each player's
@@ -3759,7 +4060,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     """
     if as_of_week is None:
         as_of_week = week
-    feats = resolve_model_features(model_version, features)
+    feats = resolve_model_features(features)
     stats_df, team_col, name_col, _ = load_and_merge_data(year, scoring_mode)
     if stats_df.empty:
         return pd.DataFrame(), {'reason': f'No roster or weekly data for {year} yet.'}
@@ -3810,7 +4111,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
 
     schedule_df = load_schedule(year)
     opponents = _week_opponents(schedule_df, week)
-    env = game_environment(schedule_df, week) if 'game_env' in feats else {}
+    env = game_environment(schedule_df, week) if (
+        'game_env' in feats or 'v2_game_total_elasticity' in feats or 'v2_venue_mult' in feats
+    ) else {}
     league_implied = None
     if env:
         implied_vals = [e['implied'] for e in env.values() if e.get('implied')]
@@ -3858,6 +4161,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # gating every other stat's 2024 grounding - is also active.
     prior2_alignment_profiles = pd.DataFrame()
     pff_alignment_defense_profiles = pd.DataFrame()
+    # Raw per-week, per-alignment defense evidence behind
+    # pff_alignment_defense_profiles' season-aggregate, shrunk candidate
+    # multipliers - kept so the UI can show what a defense actually allowed
+    # to slot/wide/inline (and the whole position, alignment-blind) by week,
+    # not just the final heavily-shrunk-toward-1.0 number. See
+    # load_weekly_alignment_defense_profiles's AlignmentDefenseLoadResult -
+    # its own docstring already flags team_games as meant for exactly this,
+    # it just wasn't threaded through yet.
+    pff_alignment_defense_team_games = pd.DataFrame()
     pff_alignment_defense_contract = {
         'status': 'feature disabled', 'source_kind': 'none', 'included_weeks': [],
         'issues': [], 'adjustment': 'neutral (defense residual preview only; no scoring multiplier applied)',
@@ -3912,7 +4224,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'issues': list(alignment_result.issues),
                 'adjustment': 'neutral (no alignment matchup multiplier applied)',
             }
-            if not cold_start and 'v2_td_two_year_prior' in feats:
+            # No longer gated behind `not cold_start` (removed 2026-08-26 per
+            # explicit request to include 2024 "to an extent" even at Week
+            # 1) - see ALIGNMENT_PRIOR2_MAX_WEIGHT's own comment in
+            # pff_alignment.py for why this lands at a light ~10% pull at
+            # cold start rather than the formula's higher in-season ceiling.
+            if 'v2_td_two_year_prior' in feats:
                 prior2_result = load_weekly_alignment_profiles(
                     year - 2, PFF_ALIGNMENT_DEFENSE_COLD_START_AS_OF_WEEK,
                     include_postseason=not bool(historical_target))
@@ -3954,6 +4271,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 alignment_defense_result = load_weekly_alignment_defense_profiles(
                     year, as_of_week, schedule_df)
             pff_alignment_defense_profiles = alignment_defense_result.profiles
+            pff_alignment_defense_team_games = alignment_defense_result.team_games
             pff_alignment_defense_contract = {
                 'status': ('time-valid offensive-weekly alignment defense profiles available'
                            if alignment_defense_result.available
@@ -4113,16 +4431,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         elif cold_pool.empty:
             ourlads_source_contract['status'] = 'snapshot available but current cold-start roster was empty'
         else:
-            # V1 remains a genuine released control.  Its historical source
-            # policy treated an lc_red row as unavailable, while V2's new
-            # availability resolver treats it as a warning only.  Keep that
-            # behavioral change entirely in V2 rather than silently moving
-            # the control with the experimental source contract.
+            # An lc_red (inactive) Ourlads row is treated as a warning, not
+            # dropped outright - the availability resolver downstream is what
+            # actually discounts it. (Until 2026-08-26 the retired V1 mode
+            # filtered these rows out here instead; that behavioral split no
+            # longer exists now that this is the only model.)
             snapshot_for_model = ourlads_snapshot
-            if str(model_version).lower() != 'v2' and 'is_inactive' in ourlads_snapshot.columns:
-                snapshot_for_model = ourlads_snapshot.loc[
-                    ~ourlads_snapshot['is_inactive'].fillna(False).astype(bool)
-                ].copy()
             cold_pool, roster_overlay, overlay_warnings = apply_ourlads_starter_roster_overlay(
                 snapshot_for_model, cold_pool, name_col, team_col,
                 prior_played, prior_name_col, prior_team_col,
@@ -4450,17 +4764,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # against nothing.
             only_prior2 = current_identity.isna() & prior2_vals.notna()
             blended[only_prior2] = prior2_vals[only_prior2]
-            return blended
+            return blended, weight
 
         if cold_start:
-            exp_share_identity = _blend_with_prior2(exp_share_identity, prior2_whole_identity)
+            exp_share_identity, _ = _blend_with_prior2(exp_share_identity, prior2_whole_identity)
         # prior_share is role_scale's denominator and is read every week
         # (not just cold start), so its 2024 context keeps mattering as the
         # season goes - decayed by this player's own 2026 games played.
         # exp_share above is NOT extended the same way: once real 2026
         # games exist it already IS the observed role, so blending it
         # toward a two-year-old number would corrupt real signal.
-        prior_share_identity = _blend_with_prior2(
+        prior_share_identity, _ = _blend_with_prior2(
             prior_share_identity, prior2_active_identity, decay_by_2026_games=True)
     prior_pre_absence = pre_absence_role_summary(player_prior, prior_name_col, prior_team_col)
     prior_pre_absence_identity = identity_indexed_series(
@@ -4639,10 +4953,31 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior_role_conf.to_numpy(),
                 index=clean_name_exact(pd.Series(prior_role_conf.index)))
             cur['role_confidence'] = clean_name_exact(cur[name_col]).map(prior_role_by_key).to_numpy()
+            role_conf_detail = _role_confidence_detail(
+                player_prior, prior_name_col, int(prior_max_week) + 1, pos, pff_rec)
+            role_conf_detail = role_conf_detail.set_index(
+                clean_name_exact(pd.Series(role_conf_detail.index)))
+            keyed_names = clean_name_exact(cur[name_col])
+            for col in ('recent_snap_pct', 'games_sampled', 'route_rate', 'method'):
+                cur[f'_role_confidence_{col}'] = keyed_names.map(
+                    role_conf_detail[col] if col in role_conf_detail.columns else pd.Series(dtype=object)
+                ).to_numpy()
         else:
             role_conf = _role_confidence(player_hist, name_col, as_of_week, pos, pff_rec)
             cur = cur.merge(role_conf.rename('role_confidence'), left_on=name_col, right_index=True, how='left')
+            role_conf_detail = _role_confidence_detail(player_hist, name_col, as_of_week, pos, pff_rec)
+            cur = cur.merge(
+                role_conf_detail.add_prefix('_role_confidence_'),
+                left_on=name_col, right_index=True, how='left')
         cur['role_confidence'] = cur['role_confidence'].fillna(0.5)
+        for col in ('_role_confidence_recent_snap_pct', '_role_confidence_games_sampled',
+                    '_role_confidence_route_rate'):
+            if col not in cur.columns:
+                cur[col] = np.nan
+        if '_role_confidence_method' not in cur.columns:
+            cur['_role_confidence_method'] = ''
+        cur['_role_confidence_method'] = cur['_role_confidence_method'].fillna(
+            'no recent-snap history — default 0.5 used')
         role_profiles = pd.DataFrame()
         role_change = pd.Series(dtype=float)
         if not cold_start:
@@ -4738,6 +5073,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             preview_reasons = []
             preview_available = []
             preview_blend_modes = []
+            # Per-alignment raw shrunk_allowed_ratio, one series per
+            # (stat, alignment) pair - added 2026-08-26 so the "Alignment
+            # mix" UI section can show its own worked calculation (per-
+            # alignment multiplier x this player's own per-alignment rate)
+            # instead of only the already-blended candidate_multiplier.
+            preview_ratio_columns = {
+                f'{stat}_{align}': []
+                for stat in preview_columns for align in ('slot', 'wide', 'inline', 'non_slot')
+            }
             for row_index, opponent in zip(cur.index, cur['Opponent']):
                 slot_rate = (pff_alignment_for_cur.at[row_index, 'slot_alignment_rate']
                              if 'slot_alignment_rate' in pff_alignment_for_cur.columns else None)
@@ -4766,11 +5110,19 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 alignment_defense_previews[row_index] = previews
                 for stat in preview_columns:
                     preview_columns[stat].append(previews[stat].get('candidate_multiplier', 1.0))
+                    for align, profile_key in (
+                        ('slot', 'slot_profile'), ('wide', 'wide_profile'),
+                        ('inline', 'inline_profile'), ('non_slot', 'non_slot_profile'),
+                    ):
+                        profile = previews[stat].get(profile_key) or {}
+                        preview_ratio_columns[f'{stat}_{align}'].append(profile.get('shrunk_allowed_ratio'))
                 preview_reasons.append(previews['targets'].get('reason', ''))
                 preview_available.append(bool(previews['targets'].get('candidate_available', False)))
                 preview_blend_modes.append(previews['targets'].get('blend_mode', 'slot_non_slot'))
             for stat, values in preview_columns.items():
                 pff_alignment_for_cur[f'alignment_defense_{stat}_candidate_multiplier'] = values
+            for key, values in preview_ratio_columns.items():
+                pff_alignment_for_cur[f'alignment_defense_{key}_ratio'] = values
             pff_alignment_for_cur['alignment_defense_candidate_available'] = preview_available
             pff_alignment_for_cur['alignment_defense_reason'] = preview_reasons
             pff_alignment_for_cur['alignment_defense_blend_mode'] = preview_blend_modes
@@ -4866,6 +5218,28 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior_pos_rows, prior_team_col, stats, prior_played,
                 anchor_week if anchor_week is not None else as_of_week)
             opponent_defense_log_prior = cur['Opponent'].astype(str).map(defense_log_by_team_prior).to_numpy()
+            # Two-years-back ("prior2") Deep Dive log, same construction as
+            # the prior-season pair just above, minus a quality-adjusted
+            # matchup matrix (not built for prior2 - only its raw per-game
+            # rate feeds the model, never a matchup multiplier) - so its
+            # Defense-adj column intentionally reads the same as its Raw
+            # column. Honestly empty (empty dict/list per player) when
+            # prior2_played has no data, same convention as the current-
+            # season pair at cold start.
+            prior2_pos_rows = (prior2_played[prior2_played['position'].astype(str).str.upper() == pos]
+                               if not prior2_played.empty else prior2_played)
+            prior2_annotated_pos = (
+                prior2_annotated[prior2_annotated['position'].astype(str).str.upper() == pos]
+                if not prior2_annotated.empty else prior2_annotated)
+            game_log_by_name_prior2 = _build_player_stat_game_log(
+                prior2_annotated_pos, prior2_name_col, stats, pd.DataFrame(),
+                schedule_df=prior2_schedule_df, team_col=prior2_team_col)
+            game_log_by_key_prior2 = {clean_name_exact(pd.Series([p])).iloc[0]: g
+                                      for p, g in game_log_by_name_prior2.items()}
+            player_game_log_prior2 = clean_name_exact(cur[name_col]).map(game_log_by_key_prior2).to_numpy()
+            defense_log_by_team_prior2 = _build_defense_weekly_log(
+                prior2_pos_rows, prior2_team_col, stats, prior2_played, as_of_week)
+            opponent_defense_log_prior2 = cur['Opponent'].astype(str).map(defense_log_by_team_prior2).to_numpy()
             # Cold start reads ROLES off last season too, and keys them by
             # the player's own name in THAT season's frame - which is why the
             # lookup below re-keys through clean_name_exact rather than
@@ -4921,9 +5295,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 ) if prior_anchor is not None else pd.DataFrame()
             )
             if 'v2_defense_prior' in feats:
+                prior_games_ = (DEFENSE_PRIOR_GAMES_OVERRIDE
+                                if ('v2_defense_prior_games_override' in feats
+                                    and DEFENSE_PRIOR_GAMES_OVERRIDE is not None)
+                                else DEFENSE_PRIOR_GAMES)
                 matchup_matrix = blend_defense_prior(
                     matchup_matrix, prior_matrix, _defense_game_evidence(
-                        pos_rows, game_universe=hist, team_col=team_col))
+                        pos_rows, game_universe=hist, team_col=team_col),
+                    prior_games=prior_games_)
 
             # Deep Dive per-game/per-week detail for BOTH seasons, threaded
             # through to the decomposition dialog via explanations[...]
@@ -4957,6 +5336,24 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior_pos_rows, prior_team_col, stats, prior_played,
                 prior_anchor if prior_anchor is not None else as_of_week)
             opponent_defense_log_prior = cur['Opponent'].astype(str).map(defense_log_by_team_prior).to_numpy()
+
+            # Two-years-back ("prior2") Deep Dive log - same convention as
+            # the cold-start branch's own prior2 log just above: no quality-
+            # adjusted matchup matrix, so Defense-adj reads the same as Raw.
+            prior2_pos_rows = (prior2_played[prior2_played['position'].astype(str).str.upper() == pos]
+                               if not prior2_played.empty else prior2_played)
+            prior2_annotated_pos = (
+                prior2_annotated[prior2_annotated['position'].astype(str).str.upper() == pos]
+                if not prior2_annotated.empty else prior2_annotated)
+            game_log_by_name_prior2 = _build_player_stat_game_log(
+                prior2_annotated_pos, prior2_name_col, stats, pd.DataFrame(),
+                schedule_df=prior2_schedule_df, team_col=prior2_team_col)
+            game_log_by_key_prior2 = {clean_name_exact(pd.Series([p])).iloc[0]: g
+                                      for p, g in game_log_by_name_prior2.items()}
+            player_game_log_prior2 = clean_name_exact(cur[name_col]).map(game_log_by_key_prior2).to_numpy()
+            defense_log_by_team_prior2 = _build_defense_weekly_log(
+                prior2_pos_rows, prior2_team_col, stats, prior2_played, as_of_week)
+            opponent_defense_log_prior2 = cur['Opponent'].astype(str).map(defense_log_by_team_prior2).to_numpy()
 
             weighted_rates, weighted_totals = _weighted_player_rates(
                 player_pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map)
@@ -5218,6 +5615,22 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                         ourlads_role_label, ourlads_role_rank)
                 ], dtype=object)
                 preseason_role_source = role_messages
+            if pos in ('WR', 'TE'):
+                depth_rank_within_team = (
+                    pd.Series(player_share, index=cur.index)
+                    .groupby(team_keys_rv.to_numpy(dtype=object))
+                    .rank(method='first', ascending=False)
+                    .to_numpy(dtype=float)
+                )
+                if pos == 'WR':
+                    share_cap = np.where(
+                        depth_rank_within_team >= WR_DEPTH_RANK_CUTOFF, RECEIVER_DEPTH_CUTOFF_SHARE_CAP,
+                        np.where(depth_rank_within_team == WR_DEPTH_RANK_SMALL_ROLE,
+                                 WR_DEPTH_RANK_SMALL_ROLE_SHARE_CAP, np.inf))
+                else:
+                    share_cap = np.where(
+                        depth_rank_within_team >= TE_DEPTH_RANK_CUTOFF, RECEIVER_DEPTH_CUTOFF_SHARE_CAP, np.inf)
+                player_share = np.minimum(player_share, share_cap)
             if cold_start:
                 pos_rows_for_share = (player_prior[player_prior['position'].astype(str).str.upper() == pos]
                                       if not player_prior.empty else player_prior)
@@ -5511,6 +5924,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 qb1_workload_override, player_prior, prior2_history=player_prior2,
                 prior_history_team=prior_stats)
 
+        # Display-only "Season average (adj)" ingredient - see
+        # _defense_adjusted_prior_average's own docstring. player_game_log_
+        # prior is set by both the cold_start and in-season branches above,
+        # aligned one-per-row to `cur`.
+        defense_adjusted_prior = _defense_adjusted_prior_average(player_game_log_prior, stats)
+
         proj_cols, stat_trace = {}, {}
         for stat in stats:
             if stat not in cur.columns:
@@ -5529,6 +5948,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 in_season_rate = np.full(len(cur), np.nan)
             in_season_rate = np.where(np.isnan(in_season_rate), season_avg, in_season_rate)
 
+            stat_prior2_weight = np.full(len(cur), np.nan)
             if not prior_rates.empty and stat in prior_rates.columns:
                 prior_map = pd.Series(prior_rates[stat].to_numpy(), index=prior_rates['_identity_key'])
                 if (have_two_season_data and stat in PRIOR2_RATE_BLEND_STATS
@@ -5539,7 +5959,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     # player accumulates 2026 games, so 2024's slice of it
                     # fades for free without a second, compounding discount.
                     older_map = pd.Series(older_rates[stat].to_numpy(), index=older_rates['_identity_key'])
-                    prior_map = _blend_with_prior2(prior_map, older_map)
+                    prior_map, prior2_weight_map = _blend_with_prior2(prior_map, older_map)
+                    stat_prior2_weight = identity_keys_rv.map(prior2_weight_map).to_numpy(dtype=float)
                 prior_rate = identity_keys_rv.map(prior_map).to_numpy(dtype=float)
             else:
                 prior_rate = np.full(len(cur), np.nan)
@@ -5640,10 +6061,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # weight_sum) still drives the current-vs-prior-season shrinkage
             # below, deliberately - see _weighted_player_rates' docstring on
             # why that calibration is left undisturbed by this change.
+            role_change_reduction = (
+                ROLE_CHANGE_K_REDUCTION_RB_CARRY
+                if (pos == 'RB' and stat in ('rushing_attempts', 'targets')
+                    and 'v2_role_change_by_stat' in feats)
+                else ROLE_CHANGE_K_REDUCTION)
             blended = _blended_rate(in_season_rate, cur_games, prior_rate, pos_rate_arr, stat,
                                     cur['role_confidence'].to_numpy(dtype=float),
                                     (cur['role_change_confidence'].to_numpy(dtype=float)
-                                     if 'v2_adaptive_volume' in feats else None))
+                                     if 'v2_adaptive_volume' in feats else None),
+                                    role_change_reduction)
             # The allocator's carry/target capacity is the preseason role
             # baseline.  For the two opportunity stats themselves, make that
             # conservation exact before the normal defense/pace projection
@@ -5684,46 +6111,150 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     stat)
                 role_overlay = 'team-game role blend'
 
-            # WR/TE slot/non-slot alignment matchup residual: player's own
-            # slot-rate mix run through the opponent's slot vs. non-slot
-            # allowed rate (both already computed above by
-            # alignment_defense_residual_multiplier, per-player-row, into
-            # alignment_defense_previews). Built and wired in 2026-08-24 per
-            # the user's proposed design, then BACKTESTED AND REJECTED the
-            # same day - see DEFAULT_FEATURES's own comment for the numbers
-            # (loses MAE/rank-corr on both START-WR and START-TE). This
-            # branch only fires when 'v2_pff_alignment_matchup' is passed
-            # explicitly - never true for DEFAULT_FEATURES, true for
-            # V2_EXPERIMENTAL_FEATURES only as a diagnostic reactivation the
-            # user asked for (see that set's own comment) so it can be
-            # inspected on a real board while the cause of the loss is
-            # investigated, not as a reversal of the rejection. Multiplied
-            # alongside the
-            # broad role/defense matchup rather than replacing it: this is an
-            # INCREMENTAL alignment-specific correction on top of the
-            # existing opponent-strength read, not a second independent
-            # opinion of it.
-            alignment_residual_mult = np.ones(len(cur))
+            # WR/TE allowed-by-alignment multiplier: player's own slot/wide/
+            # inline (or slot/non-slot) mix weighted against the opponent's
+            # own allowed-by-alignment rate for each alignment (computed
+            # above by alignment_defense_residual_multiplier, per-player-row,
+            # into alignment_defense_previews).
+            #
+            # REDESIGNED 2026-08-26 per explicit request: this used to be
+            # MULTIPLIED alongside the broad role/defense matchup below as an
+            # incremental correction - two independent opinions of the same
+            # WR/TE matchup stacked together, which is exactly the
+            # "redundancy problem" that request named. It now REPLACES the
+            # broad matchup outright for a player/defense/stat with
+            # available alignment evidence (matchup_mult is overwritten, not
+            # multiplied) - alignment_defense_residual_multiplier's own
+            # candidate_multiplier is already a complete, correctly-scaled
+            # matchup multiplier for this player's specific alignment mix
+            # (see that function's docstring for the normal-mix-division and
+            # confidence-shrink removal that made this replacement sound).
+            # Falls back to the broad matchup untouched wherever alignment
+            # evidence isn't available for that row (non-WR/TE, a defense/
+            # stat combo with no comparison games, etc).
+            #
+            # Originally built 2026-08-24 as the incremental version above,
+            # BACKTESTED AND REJECTED that same day (see
+            # docs/weekly_projections_methodology.md for the original -0.003
+            # to +0.082 MAE numbers) - that backtest predates both this
+            # redesign and the 2024 weekly archive now available, so it does
+            # not describe current behavior and needs re-running before this
+            # is trusted at face value again.
+            alignment_player_factor = np.ones(len(cur))
             alignment_residual_available = np.zeros(len(cur), dtype=bool)
             alignment_scoring_stat = ALIGNMENT_SCORING_STAT_MAP.get(stat)
             if ('v2_pff_alignment_matchup' in feats and pos in ALIGNMENT_DEFENSE_SUPPORTED_POSITIONS
                     and alignment_scoring_stat is not None and alignment_defense_previews):
                 previews = [alignment_defense_previews.get(idx, {}).get(alignment_scoring_stat, {})
                             for idx in cur.index]
-                alignment_residual_mult = np.array(
+                alignment_player_factor = np.array(
                     [p.get('candidate_multiplier', 1.0) for p in previews], dtype=float)
                 alignment_residual_available = np.array(
                     [bool(p.get('candidate_available', False)) for p in previews], dtype=bool)
-                matchup_mult = matchup_mult * alignment_residual_mult
+                matchup_mult = np.where(alignment_residual_available, alignment_player_factor, matchup_mult)
 
+            # Man/zone allowed-by-scheme multiplier - CANDIDATE, built
+            # 2026-08-27 for the first-ever backtest of this mechanism (see
+            # 'v2_scheme_matchup' in MODEL_FEATURES). Same REPLACE pattern as
+            # alignment immediately above, and deliberately applied AFTER it:
+            # where BOTH alignment and scheme have available evidence for the
+            # same player/defense/stat, scheme's own opinion wins, since the
+            # question this flag exists to answer is "does letting man/zone
+            # evidence have the final say, wherever it has evidence, help" -
+            # not a claim that scheme is more trustworthy in general. Falls
+            # back to whatever matchup_mult already held (broad matchup, or
+            # alignment's replacement) wherever scheme evidence is unavailable.
+            scheme_player_factor = np.ones(len(cur))
+            scheme_residual_available = np.zeros(len(cur), dtype=bool)
+            scheme_scoring_stat = ALIGNMENT_SCORING_STAT_MAP.get(stat)
+            scheme_wanted = ('v2_scheme_matchup' in feats or 'v2_scheme_alignment_blend' in feats)
+            if (scheme_wanted and pos in SCHEME_DEFENSE_SUPPORTED_POSITIONS
+                    and scheme_scoring_stat is not None and scheme_defense_previews):
+                scheme_previews_row = [scheme_defense_previews.get(idx, {}).get(scheme_scoring_stat, {})
+                                       for idx in cur.index]
+                scheme_player_factor = np.array(
+                    [p.get('candidate_multiplier', 1.0) for p in scheme_previews_row], dtype=float)
+                scheme_residual_available = np.array(
+                    [bool(p.get('candidate_available', False)) for p in scheme_previews_row], dtype=bool)
+
+            # Evidence-weighted blend of alignment and scheme - CANDIDATE,
+            # built 2026-08-27 to test combining both rather than either
+            # replacing the broad matchup alone or one outright replacing the
+            # other, given the two are correlated at r~0.72
+            # (scripts/check_alignment_scheme_overlap.py). Deliberately a
+            # NAIVE weighted average - it does NOT discount for that shared
+            # variance - built as the cheap baseline to check empirically
+            # whether the correlation caution actually costs anything in
+            # practice, before building anything more elaborate (e.g. a
+            # joint alignment x scheme interaction profile, which corrects
+            # for the overlap by construction instead of by adjustment).
+            # Weight per side is that side's own effect_weight (the weaker of
+            # its two per-bucket confidences, already in each preview dict) -
+            # zero for a side with no evidence, so this reduces to
+            # "whichever one has evidence" when only one does (~1% of rows;
+            # see the overlap script's "both or neither" finding for why this
+            # is rarely exercised in practice).
+            if 'v2_scheme_alignment_blend' in feats:
+                fixed_w = SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.get(pos)
+                if fixed_w is not None:
+                    # DELIBERATE FIXED RATIO, not evidence-weighted - a
+                    # per-position override for the component backtest
+                    # program's weight sweep (see
+                    # scripts/sweep_scheme_blend_weight.py). fixed_w is
+                    # scheme's own share; alignment gets (1 - fixed_w). Still
+                    # collapses to "whichever one has evidence" when only one
+                    # side is available, same as the evidence-weighted path.
+                    align_w = np.where(alignment_residual_available, 1.0 - fixed_w, 0.0)
+                    scheme_w = np.where(scheme_residual_available, fixed_w, 0.0)
+                else:
+                    align_conf = np.array([
+                        (alignment_defense_previews.get(idx, {}).get(alignment_scoring_stat, {}).get('effect_weight', 0.0)
+                         if alignment_scoring_stat is not None else 0.0)
+                        for idx in cur.index], dtype=float)
+                    scheme_conf = np.array([
+                        (scheme_defense_previews.get(idx, {}).get(scheme_scoring_stat, {}).get('effect_weight', 0.0)
+                         if scheme_scoring_stat is not None else 0.0)
+                        for idx in cur.index], dtype=float)
+                    align_w = np.where(alignment_residual_available, np.maximum(align_conf, 0.0), 0.0)
+                    scheme_w = np.where(scheme_residual_available, np.maximum(scheme_conf, 0.0), 0.0)
+                total_w = align_w + scheme_w
+                blend_available = total_w > 0
+                blended_factor = np.divide(
+                    align_w * alignment_player_factor + scheme_w * scheme_player_factor,
+                    total_w, out=np.ones(len(cur)), where=blend_available)
+                matchup_mult = np.where(blend_available, blended_factor, matchup_mult)
+            elif 'v2_scheme_matchup' in feats:
+                matchup_mult = np.where(scheme_residual_available, scheme_player_factor, matchup_mult)
+
+            if cold_start and 'v2_cold_start_regression' in feats:
+                matchup_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (matchup_mult - 1.0)
+
+            role_change_reduction = (
+                ROLE_CHANGE_K_REDUCTION_RB_CARRY
+                if (pos == 'RB' and stat in ('rushing_attempts', 'targets')
+                    and 'v2_role_change_by_stat' in feats)
+                else ROLE_CHANGE_K_REDUCTION)
             current_weight = _current_blend_weight(
                 cur_games, stat, cur['role_confidence'].to_numpy(dtype=float),
                 (cur['role_change_confidence'].to_numpy(dtype=float)
-                 if 'v2_adaptive_volume' in feats else None))
+                 if 'v2_adaptive_volume' in feats else None),
+                role_change_reduction)
             stat_trace[stat] = {
                 'build_path': np.full(len(cur), 'direct rate'),
                 'current_rate': in_season_rate,
                 'raw_prior_rate': prior_rate_before_role,
+                'defense_adjusted_prior_rate': defense_adjusted_prior.get(
+                    stat, np.full(len(cur), np.nan)),
+                # Weight actually given to 2024 (`older_map`) in the blend
+                # just above - NaN when this stat isn't in
+                # PRIOR2_RATE_BLEND_STATS (TD-type stats use a separate
+                # two-year path, blend_comparable_td_priors, exposed via
+                # 'two_year_td_prior' instead) or no usable 2024 read exists
+                # for this player. Added 2026-08-25 so the decomposition's
+                # "100% {season}" note can't be misread as "0% 2024" - that
+                # note is about CURRENT vs PRIOR SEASON weight, an
+                # independent axis from this one.
+                'prior2_weight': stat_prior2_weight,
                 'prior_rate': np.where(np.isnan(prior_rate), pos_rate_arr, prior_rate),
                 'prior_source': np.where(prior_source_is_player, 'player prior', 'position fallback'),
                 'role_scale': stat_role_scale,
@@ -5789,7 +6320,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'current_weight': current_weight,
                 'blended_rate': blended,
                 'matchup_multiplier': matchup_mult,
-                'alignment_residual_multiplier': alignment_residual_mult,
+                'alignment_residual_multiplier': alignment_player_factor,
                 'alignment_residual_available': alignment_residual_available,
                 'defense_profile': np.full(
                     len(cur),
@@ -5815,6 +6346,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             script_mult = np.ones(len(cur))
             if script_series is not None and not script_series.empty:
                 script_mult = cur[name_col].map(script_series).fillna(1.0).to_numpy(dtype=float)
+            if cold_start and 'v2_cold_start_regression' in feats:
+                script_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (script_mult - 1.0)
             stat_trace[stat]['script_multiplier'] = script_mult
             stat_trace[stat]['script_status'] = (
                 'modeled' if stat in SCRIPT_ELIGIBLE_STATS and script_series is not None and not script_series.empty
@@ -5830,8 +6363,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             pace_mult = np.clip(opp_pace.fillna(league_pace) / league_pace, *PACE_CLIP)
 
         inj_mult = cur[name_col].map(injury_mult).fillna(1.0)
-        env_mult = (_game_env_multiplier(env, cur['Team'].astype(str).to_numpy(), pos, league_implied)
+        use_total = 'game_env' in feats or 'v2_game_total_elasticity' in feats
+        use_venue = 'game_env' in feats or 'v2_venue_mult' in feats
+        env_mult = (_game_env_multiplier(env, cur['Team'].astype(str).to_numpy(), pos, league_implied,
+                                         use_total=use_total, use_venue=use_venue)
                     if env else np.ones(len(cur)))
+
+        if cold_start and 'v2_cold_start_regression' in feats:
+            pace_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (pace_mult - 1.0)
+            inj_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (inj_mult - 1.0)
+            env_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (env_mult - 1.0)
 
         # The PRE-INJURY volume, kept before the discount below multiplies it
         # away. A player ruled Out has an injury multiplier of exactly 0.0,
@@ -5989,6 +6530,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             'QB1 Selection Required': qb1_selection_required,
             'QB Projected Starter': qb_projected_starter,
         })
+        out['_role_confidence_recent_snap_pct'] = cur['_role_confidence_recent_snap_pct'].to_numpy()
+        out['_role_confidence_games_sampled'] = cur['_role_confidence_games_sampled'].to_numpy()
+        out['_role_confidence_route_rate'] = cur['_role_confidence_route_rate'].to_numpy()
+        out['_role_confidence_method'] = cur['_role_confidence_method'].to_numpy()
         if pos == 'RB' and 'v2_preseason_rb_allocator' in feats:
             # Internal fields remain on the assembled board until the V2
             # vacancy pass has consumed them.  They are deliberately not
@@ -6021,6 +6566,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'alignment_defense_candidate_available', 'alignment_defense_reason',
                 'alignment_defense_scoring_active', 'alignment_defense_blend_mode',
                 'alignment_prior2_weight', 'alignment_prior2_sample_weight',
+                'alignment_defense_targets_slot_ratio', 'alignment_defense_targets_wide_ratio',
+                'alignment_defense_targets_inline_ratio', 'alignment_defense_targets_non_slot_ratio',
+                'alignment_defense_receptions_slot_ratio', 'alignment_defense_receptions_wide_ratio',
+                'alignment_defense_receptions_inline_ratio', 'alignment_defense_receptions_non_slot_ratio',
+                'alignment_defense_yards_slot_ratio', 'alignment_defense_yards_wide_ratio',
+                'alignment_defense_yards_inline_ratio', 'alignment_defense_yards_non_slot_ratio',
             ):
                 if profile_col in pff_alignment_for_cur.columns:
                     out[f'_profile_{profile_col}'] = pff_alignment_for_cur[profile_col].to_numpy()
@@ -6166,6 +6717,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'build_path': _trace_value(trace, 'build_path', i, 'direct rate'),
                     'current_rate': _trace_number(trace, 'current_rate', i),
                     'raw_prior_rate': _trace_number(trace, 'raw_prior_rate', i),
+                    'defense_adjusted_prior_rate': _trace_number(trace, 'defense_adjusted_prior_rate', i),
+                    'prior2_weight': _trace_number(trace, 'prior2_weight', i),
                     'prior_rate': _trace_number(trace, 'prior_rate', i),
                     'prior_source': _trace_value(trace, 'prior_source', i, 'position fallback'),
                     'role_scale': _trace_number(trace, 'role_scale', i, 1.0),
@@ -6290,6 +6843,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 }
             _pgl_cur, _odl_cur = player_game_log_current[i], opponent_defense_log_current[i]
             _pgl_prior, _odl_prior = player_game_log_prior[i], opponent_defense_log_prior[i]
+            _pgl_prior2, _odl_prior2 = player_game_log_prior2[i], opponent_defense_log_prior2[i]
 
             def _records(frame):
                 return frame.to_dict('records') if isinstance(frame, pd.DataFrame) else []
@@ -6297,6 +6851,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             explanations[(player, pos, row['Team'])] = {
                 'player': player, 'position': pos, 'team': row['Team'], 'opponent': row['Opponent'],
                 'target_week': int(week), 'as_of_week': int(as_of_week), 'season_year': int(year),
+                'scoring_mode': scoring_mode,
                 'defense_matchup': defense_matchup_by_opponent.get(str(row['Opponent'])),
                 'distribution': player_distribution(
                     pos, position_rank.iloc[i], float(row['Calibrated Model Proj Pts']),
@@ -6320,10 +6875,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'game_log_by_season': {
                     int(year): _records(_pgl_cur),
                     int(year) - 1: _records(_pgl_prior),
+                    int(year) - 2: _records(_pgl_prior2),
                 },
                 'defense_weekly_log_by_season': {
                     int(year): _records(_odl_cur),
                     int(year) - 1: _records(_odl_prior),
+                    int(year) - 2: _records(_odl_prior2),
                 },
                 # Audit-only PFF slot/wide/inline + man/zone evidence for the
                 # Context tab. Every *_candidate_multiplier here is a preview
@@ -6354,6 +6911,21 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'role_confidence': float(row['Role Confidence']),
                     'expected_snap_share': float(row['Expected Snap Share']),
                     'role_change_confidence': float(row['Role Change Confidence']),
+                    # What _role_confidence actually read to produce the
+                    # number above - see that function's docstring. NaN
+                    # recent_snap_pct/route_rate means that ingredient
+                    # wasn't available for this player (fell through to the
+                    # 0.5 default, or to snap share alone).
+                    'role_confidence_recent_snap_pct': (
+                        None if pd.isna(row.get('_role_confidence_recent_snap_pct'))
+                        else float(row['_role_confidence_recent_snap_pct'])),
+                    'role_confidence_games_sampled': (
+                        None if pd.isna(row.get('_role_confidence_games_sampled'))
+                        else int(row['_role_confidence_games_sampled'])),
+                    'role_confidence_route_rate': (
+                        None if pd.isna(row.get('_role_confidence_route_rate'))
+                        else float(row['_role_confidence_route_rate'])),
+                    'role_confidence_method': row.get('_role_confidence_method') or 'unknown',
                     'qb1_workload_override': bool(row['QB1 Workload Override']),
                     'qb1_selection_required': bool(row['QB1 Selection Required']),
                     'qb_projected_starter': bool(row['QB Projected Starter']),
@@ -6442,7 +7014,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 },
                 'data_contract': source_contract.copy(),
                 'features': sorted(feats),
-                'experimental': str(model_version).lower() == 'v2',
             }
         all_rows.append(out)
 
@@ -6461,7 +7032,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # Deliberately BEFORE the vacancy pass below: vacancy should redistribute
     # a departing player's share of an already-realistic team total, not add
     # on top of one that still needs fitting to reality.
-    pass_capacity_ledger, pass_capacity_adjusted = [], False
+    pass_capacity_ledger, pass_capacity_adjusted, pass_capacity_room = [], False, []
     if 'v2_pass_capacity' in feats:
         result, pass_capacity_ledger_df = apply_pass_capacity_conservation(
             result, prior_history=prior_stats, team_col=prior_team_col)
@@ -6469,6 +7040,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         pass_capacity_adjusted = bool(
             not pass_capacity_ledger_df.empty
             and (pass_capacity_ledger_df['capacity_source'] != 'no capacity signal').any())
+        # Per-player room detail (see apply_pass_capacity_conservation's own
+        # comment for why this rides on .attrs instead of a return value) -
+        # who else is in this player's team+group and what the same
+        # conservation pass did to each of them, not just the team totals.
+        _room_detail_df = pass_capacity_ledger_df.attrs.get('player_detail')
+        if _room_detail_df is not None and not _room_detail_df.empty:
+            pass_capacity_room = _room_detail_df.to_dict('records')
 
     # Snapshot the board right here, AFTER pass-capacity conservation but
     # BEFORE the vacancy pass below, keyed by (Player, Pos, Team) rather than
@@ -6560,6 +7138,64 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             result['Calibrated Model Proj Pts'] = result['Model Proj Pts']
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
+    # Raw per-week slot/wide/inline defense-allowed evidence, grouped for
+    # per-player lookup by (defense_team, position) - the pre-shrinkage
+    # ingredients behind alignment_scheme_evidence's season-aggregate
+    # candidate multipliers (see pff_alignment_defense_team_games's own
+    # comment above). WR/TE only - team_games is empty for every other
+    # position family since ALIGNMENT_DEFENSE_SUPPORTED_POSITIONS is WR/TE.
+    #
+    # Split by season (year/year-1/year-2) as of 2026-08-26, so the Deep
+    # Dive tab's existing season radio also drives this table - it
+    # previously only ever showed whichever single season happened to be
+    # loaded for SCORING above (year-1 at cold start, year in-season),
+    # silently ignoring a 2024 selection. This is a DISPLAY-only load,
+    # independent of the scoring load above (which is untouched) - a
+    # completed prior season may be loaded twice (once for scoring at cold
+    # start, once here, since neither load is cached), acceptable for a
+    # once-per-board cost. Each season's frame also gets the same leave-
+    # one-out expected value (`_expected_value` - "that offense's own
+    # average") and a recency weight (`_recency_weight`, decaying from that
+    # season's own last included week) attached for the table below.
+    defense_alignment_log_by_team_pos_by_season: dict[int, dict[tuple[str, str], list[dict]]] = {}
+    # pff_alignment_defense_team_games (loaded above for SCORING) already
+    # IS year-1's data at cold start (the season-prior fallback), or year's
+    # own in-season data otherwise - reuse it under whichever year it
+    # actually represents rather than reloading, but never relabel it as a
+    # season it isn't: at cold start there is no real 'year' (e.g. 2026)
+    # archive yet, so that slot is loaded fresh below (correctly empty,
+    # same as every other cold-start 2026 lookup in this file) instead of
+    # silently showing year-1's numbers under the current season's tab.
+    _alignment_team_games_by_year = ({int(year) - 1: pff_alignment_defense_team_games} if cold_start
+                                     else {int(year): pff_alignment_defense_team_games})
+    for _display_year in (int(year), int(year) - 1, int(year) - 2):
+        if _display_year in _alignment_team_games_by_year:
+            continue
+        try:
+            _display_result = load_weekly_alignment_defense_profiles(
+                _display_year, (as_of_week if _display_year == int(year) else PFF_ALIGNMENT_DEFENSE_COLD_START_AS_OF_WEEK),
+                load_schedule(_display_year, include_postseason=(_display_year != int(year))),
+                include_postseason=(_display_year != int(year)))
+            _alignment_team_games_by_year[_display_year] = _display_result.team_games
+        except Exception:
+            _alignment_team_games_by_year[_display_year] = pd.DataFrame()
+    for _display_year, _adtg in _alignment_team_games_by_year.items():
+        if _adtg is None or _adtg.empty:
+            defense_alignment_log_by_team_pos_by_season[_display_year] = {}
+            continue
+        _adtg = _attach_offense_leave_one_out_baselines(_adtg)
+        _weeks_numeric = pd.to_numeric(_adtg['source_week'], errors='coerce')
+        _as_of_for_weight = (
+            as_of_week if _display_year == int(year) and not cold_start
+            else int(_weeks_numeric.max()) + 1
+        )
+        _adtg['_recency_weight'] = defense_recency_weights(_weeks_numeric, _as_of_for_weight)
+        by_team_pos: dict[tuple[str, str], list[dict]] = {}
+        for (d_team, d_pos), group in _adtg.groupby(['defense_team', 'position'], observed=True):
+            by_team_pos[(str(d_team), str(d_pos))] = (
+                group.sort_values(['source_week', 'alignment', 'stat']).to_dict('records'))
+        defense_alignment_log_by_team_pos_by_season[_display_year] = by_team_pos
+
     # Preserve the team-level preseason allocation while the internal RB
     # fields are still available.  Each player's popup can therefore show
     # both the capacity ledger and every teammate allocation without making
@@ -6650,6 +7286,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         detail['pass_capacity_ledger'] = [
             entry for entry in pass_capacity_ledger if entry.get('team') == str(row['Team'])
         ]
+        _own_group = 'WR/TE' if row['Pos'] in ('WR', 'TE') else row['Pos']
+        detail['pass_capacity_room'] = sorted(
+            (entry for entry in pass_capacity_room
+             if entry.get('team') == str(row['Team']) and entry.get('position_group') == _own_group),
+            key=lambda entry: entry.get('targets_before', 0.0), reverse=True,
+        )
+        detail['defense_alignment_weekly_log_by_season'] = {
+            _yr: _by_team_pos.get((str(row['Opponent']), str(row['Pos'])), [])
+            for _yr, _by_team_pos in defense_alignment_log_by_team_pos_by_season.items()
+        }
     # A fixed x-axis per position for the "Range of outcomes" chart -
     # explicit request, 2026-08-24: every player's curve was being auto-fit
     # to the full chart width (0 to that player's own P90 + margin), so a
@@ -6681,7 +7327,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     meta = {'reason': None, 'year': year, 'week': week, 'as_of_week': as_of_week,
             'players': int(len(result)), 'scoring': scoring_mode, 'cold_start': cold_start,
             'features': sorted(feats), 'vacancy_adjusted': vacancy_adjusted,
-            'model_version': str(model_version).lower(), 'experimental': str(model_version).lower() == 'v2',
             'source_contract': source_contract, 'explanations': explanations,
             'vacancy_ledger': vacancy_ledger,
             'rb_allocation_ledger': rb_allocation_ledger,

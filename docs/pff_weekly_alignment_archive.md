@@ -66,12 +66,22 @@ player's own wide/inline rates and the opposing defense's wide/inline comparison
 both available; it falls back to the original slot/non-slot 2-way blend otherwise (e.g. Week 1
 of a season, before this app has any 2026 weekly archive of its own - see "Week 1 and season
 files" below for the season-prior fallback this needs on BOTH the player and defense side).
-This candidate multiplier is `v2_pff_alignment_matchup`-gated (V2 board only, currently rejected
-from `DEFAULT_FEATURES` after a 2026-08-24 backtest - see `docs/weekly_projections_methodology.md`)
-and, when that feature is active, IS multiplied into the WR/TE targets/receptions/receiving_yards
-matchup step - "explanatory only" describes the underlying `pff_alignment.py` helper's own
-`multiplier` field (always 1.0), not the `candidate_multiplier` this app's caller uses. Alignment
-touchdown effects are always neutral.
+This candidate multiplier is `v2_pff_alignment_matchup`-gated - live in `DEFAULT_FEATURES` since
+2026-08-26 (folded in when the separate V1/V2 toggle was retired), and REPLACES (not multiplies
+alongside) the broad role/defense matchup for a WR/TE targets/receptions/receiving_yards row with
+available alignment evidence - see `docs/weekly_projections_methodology.md`'s 2026-08-26 update for
+why (removing a redundant second multiplier and an over-aggressive normalization-to-league-average
+were both explicit requests) and its own outstanding "not yet re-backtested" caveat. "Explanatory
+only" describes the underlying `pff_alignment.py` helper's own `multiplier` field (always 1.0), not
+the `candidate_multiplier` this app's caller uses. Alignment touchdown effects are always neutral.
+
+**Update, 2026-08-26:** re-measured against `docs/weekly_projections_methodology.md`'s own
+A/B convention (`scripts/eval_weekly_model.py`, isolating this one flag, 2025 weeks 2-18).
+START-WR - the scope the pre-redesign mechanism failed worst on - now wins (-0.069 MAE,
++0.024 rank-corr, 11/17 weeks). START-TE moves the other way, a small MAE loss (+0.025)
+with rank-corr still slightly in its favor. See that doc's matching update entry for the
+full table; kept live in `DEFAULT_FEATURES` regardless, per explicit instruction not to
+remove it on a failing number but to report the statistics instead.
 
 ## Week 1 and season files
 
@@ -130,20 +140,26 @@ this is a fallback, not a replacement.
 
 ## Two-years-back grounding for an in-season read (added 2026-08-25)
 
-Mid-season (not cold start), a player's slot/wide/inline rate for the CURRENT season so far can
-optionally be pulled slightly toward his OWN full season two years back (e.g. 2024 grounding a
-2026 in-season read) - the same "ground a breakout or down year against last-known-good" request
-that already exists for other stats via `prior2_blend_weight`/`QB_PRIOR2_*`, extended to
-alignment. `data.pff_alignment.blend_alignment_profile_toward_prior2` does the blending; it is
-deliberately SYMMETRIC (no directional dampening) unlike the QB/other-stat version, since a
-higher or lower slot/wide/inline share carries no inherent "more fantasy value" direction to
-stay bullish about. The pull is sample-size-scaled by `alignment_sample_weight` (real snaps, the
-same evidence unit this module already scores confidence by): `ALIGNMENT_PRIOR2_BASE_WEIGHT`
-(0.10) even at a full current-season sample, rising to `ALIGNMENT_PRIOR2_MAX_WEIGHT` (0.40) a
-few games into the season. Gated behind the SAME `v2_td_two_year_prior` flag every other stat's
+A player's slot/wide/inline rate can optionally be pulled slightly toward his OWN full season two
+years back (e.g. 2024 grounding a 2026 read) - the same "ground a breakout or down year against
+last-known-good" request that already exists for other stats via `prior2_blend_weight`/
+`QB_PRIOR2_*`, extended to alignment. `data.pff_alignment.blend_alignment_profile_toward_prior2`
+does the blending; it is deliberately SYMMETRIC (no directional dampening) unlike the QB/other-stat
+version, since a higher or lower slot/wide/inline share carries no inherent "more fantasy value"
+direction to stay bullish about. The pull is sample-size-scaled by `alignment_sample_weight` (real
+snaps, the same evidence unit this module already scores confidence by): `ALIGNMENT_PRIOR2_BASE_
+WEIGHT` (0.10) even at a full current-season sample, rising to `ALIGNMENT_PRIOR2_MAX_WEIGHT` (0.18)
+a few games into the season. Gated behind the SAME `v2_td_two_year_prior` flag every other stat's
 2024 grounding already uses (not a new flag), and behind `v2_pff_alignment_matchup` as always;
 a prior-year sample under `ALIGNMENT_PRIOR2_MIN_SAMPLE_WEIGHT` (20 snaps) is treated as no read
-at all. Visible in the decomposition's role data as `alignment_prior2_weight` /
+at all.
+
+**Update, 2026-08-26:** enabled at cold start too (previously gated `not cold_start`, so Week 1 -
+arguably where this mattered most - got none). At cold start "current" is the prior season's own
+full total (via `load_season_alignment_prior`, already a large sample), so `fraction_missing` lands
+near 0 and the pull sits at `ALIGNMENT_PRIOR2_BASE_WEIGHT` (~10%), not the higher in-season
+ceiling. `MAX_WEIGHT` was also lowered from 0.40 to 0.18 per explicit request to keep the whole
+mechanism inside a roughly 10-20% band. Visible in the decomposition's role data as `alignment_prior2_weight` /
 `alignment_prior2_sample_weight` whenever it actually fired.
 
 Before saving or sharing any export, confirm that your PFF agreement permits the intended

@@ -8,6 +8,7 @@ current roster and retains its match method for the projection decomposition.
 """
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -120,6 +121,31 @@ def load_availability_overrides(year: int, week: int,
             f"{target.name} has duplicate manual availability choices for "
             + ", ".join(f"{team} {player}" for team, player in duplicated.index) + ".")
     return selected.reset_index(drop=True), None
+
+
+def availability_fingerprint(year: int, week: int, *paths: str | Path) -> str:
+    """Cheap, stable fingerprint of one (year, week)'s resolved rows across
+    one or more override-schema CSVs (the manual override file, the
+    FantasyPros-pull file - same load_availability_overrides schema,
+    different paths).
+
+    Meant to be passed by the caller as build_weekly_projections'
+    ``availability_fingerprint`` argument, which only exists to sit in that
+    function's ``@st.cache_data`` key. Without it, a saved/removed override
+    or a fresh FantasyPros pull is invisible to that cache (nothing about
+    the CALL changed), so the UI previously had to call
+    ``build_weekly_projections.clear()`` - which empties the cache for
+    EVERY year/week/scoring/model combination that function has ever been
+    called with this process, not just the one being edited. Threading a
+    per-(year, week) fingerprint through instead means only the affected
+    week's cache entry actually misses on the next call; every other
+    already-computed week stays cached and reusable.
+    """
+    parts = []
+    for path in paths:
+        rows, _err = load_availability_overrides(year, week, path=path)
+        parts.append(rows.to_csv(index=False) if not rows.empty else "")
+    return hashlib.md5("||".join(parts).encode("utf-8")).hexdigest()[:12]
 
 
 def _read_all_overrides(path: str | Path = AVAILABILITY_OVERRIDE_PATH) -> pd.DataFrame:

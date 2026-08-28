@@ -375,7 +375,15 @@ def load_year_data(year):
     if 'week' in rosters.columns:
         rosters = rosters.sort_values('week', ascending=False)
 
-    bio_cols = ['gsis_id', 'pfr_id', 'espn_id', 'full_name', 'team', 'position', 'depth_chart_position', 'age', 'height', 'weight', 'jersey_number', 'years_exp', 'rookie_year', 'birth_date', 'draft_number', 'draft_club', 'entry_year']
+    # 'status' MUST be included here - it is the roster's own RET/CUT/RES/FA
+    # field, and _cold_start_pool() in weekly_projections.py filters a
+    # preseason player pool on it. Dropping it here (as this list used to)
+    # made that filter a silent no-op for every player, every season,
+    # because 'status' never survived the merge into `stats` below.  Found
+    # 2026-08-25: Adam Thielen (status='RET' in roster_weekly_2026.csv,
+    # retired) was still receiving a full Week 1 2026 WR projection off his
+    # 2025 role/snap history.
+    bio_cols = ['gsis_id', 'pfr_id', 'espn_id', 'full_name', 'team', 'position', 'depth_chart_position', 'status', 'age', 'height', 'weight', 'jersey_number', 'years_exp', 'rookie_year', 'birth_date', 'draft_number', 'draft_club', 'entry_year']
     rosters_clean = rosters[[c for c in bio_cols if c in rosters.columns]].drop_duplicates(subset=['full_name']) if 'full_name' in rosters.columns else rosters
 
     # roster_weekly_*.csv's own 'position' column is a coarse group (DB/DL/LB/

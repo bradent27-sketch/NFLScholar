@@ -746,27 +746,24 @@ def test_regular_season_late_games_remain_in_a_returning_receiver_prior():
     assert np.isclose(london['receiving_yards'], 919.0, atol=0.02)
 
 
-def test_v1_feature_set_keeps_v2_rb_allocator_experiment_out_of_the_control():
-    v1 = wp.resolve_model_features('v1')
-    v2 = wp.resolve_model_features('v2')
-    assert 'v2_preseason_rb_allocator' not in v1
-    assert 'v2_preseason_rb_allocator' in v2
+def test_default_features_include_the_former_v2_only_components():
+    # The separate "V1 released baseline" / "V2 experimental" toggle was
+    # retired 2026-08-26 - DEFAULT_FEATURES is now the single standard model
+    # and includes what used to be V2-only components.
+    feats = wp.resolve_model_features()
+    assert 'v2_preseason_rb_allocator' in feats
+    assert 'calibration' in feats
 
 
-def test_pff_alignment_matchup_is_rejected_for_default_but_live_in_v2():
+def test_pff_alignment_matchup_ships_active_despite_the_measured_loss():
     # Measured 2026-08-24 against the 2025 startable pool (see
     # DEFAULT_FEATURES's own comment): loses MAE and rank-corr on both
-    # START-WR and START-TE, so - same as volume_efficiency and game_env
-    # before it - DEFAULT_FEATURES leaves it off. Unlike those two, it was
-    # then re-enabled in the V2 experimental bundle the same day at the
-    # user's explicit request, purely so it can be inspected on a real V2
-    # board while hunting for a fixable cause - see
-    # V2_EXPERIMENTAL_FEATURES's own comment. That reactivation is a
-    # diagnostic convenience, not a reversal of the backtest result.
-    v1 = wp.resolve_model_features('v1')
-    v2 = wp.resolve_model_features('v2')
-    assert 'v2_pff_alignment_matchup' not in v1
-    assert 'v2_pff_alignment_matchup' in v2
+    # START-WR and START-TE. DESPITE that measured loss, the user explicitly
+    # asked (2026-08-26) to ship it ON by default anyway so it stays live
+    # and inspectable rather than gated behind a mode nobody selects by
+    # default - see DEFAULT_FEATURES's own comment.
+    feats = wp.resolve_model_features()
+    assert 'v2_pff_alignment_matchup' in feats
     assert 'v2_pff_alignment_matchup' in wp.MODEL_FEATURES
 
 
@@ -857,8 +854,13 @@ def test_cold_start_manual_qb1_receives_full_prior_per_game_workload():
         wp.load_qb1_overrides = lambda _year: (
             pd.DataFrame([{'year': 2026, 'team': 'KC', 'player': 'Starter'}]), None)
         wp._target_margins_by_team = lambda year, week: {}
+        # availability_fingerprint is cache-key-only (see its own docstring) -
+        # given a distinct value here purely so this test's mocked fixture
+        # can't collide in @st.cache_data with another test's (year, week,
+        # scoring, as_of_week, apply_injury) tuple that happens to match.
         out, meta = wp.build_weekly_projections(
-            2026, 1, 'Full PPR', as_of_week=1, apply_injury=False, model_version='v1')
+            2026, 1, 'Full PPR', as_of_week=1, apply_injury=False,
+            availability_fingerprint='test_cold_start_manual_qb1')
     finally:
         (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
          wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team) = original
@@ -870,7 +872,13 @@ def test_cold_start_manual_qb1_receives_full_prior_per_game_workload():
     assert passing['qb1_workload_override']
     assert passing['qb1_workload_source'] == 'Manual QB1 selection'
     assert passing['role_scale'] == 1.0
-    assert passing['prior_rate'] == 200.0
+    # raw_prior_rate, not prior_rate: the latter now also carries
+    # v2_qb_volume_blend's evidence-weighted adjustment (part of
+    # DEFAULT_FEATURES since 2026-08-26), so it's no longer exactly the raw
+    # per-game average even though the manual override is applying the full,
+    # undiluted-by-the-backup prior workload correctly - that's what
+    # raw_prior_rate isolates and confirms.
+    assert passing['raw_prior_rate'] == 200.0
     assert meta['source_contract']['qb_starter_source'] == 'manual_qb1_overrides_plus_unambiguous_prior_season_incumbents'
 
 
@@ -1015,7 +1023,7 @@ def test_nonstarter_qb_has_zero_projected_volume_not_a_relief_rate_projection():
         wp.load_qb1_overrides = lambda _year: (pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS), None)
         wp._target_margins_by_team = lambda year, week: {}
         out, meta = wp.build_weekly_projections(
-            2026, 4, 'Full PPR', as_of_week=4, apply_injury=False, model_version='v1')
+            2026, 4, 'Full PPR', as_of_week=4, apply_injury=False)
     finally:
         (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
          wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team) = original
@@ -1299,8 +1307,13 @@ def test_v2_defense_matchup_falls_back_to_prior_season_at_true_cold_start():
             (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
         wp.load_schedule = lambda year: schedule.copy()
         wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        # See test_cold_start_manual_qb1_receives_full_prior_per_game_workload's
+        # own comment: distinct availability_fingerprint avoids an
+        # @st.cache_data collision with that test's identical (year, week,
+        # scoring, as_of_week, apply_injury) tuple.
         result, meta = wp.build_weekly_projections(
-            2026, 1, 'Full PPR', as_of_week=1, apply_injury=False, model_version='v2')
+            2026, 1, 'Full PPR', as_of_week=1, apply_injury=False,
+            availability_fingerprint='test_v2_defense_matchup_cold_start')
     finally:
         wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving = original
     assert not result.empty
@@ -1366,10 +1379,10 @@ def test_v2_full_projection_contract_is_cutoff_safe_and_explained():
         wp.load_schedule = lambda year: schedule.copy()
         wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
         first, meta = wp.build_weekly_projections(
-            2026, 2, 'Full PPR', as_of_week=2, apply_injury=False, model_version='v2')
+            2026, 2, 'Full PPR', as_of_week=2, apply_injury=False)
         current.loc[current['week'] == 2, list(all_stats)] = 99999.0
         second, _ = wp.build_weekly_projections(
-            2026, 2, 'Full PPR', as_of_week=2, apply_injury=False, model_version='v2')
+            2026, 2, 'Full PPR', as_of_week=2, apply_injury=False)
     finally:
         wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving = original
     assert not first.empty
@@ -1424,15 +1437,14 @@ def test_v2_decomposition_refreshes_the_stat_line_after_vacancy_redistribution()
         wp._injury_profiles = lambda year, week: {
             'Out WR': {'plays_probability': 0.0, 'workload_if_active': 1.0, 'status': 'out'},
         }
-        # v2_fantasypros_availability is in V2_EXPERIMENTAL_FEATURES and now
-        # takes precedence over v2_availability's nflverse-backed
-        # _injury_profiles - mock the source this model_version='v2' run
-        # actually calls, not the one it superseded.
+        # v2_fantasypros_availability is in DEFAULT_FEATURES and takes
+        # precedence over v2_availability's nflverse-backed _injury_profiles -
+        # mock the source this run actually calls, not the one it superseded.
         wp.load_fantasypros_availability = lambda year, week: (
             {'Out WR': {'plays_probability': 0.0, 'workload_if_active': 1.0, 'status': 'out',
                        'source': 'FantasyPros injury report'}}, None)
         out, meta = wp.build_weekly_projections(
-            2026, 2, 'Full PPR', as_of_week=2, apply_injury=True, model_version='v2')
+            2026, 2, 'Full PPR', as_of_week=2, apply_injury=True)
     finally:
         (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
          wp.load_team_pace, wp._target_margins_by_team, wp._injury_profiles,

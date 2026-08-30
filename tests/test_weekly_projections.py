@@ -125,6 +125,56 @@ def test_ourlads_role_floor_only_supports_new_or_thin_role_evidence():
     assert max(wr_share) < 1.0  # listed formations are not 100%-snap claims
 
 
+def test_buried_veteran_dock_reads_ourlads_slot_rank_not_team_depth():
+    # The bug this pins (found 2026-08-30 on the real 2026 board): Ourlads
+    # ranks WR/TE PER ALIGNMENT SLOT, so Marquise Brown (charted RWR-2 in
+    # PHI) and Troy Franklin (SWR-2 in DEN) are slot rank 2, not "WR4/5".
+    # The first version of the dock checked rank >= 4 and never fired.
+    prior = np.array([0.55, 0.55, 0.80, 0.10, 0.55, 0.55])
+    share = np.array([0.47, 0.47, 0.80, 0.47, 0.15, 0.47])
+    rank = np.array([2.0, 3.0, 1.0, 2.0, 2.0, np.nan])  # Ourlads slot ranks
+    out, applied = wp.apply_buried_veteran_dock(share, prior, rank, depth_chart_decay=1.0)
+
+    # [0] proven vet, slot rank 2, real current role -> half his share
+    assert applied[0] and abs(out[0] - 0.47 * wp.RECEIVER_BURIED_VET_KEEP_FRACTION) < 1e-9
+    # [1] proven vet, slot rank 3+ -> pulled to the deep-bench cutoff
+    assert applied[1] and abs(out[1] - wp.RECEIVER_DEPTH_CUTOFF_SHARE_CAP) < 1e-9
+    # [2] slot rank 1 = that slot's listed starter -> never docked
+    assert not applied[2] and abs(out[2] - 0.80) < 1e-9
+    # [3] thin prior (0.10) -> not a "proven" vet -> untouched
+    assert not applied[3] and abs(out[3] - 0.47) < 1e-9
+    # [4] proven but the model already has him at 0.15 -> nothing to dock
+    assert not applied[4] and abs(out[4] - 0.15) < 1e-9
+    # [5] no chart rank -> untouched
+    assert not applied[5] and abs(out[5] - 0.47) < 1e-9
+
+
+def test_buried_veteran_dock_fades_with_depth_chart_decay_and_is_inert_in_season():
+    prior, share, rank = np.array([0.55]), np.array([0.40]), np.array([2.0])
+    # Half decay -> half the pull toward 0.40*0.5=0.20: 0.40 + 0.5*(0.20-0.40) = 0.30
+    out_half, applied_half = wp.apply_buried_veteran_dock(share, prior, rank, depth_chart_decay=0.5)
+    assert applied_half[0] and abs(out_half[0] - 0.30) < 1e-9
+    # No pull left (in-season) -> exact no-op
+    out_off, applied_off = wp.apply_buried_veteran_dock(share, prior, rank, depth_chart_decay=0.0)
+    assert not applied_off[0] and abs(out_off[0] - 0.40) < 1e-9
+
+
+def test_buried_veteran_dock_te_slot_is_one_deeper_than_wr():
+    # A charted TE-2 is often the receiving TE (TE-1 blocks). Passing the TE
+    # backup slot rank (3) must leave a proven TE-2 alone and only dock TE-3+.
+    prior = np.array([0.55, 0.55, 0.55])
+    share = np.array([0.45, 0.45, 0.45])
+    rank = np.array([2.0, 3.0, 4.0])
+    te_slot = wp.RECEIVER_BURIED_VET_BACKUP_SLOT_RANK_TE
+    out, applied = wp.apply_buried_veteran_dock(share, prior, rank, 1.0, backup_slot_rank=te_slot)
+    assert not applied[0] and abs(out[0] - 0.45) < 1e-9          # TE-2: untouched
+    assert applied[1] and abs(out[1] - 0.45 * wp.RECEIVER_BURIED_VET_KEEP_FRACTION) < 1e-9  # TE-3: half
+    assert applied[2] and abs(out[2] - wp.RECEIVER_DEPTH_CUTOFF_SHARE_CAP) < 1e-9           # TE-4: hard cap
+    # Same players under the WR default (slot 2) WOULD dock the rank-2 one.
+    out_wr, applied_wr = wp.apply_buried_veteran_dock(share, prior, rank, 1.0)
+    assert applied_wr[0]
+
+
 def test_ourlads_starter_overlay_adds_only_a_uniquely_verified_starter():
     chart, _ = odc.parse_ourlads_depth_chart(_ourlads_mhtml(), 'Arizona.mhtml')
     # New Back is absent from the current roster but exists uniquely in the
@@ -1119,13 +1169,26 @@ def test_calibration_is_one_sided():
 
 # --- V2: priors, continuous roles, and cutoff-safe sources -----------------
 
-def test_v2_defense_prior_starts_at_last_year_then_adapts_quickly():
+def test_v2_defense_prior_starts_at_last_year_then_adapts():
     current = pd.DataFrame({'targets': [1.4]}, index=['DEN'])
     prior = pd.DataFrame({'targets': [0.8]}, index=['DEN'])
+    # Week 1 (no current evidence) sits exactly on last year regardless of
+    # the shrinkage constant.
     week_one = wp.blend_defense_prior(current, prior, pd.Series({'DEN': 0.0}))
-    four_games = wp.blend_defense_prior(current, prior, pd.Series({'DEN': 4.0}))
     assert abs(week_one.loc['DEN', 'targets'] - 0.8) < 1e-9
-    assert abs(four_games.loc['DEN', 'targets'] - 1.1) < 1e-9
+    # The blend weight is evidence / (evidence + prior_games). Pin the
+    # mechanism with an explicit constant so this does not silently encode
+    # whatever DEFENSE_PRIOR_GAMES currently is: 4 games against a prior_games
+    # of 4 is a 50/50 blend -> 1.1.
+    even = wp.blend_defense_prior(current, prior, pd.Series({'DEN': 4.0}), prior_games=4.0)
+    assert abs(even.loc['DEN', 'targets'] - 1.1) < 1e-9
+    # The shipped constant (12.0 as of 2026-08-29) deliberately adapts
+    # SLOWER: 4 current games is only a quarter-weight, so the profile is
+    # still much closer to last year than to the current sample.
+    shipped = wp.blend_defense_prior(current, prior, pd.Series({'DEN': 4.0}))
+    expected = 0.8 + (4.0 / (4.0 + wp.DEFENSE_PRIOR_GAMES)) * (1.4 - 0.8)
+    assert abs(shipped.loc['DEN', 'targets'] - expected) < 1e-9
+    assert shipped.loc['DEN', 'targets'] < even.loc['DEN', 'targets']
 
 
 def test_v2_confirmed_role_change_allows_aggressive_volume_but_not_td_blend():
@@ -1151,6 +1214,35 @@ def test_v2_two_year_td_prior_requires_a_comparable_opportunity_role():
         np.array([0.50]), np.array([0.30]), np.array([7.0]), np.array([1.0]))
     assert used[0] and 0.30 < comparable[0] < 0.50
     assert not rejected[0] and changed_role[0] == 0.50
+
+
+def test_td_prior_credibility_regresses_a_thin_one_season_rate_but_spares_a_veteran():
+    pos_rate = np.array([0.030])
+    # RJ Harvey shape: ~120 carries, one role season, hot 0.055 rate.
+    harvey, cred_h, long_h = wp.credibility_shrunk_td_prior(
+        np.array([0.055]), np.array([120.0]), np.array([1.0]), pos_rate, 'rushing_attempts')
+    assert cred_h[0] < 0.45 and long_h[0] == 1.0
+    assert pos_rate[0] < harvey[0] < 0.050          # pulled most of the way to the mean
+
+    # Derrick Henry shape: ~1100 carries over 4 role seasons, 0.045 rate.
+    henry, cred_y, long_y = wp.credibility_shrunk_td_prior(
+        np.array([0.045]), np.array([1100.0]), np.array([4.0]), pos_rate, 'rushing_attempts')
+    assert cred_y[0] > 0.8 and long_y[0] == 1.0 + wp.TD_PRIOR_LONGEVITY_BONUS_MAX
+    assert abs(henry[0] - 0.045) < 0.002            # essentially untouched
+
+    # Two solid seasons: regressed, but NOT punished for lacking a third year.
+    two_yr, cred_2, long_2 = wp.credibility_shrunk_td_prior(
+        np.array([0.040]), np.array([450.0]), np.array([2.0]), pos_rate, 'rushing_attempts')
+    assert long_2[0] == 1.0 and 0.55 < cred_2[0] < 0.80
+    # More history keeps a LARGER fraction of the player's own rate.
+    kept_2yr = (two_yr[0] - pos_rate[0]) / (0.040 - pos_rate[0])
+    kept_harvey = (harvey[0] - pos_rate[0]) / (0.055 - pos_rate[0])
+    assert kept_2yr > kept_harvey
+
+    # NaN prior passes straight through (league fallback handled elsewhere).
+    nan_out, nan_cred, _ = wp.credibility_shrunk_td_prior(
+        np.array([np.nan]), np.array([0.0]), np.array([0.0]), pos_rate, 'rushing_attempts')
+    assert np.isnan(nan_out[0]) and np.isnan(nan_cred[0])
 
 
 def test_prior2_blend_weight_full_when_2024_raises_the_value():

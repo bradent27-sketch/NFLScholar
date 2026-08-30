@@ -202,3 +202,28 @@ target_earner_score) for anything missed - nothing new; confirms that
 analysis was already reasonably thorough.
 
 ---
+
+---
+
+## 2026-08-29 — DEFENSE_PRIOR_GAMES extended sweep RESULT (8/12/16/20)
+
+Ran solo, 2025 weeks 4-17, vs the shipped 4.0. `.sweeps/dpg_extended.txt`.
+
+| value | ALL dMAE (CI) | WR dMAE (CI) | TE dMAE (CI) | QB / RB |
+|---|---|---|---|---|
+| 8.0  | -0.012 [-.019,-.006] | -0.015 [-.024,-.007] | -0.012 [-.020,-.002] | CI incl. 0 |
+| 12.0 | -0.019 [-.029,-.010] | -0.024 [-.039,-.012] | -0.019 [-.035,-.002] | CI incl. 0 |
+| 16.0 | -0.023 [-.035,-.012] | -0.029 [-.046,-.013] | -0.026 [-.047,-.003] | CI incl. 0 |
+| 20.0 | -0.025 [-.037,-.011] | -0.033 [-.052,-.014] | -0.025 [-.047,-.001] | CI incl. 0 |
+
+**Read:** monotonic on ALL/WR continues, CI excludes 0 at every value, but the
+curve is plateauing hard - marginal gain per step on ALL is -.007 -> -.004 -> -.002.
+TE turns over at 20 (-.026 -> -.025). QB/RB whole-pool: nothing at any value.
+START-RB shows a real -0.07..-0.09 at 8/12/16 (CI excludes 0), noisy at 20.
+Absolute effect is small (~0.6% MAE whole-pool at the best value).
+
+**Resolution / recommendation:** move the constant to **10-12**, not higher. Most
+of the measurable benefit, materially less risk of fitting a single season's
+(n=14 weeks) defensive landscape. Requires a calibration re-fit
+(`scripts/fit_weekly_calibration.py`) and a confirm run on 2024 / multi-year
+before shipping. Constant NOT changed pending sign-off on the value.

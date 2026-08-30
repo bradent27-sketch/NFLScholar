@@ -112,5 +112,45 @@ class OurladsFullbackAndRankTests(unittest.TestCase):
         self.assertEqual(matched["source_rank"], 2)
 
 
+class OurladsInboxAndArchiveTests(unittest.TestCase):
+    def test_from_dir_imports_pages_and_archives_the_previous_snapshot(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            inbox = tmp / "inbox"
+            inbox.mkdir()
+            (inbox / "2026 Miami Dolphins Depth Chart _ Ourlads.com.mhtml").write_bytes(_chart())
+            csv_path = tmp / "ourlads_depth_charts.csv"
+            csv_path.write_text("year,team\n2025,MIA\n")  # a "previous" snapshot to archive
+            old_archive = odc.OURLADS_ARCHIVE_DIR
+            odc.OURLADS_ARCHIVE_DIR = tmp / "archive"
+            try:
+                snap, report = odc.save_ourlads_snapshot_from_dir(inbox, year=2026, path=csv_path)
+            finally:
+                odc.OURLADS_ARCHIVE_DIR = old_archive
+
+            self.assertEqual(report.get("error", ""), "")
+            self.assertEqual(report["team_count"], 1)
+            self.assertEqual(report["source_files"],
+                             ["2026 Miami Dolphins Depth Chart _ Ourlads.com.mhtml"])
+            # live snapshot was overwritten with the fresh 2026 rows
+            self.assertTrue((pd.read_csv(csv_path)["year"] == 2026).all())
+            # the previous csv + the raw page were archived
+            arch = report["archive"]
+            self.assertTrue(Path(arch["archived_csv"]).is_file())
+            self.assertEqual(arch["archived_pages"], 1)
+            self.assertEqual(pd.read_csv(arch["archived_csv"])["year"].iloc[0], 2025)
+
+    def test_from_dir_reports_a_clear_error_when_the_folder_is_empty(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            snap, report = odc.save_ourlads_snapshot_from_dir(Path(tmp), year=2026)
+            self.assertIn("No .mhtml", report["error"])
+            self.assertTrue(snap.empty)
+
+
 if __name__ == "__main__":
     unittest.main()

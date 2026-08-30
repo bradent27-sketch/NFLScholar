@@ -1,0 +1,128 @@
+2026-08-30 11:42:55.068 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.069 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.070 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.070 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.073 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.073 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.074 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.074 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.074 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.075 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.076 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.076 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.077 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.077 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.077 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.078 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.078 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.078 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.079 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.079 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.079 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.080 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.080 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.081 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.081 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.081 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.082 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.082 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.083 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.083 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.085 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.102 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.103 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.103 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.103 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.104 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.104 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.105 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.105 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.106 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.110 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+years=[2025] weeks=4-17  shipped elasticity={'QB': 0.42, 'RB': 0.17, 'WR': 0.14, 'TE': 0.3}  clip=(0.88, 1.15)
+base = 'v2_game_total_elasticity' OFF (no game-total scaling at all).
+
+2026-08-30 11:42:55.154 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+### game_total_elasticity_x0.5  elasticity={'QB': 0.21, 'RB': 0.085, 'WR': 0.07, 'TE': 0.15}  clip=(0.88, 1.15)
+2026-08-30 11:42:55.154 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.155 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 11:42:55.155 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:55.824 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:56.505 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:42:56.505 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 11:43:00.359 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 11:43:16.781 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+
+======================================================================
+game_total_elasticity_x0.5  [add mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.374  dMAE(var-base) -0.010  dRho(var-base) +0.001  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.018,-0.002]  [CI excludes 0 -> distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.091  dMAE(var-base) -0.034  dRho(var-base) +0.010  weeks variant-won 11-3 (sign-test p=0.06)  boot95%CI[-0.067,+0.005]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.350  dMAE(var-base) -0.016  dRho(var-base) +0.000  weeks variant-won 11-3 (sign-test p=0.06)  boot95%CI[-0.027,-0.006]  [CI excludes 0 -> distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.132  dMAE(var-base) -0.006  dRho(var-base) +0.001  weeks variant-won 7-6 (sign-test p=1.00)  boot95%CI[-0.019,+0.006]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.564  dMAE(var-base) +0.000  dRho(var-base) +0.002  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.015,+0.017]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.649  dMAE(var-base) -0.137  dRho(var-base) +0.046  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.334,+0.048]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.345 vs variant 6.285  dMAE(var-base) -0.060  dRho(var-base) +0.000  weeks variant-won 11-3 (sign-test p=0.06)  boot95%CI[-0.100,-0.026]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.181 vs variant 6.157  dMAE(var-base) -0.025  dRho(var-base) +0.013  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.061,+0.010]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.425  dMAE(var-base) +0.088  dRho(var-base) -0.000  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.016,+0.206]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+### game_total_elasticity_x1  elasticity={'QB': 0.42, 'RB': 0.17, 'WR': 0.14, 'TE': 0.3}  clip=(0.88, 1.15)
+
+======================================================================
+game_total_elasticity_x1  [add mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.374  dMAE(var-base) -0.011  dRho(var-base) +0.001  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.024,+0.004]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.081  dMAE(var-base) -0.044  dRho(var-base) +0.014  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.108,+0.029]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.347  dMAE(var-base) -0.019  dRho(var-base) +0.001  weeks variant-won 11-3 (sign-test p=0.06)  boot95%CI[-0.038,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.130  dMAE(var-base) -0.008  dRho(var-base) -0.000  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.028,+0.011]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.575  dMAE(var-base) +0.012  dRho(var-base) +0.001  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.017,+0.043]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.610  dMAE(var-base) -0.175  dRho(var-base) +0.055  weeks variant-won 11-3 (sign-test p=0.06)  boot95%CI[-0.382,+0.022]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.345 vs variant 6.325  dMAE(var-base) -0.020  dRho(var-base) -0.018  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.092,+0.075]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.181 vs variant 6.161  dMAE(var-base) -0.020  dRho(var-base) +0.024  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.089,+0.050]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.582  dMAE(var-base) +0.245  dRho(var-base) -0.007  weeks variant-won 3-11 (sign-test p=0.06)  boot95%CI[+0.066,+0.445]  [CI excludes 0 -> distinguishable from noise at this sample]
+
+### game_total_elasticity_x1.5  elasticity={'QB': 0.63, 'RB': 0.255, 'WR': 0.21, 'TE': 0.45}  clip=(0.82, 1.225)
+
+======================================================================
+game_total_elasticity_x1.5  [add mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.378  dMAE(var-base) -0.006  dRho(var-base) -0.000  weeks variant-won 9-5 (sign-test p=0.42)  boot95%CI[-0.025,+0.016]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.092  dMAE(var-base) -0.032  dRho(var-base) +0.015  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.123,+0.075]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.343  dMAE(var-base) -0.024  dRho(var-base) -0.001  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.050,+0.004]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.133  dMAE(var-base) -0.006  dRho(var-base) -0.001  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.034,+0.022]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.591  dMAE(var-base) +0.028  dRho(var-base) -0.001  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.016,+0.073]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.666  dMAE(var-base) -0.120  dRho(var-base) +0.047  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.265,+0.053]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.345 vs variant 6.308  dMAE(var-base) -0.038  dRho(var-base) -0.016  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.196,+0.109]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.181 vs variant 6.185  dMAE(var-base) +0.003  dRho(var-base) +0.028  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.091,+0.091]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.651  dMAE(var-base) +0.314  dRho(var-base) -0.039  weeks variant-won 4-10 (sign-test p=0.18)  boot95%CI[+0.108,+0.522]  [CI excludes 0 -> distinguishable from noise at this sample]
+
+### game_total_elasticity_x2  elasticity={'QB': 0.84, 'RB': 0.34, 'WR': 0.28, 'TE': 0.6}  clip=(0.76, 1.3)
+
+======================================================================
+game_total_elasticity_x2  [add mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.389  dMAE(var-base) +0.005  dRho(var-base) -0.001  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.023,+0.035]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.119  dMAE(var-base) -0.006  dRho(var-base) +0.021  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.127,+0.136]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.342  dMAE(var-base) -0.025  dRho(var-base) -0.001  weeks variant-won 11-3 (sign-test p=0.06)  boot95%CI[-0.061,+0.017]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.140  dMAE(var-base) +0.001  dRho(var-base) -0.002  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.037,+0.037]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.615  dMAE(var-base) +0.052  dRho(var-base) -0.003  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.006,+0.113]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.586  dMAE(var-base) -0.199  dRho(var-base) +0.072  weeks variant-won 9-5 (sign-test p=0.42)  boot95%CI[-0.432,+0.035]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.345 vs variant 6.288  dMAE(var-base) -0.057  dRho(var-base) -0.010  weeks variant-won 9-5 (sign-test p=0.42)  boot95%CI[-0.228,+0.104]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.181 vs variant 6.156  dMAE(var-base) -0.025  dRho(var-base) +0.026  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.159,+0.109]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.679  dMAE(var-base) +0.342  dRho(var-base) -0.025  weeks variant-won 3-11 (sign-test p=0.06)  boot95%CI[+0.102,+0.615]  [CI excludes 0 -> distinguishable from noise at this sample]
+
+### game_total_elasticity_x3  elasticity={'QB': 1.26, 'RB': 0.51, 'WR': 0.42, 'TE': 0.9}  clip=(0.64, 1.45)
+
+======================================================================
+game_total_elasticity_x3  [add mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.426  dMAE(var-base) +0.042  dRho(var-base) -0.005  weeks variant-won 4-10 (sign-test p=0.18)  boot95%CI[-0.002,+0.088]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.222  dMAE(var-base) +0.097  dRho(var-base) +0.027  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.070,+0.290]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.350  dMAE(var-base) -0.017  dRho(var-base) -0.003  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.068,+0.040]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.167  dMAE(var-base) +0.028  dRho(var-base) -0.005  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.029,+0.082]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.675  dMAE(var-base) +0.111  dRho(var-base) -0.018  weeks variant-won 4-10 (sign-test p=0.18)  boot95%CI[+0.021,+0.210]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.700  dMAE(var-base) -0.086  dRho(var-base) +0.075  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.367,+0.207]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.345 vs variant 6.376  dMAE(var-base) +0.030  dRho(var-base) -0.018  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.203,+0.278]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.181 vs variant 6.229  dMAE(var-base) +0.047  dRho(var-base) +0.022  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.159,+0.246]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.589  dMAE(var-base) +0.252  dRho(var-base) +0.025  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.009,+0.492]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+

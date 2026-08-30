@@ -907,6 +907,50 @@ def test_role_segments_do_not_infer_absence_without_snap_coverage_or_for_two_gam
     assert not bool(rotation_row['interrupted_season'])
 
 
+def test_snap_anchored_volume_keeps_a_team_changed_lead_back_ahead_of_the_incumbent():
+    # Travis Etienne shape: charted NO RB1, cross-team, DEPRESSED prior
+    # per-game rate (a 2025 committee year in JAX). Alvin Kamara shape:
+    # charted RB2, same team, still-high prior per-game rate from being the
+    # 2025 lead. Under the old blend the two carry/target shares converge;
+    # snap-anchored volume keeps Etienne's split tracking his snap share.
+    candidates = [
+        _candidate('NO', 'Travis Etienne', ourlads_depth_rank=1, same_team=False,
+                   draft_capital=25, base_snap_share=0.56, prior_active_snap_share=0.55,
+                   prior_whole_snap_share=0.50, prior_games=16,
+                   prior_carries_per_game=11.0, prior_targets_per_game=2.2,
+                   rb_carry_capacity=26.0, rb_target_capacity=6.0, core_rb_snap_capacity=1.0),
+        _candidate('NO', 'Alvin Kamara', ourlads_depth_rank=2, same_team=True,
+                   draft_capital=67, base_snap_share=0.46, prior_active_snap_share=0.62,
+                   prior_whole_snap_share=0.58, prior_games=14,
+                   prior_carries_per_game=15.5, prior_targets_per_game=4.6,
+                   rb_carry_capacity=26.0, rb_target_capacity=6.0, core_rb_snap_capacity=1.0),
+    ]
+    old, _ = rba.allocate_preseason_rb_roles(pd.DataFrame(candidates), snap_anchored_volume=False)
+    new, _ = rba.allocate_preseason_rb_roles(pd.DataFrame(candidates), snap_anchored_volume=True)
+
+    def _shares(frame, col):
+        e = _player_row(frame, 'Travis Etienne')[col]
+        k = _player_row(frame, 'Alvin Kamara')[col]
+        return float(e), float(k)
+
+    e_snap, k_snap = _shares(new, 'expected_snap_share')
+    assert e_snap > k_snap  # snap model already has Etienne ahead
+
+    snap_ratio = e_snap / (e_snap + k_snap)
+    for col in ('carry_share', 'target_share'):
+        e_old, k_old = _shares(old, col)
+        e_new, k_new = _shares(new, col)
+        new_ratio = e_new / (e_new + k_new)
+        old_ratio = e_old / (e_old + k_old)
+        # Snap-anchored: Etienne is clearly the lead, by a wider margin than
+        # the old per-game-rate blend gave him...
+        assert new_ratio > 0.5 and new_ratio > old_ratio
+        # ...and his volume share now tracks his snap share (within a modest
+        # per-snap tilt) instead of being dragged toward 50/50.
+        assert abs(new_ratio - snap_ratio) < 0.12
+        assert abs(old_ratio - snap_ratio) > abs(new_ratio - snap_ratio)
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith('test_') and callable(fn)]

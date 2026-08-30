@@ -114,6 +114,28 @@ RB_VACANCY_EXTENSION_BASE_FLOOR = 0.03
 # as intended (it only ever distributes across `scores.gt(0)`).
 RB_TEAM_SNAP_SHARE_TARGET = 1.00
 
+# --- v2_rb_snap_anchored_volume --------------------------------------------
+# When on, the carry/target split starts from the depth-aware snap allocation
+# and applies only a BOUNDED per-snap usage tilt (how many carries / targets
+# this back earns per snap he plays, relative to his backfield's RB rate),
+# instead of the older `0.62*snap_fraction + 0.38*(prior_per_GAME_rate /
+# capacity)` blend. Per-game rate carries the player's OLD team's backfield
+# split; a lead back who changed teams (Etienne to NO) was landing near the
+# incumbent he is charted ahead of. The tilt is wider up-side for targets
+# because genuine third-down backs really do earn >1x their snap share there.
+RB_VOL_TILT_CARRY = (0.85, 1.20)
+RB_VOL_TILT_TARGET = (0.70, 1.60)
+# A cross-team player's stale per-snap rate is only partly trusted; a
+# same-team player's is trusted in full. Thin histories fade toward
+# snap-proportional too (games / (games + K)).
+RB_VOL_TILT_CROSS_TEAM_TRUST = 0.35
+RB_VOL_TILT_GAMES_K = 6.0
+# The carry/target split also gets the SAME depth-rank discount the snap
+# split already uses, so a charted RB2 with a big old per-game rate can no
+# longer out-earn the charted RB1 on volume.
+RB_VOL_RANK_DISCOUNT = {1: 1.0, 2: 0.92, 3: 0.80}
+RB_VOL_RANK_DISCOUNT_DEFAULT = 0.72
+
 # How much of an incumbent's documented pre-injury role (``pre_gap``) is
 # credited back to him when ``interrupted_incumbent_role_credit`` is at its
 # max (1.0) - i.e. clear internal evidence he was starter-caliber before a
@@ -409,13 +431,22 @@ def _role_base(group: pd.DataFrame) -> pd.Series:
     return (role * teammate_multiplier).clip(0.0, 0.95)
 
 
-def allocate_preseason_rb_roles(candidates: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def allocate_preseason_rb_roles(candidates: pd.DataFrame,
+                                snap_anchored_volume: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Reconcile core-RB Week-1 roles to independent team capacities.
 
     Required inputs are intentionally modest.  The public names documented in
     the V2 handoff are accepted in either lower-case or UI-style title case;
     omitted evidence falls back to a neutral/explicit residual rather than a
     fabricated 15.7% reserve share.
+
+    ``snap_anchored_volume`` ('v2_rb_snap_anchored_volume'): derive the
+    carry/target split from the depth-aware SNAP allocation plus a bounded
+    per-snap usage tilt, instead of blending snap fraction with a raw
+    prior-season per-GAME rate. The per-game rate bakes in the player's OLD
+    team's backfield split, so an every-down back who changed teams (Travis
+    Etienne to NO) was landing near the aging incumbent he is charted ahead
+    of. See RB_VOL_* constants.
     """
     ledger_columns = ["team", "resource", "capacity", "allocated", "unallocated",
                       "candidate_count", "other_fraction", "reason"]
@@ -675,10 +706,39 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame) -> tuple[pd.DataFrame,
         prior_carry_rate = _numeric(candidates_team, "prior_carries_per_game", "prior_carry_rate", "prior_carries")
         prior_target_rate = _numeric(candidates_team, "prior_targets_per_game", "prior_target_rate", "prior_targets")
         snap_fraction = (snap_alloc / max(snap_capacity, 0.01)).clip(0.0, 1.0)
-        carry_evidence = (prior_carry_rate / max(carry_capacity, 0.01)).clip(lower=0.0).fillna(snap_fraction)
-        target_evidence = (prior_target_rate / max(target_capacity, 0.01)).clip(lower=0.0).fillna(snap_fraction)
-        carry_score = (0.62 * snap_fraction + 0.38 * carry_evidence).clip(lower=0.005) * availability.loc[indexes]
-        target_score = (0.50 * snap_fraction + 0.50 * target_evidence).clip(lower=0.005) * availability.loc[indexes]
+        if snap_anchored_volume:
+            # Per-SNAP usage tilt (portable across a team change), relative to
+            # this backfield's own RB carry/target-per-snap rate.
+            prior_snap = _numeric(candidates_team, "prior_whole_snap_share", "prior_active_snap_share")
+            prior_gm = _numeric(candidates_team, "prior_games").fillna(0.0)
+            team_carry_per_snap = carry_capacity / max(snap_capacity, 0.01)
+            team_target_per_snap = target_capacity / max(snap_capacity, 0.01)
+            valid_snap = prior_snap > 0.05
+            player_carry_ps = (prior_carry_rate / prior_snap.where(valid_snap))
+            player_target_ps = (prior_target_rate / prior_snap.where(valid_snap))
+            carry_tilt = (player_carry_ps / max(team_carry_per_snap, 0.01)).clip(*RB_VOL_TILT_CARRY)
+            target_tilt = (player_target_ps / max(team_target_per_snap, 0.01)).clip(*RB_VOL_TILT_TARGET)
+            carry_tilt = carry_tilt.where(np.isfinite(carry_tilt), 1.0)
+            target_tilt = target_tilt.where(np.isfinite(target_tilt), 1.0)
+            # Cross-team + thin-history players fade toward snap-proportional.
+            trust = np.where(same_team, 1.0, RB_VOL_TILT_CROSS_TEAM_TRUST) * (
+                (prior_gm / (prior_gm + RB_VOL_TILT_GAMES_K)).clip(0.0, 1.0).to_numpy())
+            carry_tilt = 1.0 + trust * (carry_tilt.to_numpy() - 1.0)
+            target_tilt = 1.0 + trust * (target_tilt.to_numpy() - 1.0)
+            rank_for_disc = (effective_rank if has_chart
+                             else base.loc[indexes].rank(ascending=False, method="first"))
+            rank_disc = rank_for_disc.map(RB_VOL_RANK_DISCOUNT).fillna(RB_VOL_RANK_DISCOUNT_DEFAULT).to_numpy()
+            carry_score = pd.Series(
+                np.clip(snap_alloc.to_numpy() * carry_tilt * rank_disc, 0.005, None)
+                * availability.loc[indexes].to_numpy(), index=indexes)
+            target_score = pd.Series(
+                np.clip(snap_alloc.to_numpy() * target_tilt * rank_disc, 0.005, None)
+                * availability.loc[indexes].to_numpy(), index=indexes)
+        else:
+            carry_evidence = (prior_carry_rate / max(carry_capacity, 0.01)).clip(lower=0.0).fillna(snap_fraction)
+            target_evidence = (prior_target_rate / max(target_capacity, 0.01)).clip(lower=0.0).fillna(snap_fraction)
+            carry_score = (0.62 * snap_fraction + 0.38 * carry_evidence).clip(lower=0.005) * availability.loc[indexes]
+            target_score = (0.50 * snap_fraction + 0.50 * target_evidence).clip(lower=0.005) * availability.loc[indexes]
         # Receiving specialists can retain target evidence without inheriting
         # early-down carries; the two vectors intentionally remain separate.
         carry_alloc = _bounded_allocation(carry_score, carry_capacity * (1.0 - other_fraction))
@@ -827,7 +887,15 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                 if dep_col in out.columns:
                     base = pd.to_numeric(out.loc[candidates, dep_col], errors="coerce").fillna(0.0)
                     out.loc[candidates, dep_col] = (base * factor).round(2)
-            recipients = [{"player": str(out.at[index, "Player"]), "allocated": round(float(gain.loc[index]), 3)}
+            # team_rank: 1-based standing of each fill-in among the active,
+            # role-compatible recipient pool by post-redistribution volume.
+            # Display-only metadata for the Deep Dive vacancy table (it trims
+            # rows below the trusted tier) - nothing downstream reads it.
+            _rank = (pd.to_numeric(out.loc[candidates, volume_col], errors="coerce")
+                     .fillna(0.0).rank(ascending=False, method="min"))
+            recipients = [{"player": str(out.at[index, "Player"]),
+                           "allocated": round(float(gain.loc[index]), 3),
+                           "team_rank": int(_rank.loc[index])}
                           for index in candidates if gain.loc[index] > 0]
             allocated = float(gain.sum())
             ledgers.append({"team": team, "volume": volume_col, "source_player": source["Player"],

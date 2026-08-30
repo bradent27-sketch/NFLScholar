@@ -32,6 +32,8 @@ from data.weekly_projections import build_weekly_projections
 from data.odds_weekly import weekly_props, weekly_market_projection
 from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
 from data.availability_overrides import availability_fingerprint, AVAILABILITY_OVERRIDE_PATH
+from data.pass_capacity_allocator import (
+    PASS_CAPACITY_TRUSTED_TIER, PASS_CAPACITY_TRUSTED_TIER_RB)
 from ui.charts import sparkline_data_uri
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
                         get_diverging_color, get_multiplier_color)
@@ -319,67 +321,58 @@ def _render_alignment_mix(detail):
         # 2026-08-26 bug (found again while building this table: it's easy
         # to repeat since 'targets'/'receptions' happen to be spelled the
         # same in both vocabularies and only 'yards' differs).
-        blended_rate = detail.get('stats', {}).get(stat, {}).get('blended_rate')
+        stat_vals = detail.get('stats', {}).get(stat, {})
+        blended_rate = stat_vals.get('blended_rate')
         blended_mult = role.get(f'alignment_defense_{pff_stat}_candidate_multiplier')
+        # 'Combined' silently folds in the game-context multiplier (script x
+        # pace x availability x environment) on top of defense, so it lands on
+        # the same scale as the main table's projected value - explicit
+        # request 2026-08-29. It still stops SHORT of team-capacity and
+        # vacancy (those are team-budget / OUT-teammate adjustments the main
+        # table shows as their own deltas), so a small remaining gap to that
+        # table's final value is expected, not a bug. The 'Final proj' column
+        # this replaced was removed the same day (redundant with the main
+        # table, and space-hungry).
+        context_mult = (
+            float(stat_vals.get('script_multiplier', 1.0))
+            * float(stat_vals.get('pace_multiplier', 1.0))
+            * float(stat_vals.get('availability_multiplier', 1.0))
+            * float(stat_vals.get('environment_multiplier', 1.0))
+        )
         per_game_col = f'{stat_label} /Game'
         mult_col = f'{stat_label} Allowed×'
         combined_col = f'{stat_label} Combined'
-        stage_total = 0.0
-        combined_total = 0.0
-        combined_has_gap = False
         for row, (key, row_label, _) in zip(table_rows, aligns):
             ratio = role.get(f'alignment_defense_{pff_stat}_{key}_ratio')
             per_game = (blended_rate * shares[key]) if blended_rate is not None else None
             row[per_game_col] = _fmt_stat(stat, per_game)
             row[mult_col] = f"{ratio:.3f}×" if ratio is not None and pd.notna(ratio) else '—'
-            if per_game is not None:
-                stage_total += per_game
             if per_game is not None and ratio is not None and pd.notna(ratio):
-                combined = per_game * ratio
-                row[combined_col] = _fmt_stat(stat, combined)
-                combined_total += combined
+                row[combined_col] = _fmt_stat(stat, per_game * ratio * context_mult)
             else:
                 row[combined_col] = '—'
-                combined_has_gap = True
         totals_row[per_game_col] = _fmt_stat(stat, blended_rate)
         totals_row[mult_col] = f"{blended_mult:.3f}×" if blended_mult is not None else '—'
         # The bottom row always uses the authoritative season-aggregate
-        # blend (blended_rate * blended_mult), not a re-sum of the per-row
-        # Combined cells above - those can individually show '—' (e.g. one
-        # alignment's own comparison evidence is thin) while the aggregate
+        # blend (blended_rate * blended_mult * context), not a re-sum of the
+        # per-row Combined cells above - those can individually show '—' (e.g.
+        # one alignment's own comparison evidence is thin) while the aggregate
         # blend that actually scores the projection is still available.
         totals_row[combined_col] = (
-            _fmt_stat(stat, blended_rate * blended_mult)
+            _fmt_stat(stat, blended_rate * blended_mult * context_mult)
             if blended_rate is not None and blended_mult is not None else '—')
-        # Added 2026-08-27 per explicit request: 'Combined' is the AFTER-
-        # DEFENSE checkpoint (Player Projection x Defense multiplier), the
-        # same stage the primary table's own 'After defense' column stops
-        # at - it is NOT the final projected value, since context (script/
-        # pace/availability/environment), pass-capacity, and vacancy all
-        # still apply downstream in the primary table. Comparing 'Combined'
-        # against that table's final 'Projected value' will look "slightly
-        # off" for a real, structural reason, not a bug - showing the actual
-        # final value alongside it here so that gap is visible rather than
-        # something the reader has to cross-reference another table to find.
-        final_val = detail.get('stats', {}).get(stat, {}).get('final_projection')
-        if final_val is None:
-            final_val = detail.get('stats', {}).get(stat, {}).get('projection')
-        final_col = f'{stat_label} Final proj'
-        totals_row[final_col] = _fmt_stat(stat, final_val) if final_val is not None else '—'
-        for row in table_rows:
-            row[final_col] = ''
 
     table = pd.DataFrame(table_rows + [totals_row])
     st.dataframe(table, hide_index=True, width="stretch", height=df_auto_height(len(table)))
     st.caption(
         "/Game = this player's own per-game projected rate for that stat, split by his own alignment "
         "share (not a separately measured per-alignment rate). 'Allowed×' = the opponent's allowed-by-"
-        "alignment multiplier for that alignment. 'Combined' = the two multiplied. The bottom row's "
-        "multiplier is the blend weighted by this player's own alignment mix (not a plain average) - "
-        "REPLACES 'Defense multiplier' in the table above for this stat when active, not a second "
-        "adjustment on top of it. 'Combined' stops at that after-defense checkpoint, matching the primary "
-        "table's own 'After defense' stage exactly - it is deliberately NOT the final projected value shown "
-        "as 'Final proj' just after it, since context/capacity/vacancy adjustments still apply downstream."
+        "alignment multiplier for that alignment. 'Combined' = /Game × Allowed× × game context "
+        "(script/pace/availability/environment). The bottom row's multiplier is the blend weighted by "
+        "this player's own alignment mix (not a plain average) - it REPLACES 'Defense multiplier' in the "
+        "table above for this stat when active, not a second adjustment on top of it. 'Combined' matches "
+        "the primary table's projected value except for team-capacity and vacancy adjustments, which still "
+        "apply downstream there."
     )
 
 
@@ -1208,6 +1201,132 @@ def _render_pass_capacity_room(detail):
                   "whatever budget the trusted tier leaves behind.")
 
 
+_VACANCY_VOLUME_LABELS = {
+    'passing_attempts': 'Pass attempts',
+    'rushing_attempts': 'Carries',
+    'targets': 'Targets',
+}
+
+
+# A vacated per-game volume below this bar is not worth a full redistribution
+# table - the OUT player was a bit part in that stat.  Per explicit request
+# 2026-08-30: "<1.5 target per game... relatively negligible", plus a carry
+# equivalent (a back under ~3 carries/game vacates a comparable sliver of
+# fantasy points).  QB pass attempts have no bar - a missing QB is never minor.
+_VACANCY_NEGLIGIBLE_PER_GAME = {'targets': 1.5, 'rushing_attempts': 3.0}
+
+
+def _vacancy_trusted_tier_cutoff(volume_key, source_role):
+    """Depth cutoff at/above which a fill-in is worth its own row.  Carries -
+    and an RB's vacated targets - use the RB room's tier; a receiver's vacated
+    targets use the pass-catcher room's tier.  QB pass attempts (single named
+    replacement) are never trimmed."""
+    if volume_key == 'rushing_attempts':
+        return PASS_CAPACITY_TRUSTED_TIER_RB
+    if volume_key == 'targets':
+        return (PASS_CAPACITY_TRUSTED_TIER_RB
+                if str(source_role or '').upper().startswith('RB')
+                else PASS_CAPACITY_TRUSTED_TIER)
+    return None
+
+
+def _summarize_vacancy_entry(entry, this_player):
+    """Decide how one vacancy-ledger row should be shown.  Pure (no Streamlit)
+    so it is unit-tested directly.  Returns a dict with 'kind':
+      'skipped'    - stale provenance / no eligible recipient, nothing vacated
+      'negligible' - the OUT player's per-game volume is below the
+                     show-a-distribution bar (see _VACANCY_NEGLIGIBLE_PER_GAME)
+      'full'       - normal: 'caption', 'recipients' (table rows kept to the
+                     trusted tier), and 'minor' (a one-line remainder summary
+                     for the fill-ins that were trimmed, or None)
+    THIS player's own row is always kept, even when small or below the tier."""
+    volume_key = str(entry.get('volume', '') or '')
+    label = _VACANCY_VOLUME_LABELS.get(volume_key, volume_key or 'volume')
+    source_player = str(entry.get('source_player', '') or 'OUT teammate')
+    vacated = float(entry.get('vacated', 0.0) or 0.0)
+    allocated = float(entry.get('allocated', 0.0) or 0.0)
+    unallocated = float(entry.get('unallocated', 0.0) or 0.0)
+    reason = str(entry.get('reason', '') or '')
+    recips = list(entry.get('recipients', []) or [])
+    this_is_recipient = this_player in {str(r.get('player', '')) for r in recips}
+
+    if vacated <= 0 and not recips:
+        return {'kind': 'skipped', 'text': f"{source_player} — {label}: {reason}"}
+
+    neg = _VACANCY_NEGLIGIBLE_PER_GAME.get(volume_key)
+    if neg is not None and vacated < neg and not this_is_recipient:
+        return {'kind': 'negligible', 'text': (
+            f"{source_player} out — {vacated:.1f} {label.lower()}/game vacated; "
+            f"too small to redistribute in detail.")}
+
+    caption = (f"{source_player} out — {vacated:.1f} {label.lower()} vacated; "
+               f"{allocated:.1f} redistributed to active teammates, "
+               f"{unallocated:.1f} left unfilled. {reason}")
+    cutoff = _vacancy_trusted_tier_cutoff(volume_key, entry.get('functional_source_role'))
+    kept, minor_n, minor_vol = [], 0, 0.0
+    for r in recips:
+        rank = r.get('team_rank')
+        name = str(r.get('player', ''))
+        if cutoff is None or rank is None or rank <= cutoff or name == this_player:
+            kept.append({
+                'Out player': source_player, 'Stat': label,
+                'Fills in for them': name,
+                'Volume added': round(float(r.get('allocated', 0.0) or 0.0), 2),
+            })
+        else:
+            minor_n += 1
+            minor_vol += float(r.get('allocated', 0.0) or 0.0)
+    minor = (f"{source_player} — {label}: {minor_n} more fill-in"
+             f"{'s' if minor_n != 1 else ''} below the trusted tier absorbed "
+             f"{minor_vol:+.2f} combined." if minor_n else None)
+    return {'kind': 'full', 'caption': caption, 'recipients': kept, 'minor': minor}
+
+
+def _render_vacancy_redistribution(detail):
+    """How an OUT teammate's vacated volume is filled in - which player lost
+    it and which active teammates absorbed how much of it. Added 2026-08-29
+    per explicit request ("add a table that shows how the vacancy volume is
+    filled in... so i understand how the volume is redistributed"). The
+    per-recipient breakdown rides on each ledger row's `recipients` list -
+    the RB allocator path always recorded it; `redistribute_v2_vacated_usage`
+    (QB handoff, and WR/TE when the RB allocator is off) was extended to
+    record it the same day. `detail['vacancy']` is already filtered to this
+    player's team upstream.
+
+    2026-08-30 per explicit request: a sub-1.5-target/game (or sub-3-carry)
+    OUT player collapses to a one-line caption, and recipients below the
+    trusted tier (PASS_CAPACITY_TRUSTED_TIER / _RB) are rolled into a single
+    remainder line instead of cluttering the grid - the deep-roster fill-ins
+    aren't getting a relevant look."""
+    vacancy = detail.get('vacancy', [])
+    if not vacancy:
+        return
+    st.markdown("**How vacated volume is redistributed**")
+    this_player = str(detail.get('player', ''))
+    recipient_rows, minor_lines = [], []
+    for entry in vacancy:
+        summ = _summarize_vacancy_entry(entry, this_player)
+        if summ['kind'] in ('skipped', 'negligible'):
+            st.caption(summ['text'])
+            continue
+        st.caption(summ['caption'])
+        recipient_rows.extend(summ['recipients'])
+        if summ['minor']:
+            minor_lines.append(summ['minor'])
+    if recipient_rows:
+        rec_df = pd.DataFrame(recipient_rows)
+        style_grid = pd.DataFrame('', index=rec_df.index, columns=rec_df.columns)
+        highlight = rec_df['Fills in for them'].astype(str).eq(this_player)
+        style_grid.loc[highlight, :] = 'font-weight:bold; background-color:rgba(127,127,127,0.15);'
+        st.dataframe(
+            rec_df.style.apply(lambda _: style_grid, axis=None).format({'Volume added': '{:+.2f}'}),
+            hide_index=True, width="stretch", height=df_auto_height(len(rec_df)))
+        if highlight.any():
+            st.caption("This player's row is highlighted.")
+    for line in minor_lines:
+        st.caption(line)
+
+
 def _render_decomposition_audit_body(detail):
     """Everything about THIS player that isn't needed at a glance -
     role/depth-chart provenance, the RB allocator ledger, availability, and
@@ -1406,6 +1525,12 @@ def _render_decomposition_audit_body(detail):
         f"plays probability {availability['plays_probability']:.0%}; "
         f"workload if active {availability['workload_if_active']:.0%}."
     )
+    reported = availability.get('reported_probability')
+    if reported is not None and pd.notna(reported):
+        st.caption(
+            f"FantasyPros reported {float(reported):.0%} chance to play — shown for reference only, "
+            "not an input to this projection. Only Out and Doubtful change the model (both → not playing)."
+        )
     # 'no current availability source' is the sentinel for "nothing
     # to report" - printing it as if it were a real source just
     # restates the line above in a more confusing way.
@@ -1426,10 +1551,7 @@ def _render_decomposition_audit_body(detail):
             f"slope {calibration.get('slope', 1.0):.3f}, intercept {calibration.get('intercept', 0.0):.3f}."
         )
 
-    vacancy = detail.get('vacancy', [])
-    if vacancy:
-        st.markdown("**Injury/vacancy ledger**")
-        st.dataframe(pd.DataFrame(vacancy), hide_index=True, width="stretch")
+    _render_vacancy_redistribution(detail)
 
     _render_pass_capacity_room(detail)
 
@@ -2133,29 +2255,57 @@ def render():
     with c3:
         wk_scoring = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="weekly_rank_scoring")
 
-    with skeleton_loader("table", n_rows=10, n_cols=7):
-        df_stats, t_col, n_col, _ = load_and_merge_data(wk_year, wk_scoring)
-        # Real cache-key input, not read inside build_weekly_projections -
-        # see availability_fingerprint's own docstring. Lets a saved
-        # override or FantasyPros pull invalidate just THIS week's cached
-        # board instead of the blanket build_weekly_projections.clear()
-        # this used to require (which evicted every other cached week too).
-        avail_fp = availability_fingerprint(wk_year, wk_week, AVAILABILITY_OVERRIDE_PATH, FANTASYPROS_INJURY_PATH)
-        model_df, model_meta = build_weekly_projections(
-            wk_year, wk_week, wk_scoring,
-            availability_fingerprint=avail_fp)
-
+    df_stats, t_col, n_col, _ = load_and_merge_data(wk_year, wk_scoring)
     form_df = build_recent_form_rank(df_stats, n_col, t_col, n_weeks=RECENT_FORM_GAMES)
 
+    # A lightweight name/team/pos roster from the stats frame, so the Live
+    # data pulls below can match FantasyPros / injury uploads BEFORE the board
+    # is built.
+    _roster_src = [c for c in (n_col, t_col, 'position') if c in df_stats.columns]
+    hub_roster = None
+    if _roster_src:
+        hub_roster = (df_stats[_roster_src].dropna(subset=[n_col]).drop_duplicates()
+                      .rename(columns={n_col: 'Player', t_col: 'Team', 'position': 'Pos'}))
+
     st.markdown("### This app's weekly model")
+    # Data pulls FIRST, then an explicit build - the board no longer builds on
+    # tab open (explicit request 2026-08-29): a user can stage FantasyPros
+    # rankings / injury reports / PFF alignment and only then spend the model
+    # build, instead of building, uploading, and rebuilding.
     fp_weekly, market_df = _render_live_data_hub(
         wk_year, wk_week, wk_scoring, wk_week_completed,
-        model_df[['Player']] if not model_df.empty else None,
-        roster_df=model_df[['Player', 'Team', 'Pos']] if not model_df.empty else None,
-        model_meta=model_meta)
+        hub_roster[['Player']] if hub_roster is not None else None,
+        roster_df=hub_roster,
+        model_meta=st.session_state.get('weekly_rank_last_model_meta'))
     _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring)
 
-    if model_df.empty:
+    build_key = (wk_year, wk_week, wk_scoring)
+    if st.button("🧮 Build board", key="weekly_rank_build", type="primary"):
+        st.session_state['weekly_rank_built_for'] = build_key
+    board_ready = st.session_state.get('weekly_rank_built_for') == build_key
+
+    model_df, model_meta = pd.DataFrame(), {}
+    if board_ready:
+        with skeleton_loader("table", n_rows=10, n_cols=7):
+            # Real cache-key input, not read inside build_weekly_projections -
+            # see availability_fingerprint's own docstring. Lets a saved
+            # override or FantasyPros pull invalidate just THIS week's cached
+            # board instead of the blanket build_weekly_projections.clear()
+            # this used to require (which evicted every other cached week too).
+            avail_fp = availability_fingerprint(
+                wk_year, wk_week, AVAILABILITY_OVERRIDE_PATH, FANTASYPROS_INJURY_PATH)
+            model_df, model_meta = build_weekly_projections(
+                wk_year, wk_week, wk_scoring, availability_fingerprint=avail_fp)
+        st.session_state['weekly_rank_last_model_meta'] = model_meta
+
+    if not board_ready:
+        st.info(
+            "Set the season / week / scoring above, stage any FantasyPros rankings or injury "
+            "reports in **📡 Live data pulls**, then click **🧮 Build board**. "
+            "Changing a selector hides the board until you rebuild, so a rebuild always picks up "
+            "the current settings and uploads."
+        )
+    elif model_df.empty:
         st.info(f"This app's model has no projection for {wk_year} week {wk_week}: "
                f"{model_meta.get('reason', 'not enough data yet')}")
         if fp_weekly is not None:

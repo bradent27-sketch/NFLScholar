@@ -10,8 +10,9 @@ from data.weekly_projections import (resolve_preseason_qb1s, resolve_inseason_qb
                                      save_qb1_override, clear_qb1_override,
                                      _all_played_weeks, _invalidate_weekly_projection_cache)
 from data.ourlads_depth_charts import (
-    load_ourlads_snapshot, save_ourlads_snapshot,
+    load_ourlads_snapshot, save_ourlads_snapshot, save_ourlads_snapshot_from_dir,
     load_ourlads_key, save_ourlads_key, build_ourlads_projection_signal,
+    OURLADS_INBOX_DIR,
 )
 from ui.styling import style_depth_chart_table, df_auto_height
 from ui.components import switch_tab, render_team_banner, skeleton_loader
@@ -295,6 +296,35 @@ def _render_ourlads_import_control(year, team):
                 })
                 st.dataframe(display, hide_index=True, width='stretch', height=df_auto_height(min(len(display), 16)))
 
+        def _report_ourlads_import(imported, report):
+            if report.get('error'):
+                st.error(report['error'])
+                return
+            _invalidate_weekly_projection_cache()
+            st.success(f"Imported {len(imported):,} rows for {report['team_count']}/32 teams.")
+            if report.get('missing_teams'):
+                st.warning(f"Still missing: {', '.join(report['missing_teams'])}")
+            for unreadable in report.get('unreadable_files', []):
+                st.caption(f"Skipped {unreadable['source_file']}: {unreadable['error']}")
+            archive = report.get('archive') or {}
+            if archive.get('archived_csv') or archive.get('archived_pages'):
+                st.caption(
+                    f"Archived the previous snapshot"
+                    f"{' + ' + str(archive['archived_pages']) + ' raw page(s)' if archive.get('archived_pages') else ''}"
+                    f" to {archive.get('archive_dir')}.")
+            st.rerun()
+
+        _inbox_pages = sorted(
+            p.name for p in OURLADS_INBOX_DIR.glob('*')
+            if p.is_file() and p.suffix.lower() in ('.mhtml', '.mht', '.html'))
+        st.caption(
+            f"Drop saved team pages in `external_data/ourlads_inbox/` "
+            f"({len(_inbox_pages)} there now) and import them here, or upload them below.")
+        if st.button(f'Import from ourlads_inbox/ ({len(_inbox_pages)} files)',
+                     key=f'ourlads_import_inbox_{year}', disabled=not _inbox_pages):
+            imported, report = save_ourlads_snapshot_from_dir(OURLADS_INBOX_DIR, year=year)
+            _report_ourlads_import(imported, report)
+
         uploads = st.file_uploader(
             'Saved Ourlads team pages (.mhtml)', type=['mhtml', 'mht', 'html'],
             accept_multiple_files=True, key=f'ourlads_pages_{year}',
@@ -307,16 +337,7 @@ def _render_ourlads_import_control(year, team):
         with import_col:
             if st.button('Import Ourlads pages', key=f'ourlads_import_{year}', disabled=not uploads):
                 imported, report = save_ourlads_snapshot(uploads, year)
-                if report.get('error'):
-                    st.error(report['error'])
-                else:
-                    _invalidate_weekly_projection_cache()
-                    st.success(f"Imported {len(imported):,} rows for {report['team_count']}/32 teams.")
-                    if report['missing_teams']:
-                        st.warning(f"Still missing: {', '.join(report['missing_teams'])}")
-                    for unreadable in report['unreadable_files']:
-                        st.caption(f"Skipped {unreadable['source_file']}: {unreadable['error']}")
-                    st.rerun()
+                _report_ourlads_import(imported, report)
         with key_col:
             if st.button('Save Ourlads key', key=f'ourlads_key_save_{year}', disabled=key_upload is None):
                 _, error = save_ourlads_key(key_upload)

@@ -407,6 +407,36 @@ WR_DEPTH_RANK_CUTOFF = 6                  # rank 6 and deeper - cut off
 TE_DEPTH_RANK_CUTOFF = 4                  # rank 4 and deeper - cut off
 RECEIVER_DEPTH_CUTOFF_SHARE_CAP = 0.01
 
+# BURIED-VETERAN depth-chart dock (added 2026-08-29, explicit request; rank
+# semantics corrected 2026-08-30). The WR/TE cutoff above ranks by the
+# model's OWN ``player_share``, so a proven veteran carrying last season's
+# snap share still ranks as a starter here even when the current Ourlads
+# chart lists him a backup - e.g. Marquise Brown (real 2025 role in KC,
+# charted RWR-2 in PHI behind DeVonta Smith), Troy Franklin (real 2025 role
+# in DEN, charted SWR-2 behind Pat Bryant after the Jaylen Waddle trade).
+# apply_ourlads_preseason_role_floor only ever pulls a role UP; the
+# deep/unlisted pull-down only touches players with NO measured history.
+#
+# OURLADS RANK IS PER ALIGNMENT SLOT, not team-wide WR depth: each of LWR /
+# RWR / SWR (and TE) is numbered independently, so rank 1 is that slot's
+# listed starter, rank 2 its primary backup, rank 3+ deep. The first version
+# of this dock checked rank >= 4 as if the number were a team-wide WR4/5/6,
+# so it never fired for a real backup (who is rank 2). Corrected: a proven
+# vet the chart lists at slot rank 2 keeps HALF his role ("we can still
+# value his production last season"); one at rank 3+ is hard-capped to the
+# deep-bench cutoff. Only fires while the depth-chart pull is live (cold
+# start + the EARLY_SEASON_DEPTH_CHART_DECAY_WEEKS fade) and only for a
+# player the model still projects as a real contributor.
+RECEIVER_BURIED_VET_MIN_PRIOR_SHARE = 0.20   # "significant role last season"
+RECEIVER_BURIED_VET_MIN_CURRENT_SHARE = 0.20  # still projected as a rotation player - something to dock
+RECEIVER_BURIED_VET_BACKUP_SLOT_RANK = 2     # WR: Ourlads slot rank 2 = primary backup -> half role; 3+ -> hard cap
+# TE runs one deeper: a charted TE-2 is very often the RECEIVING tight end
+# while TE-1 is the inline blocker (Mike Gesicki listed TE-2 behind Drew
+# Sample but out-targets him), so TE-2 is NOT treated as a buried backup -
+# only TE-3 and deeper get the dock.
+RECEIVER_BURIED_VET_BACKUP_SLOT_RANK_TE = 3
+RECEIVER_BURIED_VET_KEEP_FRACTION = 0.5
+
 # How many weeks into a season the Ourlads role floor above keeps ANY pull,
 # once real snaps exist (cold_start=False). Per the user: "the depth charts
 # are mostly for the first week to get a gauge on new players and not for
@@ -429,7 +459,18 @@ EARLY_SEASON_DEPTH_CHART_DECAY_WEEKS = 4
 # sample.
 REMATCH_WEIGHT_MULT = 1.6
 
-MATCHUP_CLIP = (0.75, 1.3)
+# Bound on the forward DEFENSE matchup multiplier (_overall_matchup_multiplier
+# / _role_adjusted_multiplier / _continuous_role_adjusted_multiplier).
+# Narrowed from (0.75, 1.30) to (0.82, 1.22) on 2026-08-30 after a scan
+# (scripts/sweep_matchup_clip.py, 2025 wk 4-17): tightening BOTH ends was the
+# best of the settings tried - best whole-pool / RB / TE / START-RB MAE, WR
+# flat, nothing hurt - i.e. the defense-matchup read is a little
+# over-trusted at its extremes. The effect is small (~0.1% MAE, RB-driven)
+# and this was an absolute-MAE scan without a paired CI, so treat it as a
+# minor, low-risk narrowing rather than a validated win. Raising just the
+# low floor (the original hypothesis) was a wash. Calibration re-fit for it
+# in the same 2026-08-30 pass as DEFENSE_PRIOR_GAMES=12.
+MATCHUP_CLIP = (0.82, 1.22)
 # Narrower than MATCHUP_CLIP - used only to retroactively adjust a single
 # PAST game's value in _weighted_player_rates, not the forward-looking
 # projection multiplier. A one-game matchup rating is a noisier estimate
@@ -479,6 +520,11 @@ INJURY_MULTIPLIER = {'out': 0.0, 'ir': 0.0, 'doubtful': 0.4, 'questionable': 0.8
 # DEFAULT_FEATURES is what the app actually runs. A name here but not in
 # DEFAULT_FEATURES was built, measured, and left off - with the measurement
 # written down next to it in docs/weekly_projections_methodology.md.
+#
+# Some names here have ZERO gating code (never built - e.g. redzone_tds,
+# role_trend, volume_faced, v2_channel_matchups). They and any new
+# model-parameter ideas live in docs/weekly_rankings_backlog.md section 4
+# (the parameter parking lot). Add ideas there, not as scattered TODOs.
 # ---------------------------------------------------------------------------
 MODEL_FEATURES = (
     'volume_efficiency',  # opportunities x per-opportunity rate, not a flat per-game rate
@@ -499,6 +545,9 @@ MODEL_FEATURES = (
     'v2_as_of_guard',      # strict as-of-week cutoff guard
     'v2_adaptive_volume',  # sample-size-adaptive volume blend
     'v2_td_two_year_prior',  # two-year, not one-year, TD-rate prior
+    'v2_td_prior_credibility',  # shrink a thin one-season TD rate to the league
+                             # mean by opportunity volume; small 3rd/4th-year
+                             # longevity bump. See credibility_shrunk_td_prior.
     'v2_defense_prior',    # defense rating prior/shrinkage revision
     'v2_continuous_roles', # continuous (not tiered) role-share read; see role_matchup above
     'v2_channel_matchups', # per-route-channel matchup read
@@ -513,6 +562,10 @@ MODEL_FEATURES = (
     'v2_availability',     # availability/injury resolver revision; see v2_fantasypros_availability
     'v2_vacancy',           # see teammate_vacancy above
     'v2_preseason_rb_allocator',  # team-constrained cold-start RB roles
+    'v2_rb_snap_anchored_volume',  # cold-start RB carry/target split = snap
+                             # allocation + bounded per-snap tilt, not a raw
+                             # prior per-GAME rate. See RB_VOL_* in
+                             # data/rb_role_allocator.py.
     'v2_pass_capacity',    # team-constrained WR/TE/RB target conservation
     'v2_qb_volume_blend',  # QB1 volume: team dropbacks x evidence-weighted player style
     'v2_fantasypros_availability',  # FantasyPros-sourced injury signal, healthy by default
@@ -559,9 +612,8 @@ MODEL_FEATURES = (
                              # unbundling as above. Not yet backtested
                              # standalone.
     'v2_defense_prior_games_override',  # sweep hook for DEFENSE_PRIOR_GAMES
-                             # (currently 4.0, never itself backtested) - see
-                             # that constant's own note and
-                             # scripts/sweep_defense_prior_games.py. A no-op
+                             # (currently 12.0) - see that constant's own note
+                             # and scripts/sweep_defense_prior_games.py. A no-op
                              # unless DEFENSE_PRIOR_GAMES_OVERRIDE is also set.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
@@ -776,12 +828,26 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 # slope 0.852->0.853 - consistent with that component's own measured effect
 # being small and RB-only. Recorded per this file's own "re-fit any time
 # DEFAULT_FEATURES changes" rule, not because anything shifted meaningfully.
+#
+# RE-FITTED 2026-08-30 for the DEFENSE_PRIOR_GAMES 4.0->12.0 change plus the
+# pass-capacity pass gaining a +-1 deadband + symmetric upscaling and having
+# its trusted-tier split replaced by a single uniform proportional factor
+# (data/pass_capacity_allocator.py). Same 2021-2023 weeks 5-17 window,
+# n=11,761. Raw fit: QB (0.472, 8.132), RB (0.855, 1.963), WR (0.933, 1.928),
+# TE (0.941, 1.495) - within 0.005 slope / ~0.04 intercept of the 2026-08-27
+# fit at every position, i.e. these changes do not meaningfully move the
+# model's dispersion. (An intermediate refit with a since-reverted top-2
+# "anchor waterfall" DID drop the WR/TE slopes hard - to 0.758 / 0.795 - which
+# is what flagged that waterfall as wrong; removing it put them back.) The
+# 12-flag ablation (2025 wk 4-17, docs/overnight_backtest_log_2026-08-30.md)
+# confirmed v2_defense_prior still nets clearly positive at DPG=12 and
+# v2_pass_capacity is still a real WR win after the uniform-dock revert.
 # ---------------------------------------------------------------------------
 WEEKLY_CALIBRATION = {
-    'QB': (0.734, 4.109),
-    'RB': (0.926, 1.018),
-    'WR': (0.968, 0.974),
-    'TE': (0.972, 0.760),
+    'QB': (0.736, 4.066),
+    'RB': (0.927, 0.982),
+    'WR': (0.967, 0.964),
+    'TE': (0.970, 0.748),
 }
 
 
@@ -1372,11 +1438,23 @@ def build_qb_quality_adjusted_matchup(hist_qbs, name_col, team_col, stats, as_of
         hist_qbs, team_col, stats, as_of_week, recency_floor=recency_floor, plays=plays)
 
 
-# Four defense games are enough for the current season to move a profile
-# materially, but not enough to erase last year's evidence.  This is
-# intentionally lighter than player-stat shrinkage: coordinator, personnel,
-# and scheme changes make a defense less stable across an offseason.
-DEFENSE_PRIOR_GAMES = 4.0
+# How many current-season defensive games it takes to fully move a defense
+# profile off last year's evidence. Deliberately heavy: coordinator,
+# personnel, and scheme churn make a defense far less stable across an
+# offseason than a player's own role, so the prior year should dominate for
+# most of the season.
+#
+# Was 4.0 from the model's origin and never itself backtested until the
+# 2026-08-27/29 sweeps. Those found a clean monotonic dose-response - every
+# value below 4.0 hurt, every value above helped, WR/TE reaching significance
+# (CI excludes 0) at each tested point, QB/RB unaffected (this only governs
+# pass-catcher defense matchups). The curve plateaus: whole-pool dMAE vs 4.0
+# was -0.012 at 8, -0.019 at 12, -0.023 at 16, -0.025 at 20 - marginal gain
+# per step -.007/-.004/-.002. 12.0 sits at the knee: ~3/4 of the maximum
+# measured benefit without chasing the last fraction into single-season
+# (2025 wk4-17, n=14) overfitting risk. Calibration was re-fit for this
+# value on 2026-08-29. Full tables: docs/overnight_backtest_log_2026-08-27.md.
+DEFENSE_PRIOR_GAMES = 12.0
 # Sweep hook, built 2026-08-27 - never set outside a sweep script. This
 # constant has driven every position's defense matchup number since it was
 # set, never itself backtested against alternate values. None (default)
@@ -2071,6 +2149,68 @@ TD_OPPORTUNITY_STAT = {
     'receiving_tds': 'targets',
 }
 
+# --- v2_td_prior_credibility -------------------------------------------------
+# A cold-start TD-rate projection is 100% the player's prior-season rate (see
+# _blended_rate: w_current is 0 with no current games). Nothing regresses a
+# THIN one-season rate toward the league/role mean, so a ~120-carry rookie
+# half-season with a hot TD rate (RJ Harvey) carries the same weight as
+# Derrick Henry's genuinely sticky multi-year rate. This shrinks the prior TD
+# rate toward the position mean by how much OPPORTUNITY stands behind it
+# (a beta-binomial-style credibility), then:
+#   - one qualifying prior season -> credibility capped (a hot small sample
+#     is mostly regressed);
+#   - two qualifying seasons -> no cap (2024 + 2025 of a real role is already
+#     sticky; not penalised for not doing it a third year ago);
+#   - three / four qualifying seasons -> a small extra multiplier on the
+#     shrunk rate (Henry-style longevity: we are very confident in the role).
+# TD stats only; monotone toward the league mean bar the small longevity
+# bump; a no-op in season once the player's own games take over.
+TD_PRIOR_CREDIBILITY_K = {'rushing_attempts': 220.0, 'targets': 90.0, 'passing_attempts': 340.0}
+TD_PRIOR_ONE_SEASON_CREDIBILITY_CAP = 0.60
+TD_PRIOR_ROLE_SEASON_MIN_GAMES = 6.0
+# A prior season counts toward "role_seasons" when the player's opportunity
+# per game that year was at least this fraction of his best prior season's.
+TD_PRIOR_ROLE_SEASON_OPP_FRACTION = 0.55
+TD_PRIOR_LONGEVITY_BONUS_PER_SEASON = 0.025   # seasons 3 and 4
+TD_PRIOR_LONGEVITY_BONUS_MAX = 0.05
+TD_PRIOR_CREDIBILITY_SEASONS = 4             # how many prior seasons to look back over
+
+
+def credibility_shrunk_td_prior(prior_rate, opportunity_total, role_seasons, pos_rate,
+                                opportunity_stat):
+    """Shrink a prior TD-rate toward ``pos_rate`` by the opportunity behind it.
+
+    ``opportunity_total`` is the player's summed carries / targets / pass
+    attempts across the looked-back prior seasons; ``role_seasons`` is how
+    many of those were a real role (see TD_PRIOR_ROLE_SEASON_* constants).
+    Returns ``(shrunk_rate, credibility, longevity_mult)``. A NaN prior_rate
+    passes straight through (the caller's league fallback still applies).
+    """
+    prior_rate = np.asarray(prior_rate, dtype=float)
+    opp = np.asarray(opportunity_total, dtype=float)
+    seasons = np.asarray(role_seasons, dtype=float)
+    pos_rate = np.asarray(pos_rate, dtype=float)
+    k = float(TD_PRIOR_CREDIBILITY_K.get(opportunity_stat, 200.0))
+
+    opp = np.where(np.isfinite(opp) & (opp > 0), opp, 0.0)
+    credibility = opp / (opp + k)
+    # One qualifying season: cap it. Two+: uncapped.
+    credibility = np.where(seasons <= 1.0,
+                           np.minimum(credibility, TD_PRIOR_ONE_SEASON_CREDIBILITY_CAP),
+                           credibility)
+    credibility = np.clip(credibility, 0.0, 1.0)
+    shrunk = credibility * prior_rate + (1.0 - credibility) * np.where(
+        np.isfinite(pos_rate), pos_rate, 0.0)
+    # Longevity: seasons 3 and 4 add a small multiplier on the shrunk rate.
+    extra_seasons = np.clip(seasons - 2.0, 0.0, 2.0)
+    longevity_mult = np.clip(1.0 + TD_PRIOR_LONGEVITY_BONUS_PER_SEASON * extra_seasons,
+                             1.0, 1.0 + TD_PRIOR_LONGEVITY_BONUS_MAX)
+    shrunk = shrunk * longevity_mult
+    passthrough = ~np.isfinite(prior_rate)
+    return (np.where(passthrough, prior_rate, shrunk),
+            np.where(passthrough, np.nan, credibility),
+            np.where(passthrough, 1.0, longevity_mult))
+
 
 def projection_channel(position, stat):
     """Name the position-specific offense/defense channel for a stat.
@@ -2577,6 +2717,55 @@ def apply_ourlads_preseason_role_floor(player_share, player_prior_share, prior_t
             shares[index] = floor
             applied[index] = True
     return shares, applied, role_rank, role_floor, role_label
+
+
+def apply_buried_veteran_dock(player_share, player_prior_share, chart_rank, depth_chart_decay,
+                              backup_slot_rank=None):
+    """Dock a PROVEN veteran the current depth chart lists as a backup.
+
+    The WR/TE role-cap downstream ranks by the model's OWN ``player_share``,
+    so a veteran carrying last season's snap share still reads as a starter
+    even when this year's chart has demoted him (Marquise Brown charted
+    RWR-2 in PHI, Troy Franklin SWR-2 in DEN). This is the one pull that
+    reads the chart against him.
+
+    ``chart_rank`` is the Ourlads PER-ALIGNMENT-SLOT rank (each of LWR / RWR
+    / SWR / TE numbered independently: 1 = that slot's listed starter,
+    2 = primary backup, 3+ = deep) - NOT a team-wide WR1/2/3/4 depth number.
+    A proven vet (prior snap share above RECEIVER_BURIED_VET_MIN_PRIOR_SHARE)
+    the model still projects as a contributor
+    (RECEIVER_BURIED_VET_MIN_CURRENT_SHARE) who is charted AT the
+    ``backup_slot_rank`` keeps RECEIVER_BURIED_VET_KEEP_FRACTION of his role;
+    charted DEEPER than that he is pulled to the deep-bench cutoff.
+
+    ``backup_slot_rank`` defaults to RECEIVER_BURIED_VET_BACKUP_SLOT_RANK (2,
+    for WR). Pass RECEIVER_BURIED_VET_BACKUP_SLOT_RANK_TE (3) for tight ends:
+    a charted TE-2 is very often the pass-catching tight end while TE-1 is the
+    inline blocker (Mike Gesicki TE-2 out-targeting Drew Sample TE-1), so the
+    dock does not treat a TE-2 as a backup at all - only TE-3 and deeper.
+
+    Faded by ``depth_chart_decay`` like every other Ourlads pull. Returns
+    ``(docked_share, applied_mask)`` - a no-op copy + all-False mask when the
+    depth-chart pull is not live or nobody qualifies.
+    """
+    slot = RECEIVER_BURIED_VET_BACKUP_SLOT_RANK if backup_slot_rank is None else int(backup_slot_rank)
+    share = np.asarray(player_share, dtype=float)
+    prior = np.asarray(player_prior_share, dtype=float)
+    rank = pd.to_numeric(pd.Series(chart_rank), errors='coerce').to_numpy(dtype=float)
+    applied = np.zeros(len(share), dtype=bool)
+    if not depth_chart_decay or depth_chart_decay <= 0.0:
+        return share.copy(), applied
+    proven = np.isfinite(prior) & (prior > RECEIVER_BURIED_VET_MIN_PRIOR_SHARE)
+    worth = proven & (share > RECEIVER_BURIED_VET_MIN_CURRENT_SHARE) & np.isfinite(rank)
+    direct_backup = worth & (rank == slot)
+    third_string = worth & (rank > slot)
+    if not (direct_backup.any() or third_string.any()):
+        return share.copy(), applied
+    target = np.where(direct_backup, share * RECEIVER_BURIED_VET_KEEP_FRACTION,
+                      np.where(third_string,
+                               np.full(len(share), RECEIVER_DEPTH_CUTOFF_SHARE_CAP), share))
+    docked = share + depth_chart_decay * (target - share)
+    return docked, (direct_backup | third_string)
 
 
 def ourlads_player_audit_arrays(matches, teams, identity_keys, player_names):
@@ -3635,12 +3824,11 @@ def _injury_profiles(year, week):
     out = {}
     for player, status in zip(injuries['Player'], statuses):
         label = str(status).strip().lower()
-        if label in {'out', 'ir', 'suspended'}:
+        # Only Out and Doubtful change the projection, both -> "assume not
+        # playing" (user's rule, 2026-08-29); Questionable is treated as
+        # healthy. Kept in sync with data.availability_overrides._ASSUME_OUT_STATUSES.
+        if label in {'out', 'ir', 'suspended', 'inactive', 'nfi', 'pup', 'doubtful'}:
             availability = 0.0
-        elif label == 'doubtful':
-            availability = 0.25
-        elif label == 'questionable':
-            availability = 0.85
         else:
             availability = 1.0
         out[player] = {
@@ -3830,6 +4018,7 @@ def redistribute_v2_vacated_usage(result, injury_profiles, skip_rb=False, skip_r
         for team in out.loc[source, 'Team'].astype(str).unique():
             source_rows = out.index[source & out['Team'].astype(str).eq(team)]
             vacated = float(pre.loc[source_rows].sum())
+            source_player = ', '.join(str(p) for p in out.loc[source_rows, 'Player'])
             reusable = vacated * V2_VACANCY_SURVIVAL[volume_col]
             recipient_mask = (out['Team'].astype(str).eq(team) & ~sidelined
                               & out['Pos'].isin(recipient_positions))
@@ -3841,8 +4030,9 @@ def redistribute_v2_vacated_usage(result, injury_profiles, skip_rb=False, skip_r
                 recipient_mask &= out['QB Projected Starter'].fillna(False).astype(bool)
             candidates = out.index[recipient_mask]
             if not len(candidates) or reusable <= 0:
-                ledger.append({'team': team, 'volume': volume_col, 'vacated': vacated,
-                               'allocated': 0.0, 'unallocated': reusable,
+                ledger.append({'team': team, 'volume': volume_col, 'source_player': source_player,
+                               'vacated': vacated, 'allocated': 0.0, 'unallocated': reusable,
+                               'recipients': [],
                                'reason': 'No projected, active role-compatible replacement.'})
                 continue
             weights = volume.loc[candidates].clip(lower=0.0)
@@ -3861,8 +4051,9 @@ def redistribute_v2_vacated_usage(result, injury_profiles, skip_rb=False, skip_r
             elif weights.sum() <= 0:
                 weights = snaps.clip(lower=0.0)
             if weights.sum() <= 0:
-                ledger.append({'team': team, 'volume': volume_col, 'vacated': vacated,
-                               'allocated': 0.0, 'unallocated': reusable,
+                ledger.append({'team': team, 'volume': volume_col, 'source_player': source_player,
+                               'vacated': vacated, 'allocated': 0.0, 'unallocated': reusable,
+                               'recipients': [],
                                'reason': 'Role-compatible replacements have no as-of opportunity/depth evidence.'})
                 continue
             requested = weights / weights.sum() * reusable
@@ -3880,8 +4071,19 @@ def redistribute_v2_vacated_usage(result, injury_profiles, skip_rb=False, skip_r
                     base = pd.to_numeric(out.loc[candidates, dep], errors='coerce').fillna(0.0)
                     out.loc[candidates, dep] = (base * factor).round(2)
             adjusted.update(candidates[gain > 0])
-            ledger.append({'team': team, 'volume': volume_col, 'vacated': vacated,
-                           'allocated': allocated, 'unallocated': max(0.0, reusable - allocated),
+            # team_rank: 1-based standing of each fill-in among the active,
+            # role-compatible recipient pool by post-redistribution volume.
+            # Display-only metadata for the Deep Dive vacancy table (it trims
+            # rows below the trusted tier) - nothing downstream reads it.
+            _rank = out.loc[candidates, volume_col].rank(ascending=False, method='min')
+            recipients = [{'player': str(out.at[index, 'Player']),
+                           'allocated': round(float(gain.loc[index]), 3),
+                           'team_rank': int(_rank.loc[index])}
+                          for index in candidates if gain.loc[index] > 0]
+            ledger.append({'team': team, 'volume': volume_col, 'source_player': source_player,
+                           'vacated': vacated, 'allocated': allocated,
+                           'unallocated': max(0.0, reusable - allocated),
+                           'recipients': recipients,
                            'reason': 'Role-compatible as-of projected recipients.'})
 
     _allocate('passing_attempts',
@@ -4931,6 +5133,43 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if not older.empty:
             older_rates['_identity_key'] = older['_identity_key'].to_numpy(dtype=object)
 
+        # v2_td_prior_credibility: per-identity opportunity volume and count of
+        # real-role seasons across up to TD_PRIOR_CREDIBILITY_SEASONS prior
+        # years, used to shrink a thin one-season TD rate toward the league
+        # mean (see credibility_shrunk_td_prior). Cold-start only; the flag is
+        # a no-op in season once a player's own games carry the rate.
+        td_credibility_ctx = pd.DataFrame()
+        if 'v2_td_prior_credibility' in feats and cold_start:
+            _opp_cols = [c for c in ('rushing_attempts', 'targets', 'passing_attempts') if c in stats]
+            _season_frames = []
+            for _sf in (prior, older):
+                if _sf is not None and not _sf.empty and '_identity_key' in _sf.columns:
+                    _season_frames.append(_sf[['_identity_key', 'Games'] + _opp_cols].copy())
+            for _yb in range(3, int(TD_PRIOR_CREDIBILITY_SEASONS) + 1):
+                try:
+                    _ydf, _ytc, _ync, _ = load_and_merge_data(year - _yb, scoring_mode)
+                except Exception:
+                    _ydf = pd.DataFrame()
+                if _ydf.empty or 'week' not in _ydf.columns:
+                    continue
+                _yt = attach_player_identity(
+                    _season_totals(_ydf, _ync, _ytc, pos, stats), _ydf, _ync)
+                if not _yt.empty and '_identity_key' in _yt.columns:
+                    _season_frames.append(_yt[['_identity_key', 'Games'] + _opp_cols].copy())
+            if _season_frames:
+                _all_seasons = pd.concat(_season_frames, ignore_index=True)
+                _all_seasons['_opp'] = _all_seasons[_opp_cols].sum(axis=1) if _opp_cols else 0.0
+                _all_seasons['_opp_pg'] = _all_seasons['_opp'] / _all_seasons['Games'].replace(0, np.nan)
+                _peak = _all_seasons.groupby('_identity_key')['_opp_pg'].transform('max')
+                _all_seasons['_role_season'] = (
+                    (_all_seasons['Games'] >= TD_PRIOR_ROLE_SEASON_MIN_GAMES)
+                    & (_all_seasons['_opp_pg'] >= TD_PRIOR_ROLE_SEASON_OPP_FRACTION * _peak)
+                ).astype(float)
+                td_credibility_ctx = _all_seasons.groupby('_identity_key').agg(
+                    **{f'_opp_total_{c}': (c, 'sum') for c in _opp_cols},
+                    _role_seasons=('_role_season', 'sum'),
+                ).reset_index()
+
         if cold_start and prior_max_week is not None and not pd.isna(prior_max_week):
             # player_hist (THIS season) is empty at cold start, so the normal
             # path below would return an empty Series and every player would
@@ -5616,6 +5855,23 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 ], dtype=object)
                 preseason_role_source = role_messages
             if pos in ('WR', 'TE'):
+                # Buried-veteran depth-chart dock (apply_buried_veteran_dock).
+                # Runs BEFORE the within-team rank/cap just below so the docked
+                # shares are what that ranking sees, and AFTER the
+                # returning-role restore above so a same-team vet cannot be
+                # restored past a chart that now buries him.
+                _chart_rank = np.where(np.isfinite(ourlads_role_rank), ourlads_role_rank,
+                                       ourlads_audit['source_rank'])
+                _bv_slot = (RECEIVER_BURIED_VET_BACKUP_SLOT_RANK_TE if pos == 'TE'
+                            else RECEIVER_BURIED_VET_BACKUP_SLOT_RANK)
+                player_share, _buried_vet_docked = apply_buried_veteran_dock(
+                    player_share, player_prior_share, _chart_rank, depth_chart_decay,
+                    backup_slot_rank=_bv_slot)
+                if _buried_vet_docked.any():
+                    preseason_role_source = np.where(
+                        _buried_vet_docked,
+                        'Ourlads depth-chart dock (proven vet now charted as a backup)',
+                        preseason_role_source)
                 depth_rank_within_team = (
                     pd.Series(player_share, index=cur.index)
                     .groupby(team_keys_rv.to_numpy(dtype=object))
@@ -5814,7 +6070,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     historic.where(historic.notna(), pre_gap).fillna(0.0) * (1.0 - blend)
                     + pre_gap.fillna(historic).fillna(0.0) * blend
                 )
-            allocation, allocation_ledger = allocate_preseason_rb_roles(allocator_input)
+            allocation, allocation_ledger = allocate_preseason_rb_roles(
+                allocator_input,
+                snap_anchored_volume='v2_rb_snap_anchored_volume' in feats)
             allocation = allocation.reindex(cur.index)
             if not allocation.empty:
                 player_share = allocation['expected_snap_share'].to_numpy(dtype=float)
@@ -5886,16 +6144,22 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     np.clip(np.divide(player_share, player_prior_share,
                                       out=np.ones_like(player_share), where=player_prior_share > 0.02),
                             *ROLE_VOLUME_CLIP), 1.0)
+                # A snap-anchored allocation can legitimately land well above
+                # 2x a player's depressed prior-team per-game rate (an
+                # every-down back who changed teams off a committee year), so
+                # widen the ratio clip when that path is on.
+                _rate_scale_hi = 2.75 if 'v2_rb_snap_anchored_volume' in feats else 2.00
+                _rate_scale_lo = 0.15 if 'v2_rb_snap_anchored_volume' in feats else 0.20
                 rb_carry_rate_scale = np.where(
                     np.isfinite(prior_carry_rate) & (prior_carry_rate > 0.05),
                     np.clip(np.divide(rb_carry_allocation, prior_carry_rate,
                                       out=np.ones_like(player_share), where=prior_carry_rate > 0.05),
-                            0.20, 2.00), role_scale)
+                            _rate_scale_lo, _rate_scale_hi), role_scale)
                 rb_target_rate_scale = np.where(
                     np.isfinite(prior_target_rate) & (prior_target_rate > 0.05),
                     np.clip(np.divide(rb_target_allocation, prior_target_rate,
                                       out=np.ones_like(player_share), where=prior_target_rate > 0.05),
-                            0.20, 2.00), role_scale)
+                            _rate_scale_lo, _rate_scale_hi), role_scale)
                 preseason_role_source = np.where(
                     rb_allocator_applied,
                     'team-constrained preseason core-RB allocation', preseason_role_source)
@@ -6012,6 +6276,22 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 games_total = cur_games.sum()
                 pos_rate = float(cur_total.sum() / games_total) if games_total > 0 else 0.0
             pos_rate_arr = np.full(len(cur), pos_rate)
+
+            # v2_td_prior_credibility: shrink a thin one-season TD-rate prior
+            # toward this position's mean by the opportunity volume behind it,
+            # with a small 3rd/4th-role-season longevity bump. TD stats only,
+            # cold start only (in season w_current takes the rate over).
+            td_prior_credibility = np.full(len(cur), np.nan)
+            if ('v2_td_prior_credibility' in feats and cold_start and opportunity_stat
+                    and not td_credibility_ctx.empty):
+                _ctx = td_credibility_ctx.set_index('_identity_key')
+                _opp_col = f'_opp_total_{opportunity_stat}'
+                _opp_total = (identity_keys_rv.map(_ctx[_opp_col]).to_numpy(dtype=float)
+                              if _opp_col in _ctx.columns else np.zeros(len(cur)))
+                _role_seasons = identity_keys_rv.map(_ctx['_role_seasons']).fillna(0.0).to_numpy(dtype=float)
+                prior_rate, td_prior_credibility, _td_longevity = credibility_shrunk_td_prior(
+                    prior_rate, _opp_total, _role_seasons, pos_rate_arr, opportunity_stat)
+
             prior_rate_before_role = prior_rate.copy()
             prior_source_is_player = np.isfinite(prior_rate)
             stat_role_scale = role_scale
@@ -6340,6 +6620,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'role_overlay': np.full(len(cur), role_overlay),
                 'target_margin': cur['target_margin'].to_numpy(dtype=float),
                 'two_year_td_prior': td_two_year_used,
+                'td_prior_credibility': td_prior_credibility,
             }
 
             script_series = script_by_stat.get(stat)
@@ -6616,13 +6897,28 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             out['Model Proj Pts'] = np.round(
                 np.clip(np.minimum(raw, intercept + slope * raw), 0.0, None), 2)
         out['Calibrated Model Proj Pts'] = out['Model Proj Pts']
-        if 'v2_availability' in feats:
+        if 'v2_availability' in feats or 'v2_fantasypros_availability' in feats:
             out['Availability'] = out['Player'].map(
                 lambda p: injury_profiles.get(p, {}).get('plays_probability', 1.0)).astype(float).round(2)
             out['Workload If Active'] = out['Player'].map(
                 lambda p: injury_profiles.get(p, {}).get('workload_if_active', 1.0)).astype(float).round(2)
-            out['Injury Status'] = out['Player'].map(
-                lambda p: injury_profiles.get(p, {}).get('status', '')).replace('unknown', '')
+
+            def _injury_status_label(player):
+                # Designation + any reported probability alongside it (display
+                # only - the FantasyPros probability never feeds the model; only
+                # 'out'/'doubtful' change the projection). See
+                # data.availability_overrides._probability.
+                prof = injury_profiles.get(player, {})
+                status = str(prof.get('status', '') or '').strip()
+                if not status or status.lower() == 'unknown':
+                    return ''
+                label = status.title()
+                reported = prof.get('reported_probability')
+                if reported is not None and np.isfinite(reported):
+                    label += f" ({float(reported):.0%})"
+                return label
+
+            out['Injury Status'] = out['Player'].map(_injury_status_label)
             out['_availability_source'] = out['Player'].map(
                 lambda p: injury_profiles.get(p, {}).get('source', 'no current availability source'))
             out['_availability_match_method'] = out['Player'].map(
@@ -6835,6 +7131,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'efficiency_defense_estimator': _trace_value(
                         trace, 'efficiency_defense_estimator', i),
                     'two_year_td_prior': bool(_trace_value(trace, 'two_year_td_prior', i, False)),
+                    'td_prior_credibility': _trace_number(trace, 'td_prior_credibility', i),
                     'pre_vacancy_projection': _trace_number(trace, 'pre_vacancy_projection', i, 0.0),
                     # Updated to the post-vacancy board value below.
                     'vacancy_delta': 0.0,
@@ -6999,6 +7296,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'status': row['Injury Status'] or 'No current designation',
                     'plays_probability': float(row['Availability']),
                     'workload_if_active': float(row['Workload If Active']),
+                    'reported_probability': injury_profiles.get(row['Player'], {}).get('reported_probability'),
                     'source': row.get('_availability_source', 'not recorded'),
                     'match_method': row.get('_availability_match_method', 'not recorded'),
                     'note': row.get('_availability_note', ''),

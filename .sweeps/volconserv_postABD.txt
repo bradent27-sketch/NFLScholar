@@ -1,0 +1,100 @@
+2026-08-29 23:56:49.337 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.338 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.339 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.339 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.342 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.352 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.352 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.352 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.353 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.354 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.354 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.354 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.354 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.354 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.354 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.355 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.355 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.355 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.355 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.356 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.356 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.356 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.357 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.357 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.358 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.358 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.358 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.359 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.359 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.360 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.362 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.379 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.379 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.380 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.380 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.381 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.381 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.382 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.382 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.383 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.387 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+Ourlads coverage: 32/32
+2026-08-29 23:56:49.433 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.433 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:49.434 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:53.032 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:53.220 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:56.858 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:56.873 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:56.874 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:56:57.726 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:57:10.367 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-29 23:57:10.796 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+
+=== 2026 week 1 (as-of 1), cold_start=True ===
+  players: 899, teams: 32
+  targets / pass attempts          model=0.952  real_nfl=n/a  teams>1.0=0/32
+  receptions / completions         model=0.992  real_nfl=n/a  teams>1.0=18/32
+  receiving yards / passing yards  model=1.006  real_nfl=n/a  teams>1.0=19/32
+  receiving TDs / passing TDs      model=0.961  real_nfl=n/a  teams>1.0=15/32
+  worst 5 teams (targets/attempts):
+      targets / pass attempts  receptions / completions  receiving yards / passing yards  receiving TDs / passing TDs
+Team                                                                                                                 
+LA                       0.99                      1.01                             1.00                         0.93
+NE                       0.98                      0.96                             0.97                         1.08
+NO                       0.98                      1.01                             0.96                         1.01
+DEN                      0.97                      1.04                             1.10                         1.13
+ATL                      0.97                      1.00                             1.03                         0.79
+
+=== 2025 week 4 (as-of 4), cold_start=False ===
+  players: 421, teams: 32
+  QB1 selection required (excluded from league ratio below): CLE, MIN, WAS
+  targets / pass attempts          model=0.955  real_nfl=0.952  teams>1.0=0/32
+  receptions / completions         model=0.988  real_nfl=1.000  teams>1.0=10/32
+  receiving yards / passing yards  model=1.006  real_nfl=1.000  teams>1.0=16/32
+  receiving TDs / passing TDs      model=0.952  real_nfl=1.000  teams>1.0=12/32
+  worst 5 teams (targets/attempts):
+      targets / pass attempts  receptions / completions  receiving yards / passing yards  receiving TDs / passing TDs
+Team                                                                                                                 
+CIN                      0.99                      1.00                             1.07                         1.32
+MIA                      0.99                      1.01                             1.16                         1.02
+DET                      0.99                      1.04                             0.98                         1.13
+PHI                      0.97                      1.04                             1.11                         1.16
+TB                       0.97                      0.99                             1.07                         0.89
+
+=== 2025 week 10 (as-of 10), cold_start=False ===
+  players: 454, teams: 28
+  QB1 selection required (excluded from league ratio below): ATL, BAL, CAR, MIN, WAS
+  targets / pass attempts          model=0.956  real_nfl=0.952  teams>1.0=0/32
+  receptions / completions         model=0.978  real_nfl=1.000  teams>1.0=9/32
+  receiving yards / passing yards  model=0.988  real_nfl=1.000  teams>1.0=10/32
+  receiving TDs / passing TDs      model=0.933  real_nfl=1.000  teams>1.0=9/32
+  worst 5 teams (targets/attempts):
+      targets / pass attempts  receptions / completions  receiving yards / passing yards  receiving TDs / passing TDs
+Team                                                                                                                 
+NO                       0.99                      1.06                             0.92                         0.67
+LA                       0.98                      1.03                             1.08                         0.83
+PIT                      0.98                      1.02                             1.03                         0.90
+JAX                      0.97                      1.05                             0.99                         1.00
+IND                      0.96                      0.92                             1.00                         1.21

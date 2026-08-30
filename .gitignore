@@ -89,3 +89,17 @@ pff_imports/*/weekly/
 # Optional manual Week-1 availability decisions. This is personal runtime
 # state, not a public source file; the code supplies an empty-safe loader.
 data/availability_overrides.csv
+
+# Ad-hoc scratch logs from long-running sweep/backtest jobs launched with
+# `nohup ... > scratch_*.log`. The curated result of every sweep is committed
+# under .sweeps/; the raw stdout capture (mostly Streamlit warning spam) is not.
+/scratch_*
+
+# Ourlads import workflow folders. The .gitkeep + README that make the folders
+# real are tracked; the raw browser page exports dropped/archived through them
+# are local subscription content and would churn the repo.
+external_data/ourlads_inbox/*
+!external_data/ourlads_inbox/.gitkeep
+!external_data/ourlads_inbox/README.md
+external_data/ourlads_archive/*
+!external_data/ourlads_archive/.gitkeep

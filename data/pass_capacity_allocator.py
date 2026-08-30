@@ -32,7 +32,10 @@ credibility score and fits the team's pass catchers to a real budget:
   3. Whatever capacity remains goes to the rest of the team's pool,
      proportional to each player's own current value, so a real committee
      role still outranks a deep bench name without either one being pinned
-     to a fabricated share.
+     to a fabricated share. The pass is SYMMETRIC (since 2026-08-29): a
+     group whose whole projected claim falls UNDER its own budget is scaled
+     UP by the same uniform budget/claim factor, rather than leaving the
+     shortfall as silently lost team volume.
   4. Receptions, receiving yards, and receiving TDs are rescaled by the same
      per-player factor as targets, so each player's OWN catch rate and
      yards/TD-per-target are preserved exactly - only the target volume that
@@ -48,13 +51,11 @@ import numpy as np
 import pandas as pd
 
 
-# The tier of a team's own pass catchers whose CURRENT projected value is
-# trusted as-is rather than refit to the team budget. Set from the audit's
-# own finding ("top 6 pass catchers per team are accurate"); widened by two
-# to avoid trimming a real second-tier target earner on a genuinely
-# receiver-heavy offense. Re-verify with scripts/check_volume_conservation.py
-# if this ever needs retuning - it is a football judgment call, not a
-# derived constant.
+# Retained only to label a "trusted" (top-N) vs "tail" count in the audit
+# ledger - the fit itself is a single uniform proportional factor across the
+# whole group (see _fit_group), so this number no longer changes any
+# projection. Was the size of a protected tier until 2026-08-30; kept at 8
+# so the ledger's trusted/tail split still reads sensibly.
 PASS_CAPACITY_TRUSTED_TIER = 8
 
 # Used only when neither a live team pass-attempt total nor prior-season
@@ -62,6 +63,14 @@ PASS_CAPACITY_TRUSTED_TIER = 8
 # team throws the ball - kept as an explicit, documented last resort rather
 # than a silent zero budget that would wipe out a team's receivers).
 FALLBACK_TARGET_PER_ATTEMPT = 0.95
+
+# Deadband (in targets) around a position group's own budget within which
+# NO adjustment is made at all - the claim is close enough to realistic that
+# refitting would just add noise. Added 2026-08-29 per explicit request
+# ("If it is within + or - 1 it should probably be left alone. If not, then
+# probably can implement the fix."). Applies symmetrically to mild over- and
+# under-claims; a group outside the band is fit exactly as before.
+PASS_CAPACITY_DEADBAND = 1.0
 
 # RUNNING BACKS GET THEIR OWN SUB-BUDGET, SEPARATE FROM WR/TE. Added
 # 2026-08-24 per a real, reported defect: this module used to rank a team's
@@ -223,8 +232,24 @@ def apply_pass_capacity_conservation(
     player_detail: list[dict] = []
 
     def _fit_group(idx: pd.Index, group_capacity: float, group_tier: int) -> tuple[pd.Series, dict]:
-        """The trusted/tail fit, unchanged math, parameterized to run once
-        per position group instead of once per team."""
+        """Fit one position group's targets to its sub-budget with a SINGLE
+        UNIFORM proportional factor - every player scaled by the same
+        ``group_capacity / claim``, over budget or under, so a genuine WR1
+        and a deep reserve take the same percentage move and neither is
+        pinned to a fabricated share.
+
+        History, all reverted 2026-08-30 at the user's request in favour of
+        this uniform form: a trusted-tier-8 / tail split that kept the top 8
+        whole when the budget allowed (2026-08-25); then a top-2 "anchor
+        waterfall" that fully protected WR1/WR2/TE1 and made ranks 3+ absorb
+        the entire over-budget amount (2026-08-29). The waterfall docked a
+        real WR1 by zero while hammering WR4/WR5 ("not correct"), and the
+        calibration refit showed it pushing raw top-of-board WR/TE
+        projections up. Reducing a deep reserve's role is now entirely the
+        job of the role model upstream (depth-chart caps, the buried-veteran
+        dock), leaving this pass to do only a small, even, symmetric budget
+        reconciliation. ``group_tier`` is kept only to label trusted/tail
+        counts in the ledger; it no longer changes the math."""
         current = out.loc[idx, 'targets']
         order = current.sort_values(ascending=False)
         trusted_idx = order.index[:group_tier]
@@ -234,32 +259,20 @@ def apply_pass_capacity_conservation(
         current_total = float(current.sum())
 
         allocated = current.copy()
-        if trusted_claim > group_capacity:
-            # Even the trusted tier alone exceeds this group's realistic
-            # budget. Originally this zeroed everyone outside the trusted
-            # tier outright, on the assumption the case was rare and
-            # pathological (an unresolved QB room forcing a low historical-
-            # fallback budget). A real-data audit (2026-08-24, user-reported:
-            # Derrick Henry and Kenneth Walker's receiving lines reading as
-            # fully zeroed) found it is NOT rare - a run-heavy team with an
-            # established low-target-share workhorse RB routinely has its
-            # "trusted" top slots filled by WR/TE names alone (a lead back's
-            # raw target rate is naturally lower than a team's top
-            # wideouts), so the tail is not always the fringe of the roster;
-            # it can contain a real, established player whose receiving role
-            # is modest but genuine. Zeroing him outright was never intended
-            # - now every catcher (trusted and tail alike) is scaled down by
-            # the same factor, so a real-but-modest role degrades
-            # proportionally instead of vanishing.
-            factor = group_capacity / current_total if current_total > 0 else 0.0
-            allocated.loc[:] = current.loc[:] * factor
-            reason = 'Total claim exceeded its own sub-budget; everyone in this group scaled down proportionally.'
+        if current_total <= 0:
+            reason = 'No projected volume in this group; nothing to fit.'
+        elif abs(current_total - group_capacity) <= PASS_CAPACITY_DEADBAND:
+            # Close enough to a realistic budget that a refit would only add
+            # noise - leave every player's own number exactly as projected.
+            reason = (f"Claim {current_total:.1f} is within {PASS_CAPACITY_DEADBAND:.1f} of the "
+                      f"{group_capacity:.1f} budget; left unadjusted.")
         else:
-            remaining = group_capacity - trusted_claim
-            allocated.loc[trusted_idx] = current.loc[trusted_idx]
-            if tail_claim > 0:
-                allocated.loc[tail_idx] = current.loc[tail_idx] * (remaining / tail_claim)
-            reason = 'Trusted tier retained; remaining tail scaled to this group\'s own sub-budget.'
+            # One uniform factor, applied to every player - symmetric for
+            # over- and under-budget rooms alike.
+            factor = group_capacity / current_total
+            allocated.loc[:] = current.loc[:] * factor
+            reason = (f"Claim {current_total:.1f} vs {group_capacity:.1f} budget; every player "
+                      f"scaled {'up' if factor > 1.0 else 'down'} proportionally (x{factor:.3f}).")
         ledger_row = {
             'capacity': round(group_capacity, 2), 'trusted_claim': round(trusted_claim, 2),
             'tail_claim': round(tail_claim, 2), 'allocated': round(float(allocated.sum()), 2),

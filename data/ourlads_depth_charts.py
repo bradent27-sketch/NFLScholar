@@ -17,6 +17,8 @@ will play every offensive snap.
 from __future__ import annotations
 
 import re
+import shutil
+from datetime import datetime
 from email import policy
 from email.parser import BytesParser
 from html import unescape
@@ -40,6 +42,21 @@ PARSER_VERSION = "2026.1"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 OURLADS_IMPORT_PATH = _REPO_ROOT / "external_data" / "ourlads_depth_charts.csv"
 OURLADS_KEY_PATH = _REPO_ROOT / "external_data" / "ourlads_depth_chart_key.txt"
+# Drop fresh saved team pages here; the Depth Charts tab's "Import from
+# ourlads_inbox/" button and scripts/import_ourlads.py both read this folder.
+OURLADS_INBOX_DIR = _REPO_ROOT / "external_data" / "ourlads_inbox"
+# Every import copies the OUTGOING snapshot csv and the raw pages it consumed
+# here first, under a timestamped subfolder, so a past-week analysis can pin
+# the exact chart the model saw.
+OURLADS_ARCHIVE_DIR = _REPO_ROOT / "external_data" / "ourlads_archive"
+_OURLADS_PAGE_SUFFIXES = (".mhtml", ".mht", ".html")
+
+
+def _current_nfl_season() -> int:
+    """Season in progress or most recently completed (NFL runs Sep-Feb, so
+    before August the current season is still last calendar year's)."""
+    today = datetime.now()
+    return today.year if today.month >= 8 else today.year - 1
 
 OURLADS_COLUMNS = (
     "year", "team", "unit", "position_label", "position", "depth_rank",
@@ -568,14 +585,65 @@ def build_ourlads_snapshot(files: Iterable[Any], year: int) -> tuple[pd.DataFram
     return snapshot.reindex(columns=OURLADS_COLUMNS), report
 
 
+def _archive_ourlads_import(files: Iterable[Any], existing_csv: Path,
+                            archive_root: Path | None = None) -> dict[str, Any]:
+    """Copy the OUTGOING snapshot csv and the raw pages being consumed into a
+    timestamped archive folder, so a past-week analysis can pin the exact
+    chart the model saw. Best-effort: a failure here never blocks the import.
+    """
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    out: dict[str, Any] = {"archived_csv": None, "archived_pages": 0, "archive_dir": None}
+    try:
+        root = OURLADS_ARCHIVE_DIR if archive_root is None else archive_root
+        batch_dir = Path(root) / f"import_{stamp}"
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        out["archive_dir"] = str(batch_dir)
+        existing_csv = Path(existing_csv)
+        if existing_csv.is_file() and existing_csv.stat().st_size > 0:
+            prev_stamp = datetime.fromtimestamp(
+                existing_csv.stat().st_mtime).strftime("%Y%m%d-%H%M%S")
+            dest = batch_dir / f"ourlads_depth_charts_{prev_stamp}.csv"
+            shutil.copy2(existing_csv, dest)
+            out["archived_csv"] = str(dest)
+        pages_dir = batch_dir / "pages"
+        for item in files or []:
+            try:
+                name, blob = _file_blob(item)
+            except Exception:
+                continue
+            safe = Path(str(name)).name or f"page_{out['archived_pages'] + 1}.mhtml"
+            pages_dir.mkdir(parents=True, exist_ok=True)
+            (pages_dir / safe).write_bytes(blob)
+            out["archived_pages"] += 1
+        # A batch with nothing to keep leaves no empty folder behind.
+        if out["archived_csv"] is None and out["archived_pages"] == 0:
+            try:
+                batch_dir.rmdir()
+                out["archive_dir"] = None
+            except OSError:
+                pass
+    except Exception as exc:  # pragma: no cover - archiving is never fatal
+        out["error"] = f"could not archive prior Ourlads import: {exc}"
+    return out
+
+
 def save_ourlads_snapshot(files: Iterable[Any], year: int,
-                          path: str | Path = OURLADS_IMPORT_PATH) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Build and persist a local normalized snapshot; never stores raw MHTML."""
+                          path: str | Path = OURLADS_IMPORT_PATH,
+                          archive: bool = True) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Build and persist a local normalized snapshot.
+
+    ``archive`` (default on): before overwriting the snapshot csv, copy the
+    current csv and the raw pages being imported into a timestamped folder
+    under ``OURLADS_ARCHIVE_DIR`` (see ``_archive_ourlads_import``). The raw
+    pages themselves are still never written to the live import path.
+    """
     snapshot, report = build_ourlads_snapshot(files, year)
     if snapshot.empty:
         report["error"] = "No readable QB/RB/FB/WR/TE Ourlads team chart was imported."
         return snapshot, report
     target = Path(path)
+    if archive:
+        report["archive"] = _archive_ourlads_import(files, target)
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
         snapshot.to_csv(target, index=False)
@@ -584,6 +652,32 @@ def save_ourlads_snapshot(files: Iterable[Any], year: int,
         return snapshot, report
     report["error"] = ""
     report["path"] = str(target)
+    return snapshot, report
+
+
+def save_ourlads_snapshot_from_dir(directory: str | Path = OURLADS_INBOX_DIR,
+                                   year: int | None = None,
+                                   path: str | Path = OURLADS_IMPORT_PATH,
+                                   archive: bool = True) -> tuple[pd.DataFrame, dict[str, Any]]:
+    """Import every saved Ourlads page in ``directory`` (default the inbox).
+
+    Returns the same ``(snapshot, report)`` as ``save_ourlads_snapshot``; the
+    report also carries ``source_dir`` and the sorted ``source_files`` list.
+    ``year`` defaults to the current NFL season.
+    """
+    directory = Path(directory)
+    if year is None:
+        year = _current_nfl_season()
+    pages = sorted(
+        p for p in directory.glob("*")
+        if p.is_file() and p.suffix.lower() in _OURLADS_PAGE_SUFFIXES)
+    if not pages:
+        empty = pd.DataFrame(columns=OURLADS_COLUMNS)
+        return empty, {"error": f"No .mhtml/.mht/.html pages found in {directory}.",
+                       "source_dir": str(directory), "source_files": []}
+    snapshot, report = save_ourlads_snapshot(pages, int(year), path=path, archive=archive)
+    report["source_dir"] = str(directory)
+    report["source_files"] = [p.name for p in pages]
     return snapshot, report
 
 

@@ -26,7 +26,14 @@ AVAILABILITY_OVERRIDE_COLUMNS = (
 )
 
 _OUT_STATUSES = frozenset({"out", "ir", "suspended", "inactive", "nfi", "pup"})
-_STATUS_PROBABILITY = {"doubtful": 0.25, "questionable": 0.85}
+# Per the user's explicit rule: ONLY "out" and "doubtful" change the
+# projection, and both mean "assume not playing" (probability 0.0). Everything
+# else - "questionable", "probable", "healthy", an unmapped designation - is
+# assumed healthy (1.0) until a report says otherwise. The old questionable
+# haircut is deliberately gone; a reported probability-of-playing is display
+# only (see _probability's honor_supplied and fantasypros_availability).
+_ASSUME_OUT_STATUSES = _OUT_STATUSES | {"doubtful"}
+_STATUS_PROBABILITY: dict[str, float] = {}
 
 
 def _text(values: Any) -> pd.Series:
@@ -57,12 +64,21 @@ def _id_key(value: Any) -> str:
     return f"id:{text.removesuffix('.0')}"
 
 
-def _probability(status: Any, supplied: Any = np.nan) -> float:
-    explicit = pd.to_numeric(pd.Series([supplied]), errors="coerce").iloc[0]
-    if pd.notna(explicit):
-        return float(np.clip(explicit, 0.0, 1.0))
+def _probability(status: Any, supplied: Any = np.nan, honor_supplied: bool = True) -> float:
+    """Effective plays-probability for the projection.
+
+    ``honor_supplied`` is True for the manual override CSV - a human writing an
+    explicit number is a deliberate decision the model should respect. It is
+    False for the FantasyPros feed: that source's probability-of-playing is
+    pulled in for display but is never a model input (user's rule), so the
+    status alone decides - "out"/"doubtful" -> 0.0, anything else -> 1.0.
+    """
+    if honor_supplied:
+        explicit = pd.to_numeric(pd.Series([supplied]), errors="coerce").iloc[0]
+        if pd.notna(explicit):
+            return float(np.clip(explicit, 0.0, 1.0))
     label = _text([status]).str.lower().iloc[0]
-    if label in _OUT_STATUSES:
+    if label in _ASSUME_OUT_STATUSES:
         return 0.0
     return float(_STATUS_PROBABILITY.get(label, 1.0))
 
@@ -302,12 +318,19 @@ def resolve_target_week_availability(raw_profiles: dict[str, dict[str, Any]] | N
             continue
         roster_name = str(row["_roster_name"])
         status = str(profile.get("status", "")).strip().lower() or "unknown"
+        source_label = str(profile.get("source", "target-season injury report"))
+        # A FantasyPros-sourced probability-of-playing is display only, never a
+        # model input - status alone decides. A manual override still wins.
+        honor_supplied = not source_label.lower().startswith("fantasypros")
+        reported = pd.to_numeric(pd.Series([profile.get("plays_probability")]), errors="coerce").iloc[0]
         profiles[roster_name] = {
             **profile,
             "status": status,
-            "plays_probability": _probability(status, profile.get("plays_probability")),
+            "plays_probability": _probability(status, profile.get("plays_probability"),
+                                              honor_supplied=honor_supplied),
+            "reported_probability": (float(reported) if pd.notna(reported) else None),
             "workload_if_active": _workload(profile.get("workload_if_active")),
-            "source": profile.get("source", "target-season injury report"),
+            "source": source_label,
             "source_name": str(source_name),
             "match_method": method,
             "manual_override": False,

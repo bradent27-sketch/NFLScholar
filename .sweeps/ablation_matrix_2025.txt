@@ -1,0 +1,284 @@
+2026-08-30 00:15:34.245 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.246 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.246 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.247 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.249 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.260 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.260 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.260 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.261 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.267 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.267 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.268 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.268 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.269 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.270 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.271 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.273 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.289 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.290 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.290 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.291 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.291 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.292 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.292 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.293 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.293 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.296 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+years=[2025] weeks=4-17 scoring=Full PPR
+ablating: ['role_volume', 'v2_adaptive_volume', 'v2_td_two_year_prior', 'v2_defense_prior', 'v2_continuous_roles', 'v2_pff_alignment_matchup', 'v2_vacancy', 'v2_preseason_rb_allocator', 'v2_pass_capacity', 'v2_qb_volume_blend', 'v2_role_change_by_stat', 'v2_fantasypros_availability']
+adding as candidate: []
+DEFAULT_FEATURES size: 19
+2026-08-30 00:15:34.322 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.322 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 00:15:34.322 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:34.969 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:35.712 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:35.712 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 00:15:36.057 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:39.367 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 00:15:51.392 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+
+======================================================================
+role_volume  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.513  dMAE(var-base) +0.129  dRho(var-base) -0.026  weeks variant-won 0-14 (sign-test p=0.00)  boot95%CI[+0.097,+0.161]  [CI excludes 0 -> distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.113  dMAE(var-base) -0.012  dRho(var-base) +0.004  weeks variant-won 11-3 (sign-test p=0.06)  boot95%CI[-0.021,-0.004]  [CI excludes 0 -> distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.520  dMAE(var-base) +0.152  dRho(var-base) -0.029  weeks variant-won 2-12 (sign-test p=0.01)  boot95%CI[+0.076,+0.235]  [CI excludes 0 -> distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.314  dMAE(var-base) +0.175  dRho(var-base) -0.026  weeks variant-won 2-12 (sign-test p=0.01)  boot95%CI[+0.108,+0.242]  [CI excludes 0 -> distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.642  dMAE(var-base) +0.078  dRho(var-base) -0.020  weeks variant-won 3-11 (sign-test p=0.06)  boot95%CI[+0.012,+0.143]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.730  dMAE(var-base) -0.055  dRho(var-base) +0.027  weeks variant-won 9-5 (sign-test p=0.42)  boot95%CI[-0.225,+0.064]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.325  dMAE(var-base) -0.022  dRho(var-base) -0.011  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.178,+0.117]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.352  dMAE(var-base) +0.170  dRho(var-base) +0.015  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[+0.029,+0.310]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.573  dMAE(var-base) +0.236  dRho(var-base) -0.021  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.107,+0.635]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_adaptive_volume  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.385  dMAE(var-base) +0.001  dRho(var-base) +0.000  weeks variant-won 5-8 (sign-test p=0.58)  boot95%CI[-0.000,+0.002]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.125  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-2 (sign-test p=0.50)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.367  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.140  dMAE(var-base) +0.001  dRho(var-base) +0.000  weeks variant-won 4-9 (sign-test p=0.27)  boot95%CI[-0.000,+0.003]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.564  dMAE(var-base) +0.001  dRho(var-base) -0.000  weeks variant-won 5-8 (sign-test p=0.58)  boot95%CI[-0.001,+0.003]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.785  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.339  dMAE(var-base) -0.007  dRho(var-base) +0.002  weeks variant-won 1-0 (sign-test p=1.00)  boot95%CI[-0.023,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.193  dMAE(var-base) +0.011  dRho(var-base) -0.001  weeks variant-won 4-8 (sign-test p=0.39)  boot95%CI[-0.000,+0.030]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.338  dMAE(var-base) +0.001  dRho(var-base) -0.005  weeks variant-won 6-5 (sign-test p=1.00)  boot95%CI[-0.007,+0.009]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_td_two_year_prior  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.388  dMAE(var-base) +0.003  dRho(var-base) -0.001  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.001,+0.007]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.126  dMAE(var-base) +0.002  dRho(var-base) -0.000  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.009,+0.012]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.371  dMAE(var-base) +0.004  dRho(var-base) -0.003  weeks variant-won 4-10 (sign-test p=0.18)  boot95%CI[-0.005,+0.014]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.140  dMAE(var-base) +0.002  dRho(var-base) -0.000  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.005,+0.008]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.569  dMAE(var-base) +0.006  dRho(var-base) -0.002  weeks variant-won 4-10 (sign-test p=0.18)  boot95%CI[-0.002,+0.014]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.707  dMAE(var-base) -0.079  dRho(var-base) +0.020  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.233,+0.005]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.372  dMAE(var-base) +0.025  dRho(var-base) -0.011  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.025,+0.080]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.146  dMAE(var-base) -0.036  dRho(var-base) +0.004  weeks variant-won 9-5 (sign-test p=0.42)  boot95%CI[-0.079,+0.003]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.392  dMAE(var-base) +0.055  dRho(var-base) -0.011  weeks variant-won 3-11 (sign-test p=0.06)  boot95%CI[-0.008,+0.127]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_defense_prior  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.418  dMAE(var-base) +0.033  dRho(var-base) -0.004  weeks variant-won 3-11 (sign-test p=0.06)  boot95%CI[+0.019,+0.049]  [CI excludes 0 -> distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.152  dMAE(var-base) +0.027  dRho(var-base) +0.008  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.038,+0.092]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.399  dMAE(var-base) +0.031  dRho(var-base) -0.003  weeks variant-won 4-10 (sign-test p=0.18)  boot95%CI[+0.011,+0.051]  [CI excludes 0 -> distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.176  dMAE(var-base) +0.038  dRho(var-base) -0.005  weeks variant-won 3-11 (sign-test p=0.06)  boot95%CI[+0.016,+0.062]  [CI excludes 0 -> distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.593  dMAE(var-base) +0.030  dRho(var-base) -0.007  weeks variant-won 1-12 (sign-test p=0.00)  boot95%CI[+0.005,+0.055]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.701  dMAE(var-base) -0.085  dRho(var-base) +0.054  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.319,+0.093]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.471  dMAE(var-base) +0.124  dRho(var-base) -0.023  weeks variant-won 3-11 (sign-test p=0.06)  boot95%CI[+0.048,+0.206]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.093  dMAE(var-base) -0.089  dRho(var-base) +0.025  weeks variant-won 9-5 (sign-test p=0.42)  boot95%CI[-0.186,-0.002]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.382  dMAE(var-base) +0.045  dRho(var-base) -0.035  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.083,+0.199]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_continuous_roles  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.386  dMAE(var-base) +0.002  dRho(var-base) +0.000  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.002,+0.006]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.122  dMAE(var-base) -0.003  dRho(var-base) -0.001  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.008,+0.003]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.379  dMAE(var-base) +0.012  dRho(var-base) +0.000  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.002,+0.026]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.136  dMAE(var-base) -0.003  dRho(var-base) +0.001  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.007,+0.001]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.564  dMAE(var-base) +0.001  dRho(var-base) +0.000  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.003,+0.005]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.713  dMAE(var-base) -0.072  dRho(var-base) +0.008  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.216,+0.003]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.368  dMAE(var-base) +0.022  dRho(var-base) -0.007  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.023,+0.068]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.155  dMAE(var-base) -0.027  dRho(var-base) +0.012  weeks variant-won 9-5 (sign-test p=0.42)  boot95%CI[-0.059,-0.002]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.439  dMAE(var-base) +0.102  dRho(var-base) +0.013  weeks variant-won 5-8 (sign-test p=0.58)  boot95%CI[+0.000,+0.245]  [CI excludes 0 -> distinguishable from noise at this sample]
+
+======================================================================
+v2_pff_alignment_matchup  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.380  dMAE(var-base) -0.004  dRho(var-base) +0.001  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.013,+0.005]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.125  dMAE(var-base) -0.000  dRho(var-base) +0.000  weeks variant-won 1-1 (sign-test p=1.00)  boot95%CI[-0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.367  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 1-2 (sign-test p=1.00)  boot95%CI[-0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.138  dMAE(var-base) +0.000  dRho(var-base) +0.001  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.021,+0.023]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.544  dMAE(var-base) -0.019  dRho(var-base) +0.004  weeks variant-won 8-6 (sign-test p=0.79)  boot95%CI[-0.042,+0.002]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.717  dMAE(var-base) -0.068  dRho(var-base) +0.012  weeks variant-won 1-0 (sign-test p=1.00)  boot95%CI[-0.206,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.348  dMAE(var-base) +0.001  dRho(var-base) +0.007  weeks variant-won 1-2 (sign-test p=1.00)  boot95%CI[-0.035,+0.046]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.229  dMAE(var-base) +0.046  dRho(var-base) -0.012  weeks variant-won 4-10 (sign-test p=0.18)  boot95%CI[-0.068,+0.147]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.456  dMAE(var-base) +0.119  dRho(var-base) +0.005  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.199,+0.533]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_vacancy  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.384  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.125  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.367  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.138  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.563  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.785  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.347  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.182  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.337  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_preseason_rb_allocator  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.387  dMAE(var-base) +0.003  dRho(var-base) -0.001  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.001,+0.007]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.125  dMAE(var-base) -0.000  dRho(var-base) +0.000  weeks variant-won 1-0 (sign-test p=1.00)  boot95%CI[-0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.378  dMAE(var-base) +0.010  dRho(var-base) -0.004  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.003,+0.025]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.138  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 2-0 (sign-test p=0.50)  boot95%CI[-0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.563  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-2 (sign-test p=0.50)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.756  dMAE(var-base) -0.029  dRho(var-base) +0.008  weeks variant-won 1-0 (sign-test p=1.00)  boot95%CI[-0.088,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.344  dMAE(var-base) -0.002  dRho(var-base) -0.003  weeks variant-won 7-6 (sign-test p=1.00)  boot95%CI[-0.013,+0.014]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.181  dMAE(var-base) -0.001  dRho(var-base) +0.000  weeks variant-won 2-0 (sign-test p=0.50)  boot95%CI[-0.002,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.349  dMAE(var-base) +0.012  dRho(var-base) +0.012  weeks variant-won 0-1 (sign-test p=1.00)  boot95%CI[+0.000,+0.037]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_pass_capacity  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.430  dMAE(var-base) +0.046  dRho(var-base) +0.001  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[+0.002,+0.086]  [CI excludes 0 -> distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.125  dMAE(var-base) -0.000  dRho(var-base) +0.000  weeks variant-won 1-2 (sign-test p=1.00)  boot95%CI[-0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.370  dMAE(var-base) +0.003  dRho(var-base) +0.002  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.068,+0.071]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.244  dMAE(var-base) +0.105  dRho(var-base) +0.001  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[+0.023,+0.181]  [CI excludes 0 -> distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.569  dMAE(var-base) +0.006  dRho(var-base) +0.002  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.071,+0.080]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.717  dMAE(var-base) -0.068  dRho(var-base) +0.012  weeks variant-won 1-0 (sign-test p=1.00)  boot95%CI[-0.206,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.333  dMAE(var-base) -0.014  dRho(var-base) +0.022  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.180,+0.139]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.347  dMAE(var-base) +0.165  dRho(var-base) +0.034  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.080,+0.371]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.610  dMAE(var-base) +0.273  dRho(var-base) -0.058  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.041,+0.655]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_qb_volume_blend  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.392  dMAE(var-base) +0.008  dRho(var-base) -0.001  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.006,+0.022]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.129  dMAE(var-base) +0.004  dRho(var-base) +0.010  weeks variant-won 7-7 (sign-test p=1.00)  boot95%CI[-0.054,+0.070]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.364  dMAE(var-base) -0.003  dRho(var-base) +0.001  weeks variant-won 10-4 (sign-test p=0.18)  boot95%CI[-0.010,+0.002]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.152  dMAE(var-base) +0.013  dRho(var-base) -0.002  weeks variant-won 4-9 (sign-test p=0.27)  boot95%CI[-0.002,+0.031]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.575  dMAE(var-base) +0.011  dRho(var-base) -0.002  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.004,+0.028]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.783  dMAE(var-base) -0.003  dRho(var-base) +0.026  weeks variant-won 9-5 (sign-test p=0.42)  boot95%CI[-0.101,+0.098]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.320  dMAE(var-base) -0.026  dRho(var-base) +0.006  weeks variant-won 6-7 (sign-test p=1.00)  boot95%CI[-0.076,+0.009]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.204  dMAE(var-base) +0.022  dRho(var-base) -0.009  weeks variant-won 5-9 (sign-test p=0.42)  boot95%CI[-0.024,+0.074]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.509  dMAE(var-base) +0.172  dRho(var-base) +0.008  weeks variant-won 6-8 (sign-test p=0.79)  boot95%CI[-0.019,+0.463]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_role_change_by_stat  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.385  dMAE(var-base) +0.001  dRho(var-base) -0.000  weeks variant-won 4-8 (sign-test p=0.39)  boot95%CI[+0.000,+0.002]  [CI excludes 0 -> distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.125  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.370  dMAE(var-base) +0.003  dRho(var-base) -0.000  weeks variant-won 3-8 (sign-test p=0.23)  boot95%CI[+0.000,+0.006]  [CI excludes 0 -> distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.138  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.563  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 1-0 (sign-test p=1.00)  boot95%CI[-0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.785  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.353  dMAE(var-base) +0.007  dRho(var-base) -0.002  weeks variant-won 2-8 (sign-test p=0.11)  boot95%CI[+0.001,+0.014]  [CI excludes 0 -> distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.182  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.337  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+v2_fantasypros_availability  [ablate mode]
+======================================================================
+  ALL        n=4394   MAE base 4.384 vs variant 4.384  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=457    MAE base 7.125 vs variant 7.125  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=1150   MAE base 4.367 vs variant 4.367  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=1836   MAE base 4.138 vs variant 4.138  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=951    MAE base 3.563 vs variant 3.563  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=309    MAE base 6.785 vs variant 6.785  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=486    MAE base 6.347 vs variant 6.347  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=645    MAE base 6.182 vs variant 6.182  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=243    MAE base 5.337 vs variant 5.337  dMAE(var-base) +0.000  dRho(var-base) +0.000  weeks variant-won 0-0 (sign-test p=nan)  boot95%CI[+0.000,+0.000]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+TOP 25 LARGEST MISSES - shipped model (DEFAULT_FEATURES), startable cut, 1683 player-weeks scored
+======================================================================
+ year  wk  pos  player                     pred  actual   error  note
+ 2025   9   TE  Brock Bowers               11.3    43.3   -32.0  UNDERPROJECTED (boom)
+ 2025  16   WR  Puka Nacua                 15.4    46.5   -31.1  UNDERPROJECTED (boom)
+ 2025  10   RB  Jonathan Taylor            19.4    49.6   -30.2  UNDERPROJECTED (boom)
+ 2025  12   RB  Jahmyr Gibbs               25.4    55.4   -30.0  UNDERPROJECTED (boom)
+ 2025  15   WR  Amon-Ra St. Brown          13.2    41.4   -28.2  UNDERPROJECTED (boom)
+ 2025  14   WR  Michael Wilson              9.0    37.2   -28.2  UNDERPROJECTED (boom)
+ 2025  15   QB  Trevor Lawrence            16.1    44.3   -28.1  UNDERPROJECTED (boom)
+ 2025  10   QB  Davis Mills                 0.0    27.7   -27.7  UNDERPROJECTED (boom)
+ 2025  16   WR  Chris Olave                 9.6    36.8   -27.2  UNDERPROJECTED (boom)
+ 2025  17   RB  Derrick Henry              18.7    45.6   -26.9  UNDERPROJECTED (boom)
+ 2025   7   RB  Christian McCaffrey        13.3    39.1   -25.8  UNDERPROJECTED (boom)
+ 2025  15   TE  Trey McBride               11.7    37.4   -25.7  UNDERPROJECTED (boom)
+ 2025  17   RB  Bijan Robinson             15.0    39.9   -24.9  UNDERPROJECTED (boom)
+ 2025   7   QB  Bo Nix                     15.6    40.0   -24.4  UNDERPROJECTED (boom)
+ 2025   8   TE  Tucker Kraft                9.0    33.3   -24.3  UNDERPROJECTED (boom)
+ 2025   9   WR  Drake London               14.6    38.8   -24.2  UNDERPROJECTED (boom)
+ 2025  11   WR  Tetairoa McMillan           8.9    33.0   -24.1  UNDERPROJECTED (boom)
+ 2025   7   WR  DeVonta Smith               9.2    33.3   -24.1  UNDERPROJECTED (boom)
+ 2025  10   RB  De'Von Achane              16.5    40.5   -24.0  UNDERPROJECTED (boom)
+ 2025  11   RB  TreVeyon Henderson          8.5    32.3   -23.8  UNDERPROJECTED (boom)
+ 2025  11   QB  Josh Allen                 19.3    42.7   -23.4  UNDERPROJECTED (boom)
+ 2025  12   WR  Wan'Dale Robinson           7.4    30.6   -23.2  UNDERPROJECTED (boom)
+ 2025   9   WR  Tee Higgins                 9.9    33.1   -23.2  UNDERPROJECTED (boom)
+ 2025  13   WR  A.J. Brown                 12.1    35.2   -23.1  UNDERPROJECTED (boom)
+ 2025   9   QB  Caleb Williams             15.8    38.7   -22.9  UNDERPROJECTED (boom)
+
+-- top 8 per position --
+
+  QB:
+    2025 w15 Trevor Lawrence         pred   16.1  actual   44.3  err  -28.1  (boom)
+    2025 w10 Davis Mills             pred    0.0  actual   27.7  err  -27.7  (boom)
+    2025 w7  Bo Nix                  pred   15.6  actual   40.0  err  -24.4  (boom)
+    2025 w11 Josh Allen              pred   19.3  actual   42.7  err  -23.4  (boom)
+    2025 w9  Caleb Williams          pred   15.8  actual   38.7  err  -22.9  (boom)
+    2025 w11 Justin Herbert          pred   23.0  actual    3.3  err  +19.6  (bust)
+    2025 w17 Brock Purdy             pred   17.4  actual   36.9  err  -19.5  (boom)
+    2025 w14 Daniel Jones            pred   19.9  actual    0.8  err  +19.1  (bust)
+
+  RB:
+    2025 w10 Jonathan Taylor         pred   19.4  actual   49.6  err  -30.2  (boom)
+    2025 w12 Jahmyr Gibbs            pred   25.4  actual   55.4  err  -30.0  (boom)
+    2025 w17 Derrick Henry           pred   18.7  actual   45.6  err  -26.9  (boom)
+    2025 w7  Christian McCaffrey     pred   13.3  actual   39.1  err  -25.8  (boom)
+    2025 w17 Bijan Robinson          pred   15.0  actual   39.9  err  -24.9  (boom)
+    2025 w10 De'Von Achane           pred   16.5  actual   40.5  err  -24.0  (boom)
+    2025 w11 TreVeyon Henderson      pred    8.5  actual   32.3  err  -23.8  (boom)
+    2025 w16 Ashton Jeanty           pred    9.0  actual   31.8  err  -22.8  (boom)
+
+  WR:
+    2025 w16 Puka Nacua              pred   15.4  actual   46.5  err  -31.1  (boom)
+    2025 w15 Amon-Ra St. Brown       pred   13.2  actual   41.4  err  -28.2  (boom)
+    2025 w14 Michael Wilson          pred    9.0  actual   37.2  err  -28.2  (boom)
+    2025 w16 Chris Olave             pred    9.6  actual   36.8  err  -27.2  (boom)
+    2025 w9  Drake London            pred   14.6  actual   38.8  err  -24.2  (boom)
+    2025 w11 Tetairoa McMillan       pred    8.9  actual   33.0  err  -24.1  (boom)
+    2025 w7  DeVonta Smith           pred    9.2  actual   33.3  err  -24.1  (boom)
+    2025 w12 Wan'Dale Robinson       pred    7.4  actual   30.6  err  -23.2  (boom)
+
+  TE:
+    2025 w9  Brock Bowers            pred   11.3  actual   43.3  err  -32.0  (boom)
+    2025 w15 Trey McBride            pred   11.7  actual   37.4  err  -25.7  (boom)
+    2025 w8  Tucker Kraft            pred    9.0  actual   33.3  err  -24.3  (boom)
+    2025 w7  Trey McBride            pred   11.2  actual   29.4  err  -18.2  (boom)
+    2025 w6  Dallas Goedert          pred    8.3  actual   26.0  err  -17.7  (boom)
+    2025 w14 Harold Fannin Jr.       pred    7.8  actual   25.4  err  -17.6  (boom)
+    2025 w11 Travis Kelce            pred    7.9  actual   24.1  err  -16.2  (boom)
+    2025 w12 Hunter Henry            pred    8.6  actual   24.5  err  -15.9  (boom)
+
+full outlier ledger written to .sweeps/ablation_outliers_2025.csv

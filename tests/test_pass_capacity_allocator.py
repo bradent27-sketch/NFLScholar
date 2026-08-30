@@ -51,17 +51,19 @@ def _approx(actual, expected, rel=1e-6):
     return abs(actual - expected) <= abs(expected) * rel + 1e-9
 
 
-def test_trusted_tier_keeps_its_value_when_budget_allows():
-    # A realistic team: 6 real pass catchers (already close to what a team
-    # actually throws) plus 6 deep-bench names each drawing a small nonzero
-    # target value from the flawed league-average fallback the audit found.
+def test_over_budget_room_is_docked_uniformly_across_every_player():
+    # Reverted 2026-08-30 from "trusted tier keeps its value when the budget
+    # allows": an over-budget room is now scaled by ONE uniform factor, so a
+    # top target earner and a deep reserve take the SAME percentage cut and
+    # nobody is pinned to a fabricated share. A realistic team: 6 real pass
+    # catchers plus 6 deep-bench names each drawing a small nonzero share.
     rows = [_board_row('KC', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=34.0)]
-    trusted_targets = [8.5, 7.0, 5.5, 4.0, 2.5, 1.8]
-    for i, t in enumerate(trusted_targets):
-        rows.append(_board_row('KC', f'Trusted{i}', 'WR' if i % 2 == 0 else 'TE', t))
-    tail_targets = [1.2, 1.1, 0.9, 0.8, 0.6, 0.5]
-    for i, t in enumerate(tail_targets):
-        rows.append(_board_row('KC', f'Tail{i}', 'WR', t))
+    top_targets = [8.5, 7.0, 5.5, 4.0, 2.5, 1.8]
+    for i, t in enumerate(top_targets):
+        rows.append(_board_row('KC', f'Top{i}', 'WR' if i % 2 == 0 else 'TE', t))
+    bench_targets = [1.2, 1.1, 0.9, 0.8, 0.6, 0.5]
+    for i, t in enumerate(bench_targets):
+        rows.append(_board_row('KC', f'Bench{i}', 'WR', t))
     board = pd.DataFrame(rows)
 
     out, ledger = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=6)
@@ -69,14 +71,16 @@ def test_trusted_tier_keeps_its_value_when_budget_allows():
     assert len(ledger) == 1
     entry = ledger.iloc[0]
     assert entry['capacity_source'] == 'live projected team pass attempts'
-    trusted_rows = out[out['Player'].str.startswith('Trusted')]
-    for i, t in enumerate(trusted_targets):
-        assert _approx(trusted_rows.iloc[i]['targets'], t)
-    tail_rows = out[out['Player'].str.startswith('Tail')]
-    # The tail's total claim comfortably exceeds what's left after the
-    # trusted tier, so every tail player must shrink from his input value.
-    assert tail_rows['targets'].sum() < sum(tail_targets)
-    assert (tail_rows['targets'] < pd.Series(tail_targets).to_numpy()).all()
+    budget = 34.0 * pca.FALLBACK_TARGET_PER_ATTEMPT
+    claim = sum(top_targets) + sum(bench_targets)
+    factor = budget / claim
+    assert factor < 1.0  # this room over-claims
+    for prefix, before in [('Top', top_targets), ('Bench', bench_targets)]:
+        rows_after = out[out['Player'].str.startswith(prefix)].sort_values('Player')
+        for got, want in zip(rows_after['targets'].to_numpy(), before):
+            assert abs(got - want * factor) <= 1e-3  # allocator rounds to 3 dp
+    catchers = out[out['Pos'].isin(['WR', 'TE'])]
+    assert abs(float(catchers['targets'].sum()) - budget) <= 0.05
 
 
 def test_dependent_stats_rescale_by_the_same_factor_as_targets():
@@ -227,9 +231,49 @@ def test_rb_group_is_still_scaled_to_its_own_sub_budget_when_it_over_claims():
     rb_entry = ledger[ledger['position_group'].eq('RB')].iloc[0]
     assert rb_entry['trusted_count'] == 2
     assert 'scaled down' in rb_entry['reason']
-    # The WR/TE room's own budget was never touched by RB's overflow.
+    # The WR/TE room is fit to its OWN sub-budget, never touched by RB's
+    # overflow. Budget = 30 att * 0.95 target/att * (1 - 0.14 RB share) =
+    # 24.51; the room's 11.0 claim is under that, so symmetric upscaling
+    # (2026-08-29) lifts it to exactly its budget while preserving the 6:5
+    # split - and it never rises toward the 28.5 team total, which is what
+    # an RB-overflow leak would look like.
     wr_rows = out[out['Player'].str.startswith('WR')]
-    assert _approx(wr_rows['targets'].sum(), 11.0)
+    assert _approx(wr_rows['targets'].sum(), 24.51)
+    wr1 = out[out['Player'].eq('WR1')].iloc[0]['targets']
+    wr2 = out[out['Player'].eq('WR2')].iloc[0]['targets']
+    assert _approx(wr1 / wr2, 6.0 / 5.0, rel=1e-3)
+    wr_entry = ledger[ledger['position_group'].eq('WR/TE')].iloc[0]
+    assert 'scaled up' in wr_entry['reason']
+
+
+def test_thin_room_under_its_budget_is_scaled_up_symmetrically():
+    """Explicit ask (2026-08-29): a group whose whole projected claim falls
+    UNDER its own realistic target budget must be scaled UP, the exact mirror
+    of the over-claim trim - not left with the shortfall as lost team volume.
+    Three WR/TE names on a 38-attempt passing team: budget = 38 * 0.95 =
+    36.1, claim = 9 + 6 + 3 = 18, so every player doubles (36.1 / 18) while
+    the 3:2:1 split and each player's own catch rate survive untouched."""
+    rows = [
+        _board_row('LAC', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=38.0),
+        _board_row('LAC', 'WR1', 'WR', 9.0),
+        _board_row('LAC', 'WR2', 'WR', 6.0),
+        _board_row('LAC', 'TE1', 'TE', 3.0),
+    ]
+    board = pd.DataFrame(rows)
+
+    out, ledger = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=8)
+
+    wr_te = out[out['Pos'].isin(['WR', 'TE'])]
+    assert _approx(wr_te['targets'].sum(), 36.1)
+    factor = 36.1 / 18.0
+    for player, before in (('WR1', 9.0), ('WR2', 6.0), ('TE1', 3.0)):
+        row = out[out['Player'].eq(player)].iloc[0]
+        assert _approx(row['targets'], before * factor, rel=1e-3)
+        # personal catch rate (receptions/targets) preserved
+        assert _approx(row['receptions'], row['targets'] * 0.65, rel=1e-3)
+    entry = ledger[ledger['position_group'].eq('WR/TE')].iloc[0]
+    assert 'scaled up' in entry['reason']
+    assert _approx(entry['unallocated'], 0.0)
 
 
 def test_derive_team_rb_catcher_share_reads_real_history_and_falls_back_league_wide():
@@ -246,6 +290,47 @@ def test_derive_team_rb_catcher_share_reads_real_history_and_falls_back_league_w
     empty_team_share, empty_league_share = pca.derive_team_rb_catcher_share(pd.DataFrame())
     assert empty_team_share == {}
     assert _approx(empty_league_share, pca.FALLBACK_RB_CATCHER_SHARE)
+
+
+def test_team_volume_conservation_holds_across_pass_volume_levels():
+    """The 2026-08-22 V2 audit's guardrail as a fast synthetic regression:
+    after apply_pass_capacity_conservation, a team's whole RB+WR+TE target
+    total must sit at its attempt-derived budget, not the 1.2x-1.6x it used
+    to run at - and that must hold at LOW, MID, and HIGH team pass volume
+    (the audit's "three different week values", here as three attempt
+    levels), so a future refactor cannot silently reintroduce the blowup
+    for one part of the range. Each room below is deliberately inflated well
+    past the +/-1 deadband so the fit always engages."""
+    ratio = pca.FALLBACK_TARGET_PER_ATTEMPT  # prior_history=None -> 0.95
+    rows = []
+    # (team, QB pass attempts) - low / mid / high volume offenses.
+    for team, attempts in (('LO', 27.0), ('MID', 35.0), ('HI', 43.0)):
+        rows.append(_board_row(team, f'{team}-QB', 'QB', 0.0, 0.0, 0.0, 0.0,
+                               passing_attempts=attempts))
+        # An over-claiming room: 5 WR + 2 TE + 3 RB whose raw targets sum to
+        # well over attempts * ratio for every one of the three teams.
+        for i, t in enumerate((11.0, 9.0, 7.0, 4.0, 3.0)):
+            rows.append(_board_row(team, f'{team}-WR{i+1}', 'WR', t))
+        for i, t in enumerate((6.0, 3.0)):
+            rows.append(_board_row(team, f'{team}-TE{i+1}', 'TE', t))
+        for i, t in enumerate((5.0, 3.0, 1.5)):
+            rows.append(_board_row(team, f'{team}-RB{i+1}', 'RB', t))
+    board = pd.DataFrame(rows)
+
+    out, ledger = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=8)
+
+    for team, attempts in (('LO', 27.0), ('MID', 35.0), ('HI', 43.0)):
+        budget = attempts * ratio
+        catchers = out[out['Team'].eq(team) & out['Pos'].isin(['RB', 'WR', 'TE'])]
+        total_after = float(catchers['targets'].sum())
+        # Conserved: within a target of the budget (rounding + the deadband
+        # slack), and nowhere near the pre-fit ~48-target claim.
+        assert abs(total_after - budget) <= 1.0, (team, total_after, budget)
+        assert total_after < 0.85 * float(
+            board[board['Team'].eq(team) & board['Pos'].isin(['RB', 'WR', 'TE'])]['targets'].sum())
+        # Dependent stats moved with targets - no receptions left stranded
+        # above the new target count.
+        assert float(catchers['receptions'].sum()) <= total_after + 1e-6
 
 
 def main():

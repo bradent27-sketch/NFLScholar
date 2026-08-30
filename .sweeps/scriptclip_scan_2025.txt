@@ -1,0 +1,45 @@
+=== SCRIPT_CLIP sweep DONE Sun Aug 30 15:18:30 CDT 2026 ===
+years=[2025] weeks=4-17  shipped SCRIPT_CLIP=(0.85, 1.15)
+
+--- SCRIPT_CLIP = (0.85, 1.15)  SHIPPED
+    ALL       n=4394   MAE 4.3811   rankcorr 0.6601
+    QB        n=457    MAE 7.1257   rankcorr 0.3840
+    RB        n=1150   MAE 4.3602   rankcorr 0.7323
+    WR        n=1836   MAE 4.1379   rankcorr 0.6414
+    TE        n=951    MAE 3.5569   rankcorr 0.6331
+    START-RB  n=485    MAE 6.3298   rankcorr 0.4188
+    START-WR  n=644    MAE 6.1851   rankcorr 0.2826
+    START-TE  n=243    MAE 5.3403   rankcorr 0.1887
+
+--- SCRIPT_CLIP = (0.8, 1.2)  
+    ALL       n=4394   MAE 4.3811   rankcorr 0.6601
+    QB        n=457    MAE 7.1257   rankcorr 0.3840
+    RB        n=1150   MAE 4.3602   rankcorr 0.7323
+    WR        n=1836   MAE 4.1379   rankcorr 0.6414
+    TE        n=951    MAE 3.5569   rankcorr 0.6331
+    START-RB  n=485    MAE 6.3298   rankcorr 0.4188
+    START-WR  n=644    MAE 6.1851   rankcorr 0.2826
+    START-TE  n=243    MAE 5.3403   rankcorr 0.1887
+
+--- SCRIPT_CLIP = (0.75, 1.25)  
+    ALL       n=4394   MAE 4.3811   rankcorr 0.6601
+    QB        n=457    MAE 7.1257   rankcorr 0.3840
+    RB        n=1150   MAE 4.3602   rankcorr 0.7323
+    WR        n=1836   MAE 4.1379   rankcorr 0.6414
+    TE        n=951    MAE 3.5569   rankcorr 0.6331
+    START-RB  n=485    MAE 6.3298   rankcorr 0.4188
+    START-WR  n=644    MAE 6.1851   rankcorr 0.2826
+    START-TE  n=243    MAE 5.3403   rankcorr 0.1887
+
+--- SCRIPT_CLIP = (0.7, 1.3)  
+    ALL       n=4394   MAE 4.3811   rankcorr 0.6601
+    QB        n=457    MAE 7.1257   rankcorr 0.3840
+    RB        n=1150   MAE 4.3602   rankcorr 0.7323
+    WR        n=1836   MAE 4.1379   rankcorr 0.6414
+    TE        n=951    MAE 3.5569   rankcorr 0.6331
+    START-RB  n=485    MAE 6.3298   rankcorr 0.4188
+    START-WR  n=644    MAE 6.1851   rankcorr 0.2826
+    START-TE  n=243    MAE 5.3403   rankcorr 0.1887
+
+
+[exited with code 0]

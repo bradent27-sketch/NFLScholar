@@ -541,6 +541,22 @@ def test_weighted_player_rates_weighs_recent_games_more():
     assert out.loc['A', 'targets'] > flat_avg
 
 
+def test_scheme_matchup_override_is_scoped_to_tight_ends():
+    """v2_scheme_matchup ships TE-only (2026-09-02).
+
+    The scheme PREVIEW is still computed for WR - it stays visible in the
+    audit panel and testable by a sweep - but only TE is allowed to have its
+    projection moved by it, because the cross-season sweep found a clean
+    replicating TE win and no startable WR win at any weight. This pins the
+    two constants apart so a later edit cannot quietly widen the override
+    back to WR by reusing SCHEME_DEFENSE_SUPPORTED_POSITIONS.
+    """
+    assert set(wp.SCHEME_MATCHUP_SCORING_POSITIONS) == {'TE'}
+    assert 'WR' in wp.SCHEME_DEFENSE_SUPPORTED_POSITIONS,         "the preview must still be COMPUTED for WR, only the scoring is scoped"
+    assert wp.SCHEME_MATCHUP_SCORING_POSITIONS < set(wp.SCHEME_DEFENSE_SUPPORTED_POSITIONS),         "scoring scope must be a strict subset of where the preview exists"
+    assert 'v2_scheme_matchup' in wp.DEFAULT_FEATURES
+
+
 def test_rematch_bump_is_neutral_at_the_shipped_multiplier():
     """REMATCH_WEIGHT_MULT ships at 1.0 as of 2026-09-02, so a rematch game
     must weigh EXACTLY the same as an equally-recent ordinary game.

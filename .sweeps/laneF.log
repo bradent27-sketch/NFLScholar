@@ -5,3 +5,33 @@ Lane F waiting for a free lane (D or E to finish) Tue Sep  1 20:23:33 CDT 2026
   done Wed Sep  2 06:55:11 CDT 2026
   mg ok 3823MB Wed Sep  2 06:55:11 CDT 2026
 [F2] WR scheme weight sweep 0.3-0.7 (2024+2025 wk2-18)
+  done Wed Sep  2 10:07:25 CDT 2026
+  mg wait 2403MB 1 Wed Sep  2 10:07:26 CDT 2026
+  mg wait 2283MB 2 Wed Sep  2 10:09:26 CDT 2026
+  mg wait 2197MB 3 Wed Sep  2 10:11:27 CDT 2026
+  mg wait 2078MB 4 Wed Sep  2 10:13:27 CDT 2026
+  mg wait 2366MB 5 Wed Sep  2 10:15:28 CDT 2026
+  mg wait 2196MB 6 Wed Sep  2 10:17:28 CDT 2026
+  mg wait 2092MB 7 Wed Sep  2 10:19:28 CDT 2026
+  mg wait 2188MB 8 Wed Sep  2 10:21:29 CDT 2026
+  mg wait 2342MB 9 Wed Sep  2 10:23:29 CDT 2026
+  mg wait 2300MB 10 Wed Sep  2 10:25:30 CDT 2026
+  mg wait 2377MB 11 Wed Sep  2 10:27:30 CDT 2026
+  mg wait 2344MB 12 Wed Sep  2 10:29:30 CDT 2026
+  mg wait 2447MB 13 Wed Sep  2 10:31:31 CDT 2026
+  mg wait 2484MB 14 Wed Sep  2 10:33:31 CDT 2026
+  mg wait 2378MB 15 Wed Sep  2 10:35:32 CDT 2026
+  mg wait 2459MB 16 Wed Sep  2 10:37:32 CDT 2026
+  mg wait 2536MB 17 Wed Sep  2 10:39:32 CDT 2026
+  mg wait 2668MB 18 Wed Sep  2 10:41:33 CDT 2026
+  mg wait 2541MB 19 Wed Sep  2 10:43:33 CDT 2026
+  mg wait 2546MB 20 Wed Sep  2 10:45:34 CDT 2026
+  mg wait 2732MB 21 Wed Sep  2 10:47:34 CDT 2026
+  mg wait 2549MB 22 Wed Sep  2 10:49:34 CDT 2026
+  mg wait 2699MB 23 Wed Sep  2 10:51:35 CDT 2026
+  mg wait 2771MB 24 Wed Sep  2 10:53:35 CDT 2026
+  mg wait 2582MB 25 Wed Sep  2 10:55:36 CDT 2026
+  mg ok 6973MB Wed Sep  2 10:57:36 CDT 2026
+[F3] scheme-alone reference (v2_scheme_matchup, 2024+2025 wk2-18)
+  done Wed Sep  2 12:08:25 CDT 2026
+LANE F DONE Wed Sep  2 12:08:25 CDT 2026

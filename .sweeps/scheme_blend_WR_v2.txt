@@ -54,3 +54,118 @@ builds ~= 170
 2026-09-02 06:55:32.742 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
 2024 w2 done  [INERT - no row moved]
 2024 w3 done
+2024 w4 done
+2024 w5 done
+2024 w6 done
+2024 w7 done
+2024 w8 done
+2024 w9 done
+2024 w10 done
+2024 w11 done
+2024 w12 done
+2024 w13 done
+2024 w14 done
+2024 w15 done
+2024 w16 done
+2024 w17 done
+2024 w18 done
+2026-09-02 08:31:27.562 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 08:31:28.718 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w2 done  [INERT - no row moved]
+2025 w3 done
+2025 w4 done
+2025 w5 done
+2025 w6 done
+2025 w7 done
+2025 w8 done
+2025 w9 done
+2025 w10 done
+2025 w11 done
+2025 w12 done
+2025 w13 done
+2025 w14 done
+2025 w15 done
+2025 w16 done
+2025 w17 done
+2025 w18 done
+
+
+====================================================================================================
+FIXED SCHEME WEIGHT SWEEP - WR   (32 weeks where the feature actually moved a row)
+====================================================================================================
+
+--- targets ---
+weight   scope             n  MAE base   MAE var     dMAE      w-l              95% CI
+0.30     WR             4430     1.940     1.939   -0.001    18-14     [-0.003,+0.001]
+0.30     START-WR       1580     2.622     2.626   +0.004    19-13     [-0.011,+0.027]
+0.40     WR             4430     1.940     1.939   -0.001    18-14     [-0.004,+0.001]
+0.40     START-WR       1580     2.622     2.626   +0.004    15-17     [-0.013,+0.027]
+0.50     WR             4430     1.940     1.939   -0.001    19-13     [-0.004,+0.001]
+0.50     START-WR       1580     2.622     2.625   +0.003    16-16     [-0.014,+0.027]
+0.70     WR             4430     1.940     1.938   -0.002    16-16     [-0.005,+0.001]
+0.70     START-WR       1580     2.622     2.629   +0.007    16-16     [-0.014,+0.030]
+
+--- receptions ---
+weight   scope             n  MAE base   MAE var     dMAE      w-l              95% CI
+0.30     WR             4430     1.394     1.394   -0.000    13-19     [-0.002,+0.001]
+0.30     START-WR       1580     1.921     1.928   +0.007    20-12     [-0.005,+0.021]
+0.40     WR             4430     1.394     1.394   -0.000    14-18     [-0.002,+0.002]
+0.40     START-WR       1580     1.921     1.930   +0.008    16-16     [-0.004,+0.022]
+0.50     WR             4430     1.394     1.394   -0.000    14-18     [-0.002,+0.002]
+0.50     START-WR       1580     1.921     1.932   +0.011    16-16     [-0.003,+0.025]
+0.70     WR             4430     1.394     1.394   -0.000    14-18     [-0.003,+0.002]
+0.70     START-WR       1580     1.921     1.934   +0.012    13-19     [-0.002,+0.027]
+
+--- receiving_yards ---
+weight   scope             n  MAE base   MAE var     dMAE      w-l              95% CI
+0.30     WR             4430    20.263    20.232   -0.031    20-12     [-0.054,-0.009] *
+0.30     START-WR       1580    29.476    29.481   +0.005    18-14     [-0.144,+0.180]
+0.40     WR             4430    20.263    20.225   -0.039    20-12     [-0.067,-0.011] *
+0.40     START-WR       1580    29.476    29.571   +0.096    16-16     [-0.085,+0.275]
+0.50     WR             4430    20.263    20.219   -0.044    20-12     [-0.078,-0.011] *
+0.50     START-WR       1580    29.476    29.545   +0.070    14-18     [-0.159,+0.294]
+0.70     WR             4430    20.263    20.204   -0.060    22-10     [-0.104,-0.017] *
+0.70     START-WR       1580    29.476    29.569   +0.093    15-17     [-0.124,+0.315]
+
+
+====================================================================================================
+CROSS-SEASON CHECK - each season scored independently (the decisive test)
+====================================================================================================
+
+--- targets ---
+weight   scope           2024 dMAE    2025 dMAE            agree?
+0.30     WR                 -0.001       -0.000               yes
+0.30     START-WR           -0.006       +0.015   NO - sign flips
+0.40     WR                 -0.001       -0.001               yes
+0.40     START-WR           -0.002       +0.010   NO - sign flips
+0.50     WR                 -0.001       -0.001               yes
+0.50     START-WR           -0.003       +0.010   NO - sign flips
+0.70     WR                 -0.001       -0.002               yes
+0.70     START-WR           +0.002       +0.011               yes
+
+--- receptions ---
+weight   scope           2024 dMAE    2025 dMAE            agree?
+0.30     WR                 -0.001       +0.001   NO - sign flips
+0.30     START-WR           -0.002       +0.016   NO - sign flips
+0.40     WR                 -0.001       +0.001   NO - sign flips
+0.40     START-WR           +0.005       +0.012               yes
+0.50     WR                 -0.001       +0.001   NO - sign flips
+0.50     START-WR           +0.004       +0.017               yes
+0.70     WR                 -0.001       +0.001   NO - sign flips
+0.70     START-WR           +0.006       +0.019               yes
+
+--- receiving_yards ---
+weight   scope           2024 dMAE    2025 dMAE            agree?
+0.30     WR                 -0.031       -0.031               yes
+0.30     START-WR           -0.111       +0.125   NO - sign flips
+0.40     WR                 -0.043       -0.035               yes
+0.40     START-WR           -0.009       +0.202   NO - sign flips
+0.50     WR                 -0.050       -0.038               yes
+0.50     START-WR           -0.030       +0.171   NO - sign flips
+0.70     WR                 -0.072       -0.048               yes
+0.70     START-WR           +0.039       +0.149               yes
+
+(A weight that flips sign between seasons is not a finding, whatever the pooled
+ number says. Ship only what holds in both.)
+
+(dMAE negative = the fixed weight beats DEFAULT_FEATURES. * = 95% CI excludes 0.)

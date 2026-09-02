@@ -174,6 +174,38 @@ ALIGNMENT_SCORING_STAT_MAP = {
 # which does not change across weight values - mutating this dict alone
 # would silently serve a stale cached result otherwise); never set here by
 # default.
+# Positions where man/zone scheme evidence REPLACES the broad matchup when
+# 'v2_scheme_matchup' is on. Deliberately narrower than
+# SCHEME_DEFENSE_SUPPORTED_POSITIONS ({TE, WR}), which governs where the
+# scheme preview is COMPUTED - the preview is still built for WR so it stays
+# visible in the audit panel and testable by a sweep; this constant governs
+# only where it is allowed to move a projection.
+#
+# TE ONLY, set 2026-09-02 from the cross-season sweep (2024+2025 wk2-18,
+# scripts/sweep_scheme_blend_weight2.py + a scheme-alone reference run on the
+# identical weeks). The two positions want opposite things:
+#
+#   TE  - scheme alone is a clean win, and it replicates. targets -0.009
+#         CI[-0.015,-0.004], START-TE targets -0.042 CI[-0.085,-0.010],
+#         receptions -0.007 CI[-0.013,-0.002] (23-9 weeks). The weight sweep
+#         agreed in sign across BOTH seasons independently at every weight
+#         tested for targets and receptions - 20 of 20 rows.
+#
+#   WR  - no startable win at any weight. The full WR pool improves on
+#         receiving yards (-0.031 to -0.083, CI excludes 0, both seasons
+#         agree), but START-WR is worse or sign-flipping everywhere; at
+#         weight 0.70 both seasons agree it is WORSE (+0.039, +0.149). The
+#         gain is concentrated in deep-bench receivers nobody starts, so
+#         letting scheme override alignment there trades a real startable
+#         signal for a bench-only one.
+#
+# The single most promising unshipped number in this project's backlog was
+# "START-WR receiving_yards -0.297, CI excludes 0" for the scheme/alignment
+# blend. On a proper cross-season test that is -0.073 with CI [-0.345,
+# +0.203] - noise from one season, the same failure mode as the coaching
+# work. It is recorded here so it is not resurrected from the old note.
+SCHEME_MATCHUP_SCORING_POSITIONS = frozenset({'TE'})
+
 SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT = {}
 
 # One past the last real week of a completed prior season, so every one of
@@ -815,6 +847,25 @@ DEFAULT_FEATURES = frozenset({
     # see weekly_rankings_backlog.md. Forecast-safe: schedule wind is
     # available for future weeks.
     'v2_weather_adjustment',
+    # Shipped 2026-09-02, TE ONLY - the override is scoped by
+    # SCHEME_MATCHUP_SCORING_POSITIONS ({'TE'}), see that constant for the
+    # full evidence and for why WR is deliberately excluded.
+    #
+    # Man/zone scheme evidence replaces the broad matchup for a TE with
+    # available scheme evidence. Cross-season sweep (2024+2025 wk2-18) plus a
+    # scheme-alone reference on identical weeks: TE targets -0.009
+    # CI[-0.015,-0.004], START-TE targets -0.042 CI[-0.085,-0.010], TE
+    # receptions -0.007 CI[-0.013,-0.002] over 23-9 weeks. The weight sweep
+    # agreed in SIGN across both seasons independently at every weight tested
+    # for targets and receptions - 20 of 20 rows - which is the cleanest
+    # replication anything in this project has produced.
+    #
+    # WR numbers can still move slightly under this flag WITHOUT being
+    # scheme-adjusted: the pass-capacity allocator conserves team targets, so
+    # a TE volume change rebalances the receiver room. Verified - with
+    # SCHEME_MATCHUP_SCORING_POSITIONS emptied, zero rows move at any
+    # position; with it set to {'TE'}, TE and WR both move and RB/QB do not.
+    'v2_scheme_matchup',
 })
 
 
@@ -6919,7 +6970,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     align_w * alignment_player_factor + scheme_w * scheme_player_factor,
                     total_w, out=np.ones(len(cur)), where=blend_available)
                 matchup_mult = np.where(blend_available, blended_factor, matchup_mult)
-            elif 'v2_scheme_matchup' in feats:
+            elif 'v2_scheme_matchup' in feats and pos in SCHEME_MATCHUP_SCORING_POSITIONS:
                 matchup_mult = np.where(scheme_residual_available, scheme_player_factor, matchup_mult)
 
             if cold_start and 'v2_cold_start_regression' in feats:

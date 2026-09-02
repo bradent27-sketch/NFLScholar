@@ -1,0 +1,68 @@
+2026-09-02 10:57:38.231 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.232 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.233 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.233 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.236 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.236 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.237 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.237 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.238 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.238 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.238 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.240 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.240 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.240 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.240 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.241 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.241 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.242 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.242 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.242 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.243 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.243 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.244 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.244 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.245 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.247 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.270 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.297 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.298 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 10:57:38.298 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:38.788 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:39.344 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:39.344 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 10:57:39.683 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:42.269 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 10:57:50.871 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 11:29:49.332 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 11:29:50.514 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+years=[2024, 2025] weeks=2-18 scoring=Full PPR stats=['targets', 'receptions', 'receiving_yards']
+
+==========================================================================
+v2_scheme_matchup  [add mode]  per-stat breakdown
+==========================================================================
+  WR         targets          n=4430   MAE 1.940 vs 1.938  dMAE(var-base) -0.002  weeks 18-14 (p=0.60)  CI[-0.006,+0.002] [CI includes 0]
+  START-WR   targets          n=1581   MAE 2.629 vs 2.628  dMAE(var-base) -0.001  weeks 16-16 (p=1.00)  CI[-0.022,+0.019] [CI includes 0]
+  WR         receptions       n=4430   MAE 1.394 vs 1.393  dMAE(var-base) -0.000  weeks 13-19 (p=0.38)  CI[-0.004,+0.003] [CI includes 0]
+  START-WR   receptions       n=1581   MAE 1.927 vs 1.931  dMAE(var-base) +0.003  weeks 14-18 (p=0.60)  CI[-0.012,+0.018] [CI includes 0]
+  WR         receiving_yards  n=4430   MAE 20.258 vs 20.175  dMAE(var-base) -0.083  weeks 20-12 (p=0.22)  CI[-0.148,-0.022] [CI excludes 0]
+  START-WR   receiving_yards  n=1581   MAE 29.582 vs 29.509  dMAE(var-base) -0.073  weeks 19-13 (p=0.38)  CI[-0.345,+0.203] [CI includes 0]
+  TE         targets          n=2239   MAE 1.602 vs 1.593  dMAE(var-base) -0.009  weeks 22-10 (p=0.05)  CI[-0.015,-0.004] [CI excludes 0]
+  START-TE   targets          n=590    MAE 2.380 vs 2.338  dMAE(var-base) -0.042  weeks 22-10 (p=0.05)  CI[-0.085,-0.010] [CI excludes 0]
+  TE         receptions       n=2239   MAE 1.302 vs 1.294  dMAE(var-base) -0.007  weeks 23-9 (p=0.02)  CI[-0.013,-0.002] [CI excludes 0]
+  START-TE   receptions       n=590    MAE 1.909 vs 1.878  dMAE(var-base) -0.031  weeks 24-8 (p=0.01)  CI[-0.066,+0.005] [CI includes 0]
+  TE         receiving_yards  n=2239   MAE 15.204 vs 15.191  dMAE(var-base) -0.012  weeks 14-18 (p=0.60)  CI[-0.081,+0.053] [CI includes 0]
+  START-TE   receiving_yards  n=590    MAE 23.374 vs 23.071  dMAE(var-base) -0.303  weeks 20-12 (p=0.22)  CI[-0.632,+0.012] [CI includes 0]

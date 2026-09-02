@@ -14,6 +14,46 @@ run **strictly sequentially** (the ~16.7 GB box OOMs otherwise).
 
 ---
 
+## 0. NEXT PUSH — action required: PFF weekly archive tracking
+
+**User instruction (2026-09-01):** the PFF weekly archive must be committed to
+the repo so the scheme/alignment backtests stay reproducible across checkouts
+and model versions, "no matter what" for now. It can be dropped once the app is
+finished and calibrated.
+
+`pff_imports/2024/weekly/` was added 2026-09-01 (weeks 1-18 + postseason 19-22,
+3 reports each + `manifest.csv`) and verified loading time-valid. It is
+currently **untracked** — `.gitignore:87` (`pff_imports/*/weekly/`) excludes it,
+so it needs `git add -f` to stage.
+
+**DECIDED 2026-09-01 — user elected to proceed knowingly.** Track the archive;
+purpose is running the local Streamlit app reproducibly, not redistribution.
+
+Context that decision was made against, recorded so it stays reviewable:
+remote `origin` is a **PUBLIC** GitHub repo (`bradent27-sketch/NFLScholar`),
+so anything committed is world-readable, cloneable and search-indexed
+regardless of intent. `.gitignore:87` exists for this case — its comment reads
+"never stage the raw subscription reports by accident when preparing a public
+push." These are licensed PFF subscription exports. `pff_imports/2025/weekly/`
+(55 files) is already tracked and therefore already public.
+
+**Cheap reversal if the intent is "local use only":** make the repo private —
+that gives full reproducibility across checkouts with none of the exposure,
+and needs no change to layout or code. Worth one minute before the next push.
+
+TO DO AT NEXT PUSH:
+```
+git add -f pff_imports/2024/weekly/
+```
+(`.gitignore:87` blocks it otherwise; same force-add 2025 needed.) Verify with
+`git status --short pff_imports/2024/weekly | wc -l` -> expect ~67 files
+(22 weeks x 3 reports + manifest.csv).
+
+Drop the whole archive from the repo once the model is finished and calibrated
+— it is a testing input, not a runtime dependency of the app.
+
+---
+
 ## 1. 2026-08-29 session — status of each item
 
 | Item | Status | Notes |
@@ -23,7 +63,7 @@ run **strictly sequentially** (the ~16.7 GB box OOMs otherwise).
 | #3 Vacancy-redistribution table (Role/audit tab) | shipped | Extended `redistribute_v2_vacated_usage` ledger with per-recipient detail; `_render_vacancy_redistribution` |
 | #4 Symmetric upward capacity scaling | shipped | Folded into the A/B/D bundle below |
 | #5 FantasyPros injuries: only Out/Doubtful → 0%, probability shown for reference only | shipped | `data/availability_overrides.py`, both feed paths |
-| **#6 New Orleans defense-vs-RB audit + Kamara-out RB redistribution** | **not started** | Etienne under-projected on snap/rush/reception share; Neal (RB3) ~35% too high; Kendre Miller (RB5) 10% should be 0. Needs a board build. |
+| **#6 New Orleans Kamara-out RB redistribution** | **done 2026-08-31** (behind `v2_rb_snap_anchored_volume`) | Kamara manually OUT (`availability_overrides.csv`). Root cause: with Kamara removed, chart RB3 Neal became effective-rank 2 and skipped the RB1←RB3+ depth nudge → ~34% snaps; and Miller's 8% was `_role_base` crediting back his pre-2024-injury role. Fixes under the flag: (a) nudge donor test keys off the **literal** chart rank + wider cap (`RB_VOL_SNAP_NUDGE_CAP=0.12`); (b) chart RB4+ vacancy-extension gets a smaller floor; (c) `ourlads_player_audit_arrays` now exposes `source_occurrence`, and a player charted **only** as a continuation/2nd-unit row (`position_occurrence≥1` — Miller) is shrunk toward ~1.5% AND has his interrupted-season pre-gap credit dropped in `_role_base` (`chart_deprioritized`). Result NO wk1: **Etienne 47→63%, Neal 34→24%, Estimé held 11%, Miller 8.2→2.1%**. 2 regression tests added, 24/24 allocator + 87/87 weekly-proj green. Defense-vs-RB side not touched. |
 | A ±1 target capacity deadband | shipped | `PASS_CAPACITY_DEADBAND = 1.0`, both directions |
 | B Buried-vet depth-chart dock (Brown/Franklin) | shipped + **fixed 2026-08-30** + tested | Was broken: checked Ourlads rank ≥4 as if team-wide, but Ourlads ranks per alignment slot, so a backup is rank **2**. Fixed: WR slot rank 2 → keep 50%, rank 3+ → hard cap. **TE runs one deeper** (`_TE = 3`) — a charted TE-2 is often the receiving TE (Gesicki). `apply_buried_veteran_dock` helper + 3 unit tests. Verified live: Brown 4.15→2.33 tgt, Franklin 4.81→2.86, Gesicki untouched at 3.23. Watch: stale Ourlads TE order for LAC/GB. |
 | C Verify WR/TE budget uses the **post-defense/pace** QB attempt number | **static confirmed** | Trace confirms `apply_pass_capacity_conservation` reads `passing_attempts` after defense × script × pace × availability × environment. Empirical board-trace check (a few high-volume offenses) still NOT done. **No speculative attempt-raise, per user.** |
@@ -95,6 +135,9 @@ alone); the calibration paste; re-run the startable-tier holdout check in
 - Pass-capacity over-budget dock → **uniform proportional** (anchor waterfall reverted)
 - `MATCHUP_CLIP` (0.75, 1.30) → **(0.82, 1.22)** — narrow-the-band, from the 2026-08-30 scan
 - Buried-vet dock **fixed** (Ourlads per-slot rank; WR slot-2 dock, TE slot-3)
+- `v2_td_prior_credibility` + `v2_rb_snap_anchored_volume` → **added to DEFAULT_FEATURES**
+  at the user's explicit request (live/inspectable now; standalone ablation backtests
+  still queued at §8 #6/#7, either may be reverted if it doesn't pass)
 
 The final calibration re-run (queued, §3h) covers all four.
 
@@ -240,31 +283,62 @@ Detailed evidence for each item is in `docs/overnight_backtest_log_2026-08-30.md
 | 1 | GTE power sweep (§3g) | `.sweeps/gte_power_2025.txt` | **DONE** — per-position: RB wants ~1.5–2× more elasticity, TE less, QB/WR ~optimal. → per-position tune, confirm on 2 seasons at #5. |
 | 2 | MATCHUP_CLIP scan (§3a) | — | **DONE** — shipped `(0.82, 1.22)`. |
 | 3 | SCRIPT_CLIP scan (§3b) | — | **DONE — NO CHANGE.** Clamp is dormant; `(0.85, 1.15)` stays. |
-| 4 | Injury/vacancy mechanism check (§3d) | `python scripts/validate_injury_vacancy.py --year 2025 --weeks 5-17` | **NEXT** |
-| 5 | GTE 2-season confirm | per-position elasticity (RB 0.17→~0.28, TE 0.30→~0.22, QB/WR keep), `GAME_TOTAL_CLIP` widened in step, 2024 + 2025 | queued |
-| 6 | Case 2 backtest | `python scripts/backtest_component.py --add v2_td_prior_credibility --years 2025 --weeks 4-17` | queued |
-| 7 | Case 1 backtest | `python scripts/backtest_component.py --add v2_rb_snap_anchored_volume --years 2025 --weeks 4-17` | queued |
-| 8 | **FINAL calibration re-run** | `python scripts/fit_weekly_calibration.py --years 2021,2022,2023`, half-strength damp, paste into `WEEKLY_CALIBRATION` | **STAYS LAST** — only once no more model changes are pending |
+| 4 | Injury/vacancy mechanism check (§3d) | `python scripts/validate_injury_vacancy.py --year 2025 --weeks 5-17` | **DONE 2026-08-31** — 2 harness bugs fixed; 77% vacated vol re-placed, 54% recip proj closer (RB 63%). Passed-but-weak. Log §3d-result. |
+| 5 | GTE 2-season confirm | elasticity RB 0.28 / TE 0.22 / QB 0.42 / WR 0.14, clip (0.82, 1.24); `--add v2_game_total_elasticity --years 2024,2025 --weeks 4-17` → `.sweeps/gte_perpos_confirm_2024-2025.txt` | **DONE 2026-08-31.** ALL −0.010 (19-9 wks). **RB −0.024, CI excl 0** (confirms RB↑). QB −0.055 (21-7, p=0.01, clip-widen spillover). WR flat (keep 0.14). **TE 0.22 REJECTED — START-TE +0.102, CI excl 0** (0.30→0.22 hurt startable TE; power-sweep's "TE wants less" was inferred from up-only scaling). → **revert TE to 0.30**, keep RB 0.28 + clip widen, pending ship decision on the flag itself. |
+| 6 | Case 2 backtest | ablation: `backtest_component.py --flags v2_td_prior_credibility --years 2025 --weeks 4-17` → `.sweeps/case2_td_prior_credibility_2025.txt` | **RESOLVED 2026-08-30 — KEPT (softened) in DEFAULT_FEATURES.** In-season ablation exact 0.000 (cold-start-only). First cold-start ablation (old K): −0.08 RB / **−0.14 START-RB** from removing it. Traced to over-regressing proven multi-season starters → **softened**: `TD_PRIOR_CREDIBILITY_K` 220/90/340 → 130/55/200, one-season cap 0.60→0.70. **Wide re-backtest** (`.sweeps/ablate_td_prior_cred_wk1_wide.txt`, 2020-2025 wk1): START-RB drag **−0.142 → −0.009** (gone); startable pools now wash-to-helps; ALL still −0.024 (6-0) but deep-bench-weighted. Neutral where decisions are made + principled ⇒ keep. Log §7/§7b. |
+| 7 | Case 1 backtest | **RESOLVED 2026-08-30 — `v2_rb_snap_anchored_volume` REMOVED from DEFAULT_FEATURES** (stays a switchable MODEL_FEATURES flag). Cold-start ablation (`.sweeps/ablate_rb_snap_anchored_wk1.txt`, wk1 2023-25): removing it helps RB — RB −0.065, **START-RB −0.288 (3-0 wks)**. User: "the etienne case is a true outlier that is tough to predict with data." **Miller replaced with a standing chart rule** (not the removed flag): (a) `RB_CHART_VACANCY_EXTENSION_MAX=1` — one out top-3 back reaches the chart RB4, never the RB5; (b) `continuation_only` (Ourlads `position_occurrence>=1` second-column listing) is now computed unconditionally and makes a candidate a deep-reserve credibility stop in the allocator. Live result: Miller 8.2%→**0%** snaps (Etienne 51.5%, Neal 36.9%, Estimé 11.6%). Tests added. Log §7. |
+| 8 | **FINAL calibration re-run** | `python scripts/fit_weekly_calibration.py --years 2021,2022,2023`, half-strength damp, paste into `WEEKLY_CALIBRATION` | **DONE 2026-08-30** (`.sweeps/calibration_fit_2026-08-30.txt`, n=11,761). Raw fit QB (0.472, 8.129) / RB (0.856, 1.952) / WR (0.934, 1.924) / TE (0.942, 1.493) — within 0.001 slope / ~0.01 intercept of the prior fit; a near-no-op, as expected (all four DEFAULT_FEATURES changes are cold-start/injury-only, don't touch the wk5-17 fit population). Half-strength damped values stored: QB (0.736, 4.064) / RB (0.928, 0.976) / WR (0.967, 0.962) / TE (0.971, 0.747) — largest move RB intercept −0.006. Half-strength kept (see §8-note). 419 tests pass. |
+| 10 | **WR/TE vacancy pecking-order A/B** | `validate_injury_vacancy.py --year 2025 --weeks 5-17` ± `--no-pecking` | **DONE 2026-08-30 — NEUTRAL, keep.** Flag `v2_receiver_vacancy_pecking_order` (in DEFAULT_FEATURES). Rank-decay curve + hard cutoff + same-position affinity (`RECEIVER_VACANCY_RANK_DECAY=0.62`, `_LEAD_SHARE=0.24`, `_CROSS_POS_WEIGHT=0.30`, `_PARTICIPATION_RANKS=8`, `_ABS_GROWTH_FLOOR=2.0`). 213 cases: recipient-closer 53.3% ON vs 53.9% OFF (−0.6pp = ~5 flips, noise; no week pattern). Fixes the pathology it targets — HOU Collins 43%→13% of vacated targets, Noel 12%→34%, Hutchinson 9%→21%, WR5/6 the rest, tail ~0 — at no measurable broad cost. `validate_injury_vacancy.py` also fixed to route WR/TE sources through the production path (allocator receiver branch); reproduced the old item-#4 numbers on the OFF run. Log §6 + §7. |
+| 9 | **Cold-start Week-1 A/B** (the real test for the RB-allocator / role-floor / QB1 chart machinery) | `python scripts/eval_weekly_model.py --years 2023,2024,2025 --weeks 1 --variants default,default+v2_historical_ourlads` → `.sweeps/coldstart_ourlads_wk1_2023-2025.txt` | **DONE 2026-08-31 — CLEAR WIN, one-directional.** Every scope improves with the frozen ~09/01 chart, 3-0 weeks almost everywhere. ALL dMAE **−0.650** (ρ +0.099); QB **−1.535** (bias −3.23→+0.96 — cold-start QB1 identity); WR **−0.812** (ρ +0.071, bias +1.70→+0.03); TE **−0.539**; RB −0.120. Startable: START-WR −1.254, START-TE −1.347, START-RB −0.302, all 3-0. Only soft spot: **START-QB** MAE −0.217 but **ρ −0.198 (2-1)**. Huge default cold-start over-projection (START-WR bias +4.87→+2.53) is the chart fixing who's actually on the field. n is small (3 seasons × wk1 ≈ 3 correlated samples) but the sign is unambiguous. **Validates the chart-consuming Week-1 machinery — keep it.** `v2_historical_ourlads` stays a backtest-only flag (zero live-board effect; the live path already reads the live CSV). |
 
 > **PAUSE POINT 2026-08-30:** stopped after #3 to commit + push `weeklymodel-2026-08-30`
 > so the work can continue on a second machine. Resume at #4.
 
 ### Also still owed (not blocking the queue)
 
-- **#6 New Orleans D-vs-RB audit + Kamara-out RB redistribution** (§1 table row #6) —
-  needs a 2026 Week 1 board build. Etienne under-projected on snap/rush/reception
-  share; Neal (RB3) ~35% too high; Kendre Miller (RB5) 10% should be 0. Related to
-  the Case 1 `v2_rb_snap_anchored_volume` work.
+- **#6 New Orleans** — Kamara-out RB redistribution **done 2026-08-31** (see §1 row #6).
+  Still open only: the NO **defense-vs-RB** side (does NO's D allow enough RB
+  rushing/receiving volume) was not audited; and Miller at 8.2% is off real
+  prior-season evidence — revisit only if a chart-order-dominance lever is wanted.
 - **B (buried-vet dock) live eyeball** on the 2026 Week 1 board: Brown / Franklin /
   Lemon / Wicks / Oliver / Hooper / Zaccheaus / Vele. Plus a dedicated regression
   test (needs a build fixture with an Ourlads chart burying a vet).
 - **C:** empirical QB-attempt board traces for a few high-volume offenses (confirm
   the pass-capacity input value — do **not** raise it, per user).
 - **#2 build-board flow** browser smoke test (no AppTest for that tab).
-- **Confirm run** for `DEFENSE_PRIOR_GAMES = 12` on 2024 / multi-year (value was
-  chosen on 2025 wk4-17 alone).
+- ~~**Confirm run** for `DEFENSE_PRIOR_GAMES = 12` on 2024 / multi-year~~ **DONE
+  2026-08-31** — `sweep_defense_prior_games.py` values 8/10/12/16/20 on 2022-2023
+  wk4-14 (`.sweeps` task bc6ixh376). Flat basin: whole-pool ALL spans 0.004
+  across pg 8-20; >12 hurts TE (CI-excl-0). **Keep 12.** Faint pg=8-10 startable
+  TE/WR hint logged, not worth a calibration re-fit. See
+  `docs/overnight_backtest_log_2026-08-31.md`.
 - **Lost result:** the scheme-blend fixed-weight sweeps (`sweep_scheme_blend_weight.py`,
   TE 0.6–0.9 / WR 0.3–0.7) ran in a prior session and the output was never recorded
   (§3 "Resolution unknown"). Re-run if `v2_scheme_*` is revisited.
 - **`v2_rb_snap_anchored_volume` / `v2_td_prior_credibility` live-board sanity checks**
   (Etienne/Kamara, Harvey/Henry) — deferred pending a free job slot.
+- **Draft projection — ECR dependence reduced 2026-08-31 (untuned).** `data/draft_projections.py`:
+  `STAT_SELF_WEIGHT` usage stats 0.70→0.80–0.82, receptions 0.65→0.76, yards +0.05,
+  TDs +0.02 (kept low — genuine regression); `FULL_TRUST_GAMES` 24→20;
+  `ROLE_CHANGE_EVIDENCE_FLOOR = 0.30` (new — a promoted player keeps ≥30% of his own
+  line instead of collapsing onto the rank curve). Board rebuilds clean, no neg/NaN,
+  402 players on "own history". **Owed:** (1) no draft-projection backtest harness
+  exists — build one that scores `build_projected_board` (year N-1 data + ECR) against
+  year N actuals, then sweep the self-weights + the floor; (2) the cleaner role-change
+  fix — project *volume* from the curve at the new rank but *efficiency* (yds/touch,
+  TD/touch) from the player's own history, instead of one blended `evidence`.
+
+### 2026-08-31 overnight — two new flags built, BOTH negative, nothing shipped
+- **`v2_coaching_aware_defense_prior`** (MODEL_FEATURES only). `data/coaching_changes.py`
+  (HC nflverse 1999-2026, DC Ourlads 2023-25). Analysis: HC+DC change resets a
+  defense (persistence corr +0.02), DC-only-under-retained-HC is *more* stable
+  (+0.33). Model backtest 2023-25 wk4-17: whole-pool dead flat, START-RB +0.029
+  (small real drag). **Not shipping.** Live use would need curated current-season
+  DC data anyway.
+- **`v2_weather_adjustment`** (MODEL_FEATURES only) + **`data/weather.py`**
+  (provider-agnostic; Open-Meteo keyless, verified pulling live 2026 forecasts;
+  Visual Crossing adapter ready for a key). Wind/cold effect measured 2015-25
+  (QB −14% @ 15-20mph, WR −11%, RB none). Backtests: QB effect flips sign
+  across windows; WR unexploitable (boom variance); only a tiny RB volume
+  knock-on survives (−0.005). **Not shipping the adjustment; keeping the infra.**
+- Full detail + tables: `docs/overnight_backtest_log_2026-08-31.md`.

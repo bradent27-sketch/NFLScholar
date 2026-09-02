@@ -22,7 +22,8 @@ from data.coverage_radar import (
     team_nickname, build_team_man_zone_rates, build_alignment_matchup_data,
 )
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config, get_pff_color, get_matchup_color
-from ui.components import render_matchup_title, render_percentile_metric_tiles, skeleton_loader
+from ui.components import (render_matchup_title, render_percentile_metric_tiles,
+                           render_back_button, skeleton_loader)
 
 # Sharp Football's coverage-tendency export keys teams by bare nickname
 # (e.g. "Dolphins"), while build_points_allowed_matrix keys by nflverse
@@ -79,6 +80,11 @@ def _merge_matchup_and_coverage(def_matrix, pff_man_zone_df, mof_df=None):
 
 
 def render():
+    # This tab is a jump DESTINATION - Player Search's "View Matchup vs X"
+    # button lands here with the opponent pre-selected - so it needs the same
+    # way back every other destination offers. Without this the jump was
+    # one-way and you had to re-navigate by hand (fixed 2026-09-01).
+    render_back_button()
     c_t3_year, c_t3_score = st.columns(2)
     with c_t3_year:
         t3_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_tab3")

@@ -1084,10 +1084,66 @@ def check_data_health():
     for yr in [2024, 2025, 2026]:
         check_file(f"Weekly stats {yr}", [f"stats_player_week_{yr}.csv"])
         check_file(f"Rosters {yr}", [f"roster_weekly_{yr}.csv"])
-        check_file(f"Snap counts {yr}", [f"snap_counts_{yr}.csv.csv", f"snap_counts_{yr}.csv"])
+        # Snap counts are OPTIONAL and were reported as a scary "not found"
+        # for every season but 2025, which is exactly the false alarm this
+        # panel exists to prevent: load_year_data's real primary source is
+        # nflverse (_pivot_nflreadpy_snap_counts, 2012-present), and the
+        # local csv is only a supplement that gets topped up from nflverse
+        # anyway. Measured coverage with NO local file is 86-88% of players.
+        # Reported as present-or-absent supplement, never as a failure.
+        local_snap = next((c for c in (f"snap_counts_{yr}.csv.csv", f"snap_counts_{yr}.csv")
+                           if os.path.exists(c)), None)
+        if local_snap:
+            checks.append((f"Snap counts {yr} (local supplement + nflverse)",
+                           local_snap, True, _file_rows(local_snap)))
+        else:
+            checks.append((f"Snap counts {yr} (nflverse — no local supplement needed)",
+                           "nflverse load_snap_counts", True, None))
     check_pff_file("PFF receiving summary (2025)", "receiving_summary", 2025)
     check_pff_file("PFF passing summary (2025)", "passing_summary", 2025)
     check_pff_file("PFF rushing summary (2025)", "rushing_summary", 2025)
+
+    # --- COVERAGE checks, not just presence -----------------------------
+    # Added 2026-09-01 after a real failure: a depth-chart import silently
+    # landed only 8 of 32 teams and there was NO surface anywhere in the app
+    # that would say so - the file existed, so every presence-style check
+    # was happy while three quarters of the league quietly fell back to
+    # prior-season logic. A file that exists but is two-thirds empty is the
+    # failure mode this panel is for, so these report what is INSIDE.
+    # _current_nfl_season() is "in progress or most recently completed"; the
+    # depth-chart/PFF question is about the season being PREPARED for, which
+    # from August onward is the next one.
+    import datetime as _dt
+    season = _current_nfl_season() + (1 if _dt.date.today().month >= 8 else 0)
+    try:
+        from data.ourlads_depth_charts import OURLADS_IMPORT_PATH
+        import pandas as _pd
+        if os.path.exists(OURLADS_IMPORT_PATH):
+            snap = _pd.read_csv(OURLADS_IMPORT_PATH, dtype=str)
+            for yr in sorted({season, season - 1}, reverse=True):
+                rows = snap[_pd.to_numeric(snap.get('year'), errors='coerce') == yr]
+                if rows.empty:
+                    continue
+                teams = rows['team'].nunique()
+                label = f"Ourlads depth charts {yr} — {teams}/32 teams"
+                checks.append((label, str(OURLADS_IMPORT_PATH), teams >= 32, len(rows)))
+        else:
+            checks.append(("Ourlads depth charts", str(OURLADS_IMPORT_PATH), False, None))
+    except Exception:
+        pass  # diagnostics must never crash the app
+
+    # PFF WEEKLY archive - the scheme/alignment features are silently inert
+    # for any season without one, which is invisible from the season totals.
+    for yr in (2024, 2025, 2026):
+        wk_dir = os.path.join('pff_imports', str(yr), 'weekly')
+        weeks = sorted(d for d in glob.glob(os.path.join(wk_dir, '*'))
+                       if os.path.isdir(d) and os.path.basename(d).isdigit())
+        if weeks:
+            checks.append((f"PFF weekly archive {yr} — {len(weeks)} weeks",
+                           wk_dir, True, len(weeks)))
+        elif yr < season:
+            checks.append((f"PFF weekly archive {yr} (scheme features inert without it)",
+                           os.path.join(wk_dir, '{1..18}'), False, None))
     return checks
 
 

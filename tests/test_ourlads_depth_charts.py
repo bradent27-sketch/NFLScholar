@@ -13,8 +13,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import data.ourlads_depth_charts as odc  # noqa: E402
 
 
-def _chart() -> bytes:
-    return b'''From: <Saved by Blink>
+def _chart(team: str = "MIA", name: str = "Miami Dolphins") -> bytes:
+    """A minimal saved printer-friendly page. `team`/`name` let a test build
+    a second, DIFFERENT team's page for the batched-import case."""
+    return _CHART_TEMPLATE.replace(b"MIA", team.encode()).replace(
+        b"Miami Dolphins", name.encode())
+
+
+_CHART_TEMPLATE = b'''From: <Saved by Blink>
 MIME-Version: 1.0
 Content-Type: multipart/related; boundary="chart"
 
@@ -112,6 +118,89 @@ class OurladsFullbackAndRankTests(unittest.TestCase):
         self.assertEqual(matched["source_rank"], 2)
 
 
+_MULTI_UNIT_PAGE = b"""From: <Saved by Blink>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="chart"
+
+--chart
+Content-Type: text/html; charset=UTF-8
+Content-Location: https://www.ourlads.com/nfldepthcharts/pfdepthchart/SEA
+
+<html><head><title>Seattle Seahawks Depth Chart</title></head><body>
+<table><tr><th>Pos</th><th>Player 1</th><th>Player 2</th></tr>
+<tr><td>LWR</td><td>Real, Starter 24/1</td><td>Real, Backup 25/2</td></tr>
+<tr><td>QB</td><td>Real, Passer 22/1</td><td></td></tr>
+<tr><td>RB</td><td>Real, Runner 23/1</td><td></td></tr>
+</table>
+<table><tr><th>Pos</th><th>Player 1</th><th>Player 2</th></tr>
+<tr><td>LDE</td><td>Def, End 24/1</td><td>Def, Two 25/1</td></tr>
+<tr><td>NT</td><td>Def, Tackle 24/1</td><td>Def, Four 25/1</td></tr>
+<tr><td>MLB</td><td>Def, Backer 24/1</td><td>Def, Six 25/1</td></tr>
+<tr><td>LCB</td><td>Def, Corner 24/1</td><td>Def, Eight 25/1</td></tr>
+</table>
+<table><tr><th>Pos</th><th>Player</th><th>Player</th></tr>
+<tr><td>WR</td><td>Squad, Receiver 25/7</td><td>Squad, Two 25/7</td></tr>
+<tr><td>RB</td><td>Squad, Runner 25/7</td><td>Squad, Four 25/7</td></tr>
+<tr><td>ED</td><td>Squad, Edge 25/7</td><td>Squad, Six 25/7</td></tr>
+<tr><td>CB</td><td>Squad, Corner 25/7</td><td>Squad, Eight 25/7</td></tr>
+<tr><td>S</td><td>Squad, Safety 25/7</td><td>Squad, Ten 25/7</td></tr>
+</table>
+</body></html>
+--chart--
+"""
+
+
+class OurladsTableSelectionTests(unittest.TestCase):
+    """Regression cover for the 2026-09-01 wrong-table bug.
+
+    A saved page carries five same-shaped tables (offense / defense / special
+    teams / practice squad / IR). Table choice used to be by SIZE, so the
+    longest unit won - which is routinely the defense or the practice squad,
+    not the offense. 24 of 32 real 2026 pages failed this way, reporting
+    "no offense rows" or "no Pos / Player columns" with the offense table
+    sitting unread right there. Both failure modes are pinned here because
+    both were silent: the page parsed "successfully" into the wrong unit.
+    """
+
+    def setUp(self):
+        self.frame, self.report = odc.parse_ourlads_depth_chart(
+            _MULTI_UNIT_PAGE, "SEA.mhtml")
+
+    def test_offense_table_is_chosen_over_a_longer_defense_table(self):
+        self.assertEqual(self.report["error"], "")
+        self.assertEqual(self.report["team"], "SEA")
+        # Defense table has more rows than offense - size must not decide.
+        players = set(self.frame["player"])
+        self.assertIn("Starter Real", players)
+        self.assertFalse([p for p in players if p.startswith("End Def")],
+                         "defensive rows must never reach the snapshot")
+
+    def test_practice_squad_table_is_excluded(self):
+        # The PS table is the LONGEST here and contains real offense labels
+        # (WR/RB), so a naive "most rows" or "any offense label" rule takes
+        # it. Its rank-1 entries would then feed the role-floor logic as
+        # starters.
+        players = set(self.frame["player"])
+        self.assertFalse([p for p in players if p.startswith("Receiver Squad")
+                          or p.startswith("Runner Squad")],
+                         "practice-squad rows must never reach the snapshot")
+        self.assertEqual(len(self.frame), 4)  # LWR x2 + QB + RB
+
+    def test_unnumbered_player_headers_still_parse(self):
+        """A large minority of pages label columns "Player" with no number;
+        the old number-only regex dropped those pages entirely."""
+        page = _MULTI_UNIT_PAGE.replace(b"<th>Player 1</th><th>Player 2</th>",
+                                        b"<th>Player</th><th>Player</th>", 1)
+        frame, report = odc.parse_ourlads_depth_chart(page, "SEA.mhtml")
+        self.assertEqual(report["error"], "")
+        self.assertEqual(len(frame), 4)
+        lwr = frame[frame["position_label"].eq("LWR")].sort_values("depth_rank")
+        # Unnumbered columns take their left-to-right order as the rank.
+        self.assertEqual(lwr["depth_rank"].tolist(), [1, 2])
+        self.assertTrue(lwr.iloc[0]["is_listed_starter"])
+        self.assertFalse(lwr.iloc[1]["is_listed_starter"])
+
+
 class OurladsInboxAndArchiveTests(unittest.TestCase):
     def test_from_dir_imports_pages_and_archives_the_previous_snapshot(self):
         import tempfile
@@ -135,13 +224,54 @@ class OurladsInboxAndArchiveTests(unittest.TestCase):
             self.assertEqual(report["team_count"], 1)
             self.assertEqual(report["source_files"],
                              ["2026 Miami Dolphins Depth Chart _ Ourlads.com.mhtml"])
-            # live snapshot was overwritten with the fresh 2026 rows
-            self.assertTrue((pd.read_csv(csv_path)["year"] == 2026).all())
+            # The fresh 2026 rows land...
+            written = pd.read_csv(csv_path)
+            self.assertTrue((written[written["year"] == 2026]["team"] == "MIA").all())
+            # ...and an UNRELATED SEASON is left alone. Import merges rather
+            # than replacing the file (changed 2026-09-01) - it only
+            # supersedes the (year, team) pairs the batch actually contains.
+            self.assertIn(2025, set(written["year"]))
             # the previous csv + the raw page were archived
             arch = report["archive"]
             self.assertTrue(Path(arch["archived_csv"]).is_file())
             self.assertEqual(arch["archived_pages"], 1)
             self.assertEqual(pd.read_csv(arch["archived_csv"])["year"].iloc[0], 2025)
+
+    def test_batched_imports_accumulate_instead_of_replacing(self):
+        """The league is ~74MB of pages, so it often cannot be imported in one
+        go. Importing a few teams at a time must ADD to the snapshot; the old
+        behaviour overwrote the file and silently discarded every earlier
+        batch, while reporting the teams merely absent from the current batch
+        as "missing"."""
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = Path(tmp) / "ourlads_depth_charts.csv"
+            snap_a, rep_a = odc.save_ourlads_snapshot(
+                [("mia.mhtml", _chart())], 2026, path=csv_path, archive=False)
+            self.assertEqual(rep_a["batch_teams"], ["MIA"])
+            self.assertEqual(rep_a["carried_teams"], [])
+
+            # A second batch for a DIFFERENT team must not evict the first.
+            snap_b, rep_b = odc.save_ourlads_snapshot(
+                [("hou.mhtml", _chart(team="HOU", name="Houston Texans"))], 2026, path=csv_path, archive=False)
+            self.assertEqual(rep_b["batch_teams"], ["HOU"])
+            self.assertEqual(rep_b["carried_teams"], ["MIA"])
+            self.assertEqual(rep_b["team_count"], 2)
+            self.assertNotIn("MIA", rep_b["missing_teams"])
+
+            on_disk, problem = odc.load_ourlads_snapshot(2026, path=csv_path)
+            self.assertIsNone(problem)
+            self.assertEqual(sorted(on_disk["team"].unique().tolist()), ["HOU", "MIA"])
+
+            # Re-importing a team REPLACES its rows rather than duplicating.
+            before = len(on_disk)
+            odc.save_ourlads_snapshot(
+                [("mia2.mhtml", _chart())], 2026, path=csv_path, archive=False)
+            again, _ = odc.load_ourlads_snapshot(2026, path=csv_path)
+            self.assertEqual(len(again), before)
+            self.assertEqual(sorted(again["team"].unique().tolist()), ["HOU", "MIA"])
+
 
     def test_from_dir_reports_a_clear_error_when_the_folder_is_empty(self):
         import tempfile

@@ -53,6 +53,68 @@ def test_missing_value_or_no_rows_does_not_raise():
     assert tier_by_position(df, 'not_a_column', pos_col='Pos').isna().all()
 
 
+# --- availability robustness (2026-09-01) --------------------------------
+# Both crashes below were found by stress-running a full 15-round draft, and
+# both took the ENTIRE draft room down with an AttributeError rather than
+# degrading. Cause in each case: DataFrame.get returns None for a missing
+# column, and pd.to_numeric(None) is a numpy scalar, not a Series - so the
+# Series methods the fallback logic relies on (.isna(), .where()) exploded.
+
+def _availability_board(drop=()):
+    import numpy as _np
+    n = 40
+    df = pd.DataFrame({
+        'Player': [f'P{i}' for i in range(n)],
+        'Pos': ['RB', 'WR', 'QB', 'TE'] * (n // 4),
+        'ADP': _np.linspace(1, 200, n),
+        'Expected Pick': _np.linspace(1, 200, n),
+        'ADP SD': _np.linspace(2, 30, n),
+        'VORP': _np.linspace(120, 0, n),
+    })
+    return df.drop(columns=list(drop))
+
+
+def test_add_availability_survives_a_board_with_no_expected_pick_column():
+    from data.draft_board import add_availability
+    out = add_availability(_availability_board(drop=['Expected Pick']), 25, current_pick=12)
+    assert 'Avail Next %' in out.columns
+    # Falls back to ADP rather than crashing, so the column is real.
+    assert out['Avail Next %'].notna().any()
+
+
+def test_add_availability_survives_a_board_with_no_adp_sd_column():
+    """effective_adp_sd's own published-vs-estimated fallback had the same bug."""
+    from data.draft_board import add_availability
+    out = add_availability(_availability_board(drop=['ADP SD']), 25, current_pick=12)
+    assert out['Avail Next %'].notna().any()
+
+
+def test_add_availability_reports_unknown_when_there_is_nothing_to_model():
+    """No Expected Pick AND no ADP is genuinely unknowable - the honest
+    answer is an empty column, still never an exception."""
+    from data.draft_board import add_availability
+    out = add_availability(_availability_board(drop=['Expected Pick', 'ADP']), 25, current_pick=12)
+    assert out['Avail Next %'].isna().all()
+
+
+def test_refresh_pick_context_cost_does_not_grow_through_a_draft():
+    """The live-draft room calls this on every pick. A per-pick cost that
+    grew with picks taken would surface as the room getting slower and
+    eventually timing out late in a draft."""
+    import time as _time
+    import numpy as _np
+    from data.draft_board import refresh_pick_context
+    avail = _availability_board()
+    early, late = [], []
+    for pick in range(1, 31):
+        t0 = _time.perf_counter()
+        refresh_pick_context(avail, pick + 12, pick)
+        (early if pick <= 10 else late).append(_time.perf_counter() - t0)
+    # Generous bound - this is a regression guard against an O(picks) blow-up,
+    # not a benchmark.
+    assert _np.mean(late) < max(_np.mean(early) * 4, 0.05)
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith('test_') and callable(fn)]

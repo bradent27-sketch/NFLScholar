@@ -1553,8 +1553,17 @@ def fetch_intelligent_depth_chart(team, _stats_df, _df_pff_rec, year,
     # entirely once real weekly data exists (had_real_weekly_data) - a
     # played season is ordered on what actually happened.
     if _ourlads_rank_map and not had_real_weekly_data and dedup_key in team_df.columns:
-        ol_rank = (clean_name_exact(team_df[dedup_key].astype(str))
-                   .map(_ourlads_rank_map).astype(float))
+        # Exact key first, then the suffix-stripped one for anything it
+        # missed. The two sources do not agree on suffixes and
+        # clean_name_exact deliberately preserves them, so an exact-only
+        # lookup silently skipped every Jr./Sr./II/III player - ARI's QB2/QB3
+        # came out reversed because "GARDNER MINSHEW II" never matched the
+        # roster's "Gardner Minshew". The map carries both forms; this tries
+        # both, preferring exact.
+        names = team_df[dedup_key].astype(str)
+        ol_rank = clean_name_exact(names).map(_ourlads_rank_map).astype(float)
+        loose_rank = clean_name_for_merge(names).map(_ourlads_rank_map).astype(float)
+        ol_rank = ol_rank.fillna(loose_rank)
         if ol_rank.notna().any():
             team_df['depth_score'] = np.where(
                 ol_rank.notna(), 1000.0 - ol_rank.fillna(0) * 10.0, team_df['depth_score'])

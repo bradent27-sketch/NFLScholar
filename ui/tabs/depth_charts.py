@@ -6,7 +6,7 @@ from config import (MASTER_TEAMS_LIST, TEAM_CONFIG, TAB_PLAYER_SEARCH,
                     AVAILABLE_SEASONS, AVAILABLE_SEASONS_WITH_UPCOMING)
 from data.transforms import load_and_merge_data, fetch_intelligent_depth_chart
 from data.loaders import build_veteran_database, load_pff_data_with_fallback
-from data.utils import clean_name_exact
+from data.utils import clean_name_exact, clean_name_for_merge
 from data.weekly_projections import (resolve_preseason_qb1s, resolve_inseason_qb1s,
                                      save_qb1_override, clear_qb1_override,
                                      _all_played_weeks, _invalidate_weekly_projection_cache)
@@ -270,10 +270,21 @@ def _ourlads_rank_map_for(snapshot, team):
     slot = (pd.to_numeric(rows.get('source_slot'), errors='coerce')
             .fillna(pd.to_numeric(rows.get('depth_rank'), errors='coerce'))
             .fillna(9.0))
+    players = rows['player'].astype(str)
     out = {}
-    for key, s in zip(clean_name_exact(rows['player'].astype(str)), slot):
-        if key and (key not in out or s < out[key]):
-            out[key] = float(s)
+    # BOTH key forms, because the two sources spell suffixes differently and
+    # clean_name_exact deliberately PRESERVES them: Ourlads writes "GARDNER
+    # MINSHEW II" / "Marvin Harrison Jr." / "DEEBO SAMUEL SR." where the
+    # roster has the bare name, so an exact-only map silently dropped every
+    # suffixed player from the ordering (confirmed: ARI's QB2/QB3 came out
+    # reversed because Minshew never matched). The loose key strips
+    # suffixes/punctuation and is what bridges them; it is written first so
+    # an exact hit always wins where both exist.
+    for keys, series in ((clean_name_for_merge(players), slot),
+                         (clean_name_exact(players), slot)):
+        for key, s in zip(keys, series):
+            if key and (key not in out or s < out[key]):
+                out[key] = float(s)
     return out
 
 
@@ -337,11 +348,48 @@ def _render_ourlads_import_control(year, team):
             # manual rerun.
             fetch_intelligent_depth_chart.clear()
             _build_snap_totals.clear()
-            st.success(f"Imported {len(imported):,} rows for {report['team_count']}/32 teams.")
+            batch = report.get('batch_teams') or []
+            carried = report.get('carried_teams') or []
+            st.success(
+                f"Imported {len(imported):,} rows for {len(batch)} team(s) in this batch "
+                f"({', '.join(batch)}). Snapshot now covers {report['team_count']}/32 teams.")
+            if carried:
+                st.caption(
+                    f"Kept from earlier imports: {', '.join(carried)}. Batches accumulate — "
+                    "a team is only replaced when a newer page for it is imported.")
             if report.get('missing_teams'):
-                st.warning(f"Still missing: {', '.join(report['missing_teams'])}")
+                st.warning(
+                    f"Still to import ({len(report['missing_teams'])}): "
+                    f"{', '.join(report['missing_teams'])}. Import the rest in further "
+                    "batches; nothing already loaded is lost.")
+
+            # File-level accounting, shown whenever anything did not make it
+            # through. Without this a batch where the browser silently dropped
+            # most of the upload is indistinguishable from one where every page
+            # failed to parse - the difference decides whether to retry the
+            # upload or fix the pages, so it must not be buried.
+            received = report.get('files_received', 0)
+            parsed = report.get('files_parsed', 0)
+            if received and parsed < received:
+                st.error(
+                    f"{received} file(s) reached the app, {parsed} parsed. "
+                    f"{received - parsed} failed - details below.")
+            elif received:
+                st.caption(f"{received} file(s) reached the app, all {parsed} parsed.")
+            if received and received < len(MASTER_TEAMS_LIST) and not report.get('carried_teams'):
+                st.info(
+                    f"Only {received} file(s) arrived. If you selected more than that, the "
+                    "browser upload dropped the rest - a full league is ~74MB. Use the "
+                    "`ourlads_inbox/` folder + the import button above instead; it reads "
+                    "from disk and has no upload limit.")
             for unreadable in report.get('unreadable_files', []):
-                st.caption(f"Skipped {unreadable['source_file']}: {unreadable['error']}")
+                st.caption(f"⚠️ Skipped {unreadable['source_file']}: {unreadable['error']}")
+            dupes = report.get('duplicate_teams') or []
+            if dupes:
+                st.caption(
+                    f"Multiple pages for {', '.join(dupes)} - kept the one with the newest "
+                    "'Updated' timestamp. If several pages resolved to the SAME team by "
+                    "mistake, that is why fewer teams landed than files sent.")
             archive = report.get('archive') or {}
             if archive.get('archived_csv') or archive.get('archived_pages'):
                 st.caption(

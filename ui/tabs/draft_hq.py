@@ -1742,8 +1742,8 @@ def _render_positional_scarcity(available, settings):
         })
     if rows:
         st.markdown("**Positional scarcity**")
-        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True,
-                     height=df_auto_height(len(rows)))
+        st.dataframe(style_plain_dataframe(pd.DataFrame(rows)), width="stretch",
+                     hide_index=True, height=df_auto_height(len(rows)))
 
 
 
@@ -2073,8 +2073,8 @@ def _render_market_comparison(board, settings, meta, status):
             "bias of who it happened to draw. **Context, not a projection input** — scaling "
             "projections by it was backtested on 748 player-seasons and made them worse."
         )
-        st.dataframe(environment.head(32), width="stretch", hide_index=True,
-                     height=df_auto_height(10))
+        st.dataframe(style_plain_dataframe(environment.head(32)), width="stretch",
+                     hide_index=True, height=df_auto_height(10))
     elif vegas.get('error'):
         st.caption(f"Vegas game lines: {vegas['error']}")
 
@@ -2895,8 +2895,9 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
     if dc['complete']:
         st.success("Mock complete.")
         grades = grade_draft(dc['state'], settings)
-        st.dataframe(grades[['Rank', 'Team', 'Starters Proj', 'Bench Proj']], width="stretch",
-                     hide_index=True, height=df_auto_height(len(grades)))
+        st.dataframe(
+            style_plain_dataframe(grades[['Rank', 'Team', 'Starters Proj', 'Bench Proj']]),
+            width="stretch", hide_index=True, height=df_auto_height(len(grades)))
         # Every roster in the room is known here, so the season can be played
         # out against the teams that actually drafted rather than against a
         # reconstructed field - the one place this simulation has no
@@ -2910,8 +2911,9 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
                 table = table.reset_index().rename(columns={'Team': 'Slot'})
                 table['Slot'] = table['Slot'].map(
                     lambda t: f"Team {t}" + (" ★" if t == dc['my_slot'] else ""))
-                st.dataframe(table.sort_values('Wins', ascending=False), width="stretch",
-                             hide_index=True, height=df_auto_height(len(table)))
+                st.dataframe(
+                    style_plain_dataframe(table.sort_values('Wins', ascending=False)),
+                    width="stretch", hide_index=True, height=df_auto_height(len(table)))
                 st.caption(
                     "Wins, not points. Each season redraws the schedule and re-rolls every "
                     "player's weeks from the real distribution of scores at his projected rank, "
@@ -3028,8 +3030,9 @@ def _render_mock_tools(board, settings, ctx):
             m3.metric("Avg league finish", f"{outcomes['League Rank'].mean():.1f}")
             st.caption("Read as tendencies, not predictions — 60% of drafts is a player your "
                        "slot reliably gets; 10% is a coin flip you shouldn't plan around.")
-            st.dataframe(summary[['round', 'Player', 'Pos', '% of drafts']], width="stretch",
-                         hide_index=True, height=df_auto_height(min(len(summary), 26)))
+            st.dataframe(
+                style_plain_dataframe(summary[['round', 'Player', 'Pos', '% of drafts']]),
+                width="stretch", hide_index=True, height=df_auto_height(min(len(summary), 26)))
 
     if run_slots:
         sims_each = max(4, int(n_sims) // 3)
@@ -3042,7 +3045,7 @@ def _render_mock_tools(board, settings, ctx):
             st.caption("Which slots your settings actually favour — the answer moves with league "
                        "size, superflex and TE premium, so the usual wisdom about 'the turn' "
                        "often doesn't apply.")
-            st.dataframe(cmp_df, width="stretch", hide_index=True,
+            st.dataframe(style_plain_dataframe(cmp_df), width="stretch", hide_index=True,
                          height=df_auto_height(len(cmp_df)))
 
 
@@ -3074,9 +3077,11 @@ def _render_news(board, settings):
             on_board = inj[inj['Player'].isin(set(board['Player']))] if not board.empty else inj
             merged = on_board.merge(board[['Player', 'Pos', 'Team', 'ECR']], on='Player', how='left')
             merged = merged.sort_values('ECR', na_position='last')
-            st.dataframe(merged[['Player', 'Pos', 'Team', 'Injury Status', 'Injury Detail', 'ECR']],
-                         width="stretch", hide_index=True,
-                         height=df_auto_height(min(len(merged), 20)))
+            st.dataframe(
+                style_plain_dataframe(
+                    merged[['Player', 'Pos', 'Team', 'Injury Status', 'Injury Detail', 'ECR']]),
+                width="stretch", hide_index=True,
+                height=df_auto_height(min(len(merged), 20)))
     with c2:
         st.markdown("**Latest headlines**")
         news, news_err = fetch_player_news()
@@ -3106,7 +3111,8 @@ def _render_news(board, settings):
         else:
             show = vals[['player', 'pos', 'team', 'age', 'ecr_1qb', 'ecr_2qb', 'value_1qb', 'value_2qb']]
             show = show.rename(columns={'player': 'Player', 'pos': 'Pos', 'team': 'Team', 'age': 'Age'})
-            st.dataframe(show.head(120), width="stretch", hide_index=True, height=df_auto_height(24))
+            st.dataframe(style_plain_dataframe(show.head(120)), width="stretch",
+                         hide_index=True, height=df_auto_height(24))
 
 
 def _board_load_signature(cfg, ffa_upload):

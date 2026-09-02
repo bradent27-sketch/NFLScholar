@@ -51,12 +51,25 @@ def test_the_table_carries_the_columns_the_panel_renders():
         assert column in table.columns, column
 
 
-def test_a_missing_import_reads_as_not_loaded_with_no_timestamp():
+def test_a_missing_import_reads_as_not_loaded_with_no_timestamp(tmp_path, monkeypatch):
     # A blank timestamp, not today's date - "imported just now" for a file
     # that was never imported is the exact confusion this panel replaces.
+    #
+    # Runs against an EMPTY temp directory, not the developer's real
+    # external_data/. This used to assert on 'Underdog' against live disk and
+    # so failed on any machine that had actually saved an Underdog payload -
+    # a false alarm about the app on a checkout where nothing was wrong
+    # (fixed 2026-09-01). What is under test is the "never imported" 
+    # rendering, which needs a guaranteed-absent source to be meaningful.
+    import data.import_status as ist
+    monkeypatch.chdir(tmp_path)
+    for attr in ('EXTERNAL_DIR', 'EXTERNAL_DATA_DIR', 'DATA_DIR'):
+        if hasattr(ist, attr):
+            monkeypatch.setattr(ist, attr, tmp_path / 'external_data')
+
     table = status_table({}).set_index('Source')
     row = table.loc['Underdog']
-    assert row['Loaded'] == '—'
+    assert row['Loaded'] == '—', "an absent import must not render as loaded"
     assert row['Imported'] == ''
     assert row['Age'] == ''
 

@@ -22,7 +22,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from config import AVAILABLE_SEASONS_WITH_UPCOMING, TEAM_CONFIG
+from config import (AVAILABLE_SEASONS_WITH_UPCOMING, TEAM_CONFIG, TAB_PLAYER_SEARCH,
+                    TAB_DEFENSIVE_YIELD, abbr_to_pff_team)
 from data.draft_board import DEFAULT_SCORING, tier_by_position
 from data.transforms import (load_and_merge_data, build_recent_form_rank, build_form_series,
                              score_projected_stats)
@@ -38,7 +39,7 @@ from ui.charts import sparkline_data_uri
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
                         get_diverging_color, get_multiplier_color)
 from ui.components import (position_group_buttons, apply_position_group, skeleton_loader,
-                           import_hint)
+                           import_hint, switch_tab)
 
 _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing_yards',
                     'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds']
@@ -220,11 +221,55 @@ def _fmt_stat(stat, value, signed=False):
     return f"{value:+.{decimals}f}" if signed else f"{value:.{decimals}f}"
 
 
+def _render_decomposition_navigation(detail):
+    """Route out of the Deep Dive into this player's full profile or this
+    week's defensive matchup.
+
+    Weekly Rankings is the tab people live in, and until 2026-09-01 it was a
+    NAVIGATION DEAD END - the only tab with a player table and no way to
+    click through to Player Search, because its own row-select gesture is
+    already spent opening this dialog. Putting the jumps here instead of on
+    the row keeps that gesture and still makes every player reachable.
+
+    on_click callbacks, not `if st.button(...)`, for the reason every other
+    cross-tab jump in this app documents: app.py's st.tabs(key="active_tab")
+    is already instantiated by the time a tab body runs, and Streamlit only
+    allows assigning to a keyed widget's state from a callback. switch_tab
+    also records nav_back_tab, so both destinations offer "Back to Weekly
+    Fantasy" once they land.
+    """
+    player, team = detail.get('player'), detail.get('team')
+    opponent, season = detail.get('opponent'), detail.get('season_year')
+    if not player:
+        return
+    left, right = st.columns(2)
+    with left:
+        kwargs = {'jump_to_player': player}
+        if season:
+            kwargs['jump_to_year'] = int(season)
+        if team:
+            kwargs['jump_to_team'] = team
+        st.button(f"🔎 {player} in Player Search", key=f"wr_nav_ps_{player}_{team}",
+                  width="stretch", help="Full profile: percentiles, game log, career totals.",
+                  on_click=switch_tab, args=(TAB_PLAYER_SEARCH,), kwargs=kwargs)
+    with right:
+        # Guarded: the destination selectbox raises if handed a value that
+        # isn't one of its options, so a missing/unknown opponent offers no
+        # button rather than a broken jump.
+        if opponent and str(opponent) in TEAM_CONFIG:
+            st.button(f"🛡️ {opponent} defense breakdown",
+                      key=f"wr_nav_dy_{player}_{opponent}", width="stretch",
+                      help=f"How {opponent} defends this position, by scheme and alignment.",
+                      on_click=switch_tab, args=(TAB_DEFENSIVE_YIELD,),
+                      kwargs={'radar_opponent': abbr_to_pff_team(opponent)})
+
+
 def _render_decomposition_header(detail):
     st.caption(
         f"{detail['position']} · {detail['team']} vs {detail['opponent']} · "
         f"Week {detail['target_week']} using information through Week {detail['as_of_week'] - 1}"
     )
+    _render_decomposition_navigation(detail)
     raw, calibrated = detail['raw_points'], detail['calibrated_points']
     status = canonical_status(detail.get('availability', {}).get('status'))
     if detail.get('calibration', {}).get('enabled'):
@@ -381,7 +426,7 @@ def _render_alignment_mix(detail):
             if blended_rate is not None and blended_mult is not None else '—')
 
     table = pd.DataFrame(table_rows + [totals_row])
-    st.dataframe(table, hide_index=True, width="stretch", height=df_auto_height(len(table)))
+    st.dataframe(style_plain_dataframe(table), hide_index=True, width="stretch", height=df_auto_height(len(table)))
     st.caption(
         "/Game = this player's own per-game projected rate for that stat, split by his own alignment "
         "share (not a separately measured per-alignment rate). 'Allowed×' = the opponent's allowed-by-"
@@ -665,7 +710,7 @@ def _render_context_multiplier_table(ingredients):
         'Vegas environment ×': f"{ingredients['environment']:.3f}",
         'Combined (Context multiplier) ×': f"{ingredients['combined']:.3f}",
     }])
-    st.dataframe(thin, hide_index=True, width="stretch", height=df_auto_height(1))
+    st.dataframe(style_plain_dataframe(thin), hide_index=True, width="stretch", height=df_auto_height(1))
     st.caption("Context multiplier = Game script × Pace × Availability × Vegas-implied game environment.")
 
 
@@ -951,7 +996,7 @@ def _render_context_deep_dive(detail):
             'Environment': f"{values.get('environment_multiplier', 1.0):.3f}×",
         })
     if rows:
-        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", height=df_auto_height(len(rows)))
+        st.dataframe(style_plain_dataframe(pd.DataFrame(rows)), hide_index=True, width="stretch", height=df_auto_height(len(rows)))
     sample = next(iter(stats.values()), {})
     target_margin = sample.get('target_margin')
     opp_pace, league_pace = sample.get('opponent_defensive_pace'), sample.get('league_pace')
@@ -1068,7 +1113,7 @@ def _render_pipeline_diagnostics(model_meta):
         overlay = ourlads.get('roster_overlay_changes') or []
         if overlay:
             with st.expander(f"Roster overlay changes ({len(overlay)})", expanded=False):
-                st.dataframe(pd.DataFrame(overlay), hide_index=True, width="stretch")
+                st.dataframe(style_plain_dataframe(pd.DataFrame(overlay)), hide_index=True, width="stretch")
         issues = ourlads.get('warnings') or []
         if issues:
             with st.expander(f"Depth-chart warnings ({len(issues)})", expanded=False):
@@ -1164,7 +1209,7 @@ def _render_role_confidence_table(role):
         'Value': f"{float(confidence):.0%}",
         'Detail': method,
     })
-    st.dataframe(pd.DataFrame(ingredient_rows), hide_index=True, width="stretch",
+    st.dataframe(style_plain_dataframe(pd.DataFrame(ingredient_rows)), hide_index=True, width="stretch",
                 height=df_auto_height(len(ingredient_rows)))
     st.caption(
         "How it's used: role confidence shrinks how fast a stat trusts THIS player's own rate over the "
@@ -1470,11 +1515,11 @@ def _render_decomposition_audit_body(detail):
                                        'candidate_count', 'other_fraction', 'reason')
                 if column in capacity_frame.columns
             ]
-            st.dataframe(capacity_frame[display_columns], hide_index=True, width="stretch")
+            st.dataframe(style_plain_dataframe(capacity_frame[display_columns]), hide_index=True, width="stretch")
         allocation = detail.get('rb_team_allocation', [])
         if allocation:
             with st.expander("Team RB allocation and projected opportunities"):
-                st.dataframe(pd.DataFrame(allocation), hide_index=True, width="stretch")
+                st.dataframe(style_plain_dataframe(pd.DataFrame(allocation)), hide_index=True, width="stretch")
         source = role.get('rb_allocation_source') or 'not recorded'
         reason = role.get('rb_allocation_eligibility_reason') or 'not recorded'
         st.caption(f"Allocator eligibility: {reason}. Source: {source}.")
@@ -1543,8 +1588,8 @@ def _render_decomposition_audit_body(detail):
                               if prior2_db else 'weight toward his prior2 season')
                     + ' - active because his prior-season sample is thin relative to a full season'})
             if blend_rows:
-                st.dataframe(pd.DataFrame(blend_rows), hide_index=True, width="stretch",
-                            height=df_auto_height(len(blend_rows)))
+                st.dataframe(style_plain_dataframe(pd.DataFrame(blend_rows)), hide_index=True,
+                             width="stretch", height=df_auto_height(len(blend_rows)))
 
     availability = detail['availability']
     st.markdown("**Availability and workload**")

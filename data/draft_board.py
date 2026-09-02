@@ -1974,8 +1974,21 @@ def effective_adp_sd(board):
         sd = pd.to_numeric(board['Expected Pick SD'], errors='coerce')
         if sd.notna().any():
             return sd
-    adp = pd.to_numeric(board.get('ADP'), errors='coerce')
-    published = pd.to_numeric(board.get('ADP SD'), errors='coerce')
+
+    # Column-or-NaN-Series, never DataFrame.get: get returns None for a
+    # missing column and pd.to_numeric(None) is a numpy SCALAR, so both the
+    # `.where(...)` below and the arithmetic above silently degraded into
+    # scalar ops and raised AttributeError - crashing the draft room on any
+    # board without an 'ADP SD' column instead of falling back to the
+    # estimate this function documents. Same class of bug as the one fixed
+    # in add_availability; both were found by a full-draft stress run.
+    def _numeric_column(name):
+        if name not in board.columns:
+            return pd.Series(np.nan, index=board.index, dtype=float)
+        return pd.to_numeric(board[name], errors='coerce')
+
+    adp = _numeric_column('ADP')
+    published = _numeric_column('ADP SD')
     estimated = np.maximum(2.5, 0.22 * adp)
     return published.where(published.notna() & (published > 0), estimated)
 
@@ -2030,9 +2043,28 @@ def add_availability(board, next_pick, current_pick=None):
         out['Avail Next %'] = np.nan
         return out
     out = board.copy()
-    expected = pd.to_numeric(out.get('Expected Pick'), errors='coerce')
+
+    def _numeric_column(name):
+        """A numeric Series for `name`, or an all-NaN one if it is absent.
+
+        NOT `pd.to_numeric(out.get(name))`: DataFrame.get returns None for a
+        missing column, and pd.to_numeric(None) is a numpy scalar, not a
+        Series - so the `.isna().all()` below raised AttributeError and took
+        the whole draft room down rather than falling through to the ADP
+        fallback this function was written to have. Reachable on any board
+        assembled without an 'Expected Pick' column.
+        """
+        if name not in out.columns:
+            return pd.Series(np.nan, index=out.index, dtype=float)
+        return pd.to_numeric(out[name], errors='coerce')
+
+    expected = _numeric_column('Expected Pick')
     if expected.isna().all():
-        expected = pd.to_numeric(out.get('ADP'), errors='coerce')
+        expected = _numeric_column('ADP')
+    if expected.isna().all():
+        # Nothing to model a draft slot from - report "unknown", never crash.
+        out['Avail Next %'] = np.nan
+        return out
     sd = effective_adp_sd(out).replace(0, np.nan)
 
     z_next = ((float(next_pick) - expected) / sd).to_numpy(dtype=float)

@@ -347,32 +347,121 @@ def _extract_updated_at(html: str) -> str:
     return _clean_text(match.group(1)) if match else ""
 
 
-def _table_rows(html: str) -> list[list[str]]:
+def _candidate_tables(html: str) -> list[list[list[str]]]:
+    """EVERY depth-chart-shaped table on the page, in document order.
+
+    Was "pick the single highest-scoring table", which silently lost 24 of 32
+    real 2026 pages (fixed 2026-09-01). Ourlads renders offense, defense and
+    special teams as SEPARATE tables of the same shape, and the old scoring
+    (`+len(table)` as a tiebreak) rewarded whichever table had the most rows -
+    frequently DEFENSE, which carries more position slots. The page then
+    parsed cleanly, found no QB/RB/WR/TE rows in it, and reported "page
+    contained no QB/RB/FB/WR/TE offense rows" for a page whose offense table
+    was sitting right there unread.
+
+    Returning all of them lets the caller keep offense-skill rows from
+    wherever they actually live, which also handles a page that merges units
+    into one table.
+    """
     parser = _HTMLTableParser()
     parser.feed(html)
     parser.close()
-    best: list[list[list[str]]] | None = None
-    best_score = -1
+    tables: list[list[list[str]]] = []
     for table in parser.tables:
         for row in table[:5]:
             values = [_clean_text("".join(cell)) for cell in row]
             normalized = [value.lower() for value in values]
-            player_count = sum(value.startswith("player") for value in normalized)
-            score = (20 if any(value == "pos" for value in normalized) else 0) + player_count * 5 + len(table)
-            if player_count and score > best_score:
-                best, best_score = table, score
-    if best is None:
-        return []
-    return [[_clean_text("".join(cell)) for cell in row] for row in best]
+            if not any(value == "pos" for value in normalized):
+                continue
+            if not any(value.startswith("player") for value in normalized):
+                continue
+            tables.append([[_clean_text("".join(cell)) for cell in r] for r in table])
+            break
+    return tables
+
+
+# Position labels that prove a table is NOT the offense depth chart. A saved
+# page carries five same-shaped tables - offense, defense, special teams, a
+# practice-squad/roster list, and an IR/PUP list - so shape alone cannot pick
+# the right one.
+_DEFENSE_POSITION_HINTS = frozenset({
+    "DE", "LDE", "RDE", "NT", "DT", "RUSH", "ED", "EDGE",
+    "LB", "WLB", "MLB", "SLB", "LOLB", "ROLB", "ILB", "OLB",
+    "CB", "LCB", "RCB", "NB", "DB", "S", "SS", "FS",
+})
+_SPECIAL_POSITION_HINTS = frozenset({"PT", "PK", "LS", "H", "KO", "PR", "KR"})
+_RESERVE_POSITION_HINTS = frozenset({"IR", "PUP", "NFI", "SUS", "CE", "RES"})
+
+
+def _offense_table_score(rows: list[list[str]]) -> int:
+    """How much this table looks like the OFFENSE depth chart. -1 = not it.
+
+    Counts offense-skill position labels and disqualifies any table that also
+    carries defensive, special-teams or reserve labels. That combination is
+    what separates the real offense chart (LWR/RWR/SWR/LT../TE/QB/RB/FB) from
+    the practice-squad table, which lists generic WR/OT/TE/QB/RB *alongside*
+    ED/DT/LB/CB/S and whose rank-1 entries are emphatically not starters.
+    """
+    labels = {re.sub(r"[^A-Z]", "", (row[0] if row else "").upper())
+              for row in rows[1:] if row and row[0].strip()}
+    labels.discard("")
+    if labels & (_DEFENSE_POSITION_HINTS | _SPECIAL_POSITION_HINTS | _RESERVE_POSITION_HINTS):
+        return -1
+    return sum(1 for label in labels if _position_group(label))
+
+
+def _table_rows(html: str) -> list[list[str]]:
+    """The OFFENSE depth-chart table, or [].
+
+    Selection is by POSITION VOCABULARY, not by size. The previous version
+    scored tables with `+len(table)` as a tiebreak and took the largest, which
+    silently picked the wrong unit on 24 of 32 real 2026 pages (fixed
+    2026-09-01): the defense table is usually a row or two longer than
+    offense (ARI: 12 defensive slots vs 11 offensive), and the practice-squad
+    table is longer still. Those pages then failed as "no offense rows" or
+    "no Pos / Player columns" with the real offense table sitting unread.
+    """
+    best, best_score = [], 0
+    for table in _candidate_tables(html):
+        score = _offense_table_score(table)
+        if score > best_score:
+            best, best_score = table, score
+    return best
 
 
 def _player_column_indexes(header: list[str]) -> list[tuple[int, int]]:
-    columns = []
+    """[(column index, depth rank)] for the header's player columns.
+
+    Accepts BOTH header dialects Ourlads emits. Most pages label the columns
+    "Player 1" / "Player 2" / ..., but a substantial minority (14 of 32 on the
+    2026 preseason set - BAL, CHI, CIN, CLE, DEN, IND, KC, LV, LA, NE, NO,
+    NYJ, SF, TEN, WAS) simply repeat "Player" with no number. The old
+    number-only regex returned nothing for those, so the whole page failed
+    with "table did not include Pos / Player columns" (fixed 2026-09-01).
+
+    Numbered labels win where present - they are the source's own explicit
+    depth rank. Unnumbered columns fall back to their left-to-right ORDER
+    among player columns, which is the same thing the numbers encode.
+    """
+    numbered: list[tuple[int, int]] = []
+    plain: list[int] = []
     for index, value in enumerate(header):
-        match = re.fullmatch(r"player\s*(\d+)", _clean_text(value).lower())
+        text = _clean_text(value).lower()
+        match = re.fullmatch(r"player\s*(\d+)", text)
         if match:
-            columns.append((index, int(match.group(1))))
-    return columns
+            numbered.append((index, int(match.group(1))))
+        elif text == "player":
+            plain.append(index)
+    if numbered:
+        # A mixed header is not something Ourlads emits; if it ever does,
+        # trust the explicit numbers and continue the sequence past them for
+        # any unnumbered stragglers rather than dropping those columns.
+        next_rank = max(rank for _i, rank in numbered) + 1
+        for index in plain:
+            numbered.append((index, next_rank))
+            next_rank += 1
+        return sorted(numbered)
+    return [(index, rank) for rank, index in enumerate(plain, start=1)]
 
 
 def _strip_player_metadata(raw_player: str) -> str:
@@ -450,81 +539,94 @@ def parse_ourlads_depth_chart(blob: bytes | str, source_file: str = "") -> tuple
         diagnostics["error"] = "could not identify an NFL team from the saved page"
         return pd.DataFrame(columns=OURLADS_COLUMNS), diagnostics
 
-    rows = _table_rows(html)
-    if not rows:
+    offense = _table_rows(html)
+    if not offense:
         diagnostics["error"] = "could not find the printer-friendly depth-chart table"
         return pd.DataFrame(columns=OURLADS_COLUMNS), diagnostics
+    tables = [offense]
 
-    header_index = None
-    player_columns: list[tuple[int, int]] = []
-    for index, row in enumerate(rows[:8]):
-        player_columns = _player_column_indexes(row)
-        if player_columns and any(_clean_text(value).lower() == "pos" for value in row):
-            header_index = index
-            break
-    if header_index is None:
-        diagnostics["error"] = "table did not include Pos / Player columns"
-        return pd.DataFrame(columns=OURLADS_COLUMNS), diagnostics
-
-    # The printer-friendly page exposes offense and defense as separate
-    # tables, so the selected Pos/Player table often has no literal
-    # "Offense" separator row.  Start in offense and still honor a marker if
-    # an export includes one.
-    section = "offense"
+    # Exactly ONE table is read - the offense depth chart, chosen by position
+    # vocabulary in _table_rows. Reading every same-shaped table instead would
+    # drag in the practice-squad list, whose rank-1 WR/RB entries would then
+    # feed the role-floor logic as if they were starters.
     output = []
     updated_at = _extract_updated_at(html)
     anchors = _anchor_metadata(html)
     position_occurrences: dict[str, int] = {}
-    for source_row, raw_row in enumerate(rows[header_index + 1:], start=1):
-        if not raw_row:
+    header_seen = False
+    source_row = 0
+
+    for rows in tables:
+        header_index = None
+        player_columns: list[tuple[int, int]] = []
+        for index, row in enumerate(rows[:8]):
+            player_columns = _player_column_indexes(row)
+            if player_columns and any(_clean_text(value).lower() == "pos" for value in row):
+                header_index = index
+                break
+        if header_index is None:
             continue
-        first = _clean_text(raw_row[0] if raw_row else "")
-        first_key = first.lower()
-        if first_key in {"offense", "defense", "special teams", "reserves"}:
-            section = first_key
-            continue
-        position_label = re.sub(r"\s+", "", first.upper())
-        position = _position_group(position_label)
-        if section != "offense" or not position:
-            continue
-        position_occurrence = position_occurrences.get(position_label, 0)
-        position_occurrences[position_label] = position_occurrence + 1
-        for col_index, depth_rank in player_columns:
-            raw_player = _clean_text(raw_row[col_index] if col_index < len(raw_row) else "")
-            player = _strip_player_metadata(raw_player)
-            if not player or not re.search(r"[A-Za-z]", player):
+        header_seen = True
+
+        # A table often carries no literal "Offense" separator row, so start
+        # in offense and still honour a marker if the export includes one.
+        section = "offense"
+        for raw_row in rows[header_index + 1:]:
+            if not raw_row:
                 continue
-            link_meta = (anchors.get(raw_player) or [{}])[0]
-            status_class = _clean_text(link_meta.get("status_class"))
-            output.append({
-                "year": pd.NA,
-                "team": team,
-                "unit": "Offense",
-                "position_label": position_label,
-                "position": position,
-                "depth_rank": int(depth_rank),
-                "source_row": int(source_row),
-                "source_slot": int(depth_rank),
-                "position_occurrence": int(position_occurrence),
-                # A second rendered RB/TE row is overflow, not a second
-                # starter at the same position.  LWR/RWR/SWR are separate
-                # formation labels, so each first row still carries its own
-                # starter signal.
-                "is_listed_starter": bool(depth_rank == 1 and position_occurrence == 0),
-                "is_inactive": "lc_red" in status_class.split(),
-                "status_class": status_class,
-                "source_player_id": _clean_text(link_meta.get("source_player_id")),
-                "player": player,
-                "player_key": clean_name_exact(pd.Series([player])).iloc[0],
-                "raw_player": raw_player,
-                "source_updated_at": updated_at,
-                "source_file": _clean_text(source_file),
-                "source_url": source_url,
-                "parser_version": PARSER_VERSION,
-            })
+            source_row += 1
+            first = _clean_text(raw_row[0] if raw_row else "")
+            first_key = first.lower()
+            if first_key in {"offense", "defense", "special teams", "reserves"}:
+                section = first_key
+                continue
+            position_label = re.sub(r"\s+", "", first.upper())
+            position = _position_group(position_label)
+            if section != "offense" or not position:
+                continue
+            position_occurrence = position_occurrences.get(position_label, 0)
+            position_occurrences[position_label] = position_occurrence + 1
+            for col_index, depth_rank in player_columns:
+                raw_player = _clean_text(raw_row[col_index] if col_index < len(raw_row) else "")
+                player = _strip_player_metadata(raw_player)
+                if not player or not re.search(r"[A-Za-z]", player):
+                    continue
+                link_meta = (anchors.get(raw_player) or [{}])[0]
+                status_class = _clean_text(link_meta.get("status_class"))
+                output.append({
+                    "year": pd.NA,
+                    "team": team,
+                    "unit": "Offense",
+                    "position_label": position_label,
+                    "position": position,
+                    "depth_rank": int(depth_rank),
+                    "source_row": int(source_row),
+                    "source_slot": int(depth_rank),
+                    "position_occurrence": int(position_occurrence),
+                    # A second rendered RB/TE row is overflow, not a second
+                    # starter at the same position.  LWR/RWR/SWR are separate
+                    # formation labels, so each first row still carries its own
+                    # starter signal.
+                    "is_listed_starter": bool(depth_rank == 1 and position_occurrence == 0),
+                    "is_inactive": "lc_red" in status_class.split(),
+                    "status_class": status_class,
+                    "source_player_id": _clean_text(link_meta.get("source_player_id")),
+                    "player": player,
+                    "player_key": clean_name_exact(pd.Series([player])).iloc[0],
+                    "raw_player": raw_player,
+                    "source_updated_at": updated_at,
+                    "source_file": _clean_text(source_file),
+                    "source_url": source_url,
+                    "parser_version": PARSER_VERSION,
+                })
     frame = pd.DataFrame(output, columns=OURLADS_COLUMNS)
     if frame.empty:
-        diagnostics["error"] = "page contained no QB/RB/FB/WR/TE offense rows"
+        # Distinguish "no table had a usable header" from "tables read fine
+        # but held no offense skill rows" - they point at different problems
+        # (a page saved in an unexpected layout vs. the wrong page entirely).
+        diagnostics["error"] = (
+            "page contained no QB/RB/FB/WR/TE offense rows" if header_seen
+            else "table did not include Pos / Player columns")
     diagnostics["rows"] = len(frame)
     return frame, diagnostics
 
@@ -644,15 +746,64 @@ def _archive_ourlads_import(files: Iterable[Any], existing_csv: Path,
     return out
 
 
+def _merge_into_existing(snapshot: pd.DataFrame, year: int,
+                         target: Path) -> tuple[pd.DataFrame, list[str], list[str]]:
+    """Fold a freshly imported batch into whatever is already on disk.
+
+    Returns ``(merged, replaced_teams, carried_teams)``.
+
+    A batch REPLACES a team it contains and LEAVES ALONE every team it does
+    not, so importing the league a handful of pages at a time accumulates
+    instead of discarding the previous batch. Other seasons are never
+    touched.
+
+    This exists because the previous behaviour was a straight overwrite,
+    which silently destroyed earlier work: a user who could not push all 32
+    team pages through the uploader in one go - the pages are ~2.3MB each, so
+    a full league is ~74MB in a single request - would import 8, then import
+    the next 8 and find the first 8 gone, with the UI reporting the 24 teams
+    of the *current batch* as "missing" rather than the genuinely missing set.
+    """
+    replaced = sorted(snapshot["team"].dropna().astype(str).unique())
+    if not target.exists():
+        return snapshot, replaced, []
+    try:
+        prior = pd.read_csv(target, dtype={"team": str, "player": str, "position": str,
+                                           "position_label": str, "source_file": str})
+    except Exception:
+        # An unreadable prior snapshot must not block a good import; the
+        # archive copy taken just above is the recovery path.
+        return snapshot, replaced, []
+    if prior.empty or "team" not in prior.columns or "year" not in prior.columns:
+        return snapshot, replaced, []
+
+    same_year = pd.to_numeric(prior["year"], errors="coerce").eq(int(year))
+    superseded = same_year & prior["team"].astype(str).isin(replaced)
+    kept = prior[~superseded]
+    carried = sorted(
+        kept.loc[pd.to_numeric(kept["year"], errors="coerce").eq(int(year)), "team"]
+        .dropna().astype(str).unique())
+    # Union of columns so an older snapshot written by a previous parser
+    # version (or without the optional source-id columns) still concatenates.
+    merged = pd.concat([kept, snapshot], ignore_index=True, sort=False)
+    return merged, replaced, carried
+
+
 def save_ourlads_snapshot(files: Iterable[Any], year: int,
                           path: str | Path = OURLADS_IMPORT_PATH,
-                          archive: bool = True) -> tuple[pd.DataFrame, dict[str, Any]]:
+                          archive: bool = True,
+                          merge: bool = True) -> tuple[pd.DataFrame, dict[str, Any]]:
     """Build and persist a local normalized snapshot.
 
-    ``archive`` (default on): before overwriting the snapshot csv, copy the
+    ``archive`` (default on): before writing the snapshot csv, copy the
     current csv and the raw pages being imported into a timestamped folder
     under ``OURLADS_ARCHIVE_DIR`` (see ``_archive_ourlads_import``). The raw
     pages themselves are still never written to the live import path.
+
+    ``merge`` (default on, added 2026-09-01): fold this batch into the
+    existing snapshot rather than replacing the file, so the league can be
+    imported in several passes. See ``_merge_into_existing``. Pass
+    ``merge=False`` for the old replace-everything behaviour.
     """
     snapshot, report = build_ourlads_snapshot(files, year)
     if snapshot.empty:
@@ -661,14 +812,28 @@ def save_ourlads_snapshot(files: Iterable[Any], year: int,
     target = Path(path)
     if archive:
         report["archive"] = _archive_ourlads_import(files, target)
+
+    to_write, replaced, carried = (
+        _merge_into_existing(snapshot, year, target) if merge
+        else (snapshot, sorted(snapshot["team"].astype(str).unique()), []))
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        snapshot.to_csv(target, index=False)
+        to_write.to_csv(target, index=False)
     except Exception as exc:
         report["error"] = f"Parsed the depth charts but could not save the local snapshot: {exc}"
         return snapshot, report
+
+    # Report against the MERGED state, not just this batch - otherwise a
+    # partial import reads as "24 teams failed" when those pages were simply
+    # not in the batch.
+    total_teams = sorted(set(replaced) | set(carried))
     report["error"] = ""
     report["path"] = str(target)
+    report["batch_teams"] = replaced
+    report["carried_teams"] = carried
+    report["teams"] = total_teams
+    report["team_count"] = len(total_teams)
+    report["missing_teams"] = sorted(set(TEAM_CONFIG) - set(total_teams))
     return snapshot, report
 
 

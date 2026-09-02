@@ -227,22 +227,58 @@ def load_year_data(year):
     if 'player_id' not in stats.columns:
         stats['player_id'] = pd.Series(dtype='str')
 
-    rosters = pd.DataFrame()
-    local_rosters = [f"roster_weekly_{year}.csv", "players.csv", "weekly_rosters.csv"]
-    for r_file in local_rosters:
-        if os.path.exists(r_file):
-            try:
-                tmp_roster = pd.read_csv(r_file, low_memory=False)
-                if 'season' in tmp_roster.columns:
-                    tmp_roster = tmp_roster[tmp_roster['season'] == year]
-                if not tmp_roster.empty:
-                    rosters = tmp_roster
-                    break
-            except: pass
+    # ROSTER SOURCE PRECEDENCE depends on whether the season is FINISHED.
+    #
+    # A completed season's roster is immutable, so a local snapshot is as
+    # good as the feed and costs no network call - local wins there.
+    #
+    # An in-progress or upcoming season's roster changes daily, and a local
+    # csv is a frozen snapshot of whenever it was saved. Preferring it there
+    # silently pins the app to that date: confirmed 2026-09-02, a
+    # roster_weekly_2026.csv saved on 08-30 had no Deebo Samuel, while
+    # nflverse listed him SF / WR / status ACT. Every tab reading the merged
+    # frame therefore could not see him at all, and the weekly model only
+    # projected him because the Ourlads overlay adds "verified missing
+    # starters" back - which is precisely the kind of compensating patch that
+    # hides a stale input rather than fixing it. So for a live season the
+    # FEED wins and the local file is the fallback.
+    def _season_is_complete(yr):
+        import datetime as _dt
+        today = _dt.date.today()
+        # Seasons run Sep-Feb; treat a season as closed once the following
+        # August arrives (well past the Super Bowl, before the next kickoff).
+        return yr < (today.year if today.month >= 8 else today.year - 1)
 
+    def _load_local_roster():
+        for r_file in (f"roster_weekly_{year}.csv", "players.csv", "weekly_rosters.csv"):
+            if os.path.exists(r_file):
+                try:
+                    tmp_roster = pd.read_csv(r_file, low_memory=False)
+                    if 'season' in tmp_roster.columns:
+                        tmp_roster = tmp_roster[tmp_roster['season'] == year]
+                    if not tmp_roster.empty:
+                        return tmp_roster
+                except Exception:
+                    pass
+        return pd.DataFrame()
+
+    def _load_feed_roster():
+        try:
+            return nflreadpy.load_rosters([year]).to_pandas()
+        except Exception:
+            return pd.DataFrame()
+
+    rosters = pd.DataFrame()
+    if _season_is_complete(year):
+        rosters = _load_local_roster()
+        if rosters.empty:
+            rosters = _load_feed_roster()
+    else:
+        rosters = _load_feed_roster()
+        if rosters.empty:
+            rosters = _load_local_roster()
     if rosters.empty:
-        try: rosters = nflreadpy.load_rosters([year]).to_pandas()
-        except Exception: rosters = pd.DataFrame(columns=['gsis_id', 'full_name', 'position', 'team'])
+        rosters = pd.DataFrame(columns=['gsis_id', 'full_name', 'position', 'team'])
 
     snaps = pd.DataFrame()
     # NOTE: previously included a hardcoded "snap_counts_2025.csv.csv" as an

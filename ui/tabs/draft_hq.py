@@ -1409,6 +1409,55 @@ def _render_roster_panel(settings):
                 f"{int(w)} ({int(c)} players)" for w, c in stacked.items()))
 
 
+# --- rerun timing, for the live-draft stall -------------------------------
+# Added 2026-09-02. A live draft stalled on committing a pick, and the
+# compute path has now been cleared: per-pick recompute measures 6.3ms flat
+# with no growth over 180 picks, the board grid is capped at 40 rows, and
+# every simulation is behind a button. That leaves render/frontend cost,
+# which cannot be reproduced outside a real session - so instead of guessing
+# again, the room records how long each rerun actually took and shows the
+# recent history. Next stall, the number says whether it is Python-side at
+# all. Costs one perf_counter per rerun.
+_RENDER_TIMES_KEY = 'dhq_render_ms'
+
+
+def _render_timer_start():
+    st.session_state['_dhq_render_t0'] = time.perf_counter()
+
+
+def _render_timer_stop(picks_made):
+    t0 = st.session_state.pop('_dhq_render_t0', None)
+    if t0 is None:
+        return
+    hist = st.session_state.setdefault(_RENDER_TIMES_KEY, [])
+    hist.append((int(picks_made), round((time.perf_counter() - t0) * 1000, 1)))
+    # Bounded: this is a diagnostic, not a log, and an unbounded list in
+    # session state is exactly the kind of slow growth being investigated.
+    if len(hist) > 40:
+        del hist[:-40]
+
+
+def _render_timing_panel():
+    hist = st.session_state.get(_RENDER_TIMES_KEY) or []
+    if len(hist) < 2:
+        return
+    ms = [m for _p, m in hist]
+    recent = ms[-5:]
+    with st.expander(f"⏱ Render timing — last rerun {ms[-1]:.0f} ms", expanded=False):
+        st.caption(
+            "How long each rerun of this room took, server-side. If a stall shows "
+            "a NORMAL number here, the delay is in the browser/websocket, not in "
+            "Python — which is the single most useful thing to know about it."
+        )
+        st.dataframe(
+            style_plain_dataframe(pd.DataFrame(
+                [{'Picks made': p, 'Render ms': m} for p, m in reversed(hist[-15:])])),
+            width="stretch", hide_index=True, height=df_auto_height(min(len(hist), 15)))
+        st.caption(
+            f"median {np.median(ms):.0f} ms · max {max(ms):.0f} ms · "
+            f"last five {', '.join(f'{m:.0f}' for m in recent)} ms")
+
+
 def _render_live_sync(board):
     """Sleeper sync / paste / manual entry for a real draft happening elsewhere."""
     with st.expander(f"🔗 Sync from your live draft ({len(_drafted_list())} picks logged)", expanded=False):
@@ -2847,6 +2896,7 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
     strategy and pick odds, the mock didn't. One surface with a mode switch
     is the same product with half the code and none of the drift.
     """
+    _render_timer_start()
     mode = st.radio("Mode", ["Live draft", "Mock draft"], horizontal=True,
                     key="dhq_mode", label_visibility="collapsed")
 
@@ -2958,6 +3008,11 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
     # the pick handlers keep their default-scope st.rerun() which escalates
     # to the app; only the filter buttons rerun fragment-scoped.
     _draft_board_pane(board, dc, settings, ctx, meta, status, reach, mode)
+
+    # Recorded here rather than after the ticker below: the ticker ends the
+    # run with st.rerun(), so anything past it never executes on a paced tick.
+    _render_timer_stop(len(dc['picks']))
+    _render_timing_panel()
 
     # Last, and off the FULL board rather than the available pool - a player
     # you just watched go off the board is exactly the one you want to read

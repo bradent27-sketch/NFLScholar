@@ -80,11 +80,44 @@ PROJECTED_STATS = [
 # TD weights barely move - "efficiency regresses, TDs regress hardest" still
 # holds regardless of which source the number comes from. A proper sweep of
 # these against next-season actuals is queued (weekly_rankings_backlog.md).
+#
+# 2026-09-02: measured how much of a projection the ECR rank curve actually
+# supplies at FULL sample (17 games), which is the honest way to read this
+# table - self_weight is scaled by evidence, so the curve share is
+# 1 - weight*min(1, games/FULL_TRUST_GAMES):
+#
+#     carries 30%  ·  receptions 35%  ·  rushing_yards 49%  ·  rushing_tds 73%
+#
+# Two deliberate moves off that reading, both at the user's direction:
+#
+#   RUSHING/RECEIVING YARDS 0.60 -> 0.72. At 0.60 a fully-established back
+#   drew about half his yardage projection from consensus rank, which is out
+#   of line with the 30-35% his own carry and reception counts draw. Yards
+#   are a volume stat wearing an efficiency stat's clothing: most of the
+#   variance is carries x a per-carry rate that is itself fairly stable for
+#   a given back. It should sit nearer the usage stats than to touchdowns.
+#   Passing yards moves with it (0.65 -> 0.74) for the same reason - attempts
+#   are already at 0.80.
+#
+#   TOUCHDOWNS 0.32 -> 0.40 (rushing/receiving), 0.42 -> 0.48 (passing). A
+#   deliberately SMALL step. The low weight is statistically correct - TD
+#   rates genuinely are the noisiest thing on the board and regressing them
+#   hard is right - the objection is only to regressing them toward CONSENSUS
+#   OPINION rather than toward something structural. Nudging the weight is a
+#   stopgap; the real fix is anchoring TDs to a volume-derived team-share
+#   expectation (implied team points x projected goal-line/red-zone share),
+#   which is designed in the backlog and needs the draft-projection backtest
+#   harness that does not exist yet.
+#
+# NEITHER CHANGE IS BACKTESTED. There is no harness that scores
+# build_projected_board against next-season actuals, so these are reasoned
+# adjustments, not measured ones - flagged as such because everything else
+# shipped in this project carries a measurement and these do not.
 STAT_SELF_WEIGHT = {
     'carries': 0.82, 'targets': 0.82, 'attempts': 0.80,     # usage: sticky
     'receptions': 0.76,
-    'rushing_yards': 0.60, 'receiving_yards': 0.60, 'passing_yards': 0.65,
-    'rushing_tds': 0.32, 'receiving_tds': 0.32, 'passing_tds': 0.42,
+    'rushing_yards': 0.72, 'receiving_yards': 0.72, 'passing_yards': 0.74,
+    'rushing_tds': 0.40, 'receiving_tds': 0.40, 'passing_tds': 0.48,
     'passing_interceptions': 0.36,
     'rushing_fumbles_lost': 0.27, 'receiving_fumbles_lost': 0.27,
 }

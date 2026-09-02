@@ -9,12 +9,13 @@ import streamlit as st
 from config import TEAM_CONFIG, THEME, OLINE_POSITIONS, DEFENSIVE_POSITIONS, TAB_DEFENSIVE_YIELD, abbr_to_pff_team, ODDS_API_PLAYER_PROP_MARKETS, AVAILABLE_SEASONS_WITH_UPCOMING
 from data.transforms import (
     load_and_merge_data, precompute_league_percentiles, build_player_historical_summary,
-    build_stat_allowed_matrix, build_alignment_multiplier, build_player_projection,
     build_market_projection, score_projected_stats, OFFENSE_PROJECTION_STATS,
     build_points_allowed_matrix,
 )
-from data.loaders import load_pff_data_with_fallback, load_schedule, load_saved_odds_api_key, fetch_nfl_player_props, load_team_pace, load_sharp_positional_coverage
-from data.coverage_radar import list_receivers, list_coverage_teams, team_nickname
+from data.loaders import (load_pff_data_with_fallback, load_schedule, load_saved_odds_api_key,
+                          fetch_nfl_player_props)
+from data.weekly_projections import build_weekly_projections
+from data.coverage_radar import list_receivers, list_coverage_teams
 from data.utils import (
     calculate_exact_age, parse_height, parse_weight, clean_name_exact, clean_name_for_merge,
     build_last_name_index, match_abbreviated_name, calculate_percentile,
@@ -700,26 +701,49 @@ def render():
         elif not opponent_abbr:
             st.caption("No upcoming game found on the schedule to project against.")
         else:
-            allowed_matrix = build_stat_allowed_matrix(df_t1_stats, position_filter=[pos])
-            pace_df = load_team_pace(t1_target_year)
-
-            alignment_mult = 1.0
-            if pos in ('WR', 'TE') and not pff['rec'].empty:
-                p_pff_rec = pff['rec'][pff['rec']['player'].str.lower() == selected_player.lower()]
-                if not p_pff_rec.empty:
-                    coverage_df = load_sharp_positional_coverage()
-                    opp_nickname = team_nickname(TEAM_CONFIG.get(opponent_abbr, {}).get('name', ''))
-                    rec_row = p_pff_rec.iloc[0]
-                    alignment_mult = build_alignment_multiplier(
-                        coverage_df, opp_nickname, rec_row.get('slot_rate', 0), rec_row.get('wide_rate', 0)
-                    )
-
-            model_proj, _ = build_player_projection(
-                p_data, pos, opponent_abbr, t1_scoring_rule, allowed_matrix, pace_df, alignment_mult
-            )
+            # THE WEEKLY MODEL, not a second projection system.
+            #
+            # This block used to call data.transforms.build_player_projection -
+            # a much simpler estimator (season-average x allowed-matrix x pace
+            # x a sharp-coverage alignment multiplier) that existed before the
+            # weekly model did. The result was two different models projecting
+            # the same player in two different tabs, disagreeing, with the
+            # weaker one shown here. Switched 2026-09-02 so Player Search and
+            # Weekly Rankings can never quote different numbers for the same
+            # player-week.
+            #
+            # Cheap in practice despite build_weekly_projections being the
+            # expensive call in the app: it is @st.cache_data'd on
+            # (year, week, scoring, as_of_week, ...), and Weekly Rankings has
+            # almost always populated that exact key already. This also
+            # removes the last projection-path consumer of the 2025-frozen
+            # sharp-coverage export - it still powers the coverage radar and
+            # positional vulnerability, which are descriptive panels, but no
+            # longer feeds a number anyone drafts or starts on.
+            model_proj = {}
+            try:
+                weekly_df, _weekly_meta = build_weekly_projections(
+                    int(t1_target_year), int(opponent_week), t1_scoring_rule,
+                    as_of_week=int(opponent_week), apply_injury=False,
+                )
+            except Exception:
+                weekly_df = pd.DataFrame()
+            if not weekly_df.empty:
+                match = weekly_df[weekly_df['Player'].astype(str) == str(selected_player)]
+                if not match.empty:
+                    row = match.iloc[0]
+                    model_proj = {
+                        stat: round(float(row[stat]), 1)
+                        for stat in OFFENSE_PROJECTION_STATS[pos]
+                        if stat in match.columns and pd.notna(row[stat])
+                    }
 
             if not model_proj:
-                st.caption("Not enough game log data yet this season to build a projection.")
+                st.caption(
+                    "The weekly model has no projection for this player-week yet — "
+                    "usually a player with no current role, or a season/week the "
+                    "model can't build for."
+                )
             else:
                 # Reuse whatever prop lines are already loaded for this
                 # player/opponent from the micro-card above (only if the

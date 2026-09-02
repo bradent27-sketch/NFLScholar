@@ -501,7 +501,7 @@ def _render_positional_vulnerability(stats_df, points_allowed, defense_team, pos
     if not rows:
         st.caption("No points-allowed data for this defense yet.")
         return
-    ypt = ms.ypt_allowed_for_team(load_sharp_positional_coverage(), _team_label(defense_team))
+    ypt = ms.ypt_allowed_for_team(load_sharp_positional_coverage()[0], _team_label(defense_team))
     cells = []
     for r in rows:
         is_subject = r['position'] == position
@@ -602,7 +602,7 @@ def _render_coverage(defense_team, season):
     pff = load_all_pff_data(season)
     profile = ms.coverage_profile(
         abbr_to_pff_team(defense_team), _team_label(defense_team),
-        load_external_coverage_schemes(), load_sharp_positional_coverage(),
+        load_external_coverage_schemes(), load_sharp_positional_coverage()[0],
         pff.get('def_coverage_scheme'),
     )
     if not profile['available']:
@@ -658,7 +658,7 @@ def _render_coverage(defense_team, season):
 
 
 def _render_run_defense(defense_team, season):
-    sumer = load_sumersports_tendency_data()
+    sumer, _sumer_year = load_sumersports_tendency_data()
     profile = ms.run_defense_profile(
         load_all_pff_data(season).get('run_def'), abbr_to_pff_team(defense_team),
         sumer.get('def_overview'), _team_label(defense_team),
@@ -698,7 +698,7 @@ def _render_scheme_fit(season, player_name, position, defense_team):
     pff = load_all_pff_data(season)
     coverage = ms.coverage_profile(
         abbr_to_pff_team(defense_team), _team_label(defense_team),
-        load_external_coverage_schemes(), load_sharp_positional_coverage(),
+        load_external_coverage_schemes(), load_sharp_positional_coverage()[0],
     )
     run_defense = ms.run_defense_profile(pff.get('run_def'), abbr_to_pff_team(defense_team))
     fit = ms.scheme_fit(position, pff.get('rush'), pff.get('rec'), player_name, coverage, run_defense)

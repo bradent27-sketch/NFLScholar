@@ -288,12 +288,42 @@ def _ordinal_percentile_label(pct):
     return f"{n}{suffix} percentile"
 
 
+def _stale_source_notice(label, source_year):
+    """Say so when a hand-exported panel is reading an old season.
+
+    These two sources have no feed behind them - they are manual downloads
+    from public pages - and their filenames were hardcoded to _2025 until
+    2026-09-02, so the app would have shown last season's numbers as though
+    they were current, indefinitely and silently. A defensive profile from
+    last season is a perfectly reasonable read in Week 1 and a bad one in
+    Week 12; the reader needs to know which they are looking at, so this is
+    a caption rather than a warning.
+    """
+    if source_year is None:
+        st.caption(f"⚠️ {label}: no export found in `external_data/` — panel unavailable.")
+        return
+    current = _current_prep_season()
+    if int(source_year) < current:
+        st.caption(
+            f"📅 {label}: showing **{source_year}** data — no {current} export in "
+            f"`external_data/` yet. Manual download; drop in "
+            f"`..._{current}.csv` and it is picked up automatically."
+        )
+
+
+def _current_prep_season():
+    import datetime as _dt
+    today = _dt.date.today()
+    return today.year if today.month >= 8 else today.year - 1
+
+
 def _render_coverage_radar(pff):
     st.markdown("<div class='custom-section-header'>COVERAGE MATCHUP RADAR — MAN VS. ZONE</div>", unsafe_allow_html=True)
 
     rec_scheme_df = pff['rec_scheme']
     def_coverage_df = pff['def_coverage_scheme']
-    positional_coverage_df = load_sharp_positional_coverage()
+    positional_coverage_df, _sharp_year = load_sharp_positional_coverage()
+    _stale_source_notice("Sharp positional coverage", _sharp_year)
 
     if rec_scheme_df.empty or def_coverage_df.empty:
         st.info("receiving_scheme_2025.csv and/or defense_coverage_scheme_2025.csv not found in pff_imports/ — radar unavailable.")
@@ -460,7 +490,8 @@ def _render_coverage_radar(pff):
 
 
 def _render_sumersports_context(full_name):
-    tendency = load_sumersports_tendency_data()
+    tendency, _sumer_year = load_sumersports_tendency_data()
+    _stale_source_notice("SumerSports tendencies", _sumer_year)
     def_personnel = tendency.get('def_personnel', pd.DataFrame())
     def_formation = tendency.get('def_formation', pd.DataFrame())
     if def_personnel.empty and def_formation.empty:

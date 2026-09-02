@@ -378,9 +378,13 @@ def render():
         # tiles, per explicit feedback that this should be the very first
         # thing shown for a selected player, styled after the boards' own
         # "Last 5 Wks" sparkline column (the chart style users said reads
-        # best "at a glance"). Renders nothing for seasons with no weekly
-        # data yet (see render_fpts_week_strip's own guard).
-        render_fpts_week_strip(p_data, t1_target_year, scoring_label=t1_scoring_rule)
+        # best "at a glance"). Passing the team's full schedule fixes the
+        # x-axis to the whole season: a pre-kickoff 2026 view shows the
+        # empty 18-week axis with opponents, and it fills in as games are
+        # played rather than only spanning the weeks already played.
+        _fpts_sched = _build_schedule_only_log(filter_team, t1_target_year)
+        render_fpts_week_strip(p_data, t1_target_year, scoring_label=t1_scoring_rule,
+                               schedule_df=_fpts_sched)
 
         # Rest-of-season matchup difficulty strip - additive companion to
         # the fpts-by-week strip above (that one looks back, this one looks
@@ -586,68 +590,76 @@ def render():
             # instead of a slider floating loose above an unrelated-looking
             # table box.
             with st.container(border=True):
-                if 'week' not in p_data.columns:
-                    # No weekly stats file exists for this season at all yet
-                    # (e.g. 2026 before kickoff) - checked BEFORE the "is
-                    # log_df empty" branch below, not after: a roster-only
-                    # frame still carries the OTHER log_cols as real columns
-                    # (passing_attempts etc, just filled with placeholder 0s
-                    # from load_year_data's get_col() fallback), only 'week'/
-                    # 'opponent_team' are truly absent - so log_df.empty was
-                    # False even with no real data, and this fallback never
-                    # fired until the check order was flipped (confirmed live:
-                    # the sticky log rendered one bogus "Week 0 / all-zero
-                    # stats" row instead of either a real log or this
-                    # fallback). Shows the schedule instead of a bare "no logs"
-                    # message, so there's still something useful here: who
-                    # they play, and when, with stats to follow once games are
-                    # actually played.
-                    schedule_only = _build_schedule_only_log(filter_team, t1_target_year)
+                # ONE full-season table in every case: the team's whole
+                # schedule is the row set, and the player's real per-game
+                # stats are merged onto the weeks he has played. An
+                # unplayed week stays as a present-but-empty row rather
+                # than vanishing, so the 2026 pre-kickoff view and a
+                # mid-season view are the same styled table, just at
+                # different fill levels.
+                played_log = log_df if 'week' in log_df.columns else p_data.iloc[0:0]
+                schedule_only = _build_schedule_only_log(filter_team, t1_target_year)
+
+                if schedule_only.empty and played_log.empty:
+                    st.info(f"No {t1_target_year} schedule or game logs available yet.")
+                else:
                     if not schedule_only.empty:
-                        st.caption(f"No stats yet for {t1_target_year} - this is the schedule below. It'll fill in with real per-game stats once games are played.")
-                        sched_display = schedule_only.rename(columns={'week': 'WEEK', 'opponent_team': 'OPPONENT', 'gameday': 'DATE'})
-                        st.dataframe(
-                            style_plain_dataframe(sched_display.set_index('WEEK')),
-                            width="stretch", height=df_auto_height(len(sched_display)),
-                        )
+                        sched = schedule_only.copy()
+                        sched['week'] = pd.to_numeric(sched['week'], errors='coerce')
+                        played_weeks = set()
+                        merged = sched
+                        if not played_log.empty:
+                            stats_only = played_log.drop(
+                                columns=[c for c in ('opponent_team',) if c in played_log.columns])
+                            stats_only = stats_only.copy()
+                            stats_only['week'] = pd.to_numeric(stats_only['week'], errors='coerce')
+                            played_weeks = set(stats_only['week'].dropna().astype(int).tolist())
+                            merged = sched.merge(stats_only, on='week', how='left')
+                        merged['_unplayed'] = ~merged['week'].astype('Int64').isin(played_weeks)
+                        full_log = merged.sort_values('week').reset_index(drop=True)
                     else:
-                        st.info(f"No {t1_target_year} schedule available yet either.")
-                elif not log_df.empty:
-                    weeks_available = sorted(pd.to_numeric(log_df['week'], errors='coerce').dropna().astype(int).unique().tolist())
+                        full_log = played_log.copy()
+                        full_log['_unplayed'] = False
+                        full_log = full_log.sort_values('week').reset_index(drop=True)
+
+                    weeks_available = sorted(
+                        pd.to_numeric(full_log['week'], errors='coerce').dropna().astype(int).unique().tolist())
                     if len(weeks_available) > 1:
                         wk_lo, wk_hi = st.select_slider(
-                            "Week range", options=weeks_available, value=(weeks_available[0], weeks_available[-1]), key="t1_week_slider"
+                            "Week range", options=weeks_available,
+                            value=(weeks_available[0], weeks_available[-1]), key="t1_week_slider"
                         )
-                        log_df_view = log_df[(pd.to_numeric(log_df['week'], errors='coerce') >= wk_lo) & (pd.to_numeric(log_df['week'], errors='coerce') <= wk_hi)]
+                        wk_num = pd.to_numeric(full_log['week'], errors='coerce')
+                        log_df_view = full_log[(wk_num >= wk_lo) & (wk_num <= wk_hi)]
                     else:
-                        log_df_view = log_df
+                        log_df_view = full_log
 
-                    render_sticky_game_log(log_df_view, log_df_view, log_cols, header_map)
+                    played_in_view = log_df_view[~log_df_view['_unplayed']]
+                    if played_in_view.empty:
+                        st.caption(f"No games played yet for {t1_target_year} — the schedule below fills in with real per-game stats as the season goes.")
+                    # avg_source_df = played rows only, so the sticky AVG
+                    # footer keeps averaging real games, not empty ones.
+                    render_sticky_game_log(log_df_view, played_in_view, log_cols, header_map)
+
                     # A chip strip, not a control inside the table: the game
                     # log is hand-rolled HTML (ui.styling.render_game_log_html_table),
                     # and HTML cannot fire a Python callback, so a per-row
-                    # button has to live outside the table. Rows that don't
-                    # resolve to a real game are dropped by game_link_rows,
-                    # so every chip here opens something.
-                    from data.box_score import game_link_rows
-                    from data.game_slate import season_slate
-                    slate, _slate_err = season_slate(t1_target_year)
-                    # No `limit` - every game in the selected week range gets
-                    # a chip. This used to cap at 8, which silently hid the
-                    # earlier part of any season with more games than that
-                    # (a full 18-week slate, or any season with a playoff
-                    # run) with no indication anything was cut off.
-                    links = game_link_rows(log_df_view, slate, team=filter_team)
-                    render_game_links(
-                        links, t1_target_year, key_prefix="ps_box",
-                        caption="Open a game's full box score:",
-                        remember=('ps_return_ctx', {
-                            'player': selected_player, 'team_filter': team_filter,
-                            'year': t1_target_year,
-                        }),
-                    )
-                else:
-                    st.info("No weekly game logs available for this player profile structure.")
+                    # button has to live outside the table. game_link_rows
+                    # already drops any row that doesn't resolve to a real
+                    # completed game, so unplayed weeks produce no chip.
+                    if not played_in_view.empty:
+                        from data.box_score import game_link_rows
+                        from data.game_slate import season_slate
+                        slate, _slate_err = season_slate(t1_target_year)
+                        links = game_link_rows(played_in_view, slate, team=filter_team)
+                        render_game_links(
+                            links, t1_target_year, key_prefix="ps_box",
+                            caption="Open a game's full box score:",
+                            remember=('ps_return_ctx', {
+                                'player': selected_player, 'team_filter': team_filter,
+                                'year': t1_target_year,
+                            }),
+                        )
 
             # Radar grid lives here (under the game log), not under the
             # matrix table in c_left - c_left was running much taller than

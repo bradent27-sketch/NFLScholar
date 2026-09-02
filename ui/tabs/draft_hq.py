@@ -18,6 +18,7 @@ Mock Draft and News follow because they're preparation, not draft night.
 League Settings sits in a collapsed expander above all of it: it's
 configured once and then never touched again while a clock is running.
 """
+import os
 import time
 
 import numpy as np
@@ -48,9 +49,12 @@ from data.draft_intel import (
     pick_intel, outcome_distribution, roster_percentile,
     positional_run_pressure, positional_value_add,
 )
-from data.ffa_import import load_ffa_import, save_ffa_import, merge_ffa_into_board
+from data.ffa_import import (
+    load_ffa_import, save_ffa_import, merge_ffa_into_board, FFA_IMPORT_PATH,
+)
 from data.fantasypros_import import (
     load_cheatsheet, merge_cheatsheet_into_board, save_upload as save_fp_upload,
+    CHEATSHEET_PATH, PLAYER_ARRAY_PATH,
 )
 from data.loaders import fetch_sleeper_draft_picks
 from data.transforms import parse_pasted_draft_picks, match_names_to_board
@@ -1035,6 +1039,16 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _market_scored, _settings, cache
     # around it (see add_outcome_range_from_projections).
     projected, proj_meta = build_projected_board(
         _ecr_board, scoring, latest_season=season, ppr_for_ranking=float(scoring.get('rec', 1.0)))
+    # build_projected_board returns the raw ECR board (no Proj Pts, so a blank
+    # grid) when build_volume_curves comes back empty - which is a TRANSIENT
+    # failure (an nflverse parquet read that timed out or was starved under
+    # load), not a real state. Raise rather than let @st.cache_data store the
+    # degenerate board: the key would keep serving it until settings changed,
+    # long after the machine recovered. Raising means the next rerun retries.
+    if not proj_meta.get('volume_projections'):
+        raise RuntimeError(
+            "volume curves failed to load (transient) - not caching a blank board; "
+            "rerun to retry")
 
     ffa_meta = {}
     if _ffa_df is not None and not _ffa_df.empty:
@@ -1095,6 +1109,46 @@ def _cached_board(_ecr_board, _adp_df, _ffa_df, _market_scored, _settings, cache
     return board, meta
 
 
+def _file_mtime(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+# The imported cheat sheet and FFA export don't change during a draft, but
+# load_cheatsheet / load_ffa_import re-read and re-parse the file (and the
+# cheat-sheet merge re-runs a ~700-row join) on EVERY rerun - a pick, a mock
+# tick, a sort. Key the cache on the file's mtime so a fresh export still
+# busts it. `mtime` is a plain float and IS the hash key (no underscore).
+@st.cache_data(show_spinner=False)
+def _load_ffa_import_cached(mtime):
+    return load_ffa_import()
+
+
+@st.cache_data(show_spinner=False)
+def _load_cheatsheet_cached(mtime_sheet, mtime_array):
+    return load_cheatsheet()
+
+
+# Vegas team-scoring is INFORMATION-ONLY (never multiplied into a projection),
+# so a few minutes of staleness during a draft is harmless - and the two
+# functions cost ~65ms/rerun combined (they're deliberately uncached in
+# data/odds_market.py because its own tests monkeypatch fetch_game_lines and
+# call them directly; these app-side wrappers are never touched by those
+# tests). ttl gives the freshness; season alone is the key.
+@st.cache_data(show_spinner=False, ttl=300)
+def _team_scoring_environment_cached(season):
+    from data.odds_market import team_scoring_environment
+    return team_scoring_environment(season)
+
+
+@st.cache_data(show_spinner=False, ttl=300)
+def _estimate_full_season_scoring_cached(season):
+    from data.odds_market import estimate_full_season_scoring
+    return estimate_full_season_scoring(season)
+
+
 def _load_board(settings):
     """
     Fetch sources and assemble the board, reporting what did and didn't load.
@@ -1134,7 +1188,7 @@ def _load_board(settings):
     if upload is not None:
         ffa_df, ffa_err = save_ffa_import(upload)
     else:
-        ffa_df, ffa_err = load_ffa_import()
+        ffa_df, ffa_err = _load_ffa_import_cached(_file_mtime(FFA_IMPORT_PATH))
     status['ffa'] = {'rows': int(len(ffa_df)), 'error': ffa_err}
     settings = {**settings, 'ffa_rows': int(len(ffa_df))}
 
@@ -1154,15 +1208,24 @@ def _load_board(settings):
     _record_live_market_status(market_status)
     settings = {**settings, 'market_rows': int(len(market_scored))}
 
-    board, meta = _cached_board(ecr_board, adp_df, ffa_df, market_scored, settings,
-                                _board_cache_key(settings, adp_meta))
+    try:
+        board, meta = _cached_board(ecr_board, adp_df, ffa_df, market_scored, settings,
+                                    _board_cache_key(settings, adp_meta))
+    except RuntimeError as exc:
+        # A transient nflverse read failure inside build_volume_curves /
+        # build_player_rates now raises (rather than caching a blank board) -
+        # surface it as the empty-board path so render() shows the retry
+        # message instead of a traceback.
+        status['board_error'] = str(exc)
+        return pd.DataFrame(), {}, adp_df, adp_meta, status
     meta['market_scored'] = market_scored
 
     # Merged after the cached build rather than inside it: this is pure
     # annotation - auction values, their analysts' tiers, their notes - and
     # none of it feeds a calculation, so it has no business invalidating a
     # board rebuild when the file changes.
-    sheet, sheet_err = load_cheatsheet()
+    sheet, sheet_err = _load_cheatsheet_cached(
+        _file_mtime(CHEATSHEET_PATH), _file_mtime(PLAYER_ARRAY_PATH))
     status['cheatsheet'] = {'rows': int(len(sheet)), 'error': sheet_err}
     if not sheet.empty:
         board, sheet_meta = merge_cheatsheet_into_board(board, sheet)
@@ -1172,10 +1235,8 @@ def _load_board(settings):
     # the same reason as the cheat sheet: it is annotation. Nothing in the
     # projection multiplies by it - that was measured and it made projections
     # worse (see data/odds_market.py).
-    from data.odds_market import (
-        team_scoring_environment, attach_team_environment, estimate_full_season_scoring,
-    )
-    environment, env_meta = team_scoring_environment(settings['adp_year'])
+    from data.odds_market import attach_team_environment
+    environment, env_meta = _team_scoring_environment_cached(settings['adp_year'])
     status['vegas'] = env_meta
     if not environment.empty:
         board = attach_team_environment(board, environment)
@@ -1185,7 +1246,7 @@ def _load_board(settings):
     # yet, so "Market lines vs this board" isn't judging every offense off
     # however many (and whichever) games happen to have a number this early
     # - see estimate_full_season_scoring's own docstring for the method.
-    full_env, full_env_meta = estimate_full_season_scoring(settings['adp_year'])
+    full_env, full_env_meta = _estimate_full_season_scoring_cached(settings['adp_year'])
     status['vegas_full_season'] = full_env_meta
     if not full_env.empty:
         meta['full_season_environment'] = full_env
@@ -2353,7 +2414,10 @@ def _render_position_filter():
             if st.button(label, key=f"posfilter_{label}", width="stretch",
                          type="primary" if current == label else "secondary"):
                 st.session_state[POS_FILTER_KEY] = label
-                st.rerun()
+                # Fragment-scoped: changing which position the board shows
+                # touches nothing above _draft_board_pane. A plain st.rerun()
+                # here would rebuild the whole tab for a client-side filter.
+                st.rerun(scope="fragment")
     return dict(POSITION_FILTERS).get(current), current
 
 
@@ -2703,6 +2767,76 @@ def _render_positional_value_add(board, settings, dc):
         f"<div class='pv-wrap'>{''.join(cards)}</div>", unsafe_allow_html=True)
 
 
+@st.fragment
+def _draft_board_pane(board, dc, settings, ctx, meta, status, reach, mode):
+    """
+    The recommendation + position filter + board grid + roster column, as one
+    fragment so filter/sort/limit changes don't rerun the whole tab.
+
+    A pick (or undo) mutates draft state that lives OUTSIDE this fragment -
+    the roster panel above, the pick-context columns, the recent-picks strip -
+    so those paths deliberately keep a default-scope `st.rerun()` (which, even
+    called from inside a fragment, reruns the whole app). Only the position
+    filter reruns fragment-scoped; see _render_position_filter.
+    """
+    # The filter state is read FIRST because the recommendation banner is
+    # scoped to it but renders above the buttons that set it.
+    positions, label = _current_position_filter()
+    # Scoped to what's actually left in THIS draft, not the full board - in a
+    # mock the live tracker is empty, so an unscoped read recommends the 1.01
+    # ten rounds deep.
+    recommended = _render_single_recommendation(dc['available'], settings, dc['my_roster'],
+                                                dc['avail_pick'], positions, label)
+    _render_position_filter()
+
+    action = st.columns([1.3, 1.3, 4.4])
+    if mode == "Mock draft":
+        with action[0]:
+            if st.button("⏭ Auto-pick", key="dhq_act_auto", width="stretch"):
+                row = autopick_for_user(dc['state'], settings, dc['pool'])
+                if row is not None:
+                    _commit_pick(dc, settings, row['Player'], reach=reach)
+    else:
+        with action[0]:
+            if st.button("↩ Undo last pick", key="dhq_act_undo", disabled=not dc['picks'],
+                         width="stretch"):
+                _undo_last()
+                st.rerun()
+    with action[2]:
+        boxes = "✅ / ❌ / 📝 / 🔍" if mode == "Live draft" else "✅ / 📝 / 🔍"
+        taken = "take the player, mark him gone," if mode == "Live draft" else "take the player,"
+        st.caption(f"Draft straight from the board — the {boxes} boxes on each row {taken} "
+                   "read his analyst write-up, or open his full profile.")
+
+    left, right = st.columns([3, 1])
+    with left:
+        view = _apply_position_filter(dc['available'], positions)
+        act, player = _render_board_grid(view, "dhq_board", mode, next_pick=dc['avail_pick'],
+                                         row_limit=40)
+        if act and player:
+            _handle_board_action(act, player, dc, settings, reach)
+        _render_player_detail(board, recommended)
+    with right:
+        st.markdown("**Your roster**")
+        # Nudged down so the QB line starts level with the top of the board
+        # table, which sits below that column's sort/rows controls.
+        st.markdown("<div style='height:52px'></div>", unsafe_allow_html=True)
+        _render_roster_slots(settings, roster=dc['my_roster'])
+        _render_roster_outlook(board, settings, dc)
+
+        # Prep/reference panels, narrower column to keep the page compact.
+        with st.expander("📊 Pick odds & positional scarcity", expanded=False):
+            _render_pick_odds(board, settings, ctx, dc)
+            _render_positional_scarcity(dc['available'], settings)
+        with st.expander("💵 Market lines vs this board", expanded=False):
+            _render_market_comparison(board, settings, meta or {}, status or {})
+        if mode == "Live draft":
+            _render_live_sync(board)
+        else:
+            with st.expander("🔁 Run many mocks / compare slots", expanded=False):
+                _render_mock_tools(board, settings, ctx)
+
+
 def _render_draft_room(board, settings, ctx, meta=None, status=None):
     """
     The single draft surface, live or simulated.
@@ -2814,77 +2948,14 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
         _render_run_pressure(settings)
 
     _render_positional_value_add(dc['available'], settings, dc)
-    # Recommendation directly under the positional cards, filter buttons
-    # below it: the cards say which position to spend the pick on and the
-    # banner names the player, so they read as one thought. The filter is a
-    # control, and controls belong next to the thing they filter - which is
-    # the board underneath, not the answer above.
-    #
-    # The filter still has to be READ first, since the banner is scoped to
-    # it, so its state comes out of session_state here and the buttons that
-    # set it are drawn afterwards.
-    positions, label = _current_position_filter()
-    # Scoped to what's actually left in THIS draft, not to the full board.
-    # Reading the live tracker here was the bug that had a mock ten rounds
-    # deep still recommending the consensus 1.01: in a mock, the live
-    # tracker is empty, so "available" was the entire preseason board.
-    recommended = _render_single_recommendation(dc['available'], settings, dc['my_roster'],
-                                                dc['avail_pick'], positions, label)
-    _render_position_filter()
-
-    action = st.columns([1.3, 1.3, 4.4])
-    if mode == "Mock draft":
-        with action[0]:
-            if st.button("⏭ Auto-pick", key="dhq_act_auto", width="stretch"):
-                row = autopick_for_user(dc['state'], settings, dc['pool'])
-                if row is not None:
-                    _commit_pick(dc, settings, row['Player'], reach=reach)
-    else:
-        with action[0]:
-            if st.button("↩ Undo last pick", key="dhq_act_undo", disabled=not dc['picks'],
-                         width="stretch"):
-                _undo_last()
-                st.rerun()
-    with action[2]:
-        boxes = "✅ / ❌ / 📝 / 🔍" if mode == "Live draft" else "✅ / 📝 / 🔍"
-        taken = "take the player, mark him gone," if mode == "Live draft" else "take the player,"
-        st.caption(f"Draft straight from the board — the {boxes} boxes on each row {taken} "
-                   "read his analyst write-up, or open his full profile.")
-
-    left, right = st.columns([3, 1])
-    with left:
-        view = _apply_position_filter(dc['available'], positions)
-        act, player = _render_board_grid(view, "dhq_board", mode, next_pick=dc['avail_pick'],
-                                         row_limit=40)
-        if act and player:
-            _handle_board_action(act, player, dc, settings, reach)
-        _render_player_detail(board, recommended)
-    with right:
-        st.markdown("**Your roster**")
-        # Nudged down so the QB line starts level with the top of the board
-        # table, which sits below that column's sort/rows controls. Without
-        # it the roster floats a control-height above everything it's meant
-        # to be read alongside.
-        st.markdown("<div style='height:52px'></div>", unsafe_allow_html=True)
-        _render_roster_slots(settings, roster=dc['my_roster'])
-        _render_roster_outlook(board, settings, dc)
-
-        # These four used to run full-width below the whole draft room -
-        # moved under Your Roster on request, to make the overall page more
-        # compact rather than trailing off in a long stack of expanders
-        # below the fold. They're prep/reference panels, not the primary
-        # surface (the board on the left is), so a narrower column is the
-        # right tradeoff for keeping the page shorter.
-        with st.expander("📊 Pick odds & positional scarcity", expanded=False):
-            _render_pick_odds(board, settings, ctx, dc)
-            _render_positional_scarcity(dc['available'], settings)
-        with st.expander("💵 Market lines vs this board", expanded=False):
-            _render_market_comparison(board, settings, meta or {}, status or {})
-        if mode == "Live draft":
-            _render_live_sync(board)
-        else:
-            with st.expander("🔁 Run many mocks / compare slots", expanded=False):
-                _render_mock_tools(board, settings, ctx)
+    # Everything from the recommendation banner down is one st.fragment: a
+    # position-filter click, a board re-sort or a row-limit change reruns
+    # ONLY that block, skipping _load_board / _draft_context / the recent-
+    # picks strip / the positional cards entirely. A pick still needs the
+    # whole page (roster, positional value-add, pick context all move), so
+    # the pick handlers keep their default-scope st.rerun() which escalates
+    # to the app; only the filter buttons rerun fragment-scoped.
+    _draft_board_pane(board, dc, settings, ctx, meta, status, reach, mode)
 
     # Last, and off the FULL board rather than the available pool - a player
     # you just watched go off the board is exactly the one you want to read
@@ -3112,12 +3183,21 @@ def render():
         _render_source_status(status, meta)
 
     if board.empty:
-        st.error(
-            "Couldn't build a draft board — the consensus rankings source was unreachable. "
-            "The board's ranks are live-fetched, so this usually means no network access "
-            "rather than anything wrong with the app. Uploading a FantasyPros export in "
-            "League Settings builds the board without the network."
-        )
+        if status.get('board_error'):
+            st.error(
+                "The projection build hit a transient data-load failure and did NOT "
+                f"cache the blank result — {status['board_error']} "
+                "Press R (or the button below) to rebuild; it usually succeeds on the retry."
+            )
+            if st.button("↻ Rebuild the board", key="dhq_board_retry", type="primary"):
+                st.rerun()
+        else:
+            st.error(
+                "Couldn't build a draft board — the consensus rankings source was unreachable. "
+                "The board's ranks are live-fetched, so this usually means no network access "
+                "rather than anything wrong with the app. Uploading a FantasyPros export in "
+                "League Settings builds the board without the network."
+            )
         return
 
     # The big board is no longer its own sub-tab. It was the same table as

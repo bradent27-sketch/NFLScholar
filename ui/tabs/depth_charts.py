@@ -2,7 +2,8 @@
 import pandas as pd
 import streamlit as st
 
-from config import MASTER_TEAMS_LIST, TEAM_CONFIG, TAB_PLAYER_SEARCH, AVAILABLE_SEASONS_WITH_UPCOMING
+from config import (MASTER_TEAMS_LIST, TEAM_CONFIG, TAB_PLAYER_SEARCH,
+                    AVAILABLE_SEASONS, AVAILABLE_SEASONS_WITH_UPCOMING)
 from data.transforms import load_and_merge_data, fetch_intelligent_depth_chart
 from data.loaders import build_veteran_database, load_pff_data_with_fallback
 from data.utils import clean_name_exact
@@ -251,6 +252,31 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
                     st.error(str(exc))
 
 
+def _ourlads_rank_map_for(snapshot, team):
+    """
+    {clean_name_exact(player) -> listed slot} for one team's offense-skill
+    rows in an imported Ourlads snapshot, lowest = starter. Feeds
+    fetch_intelligent_depth_chart's preseason ordering override. Multiple
+    alignment labels roll up to one fantasy position (LWR/RWR/SWR -> WR), so
+    a player keeps his BEST (lowest) listed slot across them.
+    """
+    if snapshot is None or snapshot.empty or 'player' not in snapshot.columns:
+        return {}
+    rows = snapshot[(snapshot['team'].astype(str) == str(team))
+                    & snapshot['position'].astype(str).str.upper().isin(
+                        ['QB', 'RB', 'FB', 'WR', 'TE'])]
+    if rows.empty:
+        return {}
+    slot = (pd.to_numeric(rows.get('source_slot'), errors='coerce')
+            .fillna(pd.to_numeric(rows.get('depth_rank'), errors='coerce'))
+            .fillna(9.0))
+    out = {}
+    for key, s in zip(clean_name_exact(rows['player'].astype(str)), slot):
+        if key and (key not in out or s < out[key]):
+            out[key] = float(s)
+    return out
+
+
 _OURLADS_STATUS_LABELS = {
     'lc_gold': '2026 acquisition',
     'lc_purple': '2026 rookie pick',
@@ -271,6 +297,11 @@ def _render_ourlads_import_control(year, team):
         st.caption(
             'Import your saved printer-friendly Ourlads MHTML team pages here. The app stores a local normalized '
             'snapshot—not the raw browser files—and never logs in to or scrapes Ourlads.'
+        )
+        st.caption(
+            'One import, two consumers: this same snapshot orders the depth-chart tables above for the current '
+            "season AND feeds the weekly model's preseason cold-start role signal (QB1 lock + RB/WR/TE role "
+            'floors) — see `weekly_projections.build_weekly_projections`.'
         )
         if problem:
             st.error(problem)
@@ -301,6 +332,11 @@ def _render_ourlads_import_control(year, team):
                 st.error(report['error'])
                 return
             _invalidate_weekly_projection_cache()
+            # The depth-chart tables are a second consumer of this snapshot
+            # now - drop their caches too so a fresh import redraws without a
+            # manual rerun.
+            fetch_intelligent_depth_chart.clear()
+            _build_snap_totals.clear()
             st.success(f"Imported {len(imported):,} rows for {report['team_count']}/32 teams.")
             if report.get('missing_teams'):
                 st.warning(f"Still missing: {', '.join(report['missing_teams'])}")
@@ -386,7 +422,22 @@ def render():
         t2_target_year, sel_team_t2, df_t2_stats, t2_t_col, t2_n_col,
     )
 
-    dc_df = fetch_intelligent_depth_chart(sel_team_t2, df_t2_stats, pff['rec'], t2_target_year)
+    # For an upcoming/just-started season (no real snap data yet) the depth
+    # chart's ordering falls back to last season's snap averages, which is
+    # noisy for a team with roster turnover. Hand fetch_intelligent_depth_chart
+    # the imported Ourlads chart so the starter/backup ORDER matches it; the
+    # PFF grade / snap % / GP shown in each cell stay each player's own data.
+    # Past seasons pass nothing - their full-season snaps are authoritative.
+    ourlads_rank_map, ourlads_sig = {}, ""
+    if t2_target_year not in AVAILABLE_SEASONS:
+        _ol_snap, _ol_problem = load_ourlads_snapshot(t2_target_year)
+        if _ol_problem is None and not _ol_snap.empty:
+            ourlads_rank_map = _ourlads_rank_map_for(_ol_snap, sel_team_t2)
+            ourlads_sig = str(sorted(ourlads_rank_map.items()))
+
+    dc_df = fetch_intelligent_depth_chart(
+        sel_team_t2, df_t2_stats, pff['rec'], t2_target_year,
+        _ourlads_rank_map=ourlads_rank_map or None, ourlads_sig=ourlads_sig)
 
     if not dc_df.empty:
         snap_map = dict(zip(t2_player_totals['exact_name'], t2_player_totals.get('snap_pct_avg', pd.Series(0)))) if not t2_player_totals.empty else {}
@@ -402,6 +453,8 @@ def render():
             offense_df, defense_df = dc_df, dc_df.iloc[0:0]
 
         st.markdown("<div class='custom-section-header'>OFFENSE</div>", unsafe_allow_html=True)
+        if ourlads_rank_map:
+            st.caption(f"ℹ️ Starter order for {t2_target_year} follows the imported Ourlads depth chart ({len(ourlads_rank_map)} skill players matched). PFF grade, snap % and games played are still each player's own {snap_year_used} data.")
         st.caption("Each cell: **Player · PFF grade · Snap % (games played)** — \"RK\" in place of a grade means a rookie with no PFF grade yet, \"--\" means neither a rookie nor graded (common for deep backups).")
         st.caption("Snap % shows \"N/A\" (not \"0%\") for players no source has a snap-count row for at all — mostly deep backups with too little playing time to be tracked. Ordering for those rows leans on draft capital and experience instead.")
         st.dataframe(

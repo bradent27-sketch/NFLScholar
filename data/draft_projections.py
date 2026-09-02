@@ -71,20 +71,30 @@ PROJECTED_STATS = [
 # which is what a single blend factor would do - systematically overrates
 # whoever just had a fluky scoring season and underrates the workhorse who
 # didn't finish drives.
+#
+# 2026-08-31: shifted toward the player's own history for USAGE stats
+# (carries/targets/attempts/receptions), on the reasoning that for an
+# established player his demonstrated per-game workload is a better estimator
+# than a rank curve that also averages in everyone who finished at that rank
+# via a mid-season role loss or an injury-shortened year. The efficiency and
+# TD weights barely move - "efficiency regresses, TDs regress hardest" still
+# holds regardless of which source the number comes from. A proper sweep of
+# these against next-season actuals is queued (weekly_rankings_backlog.md).
 STAT_SELF_WEIGHT = {
-    'carries': 0.70, 'targets': 0.70, 'attempts': 0.70,     # usage: sticky
-    'receptions': 0.65,
-    'rushing_yards': 0.55, 'receiving_yards': 0.55, 'passing_yards': 0.60,
-    'rushing_tds': 0.30, 'receiving_tds': 0.30, 'passing_tds': 0.40,
-    'passing_interceptions': 0.35,
-    'rushing_fumbles_lost': 0.25, 'receiving_fumbles_lost': 0.25,
+    'carries': 0.82, 'targets': 0.82, 'attempts': 0.80,     # usage: sticky
+    'receptions': 0.76,
+    'rushing_yards': 0.60, 'receiving_yards': 0.60, 'passing_yards': 0.65,
+    'rushing_tds': 0.32, 'receiving_tds': 0.32, 'passing_tds': 0.42,
+    'passing_interceptions': 0.36,
+    'rushing_fumbles_lost': 0.27, 'receiving_fumbles_lost': 0.27,
 }
-DEFAULT_SELF_WEIGHT = 0.45
+DEFAULT_SELF_WEIGHT = 0.50
 
 # Games of recent history needed before a player's own rates are trusted at
 # the full weight above. Below this the blend slides toward the rank curve
-# in proportion to how much evidence there actually is.
-FULL_TRUST_GAMES = 24
+# in proportion to how much evidence there actually is. 20 ~= 1.2 seasons -
+# a clean full season plus a partial is enough to trust a role.
+FULL_TRUST_GAMES = 20
 
 # Below this ratio of a player's own per-game workload to what his consensus
 # rank implies, his history is treated as describing a role he no longer has
@@ -92,6 +102,16 @@ FULL_TRUST_GAMES = 24
 # generous - real usage bounces around year to year, and only a large gap
 # should be read as a changed job rather than as noise.
 ROLE_CHANGE_RATIO = 0.6
+
+# ...but the damping never drives own-history weight below this. A player the
+# market has moved up was still a competent NFL player at a smaller role;
+# collapsing him entirely onto the rank curve throws away the one thing that
+# does carry across a role change - his per-snap efficiency - and reproduces
+# the "every unsigned/promoted player sits 60-120 picks ahead of the market"
+# gap this engine's own comments flag. 0.30 keeps ~a third of his own line in
+# the blend. The cleaner fix (volume from the curve, efficiency from his own
+# history) is queued as a follow-up; this is the interim floor.
+ROLE_CHANGE_EVIDENCE_FLOOR = 0.30
 
 # HOW MANY GAMES A PROJECTION IS SPREAD ACROSS.
 #
@@ -314,7 +334,14 @@ def build_volume_curves(latest_season, n_seasons=CURVE_SEASONS, ppr_for_ranking=
     """
     df, name_col = _weekly_history(latest_season, n_seasons)
     if df.empty:
-        return {}
+        # RAISE rather than `return {}`: an empty weekly history for a recent
+        # season is a transient load failure (an nflverse parquet read that
+        # timed out or was starved), and @st.cache_data would otherwise store
+        # the empty result and keep serving a blank draft board long after the
+        # machine recovered. Raising leaves nothing cached, so the next rerun
+        # retries.
+        raise RuntimeError("weekly stats history came back empty - transient load "
+                           "failure; not caching. Rerun to retry.")
 
     ranking_scoring = {
         'pass_yd': 0.04, 'pass_td': 4.0, 'pass_int': -2.0, 'pass_2pt': 2.0,
@@ -389,7 +416,10 @@ def build_player_rates(latest_season, n_seasons=CURVE_SEASONS):
     """
     df, name_col = _weekly_history(latest_season, n_seasons)
     if df.empty:
-        return pd.DataFrame()
+        # See build_volume_curves: raise so a transient empty load is not
+        # cached as an empty rates table.
+        raise RuntimeError("weekly stats history came back empty - transient load "
+                           "failure; not caching. Rerun to retry.")
 
     seasons = sorted(df['season'].unique(), reverse=True)
     weight_for = {s: (SEASON_RECENCY_WEIGHTS[i] if i < len(SEASON_RECENCY_WEIGHTS) else 0.05)
@@ -887,10 +917,13 @@ def project_stat_lines(board, curves, rates, latest_season=2025, ages=None):
             if curve_usage > 0:
                 usage_ratio = own_usage / curve_usage
                 if usage_ratio < ROLE_CHANGE_RATIO:
-                    # Scales smoothly to zero self-weight as the gap widens,
+                    # Scales smoothly toward the floor as the gap widens,
                     # rather than a cliff that would make one extra carry
                     # flip a player between two very different projections.
-                    evidence *= max(0.0, usage_ratio / ROLE_CHANGE_RATIO)
+                    # Floored (not to zero) so a promoted player keeps a
+                    # slice of his own line - see ROLE_CHANGE_EVIDENCE_FLOOR.
+                    evidence *= max(ROLE_CHANGE_EVIDENCE_FLOOR,
+                                    usage_ratio / ROLE_CHANGE_RATIO)
 
                 # RECENCY EVIDENCE. games_sample/FULL_TRUST_GAMES alone counts
                 # CAREER games, so a player with one clean, uncontested season

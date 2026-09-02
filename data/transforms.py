@@ -1416,10 +1416,19 @@ def build_player_historical_summary(selected_player, scoring_rule, years=(2023, 
 
 
 @st.cache_data
-def fetch_intelligent_depth_chart(team, _stats_df, _df_pff_rec, year):
+def fetch_intelligent_depth_chart(team, _stats_df, _df_pff_rec, year,
+                                  _ourlads_rank_map=None, ourlads_sig=""):
     """
     `_stats_df`/`_df_pff_rec` underscore-prefixed (not hashed) - see
     apply_scoring_and_percentiles for why; `team`+`year` are the real cache key.
+
+    `_ourlads_rank_map` ({clean_name_exact(name) -> listed slot, 1 = starter})
+    is the Depth Charts tab's imported Ourlads chart for THIS team. It is
+    underscore-prefixed (unhashable dict); `ourlads_sig` is the hashable
+    stand-in the caller derives from the same map so the cache re-keys when a
+    new chart is imported. It is applied ONLY for a season with no real
+    weekly snap data yet (an upcoming/just-started season) - a past season
+    keeps its authoritative full-season snap ordering and ignores the map.
     """
     t_col = 'recent_team' if 'recent_team' in _stats_df.columns else ('team' if 'team' in _stats_df.columns else None)
     if not t_col: return pd.DataFrame()
@@ -1531,6 +1540,24 @@ def fetch_intelligent_depth_chart(team, _stats_df, _df_pff_rec, year):
     else:
         team_df['draft_priority'] = 0
     team_df['depth_score'] = team_df['snap_score'] + team_df['draft_priority']
+
+    # Ourlads preseason override. For an upcoming/just-started season the
+    # snap_score above is last year's average - noisy for a team with roster
+    # turnover, and the whole reason this tab existed before the Ourlads
+    # importer was wired in. When the Depth Charts tab hands us an imported
+    # chart (exact-name -> listed slot), let THAT drive the ordering: charted
+    # players get a synthetic depth_score in listed order, above any real
+    # snap number, so every downstream re-sort in this function (get_players,
+    # the WR pool) that keys on depth_score follows it too. Players not on
+    # the chart keep their snap-based score and sort in behind. Skipped
+    # entirely once real weekly data exists (had_real_weekly_data) - a
+    # played season is ordered on what actually happened.
+    if _ourlads_rank_map and not had_real_weekly_data and dedup_key in team_df.columns:
+        ol_rank = (clean_name_exact(team_df[dedup_key].astype(str))
+                   .map(_ourlads_rank_map).astype(float))
+        if ol_rank.notna().any():
+            team_df['depth_score'] = np.where(
+                ol_rank.notna(), 1000.0 - ol_rank.fillna(0) * 10.0, team_df['depth_score'])
 
     team_df = team_df.sort_values(by=['depth_score', 'fantasy_points', 'years_exp_num'], ascending=[False, False, False])
     p_col = 'depth_chart_position' if 'depth_chart_position' in team_df.columns else 'position'

@@ -104,9 +104,11 @@ IMPORT_SOURCES = {
     'draftkings_weekly': ImportSource(
         'DraftKings — weekly boards',
         'https://sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1/leagues/88808',
-        'Weekly subcategory ids change and are only posted in season. '
-        '`python scripts/probe_season_odds.py --weekly` prints the live ones; save '
-        'each and drop them in together.',
+        "In season only — the board doesn't exist in the preseason. "
+        '**1.** Run `python scripts/probe_season_odds.py --weekly` — it prints the '
+        'live weekly ids as `category=<cid> subcategory=<sid>`. '
+        '**2.** Open `.../leagues/88808/categories/<cid>/subcategories/<sid>` for '
+        'each stat and save the JSON. **3.** Drop them all in together below.',
     ),
 
     # --- keys and ids -------------------------------------------------------

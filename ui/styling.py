@@ -464,6 +464,13 @@ def inject_theme():
             color: {C['on_surface_variant']};
             margin-bottom: 6px;
         }}
+        .fpts-strip .fs-sub {{
+            font-size: 10px;
+            color: {C['on_surface_variant']};
+            opacity: 0.75;
+            margin-top: 4px;
+            font-style: italic;
+        }}
         .fpts-linechart {{
             display: block;
             width: 100%;
@@ -1083,6 +1090,14 @@ def inject_theme():
             flex: 0 0 auto; font-family: {F['mono']}; font-size: 9px; font-weight: 700;
             background: var(--gs-color, {C['outline']}); color: #fff;
             border-radius: {R['full']}; padding: 1px 6px; letter-spacing: 0.06em;
+        }}
+        /* Vegas line snippet - sits where the score would be on an unplayed
+           game (spread on the favorite, O/U on the other), quieter than a
+           score so it reads as metadata, not a result. */
+        .gs-team .gs-line {{
+            flex: 0 0 auto; font-family: {F['mono']}; font-size: 12px;
+            font-weight: 600; color: {C['on_surface_variant']}; opacity: 0.85;
+            white-space: nowrap;
         }}
         .gs-team.gs-won {{ background: {C['surface_container_high']}; }}
         .gs-team.gs-won .gs-score {{ color: {C['primary']}; }}
@@ -1757,13 +1772,18 @@ def render_game_log_html_table(log_df_view, avg_source_df, log_cols, header_map,
     display_cols = [header_map.get(c, c.replace('_', ' ').upper()) for c in log_cols]
 
     def week_cell(col, r):
-        val = _format_stat_value(col, r.get(col, 0))
         if col == 'week':
-            return str(val), f"background-color:{C['surface_container']}; color:{C['on_surface']};"
+            return (str(_format_stat_value(col, r.get(col, 0))),
+                    f"background-color:{C['surface_container']}; color:{C['on_surface']};")
         if col == 'opponent_team':
             team = str(r.get(col, '')).strip().upper() if pd.notna(r.get(col)) else '--'
             t_bg = TEAM_CONFIG.get(team, {}).get('color', C['surface_container'])
             return team, f"background-color:{t_bg}; color:#ffffff; font-weight:bold;"
+        # A scheduled-but-not-yet-played week: a present, empty cell (muted),
+        # never a 0 - the season fills these in as games happen.
+        if bool(r.get('_unplayed')):
+            return '', f"background-color:{C['surface_container']}; color:{C['on_surface_variant']};"
+        val = _format_stat_value(col, r.get(col, 0))
         pct_val = r.get(f"{col}_wk_pct", 0)
         bg = get_pff_color(pct_val)
         return val, f"background-color:{bg}; color:#ffffff; font-weight:bold;"
@@ -1787,6 +1807,11 @@ def render_game_log_html_table(log_df_view, avg_source_df, log_cols, header_map,
             text = 'AVG'
         elif col == 'opponent_team':
             text = '--'
+        elif col not in avg_source_df.columns or avg_source_df.empty:
+            # No played games to average yet (a pre-kickoff season, or a
+            # schedule-only frame that never carried this stat column) -
+            # blank, not a fabricated 0.0.
+            text = ''
         else:
             mean_val = pd.to_numeric(avg_source_df[col], errors='coerce').mean()
             decimals = max(STAT_DECIMALS.get(col, 0), 1)
@@ -1796,7 +1821,7 @@ def render_game_log_html_table(log_df_view, avg_source_df, log_cols, header_map,
             # let f-string interpolate the result directly; formatting with
             # `:.{decimals}f` forces the display string itself to the
             # intended precision.
-            text = f"{mean_val:.{decimals}f}" if pd.notna(mean_val) else f"{0.0:.{decimals}f}"
+            text = f"{mean_val:.{decimals}f}" if pd.notna(mean_val) else ''
         avg_cells.append(
             f"<td style='padding:8px; white-space:nowrap; text-align:center; "
             f"background-color:{C['surface_dim']}; color:{C['primary']}; font-weight:800; "

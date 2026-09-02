@@ -543,7 +543,7 @@ def _nice_y_ticks(max_val, target_count=4):
     return ticks
 
 
-def render_fpts_week_strip(p_data, year, scoring_label=""):
+def render_fpts_week_strip(p_data, year, scoring_label="", schedule_df=None):
     """
     Full-season fantasy-points-by-week LINE chart (Player Search) - shown
     first, above the hero tiles, per explicit feedback that the boards'
@@ -564,27 +564,51 @@ def render_fpts_week_strip(p_data, year, scoring_label=""):
     "Wk N vs OPP — X pts" detail (native SVG <title>, same info the old
     bar strip's div title= carried).
 
-    Silently renders nothing for seasons with no weekly data (no 'week'
-    column - e.g. 2026 pre-kickoff) or a player with no played weeks.
+    `schedule_df` (week + opponent_team, e.g. from _build_schedule_only_log)
+    fixes the x-axis to the FULL season: weeks with no played game yet get
+    an empty slot and the curve grows into them as the season goes. With no
+    played weeks at all (a pre-kickoff season) the axis, week ticks and
+    opponent labels still render - just no line or dots. Renders nothing
+    only when there is neither weekly data nor a schedule.
     """
     from config import THEME
     from ui.styling import get_pff_color
-    if 'week' not in p_data.columns or 'fantasy_points' not in p_data.columns:
-        return
-    df = p_data.copy()
-    df['week'] = pd.to_numeric(df['week'], errors='coerce')
-    df = df[df['week'] > 0].sort_values('week')
-    if df.empty:
-        return
-    fpts = pd.to_numeric(df['fantasy_points'], errors='coerce').fillna(0).tolist()
-    weeks = df['week'].astype(int).tolist()
-    opps = df['opponent_team'].astype(str).tolist() if 'opponent_team' in df.columns else [''] * len(df)
-    pcts = df['fantasy_points_wk_pct'].tolist() if 'fantasy_points_wk_pct' in df.columns else [0] * len(df)
+    C = THEME['colors']
 
-    n = len(fpts)
-    max_fpts = max(fpts)
-    if max_fpts <= 0:
+    have_week = 'week' in p_data.columns and 'fantasy_points' in p_data.columns
+    if have_week:
+        df = p_data.copy()
+        df['week'] = pd.to_numeric(df['week'], errors='coerce')
+        df = df[df['week'] > 0].sort_values('week')
+    else:
+        df = p_data.iloc[0:0]
+
+    sched_weeks, sched_opp = [], {}
+    if schedule_df is not None and not schedule_df.empty and 'week' in schedule_df.columns:
+        sw = schedule_df.copy()
+        sw['week'] = pd.to_numeric(sw['week'], errors='coerce')
+        sw = sw[sw['week'] > 0].sort_values('week')
+        sched_weeks = sw['week'].astype(int).tolist()
+        if 'opponent_team' in sw.columns:
+            sched_opp = dict(zip(sw['week'].astype(int), sw['opponent_team'].astype(str)))
+
+    fpts = pd.to_numeric(df['fantasy_points'], errors='coerce').fillna(0).tolist() if not df.empty else []
+    weeks = df['week'].astype(int).tolist() if not df.empty else []
+    opps = (df['opponent_team'].astype(str).tolist()
+            if ('opponent_team' in df.columns and not df.empty) else [''] * len(weeks))
+    pcts = (df['fantasy_points_wk_pct'].tolist()
+            if ('fantasy_points_wk_pct' in df.columns and not df.empty) else [0] * len(weeks))
+
+    # The x-axis is the full schedule when we have one, otherwise just the
+    # weeks actually played (the pre-schedule_df behaviour).
+    axis_weeks = sched_weeks or weeks
+    n = len(axis_weeks)
+    if n == 0:
         return
+    week_pos = {wk: j for j, wk in enumerate(axis_weeks)}
+
+    max_fpts = max(fpts) if fpts else 0.0
+    y_ref = max_fpts if max_fpts > 0 else 25.0
 
     # Height cut roughly a third (220->140) per explicit feedback that this
     # chart ran too tall for what's meant to be a quick glance up top, not
@@ -595,36 +619,57 @@ def render_fpts_week_strip(p_data, year, scoring_label=""):
     # the first week's point.
     pad_l, pad_r, pad_t, pad_b = 30, 14, 12, 26
     plot_w, plot_h = W - pad_l - pad_r, H - pad_t - pad_b
-    y_max = max_fpts * 1.15  # headroom so the top point never touches the edge
+    y_max = y_ref * 1.15  # headroom so the top point never touches the edge
 
-    def x_at(i):
-        return pad_l if n == 1 else pad_l + plot_w * i / (n - 1)
+    def x_at_j(j):
+        return pad_l if n == 1 else pad_l + plot_w * j / (n - 1)
 
     def y_at(v):
         return pad_t + plot_h - plot_h * (v / y_max)
 
-    pts = [(x_at(i), y_at(v)) for i, v in enumerate(fpts)]
+    # One entry per PLAYED week that lands on the axis.
+    played = [
+        (week_pos[wk], wk, fpts[k], (opps[k] if k < len(opps) else '').strip().upper(),
+         pcts[k] if k < len(pcts) else 0)
+        for k, wk in enumerate(weeks) if wk in week_pos
+    ]
+    pts = [(x_at_j(j), y_at(v)) for j, _wk, v, _opp, _pct in played]
+
     # Smooth interpolating curve (Catmull-Rom -> Bezier) instead of straight
     # segments between weeks, per explicit feedback - still passes through
     # every real weekly value, just reads as one flowing line rather than a
-    # discrete connect-the-dots polyline.
-    line_path = _smooth_svg_path(pts)
-    area_path = f"{line_path} L{pts[-1][0]:.1f},{pad_t + plot_h:.1f} L{pts[0][0]:.1f},{pad_t + plot_h:.1f} Z"
+    # discrete connect-the-dots polyline. Needs >=2 points; a lone point is
+    # just a dot, and zero points is the pre-kickoff empty axis.
+    line_path = _smooth_svg_path(pts) if len(pts) >= 2 else ""
+    area_path = (f"{line_path} L{pts[-1][0]:.1f},{pad_t + plot_h:.1f} "
+                 f"L{pts[0][0]:.1f},{pad_t + plot_h:.1f} Z") if len(pts) >= 2 else ""
 
-    C = THEME['colors']
     dots, wk_labels = [], []
-    for i, (x, y) in enumerate(pts):
-        wk, val, opp, pct = weeks[i], fpts[i], opps[i].strip().upper(), pcts[i]
+    for j, wk, val, opp, pct in played:
+        x, y = x_at_j(j), y_at(val)
         color = get_pff_color(pct)
         opp_part = f" vs {opp}" if opp and opp != 'NAN' else ""
         dots.append(
             f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{color}" stroke="{C["surface_container"]}" stroke-width="1.5">'
             f'<title>Wk {wk}{opp_part} — {val:.1f} pts</title></circle>'
         )
-        # Every week when there's room to read them; thin out to every other
-        # week on a full 17/18-game season so labels don't collide.
-        if n <= 10 or i % 2 == 0 or i == n - 1:
-            wk_labels.append(f'<text x="{x:.1f}" y="{H - 6}" text-anchor="middle" class="fl-wklabel">{wk}</text>')
+
+    # Week ticks along the bottom - every week when there's room, thinned to
+    # every other on a full 17/18-game axis. With nothing played yet, each
+    # tick also carries the opponent, since that's the only content the
+    # chart has to offer at that point.
+    empty_axis = not played
+    for j, wk in enumerate(axis_weeks):
+        if not (n <= 10 or j % 2 == 0 or j == n - 1):
+            continue
+        x = x_at_j(j)
+        wk_labels.append(f'<text x="{x:.1f}" y="{H - 6}" text-anchor="middle" class="fl-wklabel">{wk}</text>')
+        if empty_axis:
+            opp = str(sched_opp.get(wk, '')).strip().upper()
+            if opp and opp != 'NAN':
+                wk_labels.append(
+                    f'<text x="{x:.1f}" y="{H - 15}" text-anchor="middle" class="fl-wklabel" '
+                    f'style="opacity:0.6;">{opp}</text>')
 
     # Faint y-axis - a handful of round-number tick marks/labels (0, 10, 20,
     # ...) so a value can be referenced against the axis when needed,
@@ -636,7 +681,7 @@ def render_fpts_week_strip(p_data, year, scoring_label=""):
     axis_parts = [
         f'<line x1="{pad_l:.1f}" y1="{pad_t:.1f}" x2="{pad_l:.1f}" y2="{pad_t + plot_h:.1f}" class="fl-yaxis-line"/>'
     ]
-    for tick_v in _nice_y_ticks(max_fpts):
+    for tick_v in _nice_y_ticks(y_ref):
         if tick_v > y_max:
             continue
         ty = y_at(tick_v)
@@ -645,22 +690,25 @@ def render_fpts_week_strip(p_data, year, scoring_label=""):
         axis_parts.append(f'<text x="{pad_l - 7:.1f}" y="{ty + 3:.1f}" text-anchor="end" class="fl-yticklabel">{tick_label}</text>')
     axis_svg = ''.join(axis_parts)
 
+    area_svg = (f'<path d="{area_path}" fill="url(#fl-fill-{year})" stroke="none"/>'
+                if area_path else "")
+    line_svg = (f'<path d="{line_path}" fill="none" stroke="{C["primary"]}" stroke-width="2.5" '
+                f'stroke-linejoin="round" stroke-linecap="round"/>' if line_path else "")
     svg = (
         f'<svg viewBox="0 0 {W} {H}" class="fpts-linechart" role="img" aria-label="Fantasy points by week">'
         f'<defs><linearGradient id="fl-fill-{year}" x1="0" y1="0" x2="0" y2="1">'
         f'<stop offset="0%" stop-color="{C["primary"]}" stop-opacity="0.30"/>'
         f'<stop offset="100%" stop-color="{C["primary"]}" stop-opacity="0"/>'
         f'</linearGradient></defs>'
-        f'{axis_svg}'
-        f'<path d="{area_path}" fill="url(#fl-fill-{year})" stroke="none"/>'
-        f'<path d="{line_path}" fill="none" stroke="{C["primary"]}" stroke-width="2.5" '
-        f'stroke-linejoin="round" stroke-linecap="round"/>'
+        f'{axis_svg}{area_svg}{line_svg}'
         f'{"".join(dots)}{"".join(wk_labels)}</svg>'
     )
 
     label_suffix = f" · {scoring_label}" if scoring_label else ""
+    empty_note = ("<div class='fs-sub'>Fills in as games are played.</div>"
+                  if not played else "")
     st.markdown(
-        f"<div class='fpts-strip'><div class='fs-label'>Fantasy Points by Week — {year}{label_suffix}</div>{svg}</div>",
+        f"<div class='fpts-strip'><div class='fs-label'>Fantasy Points by Week — {year}{label_suffix}</div>{svg}{empty_note}</div>",
         unsafe_allow_html=True,
     )
 

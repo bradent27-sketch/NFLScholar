@@ -639,18 +639,32 @@ def load_weekly_stats_history():
     shown as 3,416 yards / 254 catches (exactly 2x) before this fix.
     """
     hist_frames = []
+    matched_any = False
+    read_errors = []
     for f in os.listdir():
         fl = f.lower()
         if not fl.endswith('.csv'): continue
         if '_reg_' in fl or 'season_level' in fl: continue
         if re.search(r'(stats_player|player_stats|player_summary)', fl):
+            matched_any = True
             try:
                 tmp = pd.read_csv(f, low_memory=False)
                 if 'week' in tmp.columns:
                     hist_frames.append(tmp)
-            except: pass
+            except Exception as exc:  # noqa: BLE001 - see the raise below
+                read_errors.append(f"{f}: {type(exc).__name__}")
     if hist_frames:
         return pd.concat(hist_frames, ignore_index=True)
+    # Matching files are on disk but not one parsed -> a transient read
+    # failure (a MemoryError under load, a momentarily locked file). RAISE
+    # rather than return an empty frame: this is @st.cache_data(ttl=1h), and a
+    # cached empty here silently blanks the draft board and the 3-year history
+    # view for the next hour. Raising leaves nothing cached; the next rerun
+    # retries. Only the genuine "no files at all" case returns empty.
+    if matched_any:
+        raise RuntimeError(
+            "weekly stats history: matching CSVs exist but none parsed "
+            f"({'; '.join(read_errors) or 'no week column'}) - transient; not caching")
     return pd.DataFrame()
 
 

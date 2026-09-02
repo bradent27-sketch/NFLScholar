@@ -88,11 +88,29 @@ def _selected_player_detail(model_meta, detail_config, key):
     including after the underlying board itself gets rebuilt (TTL expiry, a
     week/scoring/model switch and back, etc.) - explicit request: "once
     loaded...it remains cached for the rest of the session".
+
+    The one thing that MUST bust it is a manual injury override / FantasyPros
+    pull for this same week: that rebuilds the board (a new availability
+    fingerprint) and can change the decomposition of the injured player and
+    everyone whose usage the vacancy redistributes to, while leaving the
+    (week, scoring) head of detail_config untouched. detail_config's last
+    element is that fingerprint, so a changed feed lands on a fresh cache_key;
+    the stale-generation sweep below then drops the pre-injury copies for the
+    same board so an affected player is re-resolved from the rebuild rather
+    than served the old breakdown. Bug report 2026-08-31: the table restated
+    after adding an injured player but the open decompositions did not.
     """
     cache = st.session_state.setdefault(_PLAYER_DETAIL_CACHE_KEY, {})
     cache_key = (detail_config, key)
     if cache_key in cache:
         return cache[cache_key]
+    if isinstance(detail_config, tuple) and len(detail_config) > 1:
+        head = detail_config[:-1]
+        stale = [k for k in cache
+                 if isinstance(k[0], tuple) and len(k[0]) == len(detail_config)
+                 and k[0][:-1] == head and k[0] != detail_config]
+        for k in stale:
+            del cache[k]
     detail = model_meta.get('explanations', {}).get(key)
     if detail is not None:
         cache[cache_key] = detail
@@ -1208,12 +1226,15 @@ _VACANCY_VOLUME_LABELS = {
 }
 
 
-# A vacated per-game volume below this bar is not worth a full redistribution
-# table - the OUT player was a bit part in that stat.  Per explicit request
-# 2026-08-30: "<1.5 target per game... relatively negligible", plus a carry
-# equivalent (a back under ~3 carries/game vacates a comparable sliver of
-# fantasy points).  QB pass attempts have no bar - a missing QB is never minor.
-_VACANCY_NEGLIGIBLE_PER_GAME = {'targets': 1.5, 'rushing_attempts': 3.0}
+# A vacated per-game volume at/below this bar is not worth a full
+# redistribution table - the OUT player was a bit part in that stat, and the
+# reallocation is a fantasy-negligible sliver.  Per explicit request
+# 2026-08-31: "only show the true reallocation for injured players that drew
+# >1 target or >1 carry per game" (tightening the earlier 1.5-target /
+# 3-carry bar; a 0.1-target vacancy was still rendering a full grid row when
+# the open player happened to be a recipient).  QB pass attempts have no bar
+# - a missing QB is never minor.
+_VACANCY_NEGLIGIBLE_PER_GAME = {'targets': 1.0, 'rushing_attempts': 1.0}
 
 
 def _vacancy_trusted_tier_cutoff(volume_key, source_role):
@@ -1234,12 +1255,16 @@ def _summarize_vacancy_entry(entry, this_player):
     """Decide how one vacancy-ledger row should be shown.  Pure (no Streamlit)
     so it is unit-tested directly.  Returns a dict with 'kind':
       'skipped'    - stale provenance / no eligible recipient, nothing vacated
-      'negligible' - the OUT player's per-game volume is below the
-                     show-a-distribution bar (see _VACANCY_NEGLIGIBLE_PER_GAME)
+      'negligible' - the OUT player's per-game volume is at/below the
+                     show-a-distribution bar (see _VACANCY_NEGLIGIBLE_PER_GAME);
+                     collapses to the same informative one-line 'text' as the
+                     'full' caption but with NO recipient grid, even for the
+                     player whose decomposition this is
       'full'       - normal: 'caption', 'recipients' (table rows kept to the
                      trusted tier), and 'minor' (a one-line remainder summary
                      for the fill-ins that were trimmed, or None)
-    THIS player's own row is always kept, even when small or below the tier."""
+    In the 'full' case THIS player's own row is always kept, even when small
+    or below the tier."""
     volume_key = str(entry.get('volume', '') or '')
     label = _VACANCY_VOLUME_LABELS.get(volume_key, volume_key or 'volume')
     source_player = str(entry.get('source_player', '') or 'OUT teammate')
@@ -1248,20 +1273,22 @@ def _summarize_vacancy_entry(entry, this_player):
     unallocated = float(entry.get('unallocated', 0.0) or 0.0)
     reason = str(entry.get('reason', '') or '')
     recips = list(entry.get('recipients', []) or [])
-    this_is_recipient = this_player in {str(r.get('player', '')) for r in recips}
 
     if vacated <= 0 and not recips:
         return {'kind': 'skipped', 'text': f"{source_player} — {label}: {reason}"}
 
-    neg = _VACANCY_NEGLIGIBLE_PER_GAME.get(volume_key)
-    if neg is not None and vacated < neg and not this_is_recipient:
-        return {'kind': 'negligible', 'text': (
-            f"{source_player} out — {vacated:.1f} {label.lower()}/game vacated; "
-            f"too small to redistribute in detail.")}
-
     caption = (f"{source_player} out — {vacated:.1f} {label.lower()} vacated; "
                f"{allocated:.1f} redistributed to active teammates, "
-               f"{unallocated:.1f} left unfilled. {reason}")
+               f"{unallocated:.1f} left unfilled. {reason}").rstrip()
+
+    # Below ~1 vacated target / carry per game the OUT player was a bit part
+    # in that stat: keep the informative caption, drop the recipient grid -
+    # even when the open player is one of the (tiny) recipients (explicit
+    # request 2026-08-31). A missing QB has no bar (passing_attempts absent).
+    neg = _VACANCY_NEGLIGIBLE_PER_GAME.get(volume_key)
+    if neg is not None and vacated < neg:
+        return {'kind': 'negligible', 'text': caption}
+
     cutoff = _vacancy_trusted_tier_cutoff(volume_key, entry.get('functional_source_role'))
     kept, minor_n, minor_vol = [], 0, 0.0
     for r in recips:
@@ -1293,11 +1320,12 @@ def _render_vacancy_redistribution(detail):
     record it the same day. `detail['vacancy']` is already filtered to this
     player's team upstream.
 
-    2026-08-30 per explicit request: a sub-1.5-target/game (or sub-3-carry)
-    OUT player collapses to a one-line caption, and recipients below the
-    trusted tier (PASS_CAPACITY_TRUSTED_TIER / _RB) are rolled into a single
-    remainder line instead of cluttering the grid - the deep-roster fill-ins
-    aren't getting a relevant look."""
+    2026-08-30 per explicit request: an OUT player who vacated ~1 or fewer
+    targets / carries per game (tightened from 1.5 / 3.0 on 2026-08-31)
+    collapses to a one-line caption, and recipients below the trusted tier
+    (PASS_CAPACITY_TRUSTED_TIER / _RB) are rolled into a single remainder line
+    instead of cluttering the grid - the deep-roster fill-ins aren't getting
+    a relevant look."""
     vacancy = detail.get('vacancy', [])
     if not vacancy:
         return
@@ -2285,6 +2313,7 @@ def render():
     board_ready = st.session_state.get('weekly_rank_built_for') == build_key
 
     model_df, model_meta = pd.DataFrame(), {}
+    avail_fp = None
     if board_ready:
         with skeleton_loader("table", n_rows=10, n_cols=7):
             # Real cache-key input, not read inside build_weekly_projections -
@@ -2436,8 +2465,8 @@ def render():
         display_cols = ['Rank', 'Player', 'Team', 'Opponent',
                         'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts']
         display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
-        display_cols += ['Market Coverage', 'Injury Status', 'Last 5 Weeks',
-                        'FantasyPros Rank', 'Model Rank', 'Market Rank',
+        display_cols += ['Injury Status', 'Last 5 Weeks',
+                        'FantasyPros Rank', 'Model Rank', 'Market Rank', 'Market Coverage',
                         'FantasyPros ECR', 'Model vs FantasyPros ECR']
 
         # 'Last 5 Weeks' is built per-displayed-row further down, so it isn't
@@ -2488,7 +2517,7 @@ def render():
         # Re-apply the requested order now that Last 5 Weeks exists - it has
         # to be built per DISPLAYED row (one SVG each), which is after the
         # slice above, so it lands on the end of the frame rather than in
-        # its requested slot between Injury Status and the rank block.
+        # its requested slot next to Injury Status.
         indexed = indexed[[c for c in display_cols if c in indexed.columns]]
 
         pct_cols = {}
@@ -2502,13 +2531,34 @@ def render():
                   f"({form_source_year}), with the dotted line at that season's average"),
             width="small",
         )
-        detail_config = (wk_year, wk_week, wk_scoring)
+        # The availability fingerprint is part of the key so a manual injury
+        # override / FantasyPros pull for this week (which rebuilds the board
+        # and can move the injured player plus every vacancy recipient) forces
+        # the open decomposition and the per-player detail cache to re-resolve
+        # from the rebuild instead of showing the pre-injury breakdown.
+        detail_config = (wk_year, wk_week, wk_scoring, avail_fp)
         selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
         if selected_state and selected_state.get('config') != detail_config:
-            # A selection is meaningful only for the exact board it came
-            # from.  This prevents a Week 3 explanation being displayed over
-            # a Week 4 table after any selector changes.
-            st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
+            prev_config = selected_state.get('config')
+            prev_key = selected_state.get('key')
+            same_board = (isinstance(prev_config, tuple) and len(prev_config) == len(detail_config)
+                          and prev_config[:-1] == detail_config[:-1])
+            fresh = (_selected_player_detail(model_meta, detail_config, prev_key)
+                     if same_board and prev_key is not None else None)
+            if fresh is not None:
+                # Same week/scoring, only the availability fingerprint moved -
+                # an injury override / feed pull rebuilt this board. Keep the
+                # decomposition open but re-resolve it against the rebuild so
+                # the injured player and every vacancy recipient show fresh
+                # numbers instead of the pre-injury breakdown.
+                st.session_state[_PROJECTION_DETAIL_KEY] = {
+                    'config': detail_config, 'detail': fresh, 'key': prev_key,
+                }
+            else:
+                # A real board switch (week / scoring), or nothing to
+                # re-resolve: a Week 3 explanation is not meaningful over a
+                # Week 4 table.
+                st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
         # Row KEYS only here, not a model_meta['explanations'] lookup per
         # row - that dict lookup is cheap today, but every displayed row
         # (up to 40) was being looked up on EVERY rerun regardless of
@@ -2521,10 +2571,11 @@ def render():
         def _on_model_row_select():
             rows = st.session_state.get(model_table_key, {}).get('selection', {}).get('rows', [])
             if rows and rows[0] < len(row_keys):
-                detail = _selected_player_detail(model_meta, detail_config, row_keys[rows[0]])
+                row_key = row_keys[rows[0]]
+                detail = _selected_player_detail(model_meta, detail_config, row_key)
                 if detail:
                     st.session_state[_PROJECTION_DETAIL_KEY] = {
-                        'config': detail_config, 'detail': detail,
+                        'config': detail_config, 'detail': detail, 'key': row_key,
                     }
 
         st.dataframe(

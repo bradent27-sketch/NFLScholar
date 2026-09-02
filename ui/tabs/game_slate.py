@@ -49,13 +49,19 @@ from ui.components import (
 _CARDS_PER_ROW = 2
 
 
-def _team_row(side, abbr, color, logo, points, is_winner, show_score):
+def _team_row(side, abbr, color, logo, points, is_winner, show_score, line_note=None):
     """
     One team's row inside a card.
 
     `is_winner` is deliberately three-valued. None means "no winner" - an
     unplayed game or a TIE - and must not collapse to False, because False
     would mark BOTH teams as losers and dim them.
+
+    `line_note` is the Vegas snippet for THIS team - the point spread on the
+    favorite's row ("-3.5"), the total on the other ("O/U 44.5"). It takes
+    the same right-edge slot the score occupies, and only for an unplayed
+    game: a played game shows the score there instead, and a game with no
+    line posted yet passes None and shows nothing.
     """
     classes = ['gs-team']
     if is_winner is True:
@@ -77,6 +83,8 @@ def _team_row(side, abbr, color, logo, points, is_winner, show_score):
         parts.append(f"<span class='gs-score'>{int(points)}</span>")
         if is_winner is True:
             parts.append("<span class='gs-win-flag'>W</span>")
+    elif line_note:
+        parts.append(f"<span class='gs-line'>{escape(line_note)}</span>")
     parts.append('</div>')
     return ''.join(parts)
 
@@ -100,6 +108,32 @@ def card_html(idx, row):
     played = bool(row.get('Played'))
     live = bool(row.get('Live'))
     show_score = played or live
+
+    # Vegas snippet per team, only when there's no score to show. nflverse's
+    # `spread_line` is positive when the HOME team is favored (see
+    # data/odds_market.py's sign note). The favorite's row gets the spread,
+    # the other row gets the game total; a game with neither field posted
+    # yet (too far out) passes None both ways and shows nothing.
+    away_line = home_line = None
+    if not show_score:
+        spread = row.get('Spread Line')
+        total = row.get('Total Line')
+        if spread is not None and pd.notna(spread):
+            spread = float(spread)
+            if spread > 0:
+                home_line = f"{-spread:g}"
+            elif spread < 0:
+                away_line = f"{spread:g}"
+            else:
+                home_line = 'PK'
+        if total is not None and pd.notna(total):
+            ou = f"O/U {float(total):g}"
+            if home_line is not None and away_line is None:
+                away_line = ou
+            elif away_line is not None and home_line is None:
+                home_line = ou
+            elif home_line is None and away_line is None:
+                home_line = ou
 
     winner = row.get('Winner')
     winner = winner if (winner is not None and pd.notna(winner)) else None
@@ -131,8 +165,8 @@ def card_html(idx, row):
         f"{style_tag}"
         f"<div class='gs-meta'>{dotted}</div>"
         f"{headline_html}"
-        f"{_team_row('AWAY', away, away_color, row.get('Away Logo'), row.get('Away Pts'), away_won, show_score)}"
-        f"{_team_row('HOME', home, home_color, row.get('Home Logo'), row.get('Home Pts'), home_won, show_score)}"
+        f"{_team_row('AWAY', away, away_color, row.get('Away Logo'), row.get('Away Pts'), away_won, show_score, away_line)}"
+        f"{_team_row('HOME', home, home_color, row.get('Home Logo'), row.get('Home Pts'), home_won, show_score, home_line)}"
     )
 
 

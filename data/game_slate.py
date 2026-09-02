@@ -83,6 +83,10 @@ SLATE_COLUMNS = [
     'Away Color', 'Home Color', 'Away Logo', 'Home Logo',
     'Venue', 'Neutral Site', 'Headline', 'Matchup',
     'Week', 'Season Type', '_source',
+    # nflverse carries these on `games.csv` for future weeks too - positive
+    # `spread_line` means the HOME team is favored (see data/odds_market.py).
+    # NaN until a line is posted; the card renders nothing in that case.
+    'Spread Line', 'Total Line',
 ]
 
 
@@ -226,6 +230,8 @@ def season_slate(season):
     home = _col(df, 'home_team').astype(str)
     neutral = _col(df, 'location').astype(str).str.lower().eq('neutral')
     kinds = _col(df, 'game_type').astype(str)
+    spread_line = pd.to_numeric(_col(df, 'spread_line'), errors='coerce')
+    total_line = pd.to_numeric(_col(df, 'total_line'), errors='coerce')
 
     rows = []
     for i, (_, src) in enumerate(df.iterrows()):
@@ -270,6 +276,8 @@ def season_slate(season):
             'Week': int(src.get('week')) if pd.notna(src.get('week')) else 0,
             'Season Type': kind,
             '_source': 'nflverse schedule',
+            'Spread Line': spread_line.iloc[i],
+            'Total Line': total_line.iloc[i],
         })
 
     out = pd.DataFrame(rows, columns=SLATE_COLUMNS)

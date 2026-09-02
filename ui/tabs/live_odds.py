@@ -30,6 +30,34 @@ def _pt(val):
     return round(float(val), 1) if val is not None else None
 
 
+def _lines_consensus(lines_df, home, away):
+    """
+    One-line market consensus across every book that posted this game -
+    shown above the per-book table so the headline number is readable
+    without scanning the grid. Medians, not means: one book with a stale
+    line shouldn't drag the shown spread.
+    """
+    def med(col):
+        if col not in lines_df.columns:
+            return None
+        s = pd.to_numeric(lines_df[col], errors='coerce').dropna()
+        return float(s.median()) if not s.empty else None
+
+    hs, tot = med('Home Spread'), med('Total (O/U)')
+    parts = []
+    if hs is not None:
+        if hs < 0:
+            parts.append(f"{home} {hs:.1f}")
+        elif hs > 0:
+            parts.append(f"{away} {-hs:.1f}")
+        else:
+            parts.append("Pick'em")
+    if tot is not None:
+        parts.append(f"O/U {tot:g}")
+    parts.append(f"median of {len(lines_df)} book{'s' if len(lines_df) != 1 else ''}")
+    return " · ".join(parts)
+
+
 def _build_lines_table(game):
     """One row per bookmaker for the selected game - moneyline, spread, total."""
     home, away = game.get('home_team'), game.get('away_team')
@@ -253,19 +281,38 @@ def _render_weekly_props():
         st.info("Lines came back but none mapped to a stat this app scores.")
         return
 
-    c1, c2 = st.columns([2, 3])
+    c1, c2, c3 = st.columns([2, 2, 3])
     with c1:
         markets = sorted(consensus['Market'].unique().tolist())
         chosen = st.multiselect("Stat", markets, default=[], key="weekly_props_market")
     with c2:
+        teams = sorted(t for t in consensus.get('Team', pd.Series(dtype=str)).dropna().unique().tolist() if t)
+        team_pick = st.multiselect("Team", teams, default=[], key="weekly_props_team")
+    with c3:
         search = st.text_input("Player", key="weekly_props_player",
                                placeholder="filter by name")
+
+    sort_by = st.radio("Sort by", ["Player", "Team", "Stat", "Widest spread"],
+                       horizontal=True, key="weekly_props_sort")
 
     view = consensus
     if chosen:
         view = view[view['Market'].isin(chosen)]
+    if team_pick and 'Team' in view.columns:
+        view = view[view['Team'].isin(team_pick)]
     if search:
         view = view[view['Player'].str.contains(search, case=False, na=False)]
+
+    _sort_spec = {
+        "Player": (["Player", "Market"], True),
+        "Team": (["Team", "Player", "Market"], True),
+        "Stat": (["Market", "Player"], True),
+        "Widest spread": (["Spread"], False),
+    }
+    _by, _asc = _sort_spec[sort_by]
+    _by = [c for c in _by if c in view.columns]
+    if _by:
+        view = view.sort_values(_by, ascending=_asc)
 
     st.markdown(
         "**Consensus board** — one row per player and stat. `Consensus` is the median "
@@ -377,8 +424,13 @@ def render():
 
     lines_df = _build_lines_table(game)
     if not lines_df.empty:
-        st.markdown("**Game Lines — Moneyline / Spread / Total (every bookmaker, click a header to sort)**")
-        st.dataframe(style_plain_dataframe(lines_df.set_index('Book')), width="stretch", height=df_auto_height(len(lines_df)))
+        st.markdown(
+            f"**Game lines** — {_lines_consensus(lines_df, game.get('home_team'), game.get('away_team'))}"
+        )
+        with st.expander(f"Per-book breakdown — moneyline / spread / total ({len(lines_df)} books, click a header to sort)",
+                         expanded=False):
+            st.dataframe(style_plain_dataframe(lines_df.set_index('Book')),
+                         width="stretch", height=df_auto_height(len(lines_df)))
     else:
         st.info("No bookmakers have posted lines for this game yet.")
 
@@ -412,14 +464,35 @@ def render():
                 markets_found = sorted(props_long['Market'].unique().tolist())
                 books_found = sorted(props_long['Book'].unique().tolist())
                 st.caption(f"Markets posted for this game: {', '.join(markets_found)} — across {len(books_found)} book(s): {', '.join(books_found)}")
-                market_filter = st.multiselect("Filter by market", markets_found, default=[], key="odds_market_filter")
-                filtered_long = props_long[props_long['Market'].isin(market_filter)] if market_filter else props_long
+                fc1, fc2, fc3 = st.columns([3, 2, 2])
+                with fc1:
+                    market_filter = st.multiselect("Filter by market", markets_found, default=[], key="odds_market_filter")
+                with fc2:
+                    player_q = st.text_input("Player", key="odds_props_player", placeholder="filter by name")
+                with fc3:
+                    sort_by = st.radio("Sort by", ["Player", "Market"], horizontal=True, key="odds_props_sort")
 
+                filtered_long = props_long
+                if market_filter:
+                    filtered_long = filtered_long[filtered_long['Market'].isin(market_filter)]
+                if player_q:
+                    filtered_long = filtered_long[filtered_long['Player'].str.contains(player_q, case=False, na=False)]
+
+                # Team filter is intentionally omitted here: a single-game
+                # props fetch spans only this matchup's two teams, and mapping
+                # every sportsbook player string back to a roster team is more
+                # work than it saves for a two-team board.
                 comparison_df = _build_props_comparison_table(filtered_long)
-                st.markdown("**Cross-book comparison** — one row per bet, one column per bookmaker (odds shown as `price (line)`; click a column header to sort)")
-                st.dataframe(
-                    style_plain_dataframe(comparison_df.set_index('Player')),
-                    width="stretch", height=df_auto_height(min(len(comparison_df), 30))
-                )
+                if comparison_df.empty:
+                    st.info("No player props match the current filters.")
+                else:
+                    secondary = "Market" if sort_by == "Player" else "Player"
+                    comparison_df = comparison_df.sort_values(
+                        [c for c in (sort_by, secondary) if c in comparison_df.columns])
+                    st.markdown("**Cross-book comparison** — one row per bet, one column per bookmaker (odds shown as `price (line)`; click a column header to sort)")
+                    st.dataframe(
+                        style_plain_dataframe(comparison_df.set_index('Player')),
+                        width="stretch", height=df_auto_height(min(len(comparison_df), 30))
+                    )
             else:
                 st.info("No player props posted for this game yet by any tracked bookmaker.")

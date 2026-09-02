@@ -126,6 +126,52 @@ def test_winner_that_is_nan_is_treated_as_no_winner():
     assert 'gs-lost' not in out and 'gs-won' not in out
 
 
+# --- vegas lines ---------------------------------------------------------
+
+def test_home_favorite_shows_spread_on_home_row_and_total_on_away():
+    # spread_line > 0 => HOME favored (data/odds_market.py convention).
+    out = card_html(0, _unplayed(**{'Spread Line': 3.5, 'Total Line': 44.5}))
+    assert 'gs-line' in out
+    # HOME is BUF (second team row); the favorite carries the spread.
+    home_half = out.split("'AWAY'")[-1] if "'AWAY'" in out else out
+    assert '-3.5' in out
+    assert 'O/U 44.5' in out
+    # The spread is on the home side, the O/U on the away side.
+    assert out.index('O/U 44.5') < out.index('-3.5'), "away row renders before home row"
+
+
+def test_away_favorite_shows_negative_spread_on_away_row():
+    out = card_html(0, _unplayed(**{'Spread Line': -6.0, 'Total Line': 41.0}))
+    assert '-6' in out and 'O/U 41' in out
+    # away row (rendered first) carries the spread now
+    assert out.index('-6') < out.index('O/U 41')
+
+
+def test_pickem_game_shows_pk():
+    out = card_html(0, _unplayed(**{'Spread Line': 0.0, 'Total Line': 40.0}))
+    assert '>PK<' in out
+    assert 'O/U 40' in out
+
+
+def test_missing_line_renders_nothing():
+    out = card_html(0, _unplayed())
+    assert 'gs-line' not in out
+    out2 = card_html(0, _unplayed(**{'Spread Line': float('nan'), 'Total Line': float('nan')}))
+    assert 'gs-line' not in out2
+    assert 'nan' not in out2.lower()
+
+
+def test_total_alone_still_shows_when_spread_missing():
+    out = card_html(0, _unplayed(**{'Spread Line': float('nan'), 'Total Line': 47.5}))
+    assert 'O/U 47.5' in out
+
+
+def test_played_game_never_shows_a_line_even_if_one_is_present():
+    out = card_html(0, _row(**{'Spread Line': 3.5, 'Total Line': 44.5}))
+    assert 'gs-line' not in out
+    assert '>27<' in out and '>24<' in out
+
+
 # --- markup safety ---------------------------------------------------------
 
 def test_ampersands_in_names_and_venues_are_escaped():

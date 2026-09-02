@@ -9,9 +9,12 @@ isn't published anywhere free/local this app can reach yet):
     target share, route grade - via data.loaders.load_all_pff_data()['rec_scheme'])
   - pff_imports/defense_coverage_scheme_2025.csv (player-level defensive
     coverage snaps, aggregated here to team-level man/zone rate)
-  - external_data/sumersports_*_personnel_tendency_2025.csv /
-    *_formation_tendency_2025.csv (secondary "scheme context" panel -
-    personnel/formation tendency, not coverage shells)
+  - build_positional_coverage_allowed() below for the defense-side YPT
+    allowed by receiver type and alignment - computed from nflverse plus the
+    PFF alignment archive, replacing two hand-exported public-page scrapes
+    (Sharp Football positional coverage, SumerSports tendency) that were
+    removed 2026-09-02: both were frozen at 2025, had no feed behind them,
+    and everything they carried was derivable from sources already loaded.
 """
 import pandas as pd
 import streamlit as st
@@ -289,6 +292,101 @@ def team_nickname(full_team_name):
     if not full_team_name:
         return None
     return full_team_name.split()[-1]
+
+
+def build_positional_coverage_allowed(year, as_of_week=None):
+    """Yards-per-target ALLOWED by receiver type and alignment, all 32 teams,
+    computed from data this app already loads.
+
+    REPLACES external_data/sharp_positional_coverage_{year}.csv (removed
+    2026-09-02). That file was a hand-exported scrape of a public page,
+    hardcoded to one season, silently frozen, and with no feed behind it -
+    every season the app showed was really 2025. Everything it carried is
+    derivable from sources that update themselves:
+
+      ypt_allowed_wr / _te / _rb
+          data.transforms.build_stat_allowed_matrix already returns targets
+          and receiving_yards allowed per defense per position; YPT is the
+          quotient. Works for any season with weekly stats.
+
+      ypt_allowed_outside / _slot
+          data.pff_alignment.load_weekly_alignment_defense_profiles carries
+          observed_total for {targets, yards} x {slot, wide} per defense, so
+          the same quotient gives a true per-alignment YPT. This is a
+          STRICTLY BETTER source than the file it replaces - opponent-
+          adjusted, shrinkage-weighted, week-sliced and time-valid - and it
+          already ships inside the weekly model.
+
+    Returns a frame with the same shape the old export had (`team` as a bare
+    nickname plus the five ypt_allowed_* columns), so the radar and the
+    Matchup Analyzer's positional-vulnerability panel consume it unchanged.
+
+    The alignment half needs the PFF weekly archive, which exists for 2024
+    onward. For an earlier season the two alignment columns are simply
+    absent and the radar drops those axes - an honest gap, where the old
+    file silently showed 2025 numbers under a 2019 heading.
+    """
+    from data.loaders import load_schedule
+    from data.transforms import load_and_merge_data, build_stat_allowed_matrix
+    from data.pff_alignment import load_weekly_alignment_defense_profiles
+    from config import TEAM_CONFIG
+
+    try:
+        stats_df, _team_col, _name_col, _rookies = load_and_merge_data(int(year), 'Full PPR')
+    except Exception:
+        return pd.DataFrame()
+    if stats_df is None or stats_df.empty:
+        return pd.DataFrame()
+
+    frames = {}
+    for pos, col in (('WR', 'ypt_allowed_wr'), ('TE', 'ypt_allowed_te'), ('RB', 'ypt_allowed_rb')):
+        m = build_stat_allowed_matrix(stats_df, position_filter=[pos])
+        if m.empty or 'targets' not in m.columns or 'receiving_yards' not in m.columns:
+            continue
+        tgt = pd.to_numeric(m['targets'], errors='coerce')
+        yds = pd.to_numeric(m['receiving_yards'], errors='coerce')
+        frames[col] = pd.Series(
+            (yds / tgt.where(tgt > 0)).to_numpy(),
+            index=m['Team'].astype(str) if 'Team' in m.columns else m.index)
+    if not frames:
+        return pd.DataFrame()
+
+    out = pd.DataFrame(frames)
+    out.index.name = 'abbr'
+    out = out.reset_index()
+
+    # Alignment half - absent rather than guessed when there is no archive.
+    try:
+        prof = load_weekly_alignment_defense_profiles(
+            int(year), int(as_of_week) if as_of_week else 19, load_schedule(int(year))).profiles
+    except Exception:
+        prof = pd.DataFrame()
+    if prof is not None and not prof.empty:
+        wr = prof[(prof['position'] == 'WR')
+                  & (prof['alignment'].isin(['slot', 'wide']))
+                  & (prof['stat'].isin(['targets', 'yards']))]
+        if not wr.empty:
+            piv = wr.pivot_table(index=['defense_team', 'alignment'], columns='stat',
+                                 values='observed_total', aggfunc='first').reset_index()
+            if {'targets', 'yards'}.issubset(piv.columns):
+                piv['ypt'] = piv['yards'] / piv['targets'].where(piv['targets'] > 0)
+                wide = piv[piv['alignment'] == 'wide'].set_index('defense_team')['ypt']
+                slot = piv[piv['alignment'] == 'slot'].set_index('defense_team')['ypt']
+                # to_numeric, not a bare .map: the pivot can hand back an
+                # OBJECT-dtype column (arrow-backed source frame), and an
+                # object column silently breaks .mean() downstream in
+                # build_alignment_multiplier - which is a crash, not a
+                # degradation, and one no unit test covers because it only
+                # fires when the tab renders.
+                out['ypt_allowed_outside'] = pd.to_numeric(out['abbr'].map(wide), errors='coerce')
+                out['ypt_allowed_slot'] = pd.to_numeric(out['abbr'].map(slot), errors='coerce')
+
+    # The consumers key on a bare nickname ("Seahawks"), which is what the
+    # replaced export used - keep that contract rather than touching them.
+    out['team'] = out['abbr'].map(
+        lambda a: str(TEAM_CONFIG.get(str(a), {}).get('name', '')).split()[-1] or str(a))
+    cols = ['team'] + [c for c in out.columns if c.startswith('ypt_allowed_')]
+    return out[cols]
 
 
 def build_defense_radar_data(positional_coverage_df, full_team_name):

@@ -13,12 +13,13 @@ from data.transforms import (
     build_oline_protection_metrics, build_def_pressure_metrics,
 )
 from data.loaders import (
-    load_external_coverage_schemes, load_all_pff_data, load_sumersports_tendency_data, load_sharp_positional_coverage,
+    load_external_coverage_schemes, load_all_pff_data,
     load_schedule, load_pfr_pass_block, load_pfr_def_pressure, load_team_pass_attempts_faced,
 )
 from data.utils import calculate_percentile
 from data.coverage_radar import (
-    list_coverage_teams, list_receivers, build_radar_data, build_defense_radar_data, render_split_radar_figure,
+    list_coverage_teams, list_receivers, build_radar_data, build_defense_radar_data,
+    build_positional_coverage_allowed, render_split_radar_figure,
     team_nickname, build_team_man_zone_rates, build_alignment_matchup_data,
 )
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config, get_pff_color, get_matchup_color
@@ -97,7 +98,7 @@ def render():
 
     # Coverage Correlator first - the tab's own signature visual, per user
     # request to lead with it rather than bury it below three tables.
-    _render_coverage_radar(pff)
+    _render_coverage_radar(pff, t3_target_year)
 
     def_matrix = build_points_allowed_matrix(df_t3_stats, t3_target_year)
     pff_man_zone = build_team_man_zone_rates(pff['def_coverage_scheme'])
@@ -288,42 +289,15 @@ def _ordinal_percentile_label(pct):
     return f"{n}{suffix} percentile"
 
 
-def _stale_source_notice(label, source_year):
-    """Say so when a hand-exported panel is reading an old season.
-
-    These two sources have no feed behind them - they are manual downloads
-    from public pages - and their filenames were hardcoded to _2025 until
-    2026-09-02, so the app would have shown last season's numbers as though
-    they were current, indefinitely and silently. A defensive profile from
-    last season is a perfectly reasonable read in Week 1 and a bad one in
-    Week 12; the reader needs to know which they are looking at, so this is
-    a caption rather than a warning.
-    """
-    if source_year is None:
-        st.caption(f"⚠️ {label}: no export found in `external_data/` — panel unavailable.")
-        return
-    current = _current_prep_season()
-    if int(source_year) < current:
-        st.caption(
-            f"📅 {label}: showing **{source_year}** data — no {current} export in "
-            f"`external_data/` yet. Manual download; drop in "
-            f"`..._{current}.csv` and it is picked up automatically."
-        )
-
-
-def _current_prep_season():
-    import datetime as _dt
-    today = _dt.date.today()
-    return today.year if today.month >= 8 else today.year - 1
-
-
-def _render_coverage_radar(pff):
+def _render_coverage_radar(pff, season):
     st.markdown("<div class='custom-section-header'>COVERAGE MATCHUP RADAR — MAN VS. ZONE</div>", unsafe_allow_html=True)
 
     rec_scheme_df = pff['rec_scheme']
     def_coverage_df = pff['def_coverage_scheme']
-    positional_coverage_df, _sharp_year = load_sharp_positional_coverage()
-    _stale_source_notice("Sharp positional coverage", _sharp_year)
+    # Computed from nflverse + the PFF alignment archive, not a hand-exported
+    # scrape - see coverage_radar.build_positional_coverage_allowed. The file
+    # this replaced was frozen at 2025 and shown under every season's heading.
+    positional_coverage_df = build_positional_coverage_allowed(season)
 
     if rec_scheme_df.empty or def_coverage_df.empty:
         st.info("receiving_scheme_2025.csv and/or defense_coverage_scheme_2025.csv not found in pff_imports/ — radar unavailable.")
@@ -486,40 +460,3 @@ def _render_coverage_radar(pff):
     else:
         st.caption("Not enough coverage-snap data to compute matchup tiles for this pairing.")
 
-    _render_sumersports_context(full_name)
-
-
-def _render_sumersports_context(full_name):
-    tendency, _sumer_year = load_sumersports_tendency_data()
-    _stale_source_notice("SumerSports tendencies", _sumer_year)
-    def_personnel = tendency.get('def_personnel', pd.DataFrame())
-    def_formation = tendency.get('def_formation', pd.DataFrame())
-    if def_personnel.empty and def_formation.empty:
-        return
-
-    st.markdown("<div class='custom-section-header'>SCHEME CONTEXT — SUMERSPORTS 2025</div>", unsafe_allow_html=True)
-    if not full_name:
-        st.caption("No TEAM_CONFIG match for this PFF team code.")
-        return
-
-    cc1, cc2 = st.columns(2)
-    with cc1:
-        if not def_personnel.empty:
-            row = def_personnel[def_personnel['team'] == full_name]
-            st.markdown("**11 Personnel faced**")
-            if not row.empty:
-                r = row.iloc[0]
-                st.write(f"Rate: {r['rate_pct']:.1f}% (league avg {r['league_avg_usage_pct']:.1f}%)")
-                st.write(f"EPA allowed: {r['epa']:.1f} (rank {int(r['epa_rank'])})")
-            else:
-                st.caption(f"No SumerSports row for {full_name}.")
-    with cc2:
-        if not def_formation.empty:
-            row = def_formation[def_formation['team'] == full_name]
-            st.markdown("**2X2 Formation faced**")
-            if not row.empty:
-                r = row.iloc[0]
-                st.write(f"Rate: {r['rate_pct']:.1f}% (league avg {r['league_avg_usage_pct']:.1f}%)")
-                st.write(f"EPA allowed: {r['epa']:.1f} (rank {int(r['epa_rank'])})")
-            else:
-                st.caption(f"No SumerSports row for {full_name}.")

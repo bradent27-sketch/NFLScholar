@@ -36,13 +36,13 @@ from config import (
 from data import matchup_signals as ms
 from data.loaders import (
     load_all_pff_data, load_external_coverage_schemes,
-    load_saved_odds_api_key, load_schedule, load_sharp_positional_coverage,
-    load_sumersports_tendency_data, fetch_nfl_odds, fetch_nfl_player_props,
+    load_saved_odds_api_key, load_schedule, fetch_nfl_odds, fetch_nfl_player_props,
     load_pff_data_with_fallback,
 )
 from data.transforms import (
     build_points_allowed_matrix, load_and_merge_data, precompute_league_percentiles,
 )
+from data.coverage_radar import build_positional_coverage_allowed
 from data.utils import american_odds_to_prob
 from ui.charts import (
     render_chart_click_overlay, render_game_log_bars, render_game_log_line,
@@ -205,7 +205,7 @@ def render():
     with r1c1:
         _render_tendency_profile(season, stats_df, name_col, p_data, p_bio, player_name, position, pff)
     with r1c2:
-        _render_positional_vulnerability(stats_df, points_allowed, defense_team, position)
+        _render_positional_vulnerability(stats_df, points_allowed, defense_team, position, season)
 
     r2c1, r2c2 = st.columns(2)
     with r2c1:
@@ -495,13 +495,14 @@ def _render_matchup_curves(series, softness_map, prowess_map, defense_team, stat
 # Defense column
 # ---------------------------------------------------------------------------
 
-def _render_positional_vulnerability(stats_df, points_allowed, defense_team, position):
+def _render_positional_vulnerability(stats_df, points_allowed, defense_team, position, season):
     _section("POSITIONAL VULNERABILITY", "Which position to actually target. Rank 1 = allows the MOST, i.e. the softest matchup.")
     rows = ms.positional_vulnerability(points_allowed, defense_team)
     if not rows:
         st.caption("No points-allowed data for this defense yet.")
         return
-    ypt = ms.ypt_allowed_for_team(load_sharp_positional_coverage()[0], _team_label(defense_team))
+    ypt = ms.ypt_allowed_for_team(
+        build_positional_coverage_allowed(season), _team_label(defense_team))
     cells = []
     for r in rows:
         is_subject = r['position'] == position
@@ -602,7 +603,7 @@ def _render_coverage(defense_team, season):
     pff = load_all_pff_data(season)
     profile = ms.coverage_profile(
         abbr_to_pff_team(defense_team), _team_label(defense_team),
-        load_external_coverage_schemes(), load_sharp_positional_coverage()[0],
+        load_external_coverage_schemes(), build_positional_coverage_allowed(season),
         pff.get('def_coverage_scheme'),
     )
     if not profile['available']:
@@ -658,10 +659,15 @@ def _render_coverage(defense_team, season):
 
 
 def _render_run_defense(defense_team, season):
-    sumer, _sumer_year = load_sumersports_tendency_data()
+    # sumer_overview dropped 2026-09-02 with the SumerSports export. It
+    # supplied one entry - EPA per rush allowed - from a hand-exported file
+    # frozen at 2025; the PFF-derived grade, stop rate and missed-tackle
+    # entries below are unaffected and are what this panel is actually for.
+    # nflverse play-by-play carries `epa` on rush plays if that line is ever
+    # wanted back from a source that updates itself.
     profile = ms.run_defense_profile(
         load_all_pff_data(season).get('run_def'), abbr_to_pff_team(defense_team),
-        sumer.get('def_overview'), _team_label(defense_team),
+        None, _team_label(defense_team),
     )
     if not profile['available'] or not profile['entries']:
         return
@@ -698,7 +704,7 @@ def _render_scheme_fit(season, player_name, position, defense_team):
     pff = load_all_pff_data(season)
     coverage = ms.coverage_profile(
         abbr_to_pff_team(defense_team), _team_label(defense_team),
-        load_external_coverage_schemes(), load_sharp_positional_coverage()[0],
+        load_external_coverage_schemes(), build_positional_coverage_allowed(season),
     )
     run_defense = ms.run_defense_profile(pff.get('run_def'), abbr_to_pff_team(defense_team))
     fit = ms.scheme_fit(position, pff.get('rush'), pff.get('rec'), player_name, coverage, run_defense)

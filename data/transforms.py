@@ -321,27 +321,37 @@ def build_alignment_multiplier(_coverage_df, opponent_nickname, slot_rate, wide_
     """
     WR/TE slot-vs-outside matchup refinement: blends how much yardage per
     target this opponent allows to SLOT-aligned vs OUTSIDE-aligned receivers
-    (Sharp Football's positional coverage export, data.loaders.
-    load_sharp_positional_coverage - team names are bare nicknames, e.g.
-    "Dolphins", not abbreviations - see data.coverage_radar.team_nickname)
+    (data.coverage_radar.build_positional_coverage_allowed - team names are
+    bare nicknames, e.g. "Dolphins", not abbreviations - see
+    data.coverage_radar.team_nickname)
     weighted by this player's own slot_rate/wide_rate snap split (PFF
     receiving_summary) - a defense that's soft over the middle matters a lot
     more for a slot-heavy receiver than a boundary/X receiver, and vice
     versa. Falls back to a neutral 1.0 multiplier if either input is
-    missing (no PFF slot/wide split for this player, or this opponent isn't
-    in the - 2025-only - Sharp Football export).
+    missing (no PFF slot/wide split for this player, or no alignment-split
+    coverage for this opponent - which is every season before the PFF weekly
+    archive begins).
     """
     if _coverage_df.empty or 'team' not in _coverage_df.columns:
         return 1.0
     row = _coverage_df[_coverage_df['team'] == opponent_nickname]
     if row.empty or 'ypt_allowed_slot' not in _coverage_df.columns or 'ypt_allowed_outside' not in _coverage_df.columns:
         return 1.0
-    league_slot_avg = _coverage_df['ypt_allowed_slot'].mean()
-    league_outside_avg = _coverage_df['ypt_allowed_outside'].mean()
-    if league_slot_avg <= 0 or league_outside_avg <= 0:
+    # pd.to_numeric rather than trusting dtype: a neutral 1.0 is the correct
+    # answer for unusable input here, and an exception is not - this function
+    # sits inside a tab render, so a raise takes the whole tab down.
+    slot_col = pd.to_numeric(_coverage_df['ypt_allowed_slot'], errors='coerce')
+    outside_col = pd.to_numeric(_coverage_df['ypt_allowed_outside'], errors='coerce')
+    league_slot_avg = slot_col.mean()
+    league_outside_avg = outside_col.mean()
+    if not (league_slot_avg > 0) or not (league_outside_avg > 0):
         return 1.0
-    slot_mult = float(row.iloc[0]['ypt_allowed_slot']) / league_slot_avg
-    outside_mult = float(row.iloc[0]['ypt_allowed_outside']) / league_outside_avg
+    team_slot = pd.to_numeric(pd.Series([row.iloc[0]['ypt_allowed_slot']]), errors='coerce').iloc[0]
+    team_outside = pd.to_numeric(pd.Series([row.iloc[0]['ypt_allowed_outside']]), errors='coerce').iloc[0]
+    if pd.isna(team_slot) or pd.isna(team_outside):
+        return 1.0
+    slot_mult = float(team_slot) / league_slot_avg
+    outside_mult = float(team_outside) / league_outside_avg
     slot_frac = (slot_rate or 0) / 100.0
     wide_frac = (wide_rate or 0) / 100.0
     remainder = max(0.0, 1.0 - slot_frac - wide_frac)

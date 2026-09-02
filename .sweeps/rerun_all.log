@@ -1,0 +1,21 @@
+start Mon Aug 31 20:58:53 CDT 2026
+[1/5] coaching confirm (l0.8 + reset-only; wk10-17 no-harm + wk2-17 full)
+[1/4] l0.8 wk10-17
+[2/4] reset-only wk10-17
+[3/4] l0.8 wk2-17
+[4/4] reset-only wk2-17
+
+              config           ALL          QB          RB          WR          TE    START-QB    START-RB    START-WR    START-TE
+----------------------------------------------------------------------------------------------------------------------------------
+        l0.8 wk10-17       -0.000      +0.000      +0.002      -0.002*     +0.000      +0.005      +0.015      +0.033      +0.016 
+  reset-only wk10-17       -0.000      +0.000      +0.001      -0.001      +0.000      +0.025      +0.022      +0.002      +0.022 
+         l0.8 wk2-17       -0.000      -0.000      +0.001      -0.002*     +0.000      +0.000      +0.004      +0.020*     +0.030 
+   reset-only wk2-17       -0.000      -0.001      +0.001      -0.000      +0.000      +0.011      +0.007      +0.007      +0.011 
+  done Tue Sep  1 02:17:56 CDT 2026
+[2/5] GTE ship-config confirm (ablation; v2_game_total_elasticity now in DEFAULT)
+  done Tue Sep  1 03:24:25 CDT 2026
+[3/5] startable-TE bias measurement
+  done Tue Sep  1 04:03:44 CDT 2026
+[4/5] scheme-blend sweep TE (0.6-1.0)
+  scheme-blend TE/WR SKIPPED (deprioritized - unshipped v2_scheme_* curiosity re-run was throttling the constant sweeps) Tue Sep  1 06:16:51 CDT 2026
+ALL DONE Tue Sep  1 06:16:51 CDT 2026

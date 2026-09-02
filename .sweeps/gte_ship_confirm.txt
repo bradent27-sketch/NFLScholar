@@ -1,0 +1,145 @@
+2026-09-01 02:18:02.369 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.383 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.383 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.383 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.386 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.386 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.387 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.387 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.387 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.388 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.388 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.389 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.389 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.389 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.389 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.389 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.390 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.390 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.390 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.391 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.391 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.391 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.404 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.405 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.405 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.405 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.406 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.406 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.407 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.408 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.410 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.431 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.443 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.443 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.443 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.444 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.444 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.445 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.445 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.446 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.451 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.495 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.495 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 02:18:02.495 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:02.959 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:03.481 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:03.482 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 02:18:03.820 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:07.431 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:18:07.499 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 02:31:12.602 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 02:31:13.572 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 02:44:04.713 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 02:44:05.719 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 02:57:07.431 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 02:57:08.506 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+years=[2022, 2023, 2024, 2025] weeks=4-17 scoring=Full PPR
+ablating: ['v2_game_total_elasticity']
+adding as candidate: []
+DEFAULT_FEATURES size: 22
+
+======================================================================
+v2_game_total_elasticity  [ablate mode]
+======================================================================
+  ALL        n=17171  MAE base 4.476 vs variant 4.485  dMAE(var-base) +0.009  dRho(var-base) -0.000  weeks variant-won 17-39 (sign-test p=0.00)  boot95%CI[+0.000,+0.017]  [CI excludes 0 -> distinguishable from noise at this sample]
+  QB         n=1793   MAE base 6.688 vs variant 6.748  dMAE(var-base) +0.060  dRho(var-base) -0.023  weeks variant-won 16-40 (sign-test p=0.00)  boot95%CI[+0.016,+0.101]  [CI excludes 0 -> distinguishable from noise at this sample]
+  RB         n=4517   MAE base 4.432 vs variant 4.447  dMAE(var-base) +0.016  dRho(var-base) -0.000  weeks variant-won 20-36 (sign-test p=0.04)  boot95%CI[+0.002,+0.028]  [CI excludes 0 -> distinguishable from noise at this sample]
+  WR         n=7219   MAE base 4.407 vs variant 4.410  dMAE(var-base) +0.003  dRho(var-base) +0.001  weeks variant-won 26-29 (sign-test p=0.79)  boot95%CI[-0.008,+0.013]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=3642   MAE base 3.577 vs variant 3.566  dMAE(var-base) -0.012  dRho(var-base) +0.004  weeks variant-won 30-26 (sign-test p=0.69)  boot95%CI[-0.028,+0.004]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=1236   MAE base 6.146 vs variant 6.181  dMAE(var-base) +0.035  dRho(var-base) -0.033  weeks variant-won 19-37 (sign-test p=0.02)  boot95%CI[-0.081,+0.133]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=1946   MAE base 6.319 vs variant 6.335  dMAE(var-base) +0.016  dRho(var-base) -0.006  weeks variant-won 23-33 (sign-test p=0.23)  boot95%CI[-0.038,+0.073]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=2633   MAE base 6.360 vs variant 6.390  dMAE(var-base) +0.030  dRho(var-base) -0.021  weeks variant-won 29-27 (sign-test p=0.89)  boot95%CI[-0.019,+0.086]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=960    MAE base 5.328 vs variant 5.339  dMAE(var-base) +0.011  dRho(var-base) -0.018  weeks variant-won 27-29 (sign-test p=0.89)  boot95%CI[-0.090,+0.136]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+TOP 25 LARGEST MISSES - shipped model (DEFAULT_FEATURES), startable cut, 6775 player-weeks scored
+======================================================================
+ year  wk  pos  player                     pred  actual   error  note
+ 2024  14   QB  Josh Allen                  0.0    51.9   -51.9  UNDERPROJECTED (boom)
+ 2023   9   WR  Tank Dell                   8.2    59.2   -51.0  UNDERPROJECTED (boom)
+ 2023  11   WR  Tank Dell                  12.1    57.8   -45.7  UNDERPROJECTED (boom)
+ 2023   4   RB  De'Von Achane               9.6    54.0   -44.4  UNDERPROJECTED (boom)
+ 2023  13   RB  De'Von Achane               7.7    50.6   -42.9  UNDERPROJECTED (boom)
+ 2022   9   RB  Joe Mixon                  14.2    55.1   -40.8  UNDERPROJECTED (boom)
+ 2022  17   WR  Mike Evans                  9.9    48.7   -38.8  UNDERPROJECTED (boom)
+ 2023   5   WR  Ja'Marr Chase              15.0    52.2   -37.2  UNDERPROJECTED (boom)
+ 2023  16   WR  Amari Cooper               14.6    51.5   -36.9  UNDERPROJECTED (boom)
+ 2023   5   WR  DJ Moore                   12.5    49.0   -36.5  UNDERPROJECTED (boom)
+ 2024  10   WR  Ja'Marr Chase              19.5    55.4   -35.9  UNDERPROJECTED (boom)
+ 2025   9   TE  Brock Bowers               10.4    43.3   -32.9  UNDERPROJECTED (boom)
+ 2024  14   RB  Zach Charbonnet             5.8    38.3   -32.5  UNDERPROJECTED (boom)
+ 2025  16   WR  Puka Nacua                 14.9    46.5   -31.6  UNDERPROJECTED (boom)
+ 2022  12   RB  Josh Jacobs                17.6    48.3   -30.7  UNDERPROJECTED (boom)
+ 2024  14   WR  Puka Nacua                 11.4    41.8   -30.4  UNDERPROJECTED (boom)
+ 2023  10   WR  Tank Dell                   7.5    37.8   -30.3  UNDERPROJECTED (boom)
+ 2024  15   WR  Davante Adams              12.6    42.8   -30.2  UNDERPROJECTED (boom)
+ 2023  16   RB  Breece Hall                12.9    43.1   -30.2  UNDERPROJECTED (boom)
+ 2024  13   WR  Jerry Jeudy                11.0    40.5   -29.5  UNDERPROJECTED (boom)
+ 2023  10   WR  Keenan Allen               11.2    40.5   -29.3  UNDERPROJECTED (boom)
+ 2025  10   RB  Jonathan Taylor            20.5    49.6   -29.1  UNDERPROJECTED (boom)
+ 2022   8   RB  Christian McCaffrey        11.2    40.3   -29.1  UNDERPROJECTED (boom)
+ 2025  17   RB  Derrick Henry              16.7    45.6   -28.9  UNDERPROJECTED (boom)
+ 2022   8   RB  Alvin Kamara               14.2    42.8   -28.5  UNDERPROJECTED (boom)
+
+-- top 8 per position --
+
+  QB:
+    2024 w14 Josh Allen              pred    0.0  actual   51.9  err  -51.9  (boom)
+    2025 w15 Trevor Lawrence         pred   17.1  actual   44.3  err  -27.2  (boom)
+    2022 w9  Justin Fields           pred   17.2  actual   42.7  err  -25.6  (boom)
+    2024 w15 Jared Goff              pred   16.1  actual   41.1  err  -24.9  (boom)
+    2023 w9  C.J. Stroud             pred   17.3  actual   41.8  err  -24.5  (boom)
+    2025 w7  Bo Nix                  pred   15.9  actual   40.0  err  -24.0  (boom)
+    2025 w11 Josh Allen              pred   20.3  actual   42.7  err  -22.4  (boom)
+    2025 w9  Caleb Williams          pred   16.5  actual   38.7  err  -22.2  (boom)
+
+  RB:
+    2023 w4  De'Von Achane           pred    9.6  actual   54.0  err  -44.4  (boom)
+    2023 w13 De'Von Achane           pred    7.7  actual   50.6  err  -42.9  (boom)
+    2022 w9  Joe Mixon               pred   14.2  actual   55.1  err  -40.8  (boom)
+    2024 w14 Zach Charbonnet         pred    5.8  actual   38.3  err  -32.5  (boom)
+    2022 w12 Josh Jacobs             pred   17.6  actual   48.3  err  -30.7  (boom)
+    2023 w16 Breece Hall             pred   12.9  actual   43.1  err  -30.2  (boom)
+    2025 w10 Jonathan Taylor         pred   20.5  actual   49.6  err  -29.1  (boom)
+    2022 w8  Christian McCaffrey     pred   11.2  actual   40.3  err  -29.1  (boom)
+
+  WR:
+    2023 w9  Tank Dell               pred    8.2  actual   59.2  err  -51.0  (boom)
+    2023 w11 Tank Dell               pred   12.1  actual   57.8  err  -45.7  (boom)
+    2022 w17 Mike Evans              pred    9.9  actual   48.7  err  -38.8  (boom)
+    2023 w5  Ja'Marr Chase           pred   15.0  actual   52.2  err  -37.2  (boom)
+    2023 w16 Amari Cooper            pred   14.6  actual   51.5  err  -36.9  (boom)
+    2023 w5  DJ Moore                pred   12.5  actual   49.0  err  -36.5  (boom)
+    2024 w10 Ja'Marr Chase           pred   19.5  actual   55.4  err  -35.9  (boom)
+    2025 w16 Puka Nacua              pred   14.9  actual   46.5  err  -31.6  (boom)
+
+  TE:
+    2025 w9  Brock Bowers            pred   10.4  actual   43.3  err  -32.9  (boom)
+    2025 w15 Trey McBride            pred    9.8  actual   37.4  err  -27.6  (boom)
+    2023 w14 Evan Engram             pred    6.6  actual   32.5  err  -25.9  (boom)
+    2022 w16 T.J. Hockenson          pred   10.6  actual   35.9  err  -25.3  (boom)
+    2025 w8  Tucker Kraft            pred    9.5  actual   33.3  err  -23.8  (boom)
+    2024 w11 Brock Bowers            pred    7.6  actual   31.3  err  -23.7  (boom)
+    2024 w11 Jonnu Smith             pred    6.5  actual   28.1  err  -21.6  (boom)
+    2023 w13 Sam LaPorta             pred    7.7  actual   29.0  err  -21.3  (boom)

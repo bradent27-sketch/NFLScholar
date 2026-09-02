@@ -1,0 +1,103 @@
+2026-08-30 19:10:28.030 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.031 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.031 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.032 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.034 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.035 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.035 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.035 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.035 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.037 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.037 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.037 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.037 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.037 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.038 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.038 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.038 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.039 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.039 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.039 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.039 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.040 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.040 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.041 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.041 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.041 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.042 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.042 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.043 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.044 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.045 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.061 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.062 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.062 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.062 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.063 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.063 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.064 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.064 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.065 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.068 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.093 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.093 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 19:10:28.094 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:28.559 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:29.086 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:29.087 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 19:10:29.422 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:32.045 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:32.096 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:10:32.113 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:11:44.650 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 19:11:45.664 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 19:12:56.291 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 19:12:57.371 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+years=[2023, 2024, 2025] weeks=1-1 scoring=Full PPR
+  default+v2_historical_ourlads: ['calibration', 'qb1_override', 'role_volume', 'v2_adaptive_volume', 'v2_alignment_contract', 'v2_as_of_guard', 'v2_availability', 'v2_channel_matchups', 'v2_continuous_roles', 'v2_defense_prior', 'v2_fantasypros_availability', 'v2_historical_ourlads', 'v2_output_contract', 'v2_pass_capacity', 'v2_pff_alignment_matchup', 'v2_preseason_rb_allocator', 'v2_qb_volume_blend', 'v2_rb_snap_anchored_volume', 'v2_receiver_vacancy_pecking_order', 'v2_role_change_by_stat', 'v2_td_prior_credibility', 'v2_td_two_year_prior', 'v2_vacancy']
+  default+v2_historical_ourlads-v2_td_prior_credibility: ['calibration', 'qb1_override', 'role_volume', 'v2_adaptive_volume', 'v2_alignment_contract', 'v2_as_of_guard', 'v2_availability', 'v2_channel_matchups', 'v2_continuous_roles', 'v2_defense_prior', 'v2_fantasypros_availability', 'v2_historical_ourlads', 'v2_output_contract', 'v2_pass_capacity', 'v2_pff_alignment_matchup', 'v2_preseason_rb_allocator', 'v2_qb_volume_blend', 'v2_rb_snap_anchored_volume', 'v2_receiver_vacancy_pecking_order', 'v2_role_change_by_stat', 'v2_td_two_year_prior', 'v2_vacancy']
+
+--- ALL ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads    951   4.833   6.561  +0.347   0.597
+default+v2_historical_ourlads-v2_td_prior_credibility    951   4.814   6.575  +0.323   0.603  -0.019  +0.007      3-0
+
+--- QB ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads    110   5.681   7.257  +0.836   0.460
+default+v2_historical_ourlads-v2_td_prior_credibility    110   5.675   7.253  +0.829   0.461  -0.006  +0.001      1-2
+
+--- RB ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads    247   4.580   6.241  -0.108   0.610
+default+v2_historical_ourlads-v2_td_prior_credibility    247   4.497   6.189  -0.159   0.623  -0.082  +0.013      2-1
+
+--- WR ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads    399   5.326   7.229  +0.133   0.517
+default+v2_historical_ourlads-v2_td_prior_credibility    399   5.336   7.274  +0.127   0.523  +0.010  +0.006      2-1
+
+--- TE ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads    195   3.669   4.789  +1.086   0.451
+default+v2_historical_ourlads-v2_td_prior_credibility    195   3.664   4.835  +1.051   0.462  -0.005  +0.012      2-1
+
+--- START-QB ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads     71   6.185   7.636  +1.974   0.204
+default+v2_historical_ourlads-v2_td_prior_credibility     71   6.301   7.700  +1.858   0.181  +0.117  -0.023      0-3
+
+--- START-RB ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads    117   5.880   7.049  +1.883   0.398
+default+v2_historical_ourlads-v2_td_prior_credibility    118   5.739   6.929  +2.092   0.446  -0.142  +0.048      2-1
+
+--- START-WR ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads    157   7.128   8.684  +2.859   0.124
+default+v2_historical_ourlads-v2_td_prior_credibility    157   7.191   8.769  +3.023   0.130  +0.063  +0.006      0-3
+
+--- START-TE ---
+variant                         n     MAE    RMSE    bias   rankρ    dMAE      dρ   wk W-L
+default+v2_historical_ourlads     57   5.440   6.418  +4.005   0.371
+default+v2_historical_ourlads-v2_td_prior_credibility     57   5.496   6.520  +4.054   0.312  +0.056  -0.059      1-2

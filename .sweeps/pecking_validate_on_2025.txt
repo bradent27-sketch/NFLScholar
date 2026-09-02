@@ -1,0 +1,280 @@
+2026-08-30 19:15:42.232 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.233 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.233 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.234 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.236 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.237 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.237 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.237 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.238 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.239 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.240 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.240 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.240 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.241 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.241 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.241 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.241 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.242 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.242 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.243 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.243 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.243 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.244 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.244 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.245 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.246 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.247 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.264 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.270 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.294 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.294 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 19:15:42.294 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:42.796 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:43.393 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:43.393 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 19:15:43.742 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:15:46.371 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 19:16:00.050 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+receiver_pecking_order = True
+
+=== per-case ===
+ year  week                   player pos team  pre_snap  vacated  allocated  unfilled  n_recipients  recip_proj_closer  recip_proj_worse
+ 2025     5              Alec Pierce  WR  IND      72.0      3.9        3.1       0.8             7                  4                 1
+ 2025     5            Austin Hooper  TE   NE      64.0      1.9        1.6       0.4             7                  3                 2
+ 2025     5             Brock Bowers  TE   LV      79.0      6.4        5.1       1.3             8                  4                 2
+ 2025     5             Bucky Irving  RB   TB      68.7     24.3        8.9      15.4             2                  2                 0
+ 2025     5           Cedric Tillman  WR  CLE      63.7      6.6        5.3       1.3             8                  3                 2
+ 2025     5            Chuba Hubbard  RB  CAR      62.3     14.3        9.7       4.7             2                  2                 0
+ 2025     5        Ja'Tavion Sanders  TE  CAR      62.5      3.3        2.6       0.7             8                  4                 3
+ 2025     5           Jauan Jennings  WR   SF      80.0      6.7        5.3       1.3             8                  3                 2
+ 2025     5               Joe Flacco  QB  CIN      95.3      0.0        0.0       0.0             0                  0                 0
+ 2025     5            Lamar Jackson  QB  BAL      88.3      0.0        0.0       0.0             0                  0                 0
+ 2025     5             Mack Hollins  WR   NE      58.7      2.0        1.6       0.4             7                  3                 2
+ 2025     5             Malik Nabers  WR  NYG      74.7      9.4        7.1       2.3             8                  3                 2
+ 2025     5           Marcus Mariota  QB  WAS     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025     5               Mike Evans  WR   TB      75.5      7.4        6.0       1.5             8                  4                 2
+ 2025     5                Noah Gray  TE   KC      63.0      2.9        2.4       0.6             8                  2                 2
+ 2025     5           Ricky Pearsall  WR   SF      80.7      6.6        5.3       1.3             8                  3                 2
+ 2025     5           Russell Wilson  QB  NYG      64.7      0.0        0.0       0.0             0                  0                 0
+ 2025     5           Terry McLaurin  WR  WAS      75.5      5.4        4.4       1.1             8                  3                 3
+ 2025     5             Tyler Higbee  TE   LA      61.7      4.7        3.8       0.9             7                  4                 3
+ 2025     5            Tyler Johnson  WR  NYJ      83.0      3.6        2.9       0.7             8                  3                 4
+ 2025     5              Tyreek Hill  WR  MIA      70.7      7.9        6.3       1.6             6                  3                 2
+ 2025     5             Tyrod Taylor  QB  NYJ      69.0      0.0        0.0       0.0             0                  0                 0
+ 2025     6          Brenton Strange  TE  JAX      65.0      5.9        4.7       1.2             8                  3                 4
+ 2025     6             Brock Bowers  TE   LV      80.0      7.1        5.7       1.4             8                  1                 5
+ 2025     6             Brock Wright  TE  DET      56.5      1.5        1.2       0.3             5                  2                 2
+ 2025     6             Bucky Irving  RB   TB      67.5     25.5       14.9      10.6             3                  1                 1
+ 2025     6        Calvin Austin III  WR  PIT      61.5      2.7        2.1       0.5             8                  3                 4
+ 2025     6         Chris Godwin Jr.  WR   TB      79.0      6.0        4.8       1.2             8                  3                 1
+ 2025     6            Chuba Hubbard  RB  CAR      56.5     19.1       15.0       4.1             2                  1                 1
+ 2025     6           Darius Slayton  WR  NYG      79.3      3.3        2.7       0.7             8                  2                 1
+ 2025     6           Darnell Mooney  WR  ATL      67.0      5.1        4.1       1.0             8                  1                 3
+ 2025     6      Dont'e Thornton Jr.  WR   LV      55.3      3.5        2.8       0.7             8                  1                 5
+ 2025     6            Jake Browning  QB  CIN      98.3      0.0        0.0       0.0             0                  0                 0
+ 2025     6          KaVontae Turpin  WR  DAL      63.5      2.6        2.1       0.5             8                  4                 2
+ 2025     6             Kyler Murray  QB  ARI      99.0      0.0        0.0       0.0             0                  0                 0
+ 2025     6            Lamar Jackson  QB  BAL      85.0      0.0        0.0       0.0             0                  0                 0
+ 2025     6             Malik Nabers  WR  NYG      62.5      9.0        7.2       1.8             8                  2                 1
+ 2025     6           Marcus Mariota  QB  WAS     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025     6          Omarion Hampton  RB  LAC      75.3     13.5        8.5       5.0             3                  2                 0
+ 2025     6         Quentin Johnston  WR  LAC      87.0      5.6        4.5       1.1             8                  4                 2
+ 2025     6           Ricky Pearsall  WR   SF      76.5      5.4        4.3       1.1             8                  3                 3
+ 2025     6              Trey Benson  RB  ARI      58.0      7.9        6.3       1.6             4                  2                 1
+ 2025     6              Tyreek Hill  WR  MIA      64.0      9.0        7.2       1.8             6                  4                 2
+ 2025     7          Brenton Strange  TE  JAX      56.0      3.9        3.2       0.8             8                  5                 1
+ 2025     7         Chris Godwin Jr.  WR   TB      79.0      6.2        5.0       1.2             8                  3                 3
+ 2025     7           Christian Kirk  WR  HOU      55.0      4.8        3.9       1.0             8                  2                 4
+ 2025     7           Darius Slayton  WR  NYG      81.0      2.3        1.8       0.5             8                  4                 2
+ 2025     7              David Njoku  TE  CLE      74.7      4.4        3.6       0.9             8                  1                 3
+ 2025     7         Deebo Samuel Sr.  WR  WAS      78.7      6.5        5.2       1.3             8                  3                 2
+ 2025     7           Garrett Wilson  WR  NYJ      92.0      5.8        4.7       1.2             8                  3                 4
+ 2025     7              Isaiah Bond  WR  CLE      66.3      2.6        2.1       0.5             8                  2                 2
+ 2025     7             Jahan Dotson  WR  PHI      67.0      1.5        1.2       0.3             6                  2                 2
+ 2025     7            Jake Browning  QB  CIN     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025     7              Jake Tonges  TE   SF      74.7      3.1        2.5       0.6             8                  1                 5
+ 2025     7            Jakobi Meyers  WR  JAX      92.0      5.0        4.0       1.0             8                  5                 1
+ 2025     7             Kyler Murray  QB  ARI      98.5      0.0        0.0       0.0             0                  0                 0
+ 2025     7 Marquez Valdes-Scantling  WR  PIT      57.0      1.5        1.2       0.3             8                  3                 2
+ 2025     7          Omarion Hampton  RB  LAC      73.5     13.4       10.4       3.0             3                  1                 1
+ 2025     7               Puka Nacua  WR   LA      75.0     11.1        8.7       2.4             8                  4                 3
+ 2025     8               A.J. Brown  WR  PHI      93.7      7.0        5.6       1.4             7                  2                 2
+ 2025     8              Bryce Young  QB  CAR      89.7      0.0        0.0       0.0             0                  0                 0
+ 2025     8              Chris Moore  WR  WAS      68.7      2.8        2.2       0.6             8                  3                 3
+ 2025     8              Cooper Rush  QB  BAL      84.0      0.0        0.0       0.0             0                  0                 0
+ 2025     8       Darnell Washington  TE  PIT      71.5      3.2        2.5       0.6             8                  3                 3
+ 2025     8             Drake London  WR  ATL      97.5      6.1        4.9       1.2             8                  5                 1
+ 2025     8           Garrett Wilson  WR  NYJ      89.0      6.3        5.1       1.3             8                  4                 2
+ 2025     8           Jayden Daniels  QB  WAS      89.7      0.0        0.0       0.0             0                  0                 0
+ 2025     8            Josh Reynolds  WR  NYJ      85.7      3.4        2.7       0.7             8                  4                 2
+ 2025     8              Julian Hill  TE  MIA      59.0      1.8        1.4       0.4             6                  2                 2
+ 2025     8      Lil'Jordan Humphrey  WR  DEN      88.0      4.1        3.3       0.8             8                  3                 5
+ 2025     8 Marquez Valdes-Scantling  WR  PIT      57.0      1.3        1.0       0.3             8                  3                 3
+ 2025     8        Michael Penix Jr.  QB  ATL     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025     8         Quentin Johnston  WR  LAC      85.5      4.5        3.6       0.9             8                  3                 1
+ 2025     9              Andy Dalton  QB  CAR      65.5      0.0        0.0       0.0             0                  0                 0
+ 2025     9             Carson Wentz  QB  MIN      94.0      0.0        0.0       0.0             0                  0                 0
+ 2025     9              Chris Moore  WR  WAS      73.5      2.9        2.3       0.6             8                  3                 1
+ 2025     9              Cooper Kupp  WR  SEA      73.0      4.3        3.4       0.9             8                  5                 0
+ 2025     9            Isiah Pacheco  RB   KC      63.7     12.6       10.0       2.6             3                  1                 1
+ 2025     9                Jack Bech  WR   LV      69.0      2.0        1.6       0.4             8                  1                 2
+ 2025     9       Jordan Whittington  WR   LA      76.0      2.6        2.1       0.5             8                  4                 1
+ 2025     9              Julian Hill  TE  MIA      62.0      1.8        1.5       0.4             7                  3                 1
+ 2025     9      Lil'Jordan Humphrey  WR  DEN      88.0      3.4        2.7       0.7             8                  4                 1
+ 2025     9           Marcus Mariota  QB  WAS      65.5      0.0        0.0       0.0             0                  0                 0
+ 2025     9      Rhamondre Stevenson  RB   NE      73.7     13.2        9.9       3.3             5                  2                 0
+ 2025     9          Spencer Rattler  QB   NO      81.3      0.0        0.0       0.0             0                  0                 0
+ 2025     9            Tyler Huntley  QB  BAL      66.0      0.0        0.0       0.0             0                  0                 0
+ 2025     9                Zay Jones  WR  ARI      66.5      3.6        2.9       0.7             8                  4                 1
+ 2025    10             Allen Lazard  WR  NYJ      67.0      0.9        0.7       0.2             8                  0                 4
+ 2025    10              Andy Dalton  QB  CAR      65.5      0.0        0.0       0.0             0                  0                 0
+ 2025    10            Brandin Cooks  WR  BUF      62.3      1.8        1.4       0.4             8                  6                 1
+ 2025    10         Brian Thomas Jr.  WR  JAX      65.5      5.1        4.1       1.0             8                  3                 2
+ 2025    10              C.J. Stroud  QB  HOU      77.3      0.0        0.0       0.0             0                  0                 0
+ 2025    10             Carson Wentz  QB  MIN      94.0      0.0        0.0       0.0             0                  0                 0
+ 2025    10              Hunter Long  TE  JAX      63.0      1.7        1.3       0.3             8                  3                 2
+ 2025    10           Jayden Daniels  QB  WAS      78.5      0.0        0.0       0.0             0                  0                 0
+ 2025    10           Kayshon Boutte  WR   NE      57.0      3.5        2.8       0.7             8                  4                 3
+ 2025    10           Matthew Golden  WR   GB      58.7      4.2        3.4       0.8             8                  3                 2
+ 2025    10      Rhamondre Stevenson  RB   NE      74.5     11.1        8.6       2.5             5                  1                 2
+ 2025    10          Spencer Rattler  QB   NO      73.0      0.0        0.0       0.0             0                  0                 0
+ 2025    10            Tommy Tremble  TE  CAR      55.7      2.4        1.9       0.5             8                  3                 2
+ 2025    10              Tory Horton  WR  SEA      56.0      2.0        1.6       0.4             8                  2                 4
+ 2025    10             Tucker Kraft  TE   GB      76.7      5.6        4.5       1.1             8                  3                 2
+ 2025    10        Xavier Hutchinson  WR  HOU      70.7      3.3        2.6       0.7             8                  4                 2
+ 2025    11            Austin Hooper  TE   NE      55.3      1.6        1.3       0.3             8                  4                 2
+ 2025    11            Brandin Cooks  WR  BUF      58.5      2.4        1.9       0.5             8                  3                 2
+ 2025    11              C.J. Stroud  QB  HOU      66.0      0.0        0.0       0.0             0                  0                 0
+ 2025    11           Darius Slayton  WR  NYG      74.7      3.2        2.6       0.6             8                  1                 2
+ 2025    11              Davis Allen  TE   LA      55.0      2.2        1.7       0.4             8                  1                 4
+ 2025    11              Jaxson Dart  QB  NYG      90.3      0.0        0.0       0.0             0                  0                 0
+ 2025    11               John Bates  TE  WAS      58.0      1.8        1.4       0.4             8                  1                 3
+ 2025    11          Kendrick Bourne  WR   SF      73.3      3.6        2.9       0.7             8                  1                 6
+ 2025    11             Keon Coleman  WR  BUF      67.7      4.6        3.7       0.9             8                  3                 2
+ 2025    11      Marvin Harrison Jr.  WR  ARI      81.5      7.0        5.6       1.4             8                  3                 1
+ 2025    11    Nick Westbrook-Ikhine  WR  MIA      59.7      2.0        1.6       0.4             8                  2                 2
+ 2025    11        Olamide Zaccheaus  WR  CHI      60.3      4.2        3.4       0.8             8                  3                 4
+ 2025    11           Rashod Bateman  WR  BAL      70.3      2.6        2.1       0.5             8                  2                 5
+ 2025    11          Ray-Ray McCloud  WR  NYG      59.0      2.3        1.9       0.5             8                  1                 2
+ 2025    11              Sam LaPorta  TE  DET      88.0      5.6        4.4       1.1             6                  1                 4
+ 2025    11             Tucker Kraft  TE   GB      70.5      5.5        4.4       1.1             8                  2                 5
+ 2025    11            Tyler Johnson  WR  NYJ      70.5      1.8        1.5       0.4             8                  3                 0
+ 2025    12            Aaron Rodgers  QB  PIT      85.7      0.0        0.0       0.0             0                  0                 0
+ 2025    12              David Njoku  TE  CLE      66.5      3.5        2.8       0.7             8                  3                 2
+ 2025    12           Dillon Gabriel  QB  CLE      74.5      0.0        0.0       0.0             0                  0                 0
+ 2025    12             Drake London  WR  ATL      96.0      9.9        7.9       2.0             8                  3                 1
+ 2025    12            Elic Ayomanor  WR  TEN      74.5      6.4        5.1       1.3             8                  2                 3
+ 2025    12            Ja'Marr Chase  WR  CIN      98.0      7.7        6.2       1.5             8                  3                 4
+ 2025    12              Jaxson Dart  QB  NYG      85.5      0.0        0.0       0.0             0                  0                 0
+ 2025    12            Justin Fields  QB  NYJ     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025    12          Kendrick Bourne  WR   SF      70.5      3.6        2.8       0.7             8                  1                 5
+ 2025    12             Keon Coleman  WR  BUF      65.0      3.7        3.0       0.7             8                  5                 0
+ 2025    12                Mac Jones  QB   SF      69.0      0.0        0.0       0.0             0                  0                 0
+ 2025    12      Marvin Harrison Jr.  WR  ARI      81.5      7.4        5.9       1.5             8                  3                 2
+ 2025    12        Michael Penix Jr.  QB  ATL      87.3      0.0        0.0       0.0             0                  0                 0
+ 2025    12           Rashod Bateman  WR  BAL      66.0      2.7        2.1       0.5             8                  2                 6
+ 2025    12          Ray-Ray McCloud  WR  NYG      59.0      1.2        1.0       0.2             8                  3                 1
+ 2025    12              Sam LaPorta  TE  DET      88.0      5.6        4.5       1.1             6                  3                 2
+ 2025    12            Tommy Tremble  TE  CAR      56.5      2.3        1.8       0.5             8                  0                 5
+ 2025    13            Austin Hooper  TE   NE      56.0      2.2        1.8       0.4             8                  4                 3
+ 2025    13             Brock Wright  TE  DET      70.0      3.2        2.6       0.6             6                  2                 1
+ 2025    13         Daniel Bellinger  TE  NYG      60.7      1.0        0.8       0.2             8                  3                 1
+ 2025    13              Davis Mills  QB  HOU     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025    13             Drake London  WR  ATL      95.0      6.7        5.3       1.3             8                  2                 2
+ 2025    13            J.J. McCarthy  QB  MIN     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025    13           Jameis Winston  QB  NYG     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025    13               Joe Flacco  QB  CIN      99.0      0.0        0.0       0.0             0                  0                 0
+ 2025    13            Justin Fields  QB  NYJ     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025    13        Michael Penix Jr.  QB  ATL      81.0      0.0        0.0       0.0             0                  0                 0
+ 2025    13              Tee Higgins  WR  CIN      84.5      5.8        4.7       1.2             8                  4                 3
+ 2025    14             Brock Wright  TE  DET      85.5      3.1        2.5       0.6             7                  3                 1
+ 2025    14              Davis Mills  QB  HOU     100.0      0.0        0.0       0.0             0                  0                 0
+ 2025    14              Drew Sample  TE  CIN      55.5      1.0        0.8       0.2             8                  2                 4
+ 2025    14               Joe Flacco  QB  CIN      99.0      0.0        0.0       0.0             0                  0                 0
+ 2025    14         Mitchell Tinsley  WR  CIN      70.5      3.8        3.0       0.8             8                  2                 4
+ 2025    14        Parker Washington  WR  JAX      66.0      3.6        2.9       0.7             8                  3                 2
+ 2025    14              Rome Odunze  WR  CHI      78.0      7.2        5.7       1.4             8                  4                 3
+ 2025    14              Tez Johnson  WR   TB      75.3      2.8        2.3       0.6             8                  1                 5
+ 2025    14            Xavier Weaver  WR  ARI      63.7      1.3        1.1       0.3             8                  1                 1
+ 2025    15            Adam Trautman  TE  DEN      66.5      1.9        1.5       0.4             8                  3                 1
+ 2025    15               Cade Otton  TE   TB      88.0      3.3        2.6       0.7             8                  3                 2
+ 2025    15           Cedric Tillman  WR  CLE      60.0      3.6        2.9       0.7             8                  2                 2
+ 2025    15             Daniel Jones  QB  IND      74.3      0.0        0.0       0.0             0                  0                 0
+ 2025    15               Gabe Davis  WR  BUF      57.0      1.6        1.2       0.3             8                  3                 3
+ 2025    15               Geno Smith  QB   LV      91.3      0.0        0.0       0.0             0                  0                 0
+ 2025    15            Isaiah Likely  TE  BAL      56.3      4.3        3.4       0.9             8                  2                 4
+ 2025    15            Mason Rudolph  QB  PIT      58.0      0.0        0.0       0.0             0                  0                 0
+ 2025    15             Mason Taylor  TE  NYJ      79.0      4.1        3.3       0.8             8                  5                 0
+ 2025    15               Pat Bryant  WR  DEN      58.5      3.2        2.6       0.6             8                  4                 1
+ 2025    15         Quentin Johnston  WR  LAC      71.5      5.4        4.3       1.1             8                  2                 2
+ 2025    15           Rashod Bateman  WR  BAL      79.5      2.5        2.0       0.5             8                  2                 4
+ 2025    15              Rome Odunze  WR  CHI      79.0      6.0        4.8       1.2             8                  3                 4
+ 2025    15              Tee Higgins  WR  CIN      75.0      6.7        5.4       1.3             8                  3                 3
+ 2025    15             Tyrod Taylor  QB  NYJ      70.0      0.0        0.0       0.0             0                  0                 0
+ 2025    15            Xavier Weaver  WR  ARI      58.5      1.3        1.1       0.3             8                  3                 0
+ 2025    15                Zach Ertz  TE  WAS      68.0      4.6        3.6       0.9             8                  4                 2
+ 2025    16             Daniel Jones  QB  IND      61.5      0.0        0.0       0.0             0                  0                 0
+ 2025    16            Devaughn Vele  WR   NO      78.7      3.6        2.9       0.7             8                  5                 1
+ 2025    16               Devin Neal  RB   NO      61.7     12.5       10.0       2.5             5                  1                 1
+ 2025    16               Gabe Davis  WR  BUF      58.0      2.0        1.6       0.4             8                  0                 6
+ 2025    16           Isaiah Hodgins  WR  NYG      88.0      1.5        1.2       0.3             8                  0                 3
+ 2025    16            Kenny Pickett  QB   LV      63.0      0.0        0.0       0.0             0                  0                 0
+ 2025    16             Mason Taylor  TE  NYJ      74.5      3.8        3.1       0.8             8                  3                 2
+ 2025    16          Patrick Mahomes  QB   KC      97.3      0.0        0.0       0.0             0                  0                 0
+ 2025    16              Rashee Rice  WR   KC      84.0      6.8        5.5       1.4             8                  0                 5
+ 2025    16           Ricky Pearsall  WR   SF      72.5      3.8        3.0       0.8             8                  5                 2
+ 2025    16           Tua Tagovailoa  QB  MIA      96.3      0.0        0.0       0.0             0                  0                 0
+ 2025    16             Tyrod Taylor  QB  NYJ      55.0      0.0        0.0       0.0             0                  0                 0
+ 2025    16                Zach Ertz  TE  WAS      68.0      4.6        3.7       0.9             8                  1                 5
+ 2025    17             Brock Bowers  TE   LV      96.0      7.0        5.6       1.4             8                  3                 2
+ 2025    17              Cade Stover  TE  HOU      56.0      1.5        1.2       0.3             8                  2                 3
+ 2025    17               DK Metcalf  WR  PIT      83.3      5.6        4.5       1.1             8                  4                 2
+ 2025    17              Davis Allen  TE   LA      70.3      2.0        1.6       0.4             8                  2                 3
+ 2025    17            Devaughn Vele  WR   NO      74.0      3.7        3.0       0.7             8                  3                 1
+ 2025    17            George Kittle  TE   SF      79.0      5.4        4.3       1.1             8                  5                 1
+ 2025    17            J.J. McCarthy  QB  MIN      84.0      0.0        0.0       0.0             0                  0                 0
+ 2025    17        Ja'Tavion Sanders  TE  CAR      55.0      2.5        2.0       0.5             8                  0                 5
+ 2025    17                Jack Bech  WR   LV      78.3      2.8        2.3       0.6             8                  3                 2
+ 2025    17               John Bates  TE  WAS      60.3      1.2        0.9       0.2             8                  2                 3
+ 2025    17              Jordan Love  QB   GB      78.7      0.0        0.0       0.0             0                  0                 0
+ 2025    17           Kayshon Boutte  WR   NE      66.5      2.7        2.1       0.5             8                  5                 1
+ 2025    17             Kimani Vidal  RB  LAC      55.3     13.2       10.6       2.6             5                  1                 2
+ 2025    17            Lamar Jackson  QB  BAL      78.3      0.0        0.0       0.0             0                  0                 0
+ 2025    17            Luke Musgrave  TE   GB      56.0      2.1        1.7       0.4             8                  4                 2
+ 2025    17             Mack Hollins  WR   NE      72.5      4.9        4.0       1.0             8                  5                 1
+ 2025    17           Marcus Mariota  QB  WAS      61.3      0.0        0.0       0.0             0                  0                 0
+ 2025    17             Mason Tipton  WR   NO      58.3      2.0        1.6       0.4             8                  3                 1
+ 2025    17        Olamide Zaccheaus  WR  CHI      82.3      3.4        2.7       0.7             8                  3                 3
+ 2025    17               Pat Bryant  WR  DEN      55.5      4.1        3.3       0.8             8                  3                 3
+ 2025    17          Patrick Mahomes  QB   KC      96.0      0.0        0.0       0.0             0                  0                 0
+ 2025    17              Rashee Rice  WR   KC      81.5      7.0        5.6       1.4             8                  1                 4
+ 2025    17            Ryan Flournoy  WR  DAL      56.3      3.2        2.6       0.6             8                  4                 4
+ 2025    17           T.J. Hockenson  TE  MIN      70.3      4.7        3.7       0.9             8                  1                 4
+ 2025    17             Theo Johnson  TE  NYG      91.5      2.0        1.6       0.4             8                  3                 1
+ 2025    17           Tua Tagovailoa  QB  MIA      94.5      0.0        0.0       0.0             0                  0                 0
+
+=== summary ===
+cases: 213
+mean vacated: 3.6  mean allocated: 2.8  mean unfilled: 0.8  (77% of vacated volume re-placed)
+recipient projections vs their actual box score: 423 moved CLOSER, 371 moved WORSE  (53% closer)
+
+by position:
+     cases  pct_placed  closer  worse
+pos                                  
+QB      56         NaN       0      0
+RB      12        68.0      17     10
+TE      46        80.0     119    121
+WR      99        80.0     287    240

@@ -1,0 +1,321 @@
+season,team,hc,hc_prev,hc_changed,oc,dc,dc_prev,dc_source,oc_changed,dc_changed,dc_to_hc,def_staff_changed,coaching_cohort
+2016,ARI,Bruce Arians,Bruce Arians,0.0,,James Bettcher,James Bettcher,wikipedia,,0.0,False,0.0,none
+2016,ATL,Dan Quinn,Dan Quinn,0.0,Kyle Shanahan,,,,0.0,,False,0.0,unknown
+2016,BAL,John Harbaugh,John Harbaugh,0.0,Marty Mornhinweg,Dean Pees,Dean Pees,wikipedia,1.0,0.0,False,0.0,none
+2016,BUF,Rex Ryan,Rex Ryan,0.0,Anthony Lynn,Dennis Thurman,Dennis Thurman,wikipedia,1.0,0.0,False,0.0,none
+2016,CAR,Ron Rivera,Ron Rivera,0.0,Mike Shula,Sean McDermott,Sean McDermott,wikipedia,0.0,0.0,False,0.0,none
+2016,CHI,John Fox,John Fox,0.0,Dowell Loggains,Vic Fangio,Vic Fangio,wikipedia,1.0,0.0,False,0.0,none
+2016,CIN,Marvin Lewis,Marvin Lewis,0.0,Ken Zampese,,,,1.0,,False,0.0,unknown
+2016,CLE,Hue Jackson,Mike Pettine,1.0,Pep Hamilton,Ray Horton,,wikipedia,1.0,,False,1.0,unknown
+2016,DAL,Jason Garrett,Jason Garrett,0.0,Scott Linehan,Rod Marinelli,Rod Marinelli,wikipedia,0.0,0.0,False,0.0,none
+2016,DEN,Gary Kubiak,Gary Kubiak,0.0,Rick Dennison,Wade Phillips,Wade Phillips,wikipedia,0.0,0.0,False,0.0,none
+2016,DET,Jim Caldwell,Jim Caldwell,0.0,Jim Bob Cooter,Teryl Austin,Teryl Austin,wikipedia,0.0,0.0,False,0.0,none
+2016,GB,Mike McCarthy,Mike McCarthy,0.0,Edgar Bennett,Dom Capers,Dom Capers,wikipedia,1.0,0.0,False,0.0,none
+2016,HOU,Bill O'Brien,Bill O'Brien,0.0,George Godsey,Romeo Crennel,Romeo Crennel,wikipedia,,0.0,False,0.0,none
+2016,IND,Chuck Pagano,Chuck Pagano,0.0,Rob Chudzinski,Ted Monachino,Greg Manusky,wikipedia,0.0,1.0,False,1.0,dc_only
+2016,JAX,Gus Bradley,Gus Bradley,0.0,Nathaniel Hackett,Todd Wash,,wikipedia,,,False,0.0,unknown
+2016,KC,Andy Reid,Andy Reid,0.0,,,,,,,False,0.0,unknown
+2016,LA,Jeff Fisher,Jeff Fisher,0.0,Rob Boras,Gregg Williams,Gregg Williams,wikipedia,,0.0,False,0.0,none
+2016,LAC,Mike McCoy,Mike McCoy,0.0,Ken Whisenhunt,John Pagano,John Pagano,wikipedia,1.0,0.0,False,0.0,none
+2016,LV,Jack Del Rio,Jack Del Rio,0.0,Bill Musgrave,,Ken Norton Jr,,0.0,,False,0.0,unknown
+2016,MIA,Adam Gase,Joe Philbin,1.0,Clyde Christensen,Vance Joseph,Kevin Coyle,wikipedia,1.0,1.0,False,1.0,both
+2016,MIN,Mike Zimmer,Mike Zimmer,0.0,Pat Shurmur,,,,1.0,,False,0.0,unknown
+2016,NE,Bill Belichick,Bill Belichick,0.0,Josh McDaniels,Matt Patricia,Matt Patricia,wikipedia,0.0,0.0,False,0.0,none
+2016,NO,Sean Payton,Sean Payton,0.0,,,,,,,False,0.0,unknown
+2016,NYG,Ben McAdoo,Tom Coughlin,1.0,,Steve Spagnuolo,Steve Spagnuolo,wikipedia,,0.0,False,1.0,hc_only
+2016,NYJ,Todd Bowles,Todd Bowles,0.0,Chan Gailey,Kacy Rodgers,Kacy Rodgers,wikipedia,,0.0,False,0.0,none
+2016,PHI,Doug Pederson,Chip Kelly,1.0,Frank Reich,Jim Schwartz,,wikipedia,1.0,,False,1.0,unknown
+2016,PIT,Mike Tomlin,Mike Tomlin,0.0,Todd Haley,,,,0.0,,False,0.0,unknown
+2016,SEA,Pete Carroll,Pete Carroll,0.0,Darrell Bevell,Kris Richard,Kris Richard,wikipedia,0.0,0.0,False,0.0,none
+2016,SF,Chip Kelly,Jim Tomsula,1.0,Curtis Modkins,,Eric Mangini,,1.0,,False,1.0,unknown
+2016,TB,Dirk Koetter,Lovie Smith,1.0,Todd Monken,,Leslie Frazier,,1.0,,False,1.0,unknown
+2016,TEN,Mike Mularkey,Ken Whisenhunt,1.0,Terry Robiskie,Dick LeBeau,Ray Horton,wikipedia,1.0,1.0,False,1.0,both
+2016,WAS,Jay Gruden,Jay Gruden,0.0,Sean McVay,Joe Barry,Joe Barry,wikipedia,0.0,0.0,False,0.0,none
+2017,ARI,Bruce Arians,Bruce Arians,0.0,,James Bettcher,James Bettcher,wikipedia,,0.0,False,0.0,none
+2017,ATL,Dan Quinn,Dan Quinn,0.0,Steve Sarkisian,Marquand Manuel,,wikipedia,1.0,,False,0.0,unknown
+2017,BAL,John Harbaugh,John Harbaugh,0.0,Marty Mornhinweg,Dean Pees,Dean Pees,wikipedia,0.0,0.0,False,0.0,none
+2017,BUF,Sean McDermott,Rex Ryan,1.0,Rick Dennison,Leslie Frazier,Dennis Thurman,wikipedia,1.0,1.0,False,1.0,both
+2017,CAR,Ron Rivera,Ron Rivera,0.0,Mike Shula,Steve Wilks,Sean McDermott,wikipedia,0.0,1.0,False,1.0,dc_only
+2017,CHI,John Fox,John Fox,0.0,Dowell Loggains,Vic Fangio,Vic Fangio,wikipedia,0.0,0.0,False,0.0,none
+2017,CIN,Marvin Lewis,Marvin Lewis,0.0,Bill Lazor,,,,1.0,,False,0.0,unknown
+2017,CLE,Hue Jackson,Hue Jackson,0.0,Hue Jackson,Gregg Williams,Ray Horton,wikipedia,1.0,1.0,False,1.0,dc_only
+2017,DAL,Jason Garrett,Jason Garrett,0.0,Scott Linehan,Rod Marinelli,Rod Marinelli,wikipedia,0.0,0.0,False,0.0,none
+2017,DEN,Vance Joseph,Gary Kubiak,1.0,Bill Musgrave,,Wade Phillips,,1.0,,False,1.0,unknown
+2017,DET,Jim Caldwell,Jim Caldwell,0.0,Jim Bob Cooter,Teryl Austin,Teryl Austin,wikipedia,0.0,0.0,False,0.0,none
+2017,GB,Mike McCarthy,Mike McCarthy,0.0,Edgar Bennett,Dom Capers,Dom Capers,wikipedia,0.0,0.0,False,0.0,none
+2017,HOU,Bill O'Brien,Bill O'Brien,0.0,,Mike Vrabel,Romeo Crennel,wikipedia,,1.0,False,1.0,dc_only
+2017,IND,Chuck Pagano,Chuck Pagano,0.0,Rob Chudzinski,Ted Monachino,Ted Monachino,wikipedia,0.0,0.0,False,0.0,none
+2017,JAX,Doug Marrone,Gus Bradley,1.0,Nathaniel Hackett,Todd Wash,Todd Wash,wikipedia,0.0,0.0,False,1.0,hc_only
+2017,KC,Andy Reid,Andy Reid,0.0,Matt Nagy,,,,1.0,,False,0.0,unknown
+2017,LA,Sean McVay,Jeff Fisher,1.0,Matt LaFleur,Wade Phillips,Gregg Williams,wikipedia,1.0,1.0,False,1.0,both
+2017,LAC,Anthony Lynn,Mike McCoy,1.0,Ken Whisenhunt,Gus Bradley,John Pagano,wikipedia,0.0,1.0,False,1.0,both
+2017,LV,Jack Del Rio,Jack Del Rio,0.0,Todd Downing,John Pagano,,wikipedia,1.0,,False,0.0,unknown
+2017,MIA,Adam Gase,Adam Gase,0.0,Clyde Christensen,,Vance Joseph,,0.0,,False,0.0,unknown
+2017,MIN,Mike Zimmer,Mike Zimmer,0.0,Pat Shurmur,,,,0.0,,False,0.0,unknown
+2017,NE,Bill Belichick,Bill Belichick,0.0,Josh McDaniels,Matt Patricia,Matt Patricia,wikipedia,0.0,0.0,False,0.0,none
+2017,NO,Sean Payton,Sean Payton,0.0,,,,,,,False,0.0,unknown
+2017,NYG,Ben McAdoo,Ben McAdoo,0.0,,Steve Spagnuolo,Steve Spagnuolo,wikipedia,,0.0,False,0.0,none
+2017,NYJ,Todd Bowles,Todd Bowles,0.0,,Kacy Rodgers,Kacy Rodgers,wikipedia,,0.0,False,0.0,none
+2017,PHI,Doug Pederson,Doug Pederson,0.0,Frank Reich,Jim Schwartz,Jim Schwartz,wikipedia,0.0,0.0,False,0.0,none
+2017,PIT,Mike Tomlin,Mike Tomlin,0.0,Todd Haley,,,,0.0,,False,0.0,unknown
+2017,SEA,Pete Carroll,Pete Carroll,0.0,Darrell Bevell,Kris Richard,Kris Richard,wikipedia,0.0,0.0,False,0.0,none
+2017,SF,Kyle Shanahan,Chip Kelly,1.0,Kyle Shanahan,Robert Saleh,,wikipedia,1.0,,False,1.0,unknown
+2017,TB,Dirk Koetter,Dirk Koetter,0.0,Todd Monken,,,,0.0,,False,0.0,unknown
+2017,TEN,Mike Mularkey,Mike Mularkey,0.0,Terry Robiskie,Dick LeBeau,Dick LeBeau,wikipedia,0.0,0.0,False,0.0,none
+2017,WAS,Jay Gruden,Jay Gruden,0.0,Matt Cavanaugh,Greg Manusky,Joe Barry,wikipedia,1.0,1.0,False,1.0,dc_only
+2018,ARI,Steve Wilks,Bruce Arians,1.0,,Al Holcomb,James Bettcher,wikipedia,,1.0,False,1.0,both
+2018,ATL,Dan Quinn,Dan Quinn,0.0,,Marquand Manuel,Marquand Manuel,wikipedia,,0.0,False,0.0,none
+2018,BAL,John Harbaugh,John Harbaugh,0.0,,Don Martindale,Dean Pees,wikipedia,,1.0,False,1.0,dc_only
+2018,BUF,Sean McDermott,Sean McDermott,0.0,,Leslie Frazier,Leslie Frazier,wikipedia,,0.0,False,0.0,none
+2018,CAR,Ron Rivera,Ron Rivera,0.0,,,,,,,False,0.0,unknown
+2018,CHI,Matt Nagy,John Fox,1.0,,Vic Fangio,Vic Fangio,wikipedia,,0.0,False,1.0,hc_only
+2018,CIN,Marvin Lewis,Marvin Lewis,0.0,,,,,,,False,0.0,unknown
+2018,CLE,Hue Jackson,Hue Jackson,0.0,,Gregg Williams,Gregg Williams,wikipedia,,0.0,False,0.0,none
+2018,DAL,Jason Garrett,Jason Garrett,0.0,,Rod Marinelli,Rod Marinelli,wikipedia,,0.0,False,0.0,none
+2018,DEN,Vance Joseph,Vance Joseph,0.0,,,,,,,False,0.0,unknown
+2018,DET,Matt Patricia,Jim Caldwell,1.0,,Paul Pasqualoni,Teryl Austin,wikipedia,,1.0,False,1.0,both
+2018,GB,Mike McCarthy,Mike McCarthy,0.0,,Mike Pettine,Dom Capers,wikipedia,,1.0,False,1.0,dc_only
+2018,HOU,Bill O'Brien,Bill O'Brien,0.0,,Romeo Crennel,Mike Vrabel,wikipedia,,1.0,False,1.0,dc_only
+2018,IND,Frank Reich,Chuck Pagano,1.0,,Matt Eberflus,Ted Monachino,wikipedia,,1.0,False,1.0,both
+2018,JAX,Doug Marrone,Doug Marrone,0.0,,Todd Wash,Todd Wash,wikipedia,,0.0,False,0.0,none
+2018,KC,Andy Reid,Andy Reid,0.0,,,,,,,False,0.0,unknown
+2018,LA,Sean McVay,Sean McVay,0.0,,Wade Phillips,Wade Phillips,wikipedia,,0.0,False,0.0,none
+2018,LAC,Anthony Lynn,Anthony Lynn,0.0,,Gus Bradley,Gus Bradley,wikipedia,,0.0,False,0.0,none
+2018,LV,Jon Gruden,Jack Del Rio,1.0,,,,,,,False,1.0,unknown
+2018,MIA,Adam Gase,Adam Gase,0.0,,,,,,,False,0.0,unknown
+2018,MIN,Mike Zimmer,Mike Zimmer,0.0,,,,,,,False,0.0,unknown
+2018,NE,Bill Belichick,Bill Belichick,0.0,,Brian Flores,Matt Patricia,wikipedia,,1.0,False,1.0,dc_only
+2018,NO,Sean Payton,Sean Payton,0.0,,,,,,,False,0.0,unknown
+2018,NYG,Pat Shurmur,Ben McAdoo,1.0,,James Bettcher,Steve Spagnuolo,wikipedia,,1.0,False,1.0,both
+2018,NYJ,Todd Bowles,Todd Bowles,0.0,,Kacy Rodgers,Kacy Rodgers,wikipedia,,0.0,False,0.0,none
+2018,PHI,Doug Pederson,Doug Pederson,0.0,,Jim Schwartz,Jim Schwartz,wikipedia,,0.0,False,0.0,none
+2018,PIT,Mike Tomlin,Mike Tomlin,0.0,,,,,,,False,0.0,unknown
+2018,SEA,Pete Carroll,Pete Carroll,0.0,,Ken Norton Jr.,Kris Richard,wikipedia,,1.0,False,1.0,dc_only
+2018,SF,Kyle Shanahan,Kyle Shanahan,0.0,,Robert Saleh,Robert Saleh,wikipedia,,0.0,False,0.0,none
+2018,TB,Dirk Koetter,Dirk Koetter,0.0,,Mark Duffner,,wikipedia,,,False,0.0,unknown
+2018,TEN,Mike Vrabel,Mike Mularkey,1.0,,Dean Pees,Dick LeBeau,wikipedia,,1.0,False,1.0,both
+2018,WAS,Jay Gruden,Jay Gruden,0.0,,Greg Manusky,Greg Manusky,wikipedia,,0.0,False,0.0,none
+2019,ARI,Kliff Kingsbury,Steve Wilks,1.0,,Vance Joseph,Al Holcomb,wikipedia,,1.0,False,1.0,both
+2019,ATL,Dan Quinn,Dan Quinn,0.0,,,,,,,False,0.0,unknown
+2019,BAL,John Harbaugh,John Harbaugh,0.0,,Don Martindale,Don Martindale,wikipedia,,0.0,False,0.0,none
+2019,BUF,Sean McDermott,Sean McDermott,0.0,,Leslie Frazier,Leslie Frazier,wikipedia,,0.0,False,0.0,none
+2019,CAR,Ron Rivera,Ron Rivera,0.0,,,,,,,False,0.0,unknown
+2019,CHI,Matt Nagy,Matt Nagy,0.0,,Chuck Pagano,Vic Fangio,wikipedia,,1.0,False,1.0,dc_only
+2019,CIN,Zac Taylor,Marvin Lewis,1.0,,Lou Anarumo,,wikipedia,,,False,1.0,unknown
+2019,CLE,Freddie Kitchens,Hue Jackson,1.0,,Steve Wilks,Gregg Williams,wikipedia,,1.0,False,1.0,both
+2019,DAL,Jason Garrett,Jason Garrett,0.0,,Rod Marinelli,Rod Marinelli,wikipedia,,0.0,False,0.0,none
+2019,DEN,Vic Fangio,Vance Joseph,1.0,,Ed Donatell,,wikipedia,,,False,1.0,unknown
+2019,DET,Matt Patricia,Matt Patricia,0.0,,Paul Pasqualoni,Paul Pasqualoni,wikipedia,,0.0,False,0.0,none
+2019,GB,Matt LaFleur,Mike McCarthy,1.0,,Mike Pettine,Mike Pettine,wikipedia,,0.0,False,1.0,hc_only
+2019,HOU,Bill O'Brien,Bill O'Brien,0.0,,Romeo Crennel,Romeo Crennel,wikipedia,,0.0,False,0.0,none
+2019,IND,Frank Reich,Frank Reich,0.0,,Matt Eberflus,Matt Eberflus,wikipedia,,0.0,False,0.0,none
+2019,JAX,Doug Marrone,Doug Marrone,0.0,,Todd Wash,Todd Wash,wikipedia,,0.0,False,0.0,none
+2019,KC,Andy Reid,Andy Reid,0.0,,Steve Spagnuolo,,wikipedia,,,False,0.0,unknown
+2019,LA,Sean McVay,Sean McVay,0.0,,Wade Phillips,Wade Phillips,wikipedia,,0.0,False,0.0,none
+2019,LAC,Anthony Lynn,Anthony Lynn,0.0,,Gus Bradley,Gus Bradley,wikipedia,,0.0,False,0.0,none
+2019,LV,Jon Gruden,Jon Gruden,0.0,,,,,,,False,0.0,unknown
+2019,MIA,Brian Flores,Adam Gase,1.0,,,,,,,False,1.0,unknown
+2019,MIN,Mike Zimmer,Mike Zimmer,0.0,,,,,,,False,0.0,unknown
+2019,NE,Bill Belichick,Bill Belichick,0.0,,Bill Belichick,Brian Flores,wikipedia,,1.0,False,1.0,dc_only
+2019,NO,Sean Payton,Sean Payton,0.0,,,,,,,False,0.0,unknown
+2019,NYG,Pat Shurmur,Pat Shurmur,0.0,,James Bettcher,James Bettcher,wikipedia,,0.0,False,0.0,none
+2019,NYJ,Adam Gase,Todd Bowles,1.0,,Gregg Williams,Kacy Rodgers,wikipedia,,1.0,False,1.0,both
+2019,PHI,Doug Pederson,Doug Pederson,0.0,,Jim Schwartz,Jim Schwartz,wikipedia,,0.0,False,0.0,none
+2019,PIT,Mike Tomlin,Mike Tomlin,0.0,,,,,,,False,0.0,unknown
+2019,SEA,Pete Carroll,Pete Carroll,0.0,,Ken Norton Jr.,Ken Norton Jr.,wikipedia,,0.0,False,0.0,none
+2019,SF,Kyle Shanahan,Kyle Shanahan,0.0,,Robert Saleh,Robert Saleh,wikipedia,,0.0,False,0.0,none
+2019,TB,Bruce Arians,Dirk Koetter,1.0,,Todd Bowles,Mark Duffner,wikipedia,,1.0,False,1.0,both
+2019,TEN,Mike Vrabel,Mike Vrabel,0.0,,Dean Pees,Dean Pees,wikipedia,,0.0,False,0.0,none
+2019,WAS,Bill Callahan,Jay Gruden,1.0,,Greg Manusky,Greg Manusky,wikipedia,,0.0,False,1.0,hc_only
+2020,ARI,Kliff Kingsbury,Kliff Kingsbury,0.0,,Vance Joseph,Vance Joseph,wikipedia,,0.0,False,0.0,none
+2020,ATL,Raheem Morris,Dan Quinn,1.0,Dirk Koetter,Jeff Ulbrich,Marquand Manuel,wikipedia,,1.0,False,1.0,both
+2020,BAL,John Harbaugh,John Harbaugh,0.0,Greg Roman,Don Martindale,Don Martindale,wikipedia,,0.0,False,0.0,none
+2020,BUF,Sean McDermott,Sean McDermott,0.0,Brian Daboll,Leslie Frazier,Leslie Frazier,wikipedia,,0.0,False,0.0,none
+2020,CAR,Matt Rhule,Ron Rivera,1.0,,Phil Snow,Steve Wilks,wikipedia,,1.0,False,1.0,both
+2020,CHI,Matt Nagy,Matt Nagy,0.0,Bill Lazor,Chuck Pagano,Chuck Pagano,wikipedia,,0.0,False,0.0,none
+2020,CIN,Zac Taylor,Zac Taylor,0.0,Brian Callahan,Lou Anarumo,Lou Anarumo,wikipedia,,0.0,False,0.0,none
+2020,CLE,Kevin Stefanski,Freddie Kitchens,1.0,Alex Van Pelt,,Steve Wilks,,,,False,1.0,unknown
+2020,DAL,Mike McCarthy,Jason Garrett,1.0,Kellen Moore,Mike Nolan,Rod Marinelli,wikipedia,,1.0,False,1.0,both
+2020,DEN,Vic Fangio,Vic Fangio,0.0,Pat Shurmur,Ed Donatell,Ed Donatell,wikipedia,,0.0,False,0.0,none
+2020,DET,Matt Patricia,Matt Patricia,0.0,Darrell Bevell,Cory Undlin,Paul Pasqualoni,wikipedia,,1.0,False,1.0,dc_only
+2020,GB,Matt LaFleur,Matt LaFleur,0.0,Nathaniel Hackett,Mike Pettine,Mike Pettine,wikipedia,,0.0,False,0.0,none
+2020,HOU,Romeo Crennel,Bill O'Brien,1.0,,Anthony Weaver,Romeo Crennel,wikipedia,,1.0,True,1.0,dc_to_hc
+2020,IND,Frank Reich,Frank Reich,0.0,Nick Sirianni,Matt Eberflus,Matt Eberflus,wikipedia,,0.0,False,0.0,none
+2020,JAX,Doug Marrone,Doug Marrone,0.0,Jay Gruden,Todd Wash,Todd Wash,wikipedia,,0.0,False,0.0,none
+2020,KC,Andy Reid,Andy Reid,0.0,Eric Bieniemy,Steve Spagnuolo,Steve Spagnuolo,wikipedia,,0.0,False,0.0,none
+2020,LA,Sean McVay,Sean McVay,0.0,,Brandon Staley,Wade Phillips,wikipedia,,1.0,False,1.0,dc_only
+2020,LAC,Anthony Lynn,Anthony Lynn,0.0,Shane Steichen,Gus Bradley,Gus Bradley,wikipedia,,0.0,False,0.0,none
+2020,LV,Jon Gruden,Jon Gruden,0.0,,,,,,,False,0.0,unknown
+2020,MIA,Brian Flores,Brian Flores,0.0,Chan Gailey,Josh Boyer,,wikipedia,1.0,,False,0.0,unknown
+2020,MIN,Mike Zimmer,Mike Zimmer,0.0,Gary Kubiak,,,,1.0,,False,0.0,unknown
+2020,NE,Bill Belichick,Bill Belichick,0.0,Josh McDaniels,Bill Belichick,Bill Belichick,wikipedia,,0.0,True,0.0,dc_to_hc
+2020,NO,Sean Payton,Sean Payton,0.0,Pete Carmichael Jr.,,Dennis Allen,,,,False,0.0,unknown
+2020,NYG,Joe Judge,Pat Shurmur,1.0,Jason Garrett,,James Bettcher,,,,False,1.0,unknown
+2020,NYJ,Adam Gase,Adam Gase,0.0,Dowell Loggains,Gregg Williams,Gregg Williams,wikipedia,,0.0,False,0.0,none
+2020,PHI,Doug Pederson,Doug Pederson,0.0,,Jim Schwartz,Jim Schwartz,wikipedia,,0.0,False,0.0,none
+2020,PIT,Mike Tomlin,Mike Tomlin,0.0,Randy Fichtner,,,,1.0,,False,0.0,unknown
+2020,SEA,Pete Carroll,Pete Carroll,0.0,Brian Schottenheimer,Ken Norton Jr.,Ken Norton Jr.,wikipedia,,0.0,False,0.0,none
+2020,SF,Kyle Shanahan,Kyle Shanahan,0.0,,Robert Saleh,Robert Saleh,wikipedia,,0.0,False,0.0,none
+2020,TB,Bruce Arians,Bruce Arians,0.0,Byron Leftwich,Todd Bowles,Todd Bowles,wikipedia,,0.0,False,0.0,none
+2020,TEN,Mike Vrabel,Mike Vrabel,0.0,,,,,,,False,0.0,unknown
+2020,WAS,Ron Rivera,Bill Callahan,1.0,,Jack Del Rio,Greg Manusky,wikipedia,,1.0,False,1.0,both
+2021,ARI,Kliff Kingsbury,Kliff Kingsbury,0.0,,Vance Joseph,Vance Joseph,wikipedia,,0.0,False,0.0,none
+2021,ATL,Arthur Smith,Raheem Morris,1.0,Dave Ragone,Dean Pees,Jeff Ulbrich,wikipedia,1.0,1.0,False,1.0,both
+2021,BAL,John Harbaugh,John Harbaugh,0.0,Greg Roman,Don Martindale,Don Martindale,wikipedia,0.0,0.0,False,0.0,none
+2021,BUF,Sean McDermott,Sean McDermott,0.0,Brian Daboll,Leslie Frazier,Leslie Frazier,wikipedia,0.0,0.0,False,0.0,none
+2021,CAR,Matt Rhule,Matt Rhule,0.0,Joe Brady,Phil Snow,Phil Snow,wikipedia,,0.0,False,0.0,none
+2021,CHI,Matt Nagy,Matt Nagy,0.0,Bill Lazor,Sean Desai,Chuck Pagano,wikipedia,0.0,1.0,False,1.0,dc_only
+2021,CIN,Zac Taylor,Zac Taylor,0.0,Brian Callahan,Lou Anarumo,Lou Anarumo,wikipedia,0.0,0.0,False,0.0,none
+2021,CLE,Kevin Stefanski,Kevin Stefanski,0.0,Alex Van Pelt,Joe Woods,,wikipedia,0.0,,False,0.0,unknown
+2021,DAL,Mike McCarthy,Mike McCarthy,0.0,Kellen Moore,Dan Quinn,Mike Nolan,wikipedia,0.0,1.0,False,1.0,dc_only
+2021,DEN,Vic Fangio,Vic Fangio,0.0,Pat Shurmur,Ed Donatell,Ed Donatell,wikipedia,0.0,0.0,False,0.0,none
+2021,DET,Dan Campbell,Matt Patricia,1.0,Anthony Lynn,Aaron Glenn,Cory Undlin,wikipedia,1.0,1.0,False,1.0,both
+2021,GB,Matt LaFleur,Matt LaFleur,0.0,Nathaniel Hackett,Joe Barry,Mike Pettine,wikipedia,0.0,1.0,False,1.0,dc_only
+2021,HOU,David Culley,Romeo Crennel,1.0,Tim Kelly,Lovie Smith,Anthony Weaver,wikipedia,,1.0,False,1.0,both
+2021,IND,Frank Reich,Frank Reich,0.0,Marcus Brady,Matt Eberflus,Matt Eberflus,wikipedia,1.0,0.0,False,0.0,none
+2021,JAX,Urban Meyer,Doug Marrone,1.0,Darrell Bevell,Joe Cullen,Todd Wash,wikipedia,1.0,1.0,False,1.0,both
+2021,KC,Andy Reid,Andy Reid,0.0,Eric Bieniemy,Steve Spagnuolo,Steve Spagnuolo,wikipedia,0.0,0.0,False,0.0,none
+2021,LA,Sean McVay,Sean McVay,0.0,Kevin O'Connell,Raheem Morris,Brandon Staley,wikipedia,,1.0,False,1.0,dc_only
+2021,LAC,Brandon Staley,Anthony Lynn,1.0,Joe Lombardi,Renaldo Hill,Gus Bradley,wikipedia,1.0,1.0,False,1.0,both
+2021,LV,Rich Bisaccia,Jon Gruden,1.0,Greg Olson,Gus Bradley,John Pagano,wikipedia,1.0,1.0,False,1.0,both
+2021,MIA,Brian Flores,Brian Flores,0.0,,Josh Boyer,Josh Boyer,wikipedia,,0.0,False,0.0,none
+2021,MIN,Mike Zimmer,Mike Zimmer,0.0,Klint Kubiak,,,,1.0,,False,0.0,unknown
+2021,NE,Bill Belichick,Bill Belichick,0.0,Josh McDaniels,,Bill Belichick,,0.0,,True,0.0,dc_to_hc
+2021,NO,Sean Payton,Sean Payton,0.0,Pete Carmichael,Dennis Allen,,wikipedia,0.0,,False,0.0,unknown
+2021,NYG,Joe Judge,Joe Judge,0.0,Jason Garrett,Patrick Graham,,wikipedia,0.0,,False,0.0,unknown
+2021,NYJ,Robert Saleh,Adam Gase,1.0,Mike LaFleur,Jeff Ulbrich,Gregg Williams,wikipedia,1.0,1.0,False,1.0,both
+2021,PHI,Nick Sirianni,Doug Pederson,1.0,Shane Steichen,Jonathan Gannon,Jim Schwartz,wikipedia,,1.0,False,1.0,both
+2021,PIT,Mike Tomlin,Mike Tomlin,0.0,Matt Canada,Keith Butler,,wikipedia,1.0,,False,0.0,unknown
+2021,SEA,Pete Carroll,Pete Carroll,0.0,Shane Waldron,Ken Norton,Ken Norton Jr.,wikipedia,1.0,0.0,False,0.0,none
+2021,SF,Kyle Shanahan,Kyle Shanahan,0.0,Mike McDaniel,DeMeco Ryans,Robert Saleh,wikipedia,,1.0,False,1.0,dc_only
+2021,TB,Bruce Arians,Bruce Arians,0.0,Byron Leftwich,Todd Bowles,Todd Bowles,wikipedia,0.0,0.0,False,0.0,none
+2021,TEN,Mike Vrabel,Mike Vrabel,0.0,Todd Downing,Shane Bowen,Dean Pees,wikipedia,,1.0,False,1.0,dc_only
+2021,WAS,Ron Rivera,Ron Rivera,0.0,Scott Turner,Jack Del Rio,Jack Del Rio,wikipedia,,0.0,False,0.0,none
+2022,ARI,Kliff Kingsbury,Kliff Kingsbury,0.0,Sean Kugler,Vance Joseph,Vance Joseph,ourlads,,0.0,False,0.0,none
+2022,ATL,Arthur Smith,Arthur Smith,0.0,Dave Ragone,Dean Pees,Dean Pees,ourlads,0.0,0.0,False,0.0,none
+2022,BAL,John Harbaugh,John Harbaugh,0.0,Greg Roman,Mike Macdonald,Don Martindale,ourlads,0.0,1.0,False,1.0,dc_only
+2022,BUF,Sean McDermott,Sean McDermott,0.0,Ken Dorsey,Leslie Frazier,Leslie Frazier,ourlads,1.0,0.0,False,0.0,none
+2022,CAR,Steve Wilks,Matt Rhule,1.0,Ben McAdoo,Phil Snow,Phil Snow,ourlads,1.0,0.0,False,1.0,hc_only
+2022,CHI,Matt Eberflus,Matt Nagy,1.0,Luke Getsy,Alan Williams,Sean Desai,ourlads,1.0,1.0,False,1.0,both
+2022,CIN,Zac Taylor,Zac Taylor,0.0,Brian Callahan,Lou Anarumo,Lou Anarumo,ourlads,0.0,0.0,False,0.0,none
+2022,CLE,Kevin Stefanski,Kevin Stefanski,0.0,Alex Van Pelt,Joe Woods,Joe Woods,ourlads,0.0,0.0,False,0.0,none
+2022,DAL,Mike McCarthy,Mike McCarthy,0.0,Kellen Moore,Dan Quinn,Dan Quinn,ourlads,0.0,0.0,False,0.0,none
+2022,DEN,Nathaniel Hackett,Vic Fangio,1.0,Justin Outten,Ejiro Evero,Ed Donatell,ourlads,1.0,1.0,False,1.0,both
+2022,DET,Dan Campbell,Dan Campbell,0.0,Ben Johnson,Aaron Glenn,Aaron Glenn,ourlads,1.0,0.0,False,0.0,none
+2022,GB,Matt LaFleur,Matt LaFleur,0.0,Adam Stenavich,Joe Barry,Joe Barry,ourlads,1.0,0.0,False,0.0,none
+2022,HOU,Lovie Smith,David Culley,1.0,Pep Hamilton,Lovie Smith,Lovie Smith,ourlads,1.0,0.0,True,1.0,dc_to_hc
+2022,IND,Frank Reich,Frank Reich,0.0,Marcus Brady,Gus Bradley,Matt Eberflus,ourlads,0.0,1.0,False,1.0,dc_only
+2022,JAX,Doug Pederson,Urban Meyer,1.0,Press Taylor,Mike Caldwell,Joe Cullen,ourlads,1.0,1.0,False,1.0,both
+2022,KC,Andy Reid,Andy Reid,0.0,Eric Bienemy,Steve Spagnuolo,Steve Spagnuolo,ourlads,1.0,0.0,False,0.0,none
+2022,LA,Sean McVay,Sean McVay,0.0,Liam Coen,Raheem Morris,Raheem Morris,ourlads,1.0,0.0,False,0.0,none
+2022,LAC,Brandon Staley,Brandon Staley,0.0,Joe Lombardi,Renaldo Hill,Renaldo Hill,ourlads,0.0,0.0,False,0.0,none
+2022,LV,Josh McDaniels,Rich Bisaccia,1.0,Mick Lombardi,Patrick Graham,Gus Bradley,ourlads,1.0,1.0,False,1.0,both
+2022,MIA,Mike McDaniel,Brian Flores,1.0,Frank Smith,Josh Boyer,Josh Boyer,ourlads,,0.0,False,1.0,hc_only
+2022,MIN,Kevin O'Connell,Mike Zimmer,1.0,Wes Phillips,Ed Donatell,,ourlads,1.0,,False,1.0,unknown
+2022,NE,Bill Belichick,Bill Belichick,0.0,Matt Patricia,Steve Belichick & Jerod Mayo,,ourlads,1.0,,False,0.0,unknown
+2022,NO,Dennis Allen,Sean Payton,1.0,Pete Carmichael,Ryan Nielsen & Kris Richard,Dennis Allen,ourlads,0.0,1.0,True,1.0,dc_to_hc
+2022,NYG,Brian Daboll,Joe Judge,1.0,Mike Kafka,Don Martindale,Patrick Graham,ourlads,1.0,1.0,False,1.0,both
+2022,NYJ,Robert Saleh,Robert Saleh,0.0,Mike LaFleur,Jeff Ulbrich,Jeff Ulbrich,ourlads,0.0,0.0,False,0.0,none
+2022,PHI,Nick Sirianni,Nick Sirianni,0.0,Shane Steichen,Jonathan Gannon,Jonathan Gannon,ourlads,0.0,0.0,False,0.0,none
+2022,PIT,Mike Tomlin,Mike Tomlin,0.0,Matt Canada,Teryl Austin,Keith Butler,ourlads,0.0,1.0,False,1.0,dc_only
+2022,SEA,Pete Carroll,Pete Carroll,0.0,Shane Waldron,Clint Hurtt,Ken Norton,ourlads,0.0,1.0,False,1.0,dc_only
+2022,SF,Kyle Shanahan,Kyle Shanahan,0.0,Chris Foerster & Bobby Slowik,DeMeco Ryans,DeMeco Ryans,ourlads,1.0,0.0,False,0.0,none
+2022,TB,Todd Bowles,Bruce Arians,1.0,Byron Leftwich,Kacy Rodgers & Larry Foote,Todd Bowles,ourlads,0.0,1.0,True,1.0,dc_to_hc
+2022,TEN,Mike Vrabel,Mike Vrabel,0.0,Todd Downing,Shane Bowen,Shane Bowen,ourlads,0.0,0.0,False,0.0,none
+2022,WAS,Ron Rivera,Ron Rivera,0.0,Scott Turner,Jack Del Rio,Jack Del Rio,ourlads,0.0,0.0,False,0.0,none
+2023,ARI,Jonathan Gannon,Kliff Kingsbury,1.0,Drew Petzing,Nick Rallis,Vance Joseph,ourlads,1.0,1.0,False,1.0,both
+2023,ATL,Arthur Smith,Arthur Smith,0.0,Dave Ragone,Ryan Nielsen,Dean Pees,ourlads,0.0,1.0,False,1.0,dc_only
+2023,BAL,John Harbaugh,John Harbaugh,0.0,Todd Monken,Mike Macdonald,Mike Macdonald,ourlads,1.0,0.0,False,0.0,none
+2023,BUF,Sean McDermott,Sean McDermott,0.0,Ken Dorsey,Vacant,Leslie Frazier,ourlads,0.0,1.0,False,1.0,dc_only
+2023,CAR,Frank Reich,Steve Wilks,1.0,Thomas Brown,Ejiro Evero,Phil Snow,ourlads,1.0,1.0,False,1.0,both
+2023,CHI,Matt Eberflus,Matt Eberflus,0.0,Luke Getsy,Alan Williams,Alan Williams,ourlads,0.0,0.0,False,0.0,none
+2023,CIN,Zac Taylor,Zac Taylor,0.0,Brian Callahan,Lou Anarumo,Lou Anarumo,ourlads,0.0,0.0,False,0.0,none
+2023,CLE,Kevin Stefanski,Kevin Stefanski,0.0,Alex Van Pelt,Jim Schwartz,Joe Woods,ourlads,0.0,1.0,False,1.0,dc_only
+2023,DAL,Mike McCarthy,Mike McCarthy,0.0,Brian Schottenheimer,Dan Quinn,Dan Quinn,ourlads,1.0,0.0,False,0.0,none
+2023,DEN,Sean Payton,Nathaniel Hackett,1.0,Joe Lombardi,Vance Joseph,Ejiro Evero,ourlads,1.0,1.0,False,1.0,both
+2023,DET,Dan Campbell,Dan Campbell,0.0,Ben Johnson,Aaron Glenn,Aaron Glenn,ourlads,0.0,0.0,False,0.0,none
+2023,GB,Matt LaFleur,Matt LaFleur,0.0,Adam Stenavich,Joe Barry,Joe Barry,ourlads,0.0,0.0,False,0.0,none
+2023,HOU,DeMeco Ryans,Lovie Smith,1.0,Bobby Slowik,Matt Burke,Lovie Smith,ourlads,1.0,1.0,False,1.0,both
+2023,IND,Shane Steichen,Frank Reich,1.0,Jim Bob Cooter,Gus Bradley,Gus Bradley,ourlads,1.0,0.0,False,1.0,hc_only
+2023,JAX,Doug Pederson,Doug Pederson,0.0,Press Taylor,Mike Caldwell,Mike Caldwell,ourlads,0.0,0.0,False,0.0,none
+2023,KC,Andy Reid,Andy Reid,0.0,Matt Nagy,Steve Spagnuolo,Steve Spagnuolo,ourlads,1.0,0.0,False,0.0,none
+2023,LA,Sean McVay,Sean McVay,0.0,Mike LaFleur,Raheem Morris,Raheem Morris,ourlads,1.0,0.0,False,0.0,none
+2023,LAC,Brandon Staley,Brandon Staley,0.0,Kellen Moore,Derrick Ansley,Renaldo Hill,ourlads,1.0,1.0,False,1.0,dc_only
+2023,LV,Antonio Pierce,Josh McDaniels,1.0,Mick Lombardi,Patrick Graham,Patrick Graham,ourlads,0.0,0.0,False,1.0,hc_only
+2023,MIA,Mike McDaniel,Mike McDaniel,0.0,Frank Smith,Vic Fangio,Josh Boyer,ourlads,0.0,1.0,False,1.0,dc_only
+2023,MIN,Kevin O'Connell,Kevin O'Connell,0.0,Wes Phillips,Brian Flores,Ed Donatell,ourlads,0.0,1.0,False,1.0,dc_only
+2023,NE,Bill Belichick,Bill Belichick,0.0,Bill O'Brien,Steve Belichick & Jerod Mayo,Steve Belichick & Jerod Mayo,ourlads,1.0,0.0,False,0.0,none
+2023,NO,Dennis Allen,Dennis Allen,0.0,Pete Carmichael,Joe Woods,Ryan Nielsen & Kris Richard,ourlads,0.0,1.0,False,1.0,dc_only
+2023,NYG,Brian Daboll,Brian Daboll,0.0,Mike Kafka,Don Martindale,Don Martindale,ourlads,0.0,0.0,False,0.0,none
+2023,NYJ,Robert Saleh,Robert Saleh,0.0,Nathaniel Hackett,Jeff Ulbrich,Jeff Ulbrich,ourlads,1.0,0.0,False,0.0,none
+2023,PHI,Nick Sirianni,Nick Sirianni,0.0,Brian Johnson,Sean Desai,Jonathan Gannon,ourlads,1.0,1.0,False,1.0,dc_only
+2023,PIT,Mike Tomlin,Mike Tomlin,0.0,Matt Canada,Teryl Austin,Teryl Austin,ourlads,0.0,0.0,False,0.0,none
+2023,SEA,Pete Carroll,Pete Carroll,0.0,Shane Waldron,Clint Hurtt,Clint Hurtt,ourlads,0.0,0.0,False,0.0,none
+2023,SF,Kyle Shanahan,Kyle Shanahan,0.0,Chris Foerster & Klint Kubiak,Steve Wilks,DeMeco Ryans,ourlads,1.0,1.0,False,1.0,dc_only
+2023,TB,Todd Bowles,Todd Bowles,0.0,Dave Canales,Kacy Rodgers & Larry Foote,Kacy Rodgers & Larry Foote,ourlads,1.0,0.0,False,0.0,none
+2023,TEN,Mike Vrabel,Mike Vrabel,0.0,Tim Kelly,Shane Bowen,Shane Bowen,ourlads,1.0,0.0,False,0.0,none
+2023,WAS,Ron Rivera,Ron Rivera,0.0,Eric Bienemy,Jack Del Rio,Jack Del Rio,ourlads,1.0,0.0,False,0.0,none
+2024,ARI,Jonathan Gannon,Jonathan Gannon,0.0,Drew Petzing,Nick Rallis,Nick Rallis,ourlads,0.0,0.0,False,0.0,none
+2024,ATL,Raheem Morris,Arthur Smith,1.0,Zac Robinson,Jimmy Lake,Ryan Nielsen,ourlads,1.0,1.0,False,1.0,both
+2024,BAL,John Harbaugh,John Harbaugh,0.0,Todd Monken,Zach Orr,Mike Macdonald,ourlads,0.0,1.0,False,1.0,dc_only
+2024,BUF,Sean McDermott,Sean McDermott,0.0,Joe Brady,Bobby Babich,Vacant,ourlads,1.0,1.0,False,1.0,dc_only
+2024,CAR,Dave Canales,Frank Reich,1.0,Brad Idzik,Ejiro Evero,Ejiro Evero,ourlads,1.0,0.0,False,1.0,hc_only
+2024,CHI,Matt Eberflus,Matt Eberflus,0.0,Shane Waldron,Eric Washington,Alan Williams,ourlads,1.0,1.0,False,1.0,dc_only
+2024,CIN,Zac Taylor,Zac Taylor,0.0,Dan Pitcher,Lou Anarumo,Lou Anarumo,ourlads,1.0,0.0,False,0.0,none
+2024,CLE,Kevin Stefanski,Kevin Stefanski,0.0,Ken Dorsey,Jim Schwartz,Jim Schwartz,ourlads,1.0,0.0,False,0.0,none
+2024,DAL,Mike McCarthy,Mike McCarthy,0.0,Brian Schottenheimer,Mike Zimmer,Dan Quinn,ourlads,0.0,1.0,False,1.0,dc_only
+2024,DEN,Sean Payton,Sean Payton,0.0,Joe Lombardi,Vance Joseph,Vance Joseph,ourlads,0.0,0.0,False,0.0,none
+2024,DET,Dan Campbell,Dan Campbell,0.0,Ben Johnson,Aaron Glenn,Aaron Glenn,ourlads,0.0,0.0,False,0.0,none
+2024,GB,Matt LaFleur,Matt LaFleur,0.0,Adam Stenavich,Jeff Hafley,Joe Barry,ourlads,0.0,1.0,False,1.0,dc_only
+2024,HOU,DeMeco Ryans,DeMeco Ryans,0.0,Bobby Slowik,Matt Burke,Matt Burke,ourlads,0.0,0.0,False,0.0,none
+2024,IND,Shane Steichen,Shane Steichen,0.0,Jim Bob Cooter,Gus Bradley,Gus Bradley,ourlads,0.0,0.0,False,0.0,none
+2024,JAX,Doug Pederson,Doug Pederson,0.0,Press Taylor,Ryan Nielsen,Mike Caldwell,ourlads,0.0,1.0,False,1.0,dc_only
+2024,KC,Andy Reid,Andy Reid,0.0,Matt Nagy,Steve Spagnuolo,Steve Spagnuolo,ourlads,0.0,0.0,False,0.0,none
+2024,LA,Sean McVay,Sean McVay,0.0,Mike LaFleur,Chris Shula,Raheem Morris,ourlads,0.0,1.0,False,1.0,dc_only
+2024,LAC,Jim Harbaugh,Brandon Staley,1.0,Greg Roman,Jesse Minter,Derrick Ansley,ourlads,1.0,1.0,False,1.0,both
+2024,LV,Antonio Pierce,Antonio Pierce,0.0,Luke Getsy,Patrick Graham,Patrick Graham,ourlads,1.0,0.0,False,0.0,none
+2024,MIA,Mike McDaniel,Mike McDaniel,0.0,Frank Smith,Anthony Weaver,Vic Fangio,ourlads,0.0,1.0,False,1.0,dc_only
+2024,MIN,Kevin O'Connell,Kevin O'Connell,0.0,Wes Phillips,Brian Flores,Brian Flores,ourlads,0.0,0.0,False,0.0,none
+2024,NE,Jerod Mayo,Bill Belichick,1.0,Alex Van Pelt,DeMarcus Covington,Steve Belichick & Jerod Mayo,ourlads,1.0,1.0,False,1.0,both
+2024,NO,Dennis Allen,Dennis Allen,0.0,Klint Kubiak,Joe Woods,Joe Woods,ourlads,1.0,0.0,False,0.0,none
+2024,NYG,Brian Daboll,Brian Daboll,0.0,Mike Kafka,Shane Bowen,Don Martindale,ourlads,0.0,1.0,False,1.0,dc_only
+2024,NYJ,Robert Saleh,Robert Saleh,0.0,Nathaniel Hackett,Jeff Ulbrich,Jeff Ulbrich,ourlads,0.0,0.0,False,0.0,none
+2024,PHI,Nick Sirianni,Nick Sirianni,0.0,Kellen Moore,Vic Fangio,Sean Desai,ourlads,1.0,1.0,False,1.0,dc_only
+2024,PIT,Mike Tomlin,Mike Tomlin,0.0,Arthur Smith,Teryl Austin,Teryl Austin,ourlads,1.0,0.0,False,0.0,none
+2024,SEA,Mike Macdonald,Pete Carroll,1.0,Ryan Grubb,Aden Durde,Clint Hurtt,ourlads,1.0,1.0,False,1.0,both
+2024,SF,Kyle Shanahan,Kyle Shanahan,0.0,Chris Foerster,Nick Sorensen,Steve Wilks,ourlads,1.0,1.0,False,1.0,dc_only
+2024,TB,Todd Bowles,Todd Bowles,0.0,Liam Coen,Kacy Rodgers & Larry Foote,Kacy Rodgers & Larry Foote,ourlads,1.0,0.0,False,0.0,none
+2024,TEN,Brian Callahan,Mike Vrabel,1.0,Nick Holz,Dennard Wilson,Shane Bowen,ourlads,1.0,1.0,False,1.0,both
+2024,WAS,Dan Quinn,Ron Rivera,1.0,Kliff Kingsbury,Joe Whitt Jr.,Jack Del Rio,ourlads,1.0,1.0,False,1.0,both
+2025,ARI,Jonathan Gannon,Jonathan Gannon,0.0,Drew Petzing,Nick Rallis,Nick Rallis,ourlads,0.0,0.0,False,0.0,none
+2025,ATL,Raheem Morris,Raheem Morris,0.0,Zac Robinson,Jeff Ulbrich,Jimmy Lake,ourlads,0.0,1.0,False,1.0,dc_only
+2025,BAL,John Harbaugh,John Harbaugh,0.0,Todd Monken,Zach Orr,Zach Orr,ourlads,0.0,0.0,False,0.0,none
+2025,BUF,Sean McDermott,Sean McDermott,0.0,Joe Brady,Bobby Babich,Bobby Babich,ourlads,0.0,0.0,False,0.0,none
+2025,CAR,Dave Canales,Dave Canales,0.0,Brad Idzik,Ejiro Evero,Ejiro Evero,ourlads,0.0,0.0,False,0.0,none
+2025,CHI,Ben Johnson,Matt Eberflus,1.0,Declan Doyle,Dennis Allen,Eric Washington,ourlads,1.0,1.0,False,1.0,both
+2025,CIN,Zac Taylor,Zac Taylor,0.0,Dan Pitcher,Al Golden,Lou Anarumo,ourlads,0.0,1.0,False,1.0,dc_only
+2025,CLE,Kevin Stefanski,Kevin Stefanski,0.0,Tommy Rees,Jim Schwartz,Jim Schwartz,ourlads,1.0,0.0,False,0.0,none
+2025,DAL,Brian Schottenheimer,Mike McCarthy,1.0,Klayton Adams,Matt Eberflus,Mike Zimmer,ourlads,1.0,1.0,False,1.0,both
+2025,DEN,Sean Payton,Sean Payton,0.0,Joe Lombardi,Vance Joseph,Vance Joseph,ourlads,0.0,0.0,False,0.0,none
+2025,DET,Dan Campbell,Dan Campbell,0.0,John Morton,Kelvin Sheppard,Aaron Glenn,ourlads,1.0,1.0,False,1.0,dc_only
+2025,GB,Matt LaFleur,Matt LaFleur,0.0,Adam Stenavich,Jeff Hafley,Jeff Hafley,ourlads,0.0,0.0,False,0.0,none
+2025,HOU,DeMeco Ryans,DeMeco Ryans,0.0,Nick Caley,Matt Burke,Matt Burke,ourlads,1.0,0.0,False,0.0,none
+2025,IND,Shane Steichen,Shane Steichen,0.0,Jim Bob Cooter,Lou Anarumo,Gus Bradley,ourlads,0.0,1.0,False,1.0,dc_only
+2025,JAX,Liam Coen,Doug Pederson,1.0,Grant Udinski,Anthony Campanile,Ryan Nielsen,ourlads,1.0,1.0,False,1.0,both
+2025,KC,Andy Reid,Andy Reid,0.0,Matt Nagy,Steve Spagnuolo,Steve Spagnuolo,ourlads,0.0,0.0,False,0.0,none
+2025,LA,Sean McVay,Sean McVay,0.0,Mike LaFleur,Chris Shula,Chris Shula,ourlads,0.0,0.0,False,0.0,none
+2025,LAC,Jim Harbaugh,Jim Harbaugh,0.0,Greg Roman,Jesse Minter,Jesse Minter,ourlads,0.0,0.0,False,0.0,none
+2025,LV,Pete Carroll,Antonio Pierce,1.0,Chip Kelly,Patrick Graham,Patrick Graham,ourlads,1.0,0.0,False,1.0,hc_only
+2025,MIA,Mike McDaniel,Mike McDaniel,0.0,Frank Smith,Anthony Weaver,Anthony Weaver,ourlads,0.0,0.0,False,0.0,none
+2025,MIN,Kevin O'Connell,Kevin O'Connell,0.0,Wes Phillips,Brian Flores,Brian Flores,ourlads,0.0,0.0,False,0.0,none
+2025,NE,Mike Vrabel,Jerod Mayo,1.0,Josh McDaniels,Terrell Williams,DeMarcus Covington,ourlads,1.0,1.0,False,1.0,both
+2025,NO,Kellen Moore,Dennis Allen,1.0,Doug Nussmeier,Brandon Staley,Joe Woods,ourlads,1.0,1.0,False,1.0,both
+2025,NYG,Brian Daboll,Brian Daboll,0.0,Mike Kafka,Shane Bowen,Shane Bowen,ourlads,0.0,0.0,False,0.0,none
+2025,NYJ,Aaron Glenn,Robert Saleh,1.0,Tanner Engstrand,Steve Wilks,Jeff Ulbrich,ourlads,1.0,1.0,False,1.0,both
+2025,PHI,Nick Sirianni,Nick Sirianni,0.0,Kevin Patullo,Vic Fangio,Vic Fangio,ourlads,1.0,0.0,False,0.0,none
+2025,PIT,Mike Tomlin,Mike Tomlin,0.0,Arthur Smith,Teryl Austin,Teryl Austin,ourlads,0.0,0.0,False,0.0,none
+2025,SEA,Mike Macdonald,Mike Macdonald,0.0,Klint Kubiak,Aden Durde,Aden Durde,ourlads,1.0,0.0,False,0.0,none
+2025,SF,Kyle Shanahan,Kyle Shanahan,0.0,Klay Kubiak,Robert Saleh,Nick Sorensen,ourlads,1.0,1.0,False,1.0,dc_only
+2025,TB,Todd Bowles,Todd Bowles,0.0,Josh Grizzard,Larry Foote,Kacy Rodgers & Larry Foote,ourlads,1.0,1.0,False,1.0,dc_only
+2025,TEN,Brian Callahan,Brian Callahan,0.0,Nick Holz,Dennard Wilson,Dennard Wilson,ourlads,0.0,0.0,False,0.0,none
+2025,WAS,Dan Quinn,Dan Quinn,0.0,Kliff Kingsbury,Joe Whitt Jr.,Joe Whitt Jr.,ourlads,0.0,0.0,False,0.0,none

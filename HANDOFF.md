@@ -257,6 +257,66 @@ its own mtime) and the raw pages it consumed into
 `external_data/ourlads_archive/import_<timestamp>/`, so a past-week analysis can pin the
 exact chart the model saw. `save_ourlads_snapshot(..., archive=False)` opts out.
 
+**Historical pre-Week-1 archive (2026-08-31).** Separate from the volatile live pipeline
+above: `external_data/OurLads Historical Depth Charts - Week Before Season 0901/` holds one
+Ourlads **"Depth Chart Archive"** HTML page per team per season (seeded 32×2022-2025, ~09/01
+snapshots). `scripts/import_ourlads_historical.py` parses them (recursively; keys off the
+in-file archive date, not filename/count; handles the archive-page and plain-page h1 forms)
+into two frozen CSVs: `external_data/ourlads_depth_charts_history.csv` (year, archive_date,
+team, unit OFF/DEF/ST/PS/RES, slot, slot_rank, jersey, player names, acq_tag, caps_name) and
+`external_data/ourlads_coaching_staff_by_season.csv` (year, team, hc/oc/dc/st — feeds the
+DEFENSE_PRIOR regime-change idea). Going forward each season's 32 archive HTML pages drop
+into the same folder and a re-run folds them in. `load_ourlads_snapshot(year,
+allow_historical=True)` adapts this CSV to the live `OURLADS_COLUMNS` schema
+(`_historical_snapshot`); `build_weekly_projections` uses it (and lifts the
+`historical_target` guard) only under the off-by-default `MODEL_FEATURES` flag
+**`v2_historical_ourlads`** — for the cold-start Week-1 A/B backtest, not the live
+board (the live cold-start path already reads the live CSV). Archive gaps vs the
+live `.mhtml`: no injury colour, no `position_occurrence` continuation rows.
+That A/B (queue #9) ran 2026-08-31 and is a **one-directional win** — every scope
+improves with the frozen ~09/01 chart, 3-0 across 2023-2025 (ALL dMAE −0.65, QB
+−1.54, WR −0.81, TE −0.54; only START-QB rank-corr slips). Reads as: the
+chart-consuming Week-1 machinery (RB allocator, role floor, QB1 gate) is
+validated. Purpose + the nflverse-vs-Ourlads source comparison behind it:
+`docs/overnight_backtest_log_2026-08-30.md` §5.
+
+**`v2_receiver_vacancy_pecking_order`** (in DEFAULT_FEATURES, 2026-08-30) — WR/TE
+branch of `redistribute_rb_vacancy_with_allocator` only. The default split weights
+recipients by current projected targets, routing most of a departed WR/TE's work
+to the alpha (HOU Collins ~12 targets with Higgins OUT). This reshapes it: rank
+recipients by current volume, geometric rank-decay from the top backup down, hold
+the lead to a fixed small share, same-position affinity (a WR's targets favour
+WRs), hard cutoff past rank 8 (`RECEIVER_VACANCY_*` in `data/rb_role_allocator.py`).
+HOU trace: alpha's slice of the *vacated* targets ~43%→~13%, Noel 12%→34%,
+Hutchinson 9%→21%, WR5/6 the rest, buried tail ~0. Backtest (queue #10, via
+`validate_injury_vacancy.py ± --no-pecking`) = neutral on recipient accuracy
+(53.3% vs 53.9% closer, noise) — kept because it fixes the pathology at no
+measurable broad cost. Note a second, larger part of an alpha's injury-week bump
+is the **upstream cold-start role-share reallocation** over the healthy pool,
+which this flag does not touch.
+
+**`v2_rb_snap_anchored_volume`** — REMOVED from DEFAULT_FEATURES 2026-08-30 (stays
+a switchable `MODEL_FEATURES` flag). Cold-start Week-1 ablation showed an RB cost
+(START-RB −0.288 dMAE, 3-0 weeks); the Etienne/NO 50-50-committee case it was
+built for is a genuine data-unpredictable outlier.
+
+**RB chart hard stop** (standing rule, replaced the removed flag's Miller lever,
+2026-08-30). Two always-on refinements to `v2_preseason_rb_allocator`, no new
+flag: (1) `RB_CHART_VACANCY_EXTENSION_MAX = 1` in `data/rb_role_allocator.py` —
+one out top-three back reaches the chart RB4 in the credible set, never the RB5;
+(2) `continuation_only` (an Ourlads `position_occurrence >= 1` second-column
+listing) is computed unconditionally now and makes a candidate a deep-reserve
+credibility stop regardless of its nominal `depth_rank`. Live: NO wk1 Miller
+8.2%→0% snaps with Kamara out.
+
+**`v2_td_prior_credibility`** (in DEFAULT_FEATURES) — cold-start only. Shrinks a
+thin one-season hot TD rate toward the position mean by opportunity volume (the
+anti-"RJ Harvey" guardrail; `credibility_shrunk_td_prior`). **Softened
+2026-08-30** after the ablation traced its RB cost to over-regressing proven
+multi-season starters: `TD_PRIOR_CREDIBILITY_K` rushing 220→130 / targets 90→55 /
+passing 340→200, one-season cap 0.60→0.70. Kept on principle; re-backtest wide
+(2020-2025 wk1) pending.
+
 Git status of the Ourlads data: the current 2026 preseason batch — the 32 raw `.mhtml` in
 `external_data/OurLads Depth Charts 2026 Preseason/` **and** `ourlads_depth_charts.csv` — is
 **tracked**, not ignored (an older version of this doc said ignored; that is stale). The

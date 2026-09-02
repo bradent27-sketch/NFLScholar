@@ -1,0 +1,197 @@
+2026-08-30 22:50:45.260 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.261 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.262 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.266 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.267 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.267 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.267 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.268 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.268 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.268 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.268 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.269 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.269 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.269 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.270 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.270 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.270 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.271 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.271 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.271 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.272 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.272 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.273 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.273 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.274 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.276 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.395 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:45.396 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:45.396 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:47.146 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:47.644 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-08-30 22:50:47.644 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:48.001 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:50.348 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:50.698 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:51.670 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:52.014 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:52.967 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:53.319 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:54.377 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:54.750 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:55.790 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:56.163 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:57.156 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:57.510 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:58.596 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:50:58.944 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-08-30 22:51:00.047 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+
+=== 1. YEAR-OVER-YEAR DEFENSE-ALLOWED PERSISTENCE ===
+window 2018-2025, 32 teams, 1016 team-pos rows
+
+By head-coach change (full window):
+  HC unchanged               n=768  corr(prev,cur)=+0.221  |d-rating| MAE=0.144  sd(Δ)=0.183
+  HC changed                 n=244  corr(prev,cur)=+0.095  |d-rating| MAE=0.157  sd(Δ)=0.199
+
+By DC change (Ourlads window, 2023-2025):
+  DC unchanged               n=216  corr(prev,cur)=+0.162  |d-rating| MAE=0.147  sd(Δ)=0.183
+  DC changed                 n=168  corr(prev,cur)=+0.209  |d-rating| MAE=0.146  sd(Δ)=0.183
+
+By 4-way cohort:
+  none                       n=200  corr(prev,cur)=+0.194  |d-rating| MAE=0.144  sd(Δ)=0.178
+  dc_only                    n=104  corr(prev,cur)=+0.329  |d-rating| MAE=0.130  sd(Δ)=0.166
+  hc_only                    n=16   corr(prev,cur)=-0.319  |d-rating| MAE=0.182  sd(Δ)=0.238
+  both                       n=64   corr(prev,cur)=+0.023  |d-rating| MAE=0.172  sd(Δ)=0.209
+
+DC change, per position:
+  QB DC unchanged            n=54   corr(prev,cur)=+0.044  |d-rating| MAE=0.148  sd(Δ)=0.179
+  QB DC changed              n=42   corr(prev,cur)=+0.101  |d-rating| MAE=0.153  sd(Δ)=0.195
+  RB DC unchanged            n=54   corr(prev,cur)=+0.439  |d-rating| MAE=0.123  sd(Δ)=0.156
+  RB DC changed              n=42   corr(prev,cur)=+0.055  |d-rating| MAE=0.164  sd(Δ)=0.200
+  WR DC unchanged            n=54   corr(prev,cur)=+0.147  |d-rating| MAE=0.121  sd(Δ)=0.151
+  WR DC changed              n=42   corr(prev,cur)=-0.092  |d-rating| MAE=0.140  sd(Δ)=0.174
+  TE DC unchanged            n=54   corr(prev,cur)=+0.028  |d-rating| MAE=0.197  sd(Δ)=0.236
+  TE DC changed              n=42   corr(prev,cur)=+0.538  |d-rating| MAE=0.128  sd(Δ)=0.165
+
+------------------------------------------------------------------------------
+
+=== 1. YEAR-OVER-YEAR DEFENSE-ALLOWED PERSISTENCE ===
+window 2023-2025, 32 teams, 384 team-pos rows
+
+By head-coach change (full window):
+  HC unchanged               n=304  corr(prev,cur)=+0.241  |d-rating| MAE=0.139  sd(Δ)=0.174
+  HC changed                 n=80   corr(prev,cur)=-0.040  |d-rating| MAE=0.174  sd(Δ)=0.214
+
+By DC change (Ourlads window, 2023-2025):
+  DC unchanged               n=216  corr(prev,cur)=+0.162  |d-rating| MAE=0.147  sd(Δ)=0.183
+  DC changed                 n=168  corr(prev,cur)=+0.209  |d-rating| MAE=0.146  sd(Δ)=0.183
+
+By 4-way cohort:
+  none                       n=200  corr(prev,cur)=+0.194  |d-rating| MAE=0.144  sd(Δ)=0.178
+  dc_only                    n=104  corr(prev,cur)=+0.329  |d-rating| MAE=0.130  sd(Δ)=0.166
+  hc_only                    n=16   corr(prev,cur)=-0.319  |d-rating| MAE=0.182  sd(Δ)=0.238
+  both                       n=64   corr(prev,cur)=+0.023  |d-rating| MAE=0.172  sd(Δ)=0.209
+
+DC change, per position:
+  QB DC unchanged            n=54   corr(prev,cur)=+0.044  |d-rating| MAE=0.148  sd(Δ)=0.179
+  QB DC changed              n=42   corr(prev,cur)=+0.101  |d-rating| MAE=0.153  sd(Δ)=0.195
+  RB DC unchanged            n=54   corr(prev,cur)=+0.439  |d-rating| MAE=0.123  sd(Δ)=0.156
+  RB DC changed              n=42   corr(prev,cur)=+0.055  |d-rating| MAE=0.164  sd(Δ)=0.200
+  WR DC unchanged            n=54   corr(prev,cur)=+0.147  |d-rating| MAE=0.121  sd(Δ)=0.151
+  WR DC changed              n=42   corr(prev,cur)=-0.092  |d-rating| MAE=0.140  sd(Δ)=0.174
+  TE DC unchanged            n=54   corr(prev,cur)=+0.028  |d-rating| MAE=0.197  sd(Δ)=0.236
+  TE DC changed              n=42   corr(prev,cur)=+0.538  |d-rating| MAE=0.128  sd(Δ)=0.165
+
+------------------------------------------------------------------------------
+
+
+=== 2. OPTIMAL prior_games BY COHORT (out-of-sample within-season) ===
+window 2018-2025; blend weeks-1..n vs actual weeks-(n+1)..18, n=2..14
+
+group                  nobs  pg   2pg   4pg   6pg   8pg  10pg  12pg  14pg  16pg  20pg  24pg  30pg  40pg  55
+all                   13208   0.189 0.178 0.173 0.171 0.169 0.169*0.169 0.169 0.169 0.170 0.171 0.172 0.173  best=14
+none                   2600   0.185 0.175 0.171 0.169 0.168 0.168*0.168 0.168 0.169 0.170 0.171 0.172 0.174  best=14
+dc_only                1352   0.186 0.170 0.162 0.156 0.153 0.151 0.150 0.149 0.147 0.147 0.146*0.146 0.146  best=40
+hc_only                 208   0.161*0.158 0.159 0.161 0.163 0.164 0.166 0.168 0.170 0.172 0.175 0.178 0.181  best=4
+both                    832   0.190 0.183 0.181*0.180 0.181 0.182 0.183 0.183 0.185 0.187 0.189 0.191 0.193  best=8
+hc_unchanged              0  (too few)
+hc_changed                0  (too few)
+
+-- by cohort x position --
+group                  nobs  pg   2pg   4pg   6pg   8pg  10pg  12pg  14pg  16pg  20pg  24pg  30pg  40pg  55
+none/QB                 650   0.165 0.158 0.156 0.155*0.155 0.156 0.156 0.157 0.158 0.159 0.160 0.162 0.164  best=10
+none/RB                 650   0.183 0.173 0.168 0.166 0.164 0.164 0.163 0.163*0.163 0.163 0.163 0.164 0.165  best=20
+none/WR                 650   0.155 0.149 0.147 0.146*0.146 0.146 0.147 0.147 0.148 0.149 0.151 0.152 0.154  best=10
+none/TE                 650   0.238 0.221 0.214 0.210 0.208 0.207 0.207*0.206 0.207 0.208 0.209 0.211 0.213  best=16
+dc_only/QB              338   0.171 0.158 0.151 0.147 0.145 0.144 0.143 0.142*0.142 0.142 0.143 0.144 0.145  best=20
+dc_only/RB              338   0.176 0.158 0.147 0.140 0.135 0.132 0.130 0.128 0.126 0.124 0.123 0.121*0.120  best=55
+dc_only/WR              338   0.155 0.146 0.142 0.141*0.141 0.141 0.141 0.141 0.142 0.142 0.143 0.145 0.146  best=10
+dc_only/TE              338   0.243 0.219 0.206 0.198 0.192 0.188 0.186 0.183 0.180 0.178 0.177 0.175*0.174  best=55
+both/QB                 208   0.168*0.167 0.170 0.174 0.178 0.181 0.184 0.187 0.192 0.196 0.200 0.205 0.210  best=4
+both/RB                 208   0.230 0.226*0.225 0.226 0.226 0.227 0.228 0.229 0.231 0.232 0.234 0.236 0.238  best=6
+both/WR                 208   0.148*0.145 0.145 0.147 0.148 0.151 0.153 0.155 0.159 0.161 0.165 0.168 0.172  best=4
+both/TE                 208   0.214 0.194 0.183 0.176 0.171 0.167 0.164 0.162 0.160 0.158 0.156 0.154*0.153  best=55
+
+-- by cohort x season (stability check) --
+group                  nobs  pg   2pg   4pg   6pg   8pg  10pg  12pg  14pg  16pg  20pg  24pg  30pg  40pg  55
+none/2023               884   0.185 0.175 0.170 0.168 0.166 0.166*0.165 0.165 0.166 0.167 0.168 0.170 0.171  best=14
+none/2024               728   0.181 0.170 0.164 0.162 0.160 0.159 0.158 0.158 0.158*0.158 0.158 0.159 0.160  best=24
+none/2025               988   0.187 0.180 0.177*0.176 0.177 0.177 0.178 0.179 0.180 0.181 0.183 0.185 0.187  best=8
+dc_only/2023            468   0.178 0.163 0.154 0.149 0.146 0.144 0.142 0.141 0.139 0.139 0.138*0.137 0.137  best=40
+dc_only/2024            572   0.182 0.166 0.158 0.153 0.150 0.149 0.148 0.147 0.146*0.146 0.146 0.147 0.148  best=24
+dc_only/2025            312   0.206 0.189 0.179 0.173 0.169 0.167 0.165 0.163 0.161 0.160 0.159 0.157*0.156  best=55
+both/2023               208   0.213 0.198 0.189 0.184 0.181 0.179 0.178 0.177*0.177 0.177 0.178 0.179 0.180  best=20
+both/2024               312   0.165 0.159 0.157*0.157 0.158 0.160 0.161 0.163 0.165 0.167 0.170 0.173 0.176  best=8
+both/2025               312   0.199*0.198 0.199 0.201 0.203 0.205 0.207 0.208 0.211 0.213 0.215 0.217 0.220  best=4
+
+(* = min MAE in the row. Larger best-pg => prior season trusted longer.)
+
+------------------------------------------------------------------------------
+
+
+=== 2. OPTIMAL prior_games BY COHORT (out-of-sample within-season) ===
+window 2023-2025; blend weeks-1..n vs actual weeks-(n+1)..18, n=2..14
+
+group                  nobs  pg   2pg   4pg   6pg   8pg  10pg  12pg  14pg  16pg  20pg  24pg  30pg  40pg  55
+all                    4992   0.185 0.174 0.170 0.167 0.166 0.166*0.165 0.166 0.166 0.166 0.167 0.169 0.170  best=14
+none                   2600   0.185 0.175 0.171 0.169 0.168 0.168*0.168 0.168 0.169 0.170 0.171 0.172 0.174  best=14
+dc_only                1352   0.186 0.170 0.162 0.156 0.153 0.151 0.150 0.149 0.147 0.147 0.146*0.146 0.146  best=40
+hc_only                 208   0.161*0.158 0.159 0.161 0.163 0.164 0.166 0.168 0.170 0.172 0.175 0.178 0.181  best=4
+both                    832   0.190 0.183 0.181*0.180 0.181 0.182 0.183 0.183 0.185 0.187 0.189 0.191 0.193  best=8
+hc_unchanged              0  (too few)
+hc_changed                0  (too few)
+
+-- by cohort x position --
+group                  nobs  pg   2pg   4pg   6pg   8pg  10pg  12pg  14pg  16pg  20pg  24pg  30pg  40pg  55
+none/QB                 650   0.165 0.158 0.156 0.155*0.155 0.156 0.156 0.157 0.158 0.159 0.160 0.162 0.164  best=10
+none/RB                 650   0.183 0.173 0.168 0.166 0.164 0.164 0.163 0.163*0.163 0.163 0.163 0.164 0.165  best=20
+none/WR                 650   0.155 0.149 0.147 0.146*0.146 0.146 0.147 0.147 0.148 0.149 0.151 0.152 0.154  best=10
+none/TE                 650   0.238 0.221 0.214 0.210 0.208 0.207 0.207*0.206 0.207 0.208 0.209 0.211 0.213  best=16
+dc_only/QB              338   0.171 0.158 0.151 0.147 0.145 0.144 0.143 0.142*0.142 0.142 0.143 0.144 0.145  best=20
+dc_only/RB              338   0.176 0.158 0.147 0.140 0.135 0.132 0.130 0.128 0.126 0.124 0.123 0.121*0.120  best=55
+dc_only/WR              338   0.155 0.146 0.142 0.141*0.141 0.141 0.141 0.141 0.142 0.142 0.143 0.145 0.146  best=10
+dc_only/TE              338   0.243 0.219 0.206 0.198 0.192 0.188 0.186 0.183 0.180 0.178 0.177 0.175*0.174  best=55
+both/QB                 208   0.168*0.167 0.170 0.174 0.178 0.181 0.184 0.187 0.192 0.196 0.200 0.205 0.210  best=4
+both/RB                 208   0.230 0.226*0.225 0.226 0.226 0.227 0.228 0.229 0.231 0.232 0.234 0.236 0.238  best=6
+both/WR                 208   0.148*0.145 0.145 0.147 0.148 0.151 0.153 0.155 0.159 0.161 0.165 0.168 0.172  best=4
+both/TE                 208   0.214 0.194 0.183 0.176 0.171 0.167 0.164 0.162 0.160 0.158 0.156 0.154*0.153  best=55
+
+-- by cohort x season (stability check) --
+group                  nobs  pg   2pg   4pg   6pg   8pg  10pg  12pg  14pg  16pg  20pg  24pg  30pg  40pg  55
+none/2023               884   0.185 0.175 0.170 0.168 0.166 0.166*0.165 0.165 0.166 0.167 0.168 0.170 0.171  best=14
+none/2024               728   0.181 0.170 0.164 0.162 0.160 0.159 0.158 0.158 0.158*0.158 0.158 0.159 0.160  best=24
+none/2025               988   0.187 0.180 0.177*0.176 0.177 0.177 0.178 0.179 0.180 0.181 0.183 0.185 0.187  best=8
+dc_only/2023            468   0.178 0.163 0.154 0.149 0.146 0.144 0.142 0.141 0.139 0.139 0.138*0.137 0.137  best=40
+dc_only/2024            572   0.182 0.166 0.158 0.153 0.150 0.149 0.148 0.147 0.146*0.146 0.146 0.147 0.148  best=24
+dc_only/2025            312   0.206 0.189 0.179 0.173 0.169 0.167 0.165 0.163 0.161 0.160 0.159 0.157*0.156  best=55
+both/2023               208   0.213 0.198 0.189 0.184 0.181 0.179 0.178 0.177*0.177 0.177 0.178 0.179 0.180  best=20
+both/2024               312   0.165 0.159 0.157*0.157 0.158 0.160 0.161 0.163 0.165 0.167 0.170 0.173 0.176  best=8
+both/2025               312   0.199*0.198 0.199 0.201 0.203 0.205 0.207 0.208 0.211 0.213 0.215 0.217 0.220  best=4
+
+(* = min MAE in the row. Larger best-pg => prior season trusted longer.)

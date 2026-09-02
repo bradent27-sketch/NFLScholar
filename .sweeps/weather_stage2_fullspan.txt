@@ -1,0 +1,111 @@
+2026-09-01 08:45:56.710 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.712 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.712 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.713 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.715 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.716 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.716 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.716 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.716 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.717 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.717 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.718 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.718 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.718 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.718 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.719 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.719 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.719 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.719 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.720 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.720 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.720 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.721 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.722 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.722 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.722 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.723 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.723 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.724 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.725 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.726 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.747 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.748 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.748 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.748 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.749 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.749 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.750 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.750 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.751 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.756 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.782 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:56.782 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 08:45:56.782 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:58.512 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:59.006 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:45:59.006 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 08:45:59.349 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:46:05.315 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:46:05.373 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 08:46:05.394 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 09:05:24.961 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 09:05:28.359 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 09:24:36.275 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 09:24:38.559 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 09:43:55.708 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 09:43:56.880 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 10:02:55.753 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 10:02:56.826 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 10:23:07.770 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 10:23:09.289 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 10:45:11.861 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 10:45:13.054 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 11:07:24.184 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 11:07:25.193 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 11:32:13.370 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 11:32:15.037 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 11:57:04.660 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 11:57:06.374 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+years=2016-2025 weeks=1-18
+WEATHER_STRENGTH=1 KNEE_SHIFT=0 per-pos[QB:- RB:- WR:- TE:-]
+
+bucket    scope        n  MAE base   MAE var     dMAE   wks w-l           boot95%CI
+------------------------------------------------------------------------------------
+indoor/na ALL       2616     4.955     4.955   +0.000       0-0     [+0.000,+0.000]
+indoor/na QB         270     6.756     6.756   +0.000       0-0     [+0.000,+0.000]
+indoor/na RB         696     4.970     4.970   +0.000       0-0     [+0.000,+0.000]
+indoor/na WR        1116     5.072     5.072   +0.000       0-0     [+0.000,+0.000]
+indoor/na TE         534     3.780     3.780   +0.000       0-0     [+0.000,+0.000]
+
+0-8       ALL      17503     4.758     4.757   -0.001     71-74     [-0.002,+0.000]
+0-8       QB        1777     6.916     6.915   -0.001     71-61     [-0.004,+0.002]
+0-8       RB        4619     4.786     4.787   +0.001     44-44     [-0.000,+0.002]
+0-8       WR        7443     4.696     4.694   -0.002     76-64     [-0.004,-0.000] *
+0-8       TE        3602     3.758     3.758   -0.000     50-49     [-0.001,+0.001]
+
+8-12      ALL       9123     4.711     4.705   -0.006     86-74     [-0.013,+0.000]
+8-12      QB         750     7.087     7.078   -0.009     51-46     [-0.029,+0.012]
+8-12      RB        2354     4.765     4.760   -0.005     83-48     [-0.011,+0.000]
+8-12      WR        3857     4.517     4.507   -0.010     79-77     [-0.022,+0.003]
+8-12      TE        1867     3.834     3.835   +0.001     65-70     [-0.005,+0.007]
+
+12-16     ALL       5143     4.489     4.471   -0.018     71-59     [-0.034,-0.002] *
+12-16     QB         324     6.284     6.227   -0.057     30-19     [-0.114,+0.002]
+12-16     RB        1344     4.450     4.439   -0.011     64-40     [-0.021,-0.001] *
+12-16     WR        2152     4.390     4.373   -0.016     59-70     [-0.045,+0.012]
+12-16     TE         959     3.590     3.579   -0.012     50-47     [-0.031,+0.009]
+
+16-20     ALL       1864     4.374     4.356   -0.018     30-30     [-0.057,+0.023]
+16-20     QB          72     5.716     5.547   -0.168       8-5     [-0.374,+0.084]
+16-20     RB         481     4.508     4.486   -0.022     29-19     [-0.056,+0.012]
+16-20     WR         798     4.189     4.179   -0.010     31-29     [-0.068,+0.055]
+16-20     TE         289     3.639     3.656   +0.018     16-21     [-0.041,+0.078]
+
+20+       ALL      16685     4.809     4.807   -0.003     28-27     [-0.007,+0.002]
+20+       QB        1739     6.974     6.965   -0.009     16-15     [-0.026,+0.007]
+20+       RB        4410     4.630     4.632   +0.002     15-20     [-0.001,+0.004]
+20+       WR        6998     4.913     4.913   +0.000     20-21     [-0.008,+0.008]
+20+       TE        3506     3.747     3.737   -0.010     22-16     [-0.018,-0.003] *
+
+

@@ -1,0 +1,13 @@
+Lane D waiting for Lane A (const sweeps) Tue Sep  1 13:02:16 CDT 2026
+Lane A done; Lane D start Tue Sep  1 14:41:18 CDT 2026
+  mg ok 8763MB Tue Sep  1 14:41:18 CDT 2026
+[D1] weather whole-slate confirm (2019-25 wk1-18, no bucket)
+  done Tue Sep  1 16:47:29 CDT 2026
+  mg ok 8995MB Tue Sep  1 16:47:29 CDT 2026
+[D2] weather wind-heavy re-run (bucket bug fixed)
+  done Tue Sep  1 18:09:03 CDT 2026
+  mg ok 9140MB Tue Sep  1 18:09:03 CDT 2026
+[D3] REMATCH wide confirm 1.0/1.2/1.3 x 2022-25
+  done Tue Sep  1 20:10:46 CDT 2026
+  mg ok 7236MB Tue Sep  1 20:10:47 CDT 2026
+[D4] PRIOR_SEASON_DEFENSE_RECENCY_FLOOR wide 0.90/0.95/1.00 x 2022-25

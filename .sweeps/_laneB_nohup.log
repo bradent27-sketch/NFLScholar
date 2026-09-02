@@ -1,0 +1,2 @@
+.sweeps/_laneB.sh: line 27: syntax error near unexpected token `('
+.sweeps/_laneB.sh: line 27: `weather Stage-2 full span (2016-25 wk1-18) $(date)" >> "$log"'

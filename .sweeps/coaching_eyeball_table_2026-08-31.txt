@@ -1,0 +1,55 @@
+COACHING CHANGE TABLE 2016-2025 (DC name + cohort). HC from nflverse (all yrs);
+DC from Ourlads 2022+ / Wikipedia coordinator-list backfill 2015-2021 (~75% coverage).
+LEGEND: . none | DC dc-only | ** hc+dc both | hc hc-only | >hc DC promoted to HC | ? gap
+
+season                2016                2017                2018                2019                 2020                 2021                 2022                2023                2024                2025
+team                                                                                                                                                                                                             
+ARI      James Bettcher  .   James Bettcher  .  Al Holcomb      **  Vance Joseph    **    Vance Joseph    .    Vance Joseph    .    Vance Joseph    .  Nick Rallis     **   Nick Rallis     .   Nick Rallis     .
+ATL      nan             ?   Marquand Manuel ?   Marquand Manuel .   nan             ?   Jeff Ulbrich    **   Dean Pees       **    Dean Pees       .  Ryan Nielsen    DC  Jimmy Lake      **  Jeff Ulbrich    DC
+BAL      Dean Pees       .   Dean Pees       .  Don Martindale  DC   Don Martindale  .    Don Martindale  .    Don Martindale  .   Mike Macdonald  DC   Mike Macdonald  .  Zach Orr        DC   Zach Orr        .
+BUF      Dennis Thurman  .  Leslie Frazier  **   Leslie Frazier  .   Leslie Frazier  .    Leslie Frazier  .    Leslie Frazier  .    Leslie Frazier  .  Vacant          DC  Bobby Babich    DC   Bobby Babich    .
+CAR      Sean McDermott  .  Steve Wilks     DC   nan             ?   nan             ?   Phil Snow       **    Phil Snow       .   Phil Snow       hc  Ejiro Evero     **  Ejiro Evero     hc   Ejiro Evero     .
+CHI      Vic Fangio      .   Vic Fangio      .  Vic Fangio      hc  Chuck Pagano    DC    Chuck Pagano    .   Sean Desai      DC   Alan Williams   **   Alan Williams   .  Eric Washington DC  Dennis Allen    **
+CIN      nan             ?   nan             ?   nan             ?   Lou Anarumo     ?    Lou Anarumo     .    Lou Anarumo     .    Lou Anarumo     .   Lou Anarumo     .   Lou Anarumo     .  Al Golden       DC
+CLE      Ray Horton      ?  Gregg Williams  DC   Gregg Williams  .  Steve Wilks     **    nan             ?    Joe Woods       ?    Joe Woods       .  Jim Schwartz    DC   Jim Schwartz    .   Jim Schwartz    .
+DAL      Rod Marinelli   .   Rod Marinelli   .   Rod Marinelli   .   Rod Marinelli   .   Mike Nolan      **   Dan Quinn       DC    Dan Quinn       .   Dan Quinn       .  Mike Zimmer     DC  Matt Eberflus   **
+DEN      Wade Phillips   .   nan             ?   nan             ?   Ed Donatell     ?    Ed Donatell     .    Ed Donatell     .   Ejiro Evero     **  Vance Joseph    **   Vance Joseph    .   Vance Joseph    .
+DET      Teryl Austin    .   Teryl Austin    .  Paul Pasqualoni **   Paul Pasqualoni .   Cory Undlin     DC   Aaron Glenn     **    Aaron Glenn     .   Aaron Glenn     .   Aaron Glenn     .  Kelvin Sheppard DC
+GB       Dom Capers      .   Dom Capers      .  Mike Pettine    DC  Mike Pettine    hc    Mike Pettine    .   Joe Barry       DC    Joe Barry       .   Joe Barry       .  Jeff Hafley     DC   Jeff Hafley     .
+HOU      Romeo Crennel   .  Mike Vrabel     DC  Romeo Crennel   DC   Romeo Crennel   .  Anthony Weaver  >hc   Lovie Smith     **  Lovie Smith     >hc  Matt Burke      **   Matt Burke      .   Matt Burke      .
+IND     Ted Monachino   DC   Ted Monachino   .  Matt Eberflus   **   Matt Eberflus   .    Matt Eberflus   .    Matt Eberflus   .   Gus Bradley     DC  Gus Bradley     hc   Gus Bradley     .  Lou Anarumo     DC
+JAX      Todd Wash       ?  Todd Wash       hc   Todd Wash       .   Todd Wash       .    Todd Wash       .   Joe Cullen      **   Mike Caldwell   **   Mike Caldwell   .  Ryan Nielsen    DC  Anthony Campani **
+KC       nan             ?   nan             ?   nan             ?   Steve Spagnuolo ?    Steve Spagnuolo .    Steve Spagnuolo .    Steve Spagnuolo .   Steve Spagnuolo .   Steve Spagnuolo .   Steve Spagnuolo .
+LA       Gregg Williams  .  Wade Phillips   **   Wade Phillips   .   Wade Phillips   .   Brandon Staley  DC   Raheem Morris   DC    Raheem Morris   .   Raheem Morris   .  Chris Shula     DC   Chris Shula     .
+LAC      John Pagano     .  Gus Bradley     **   Gus Bradley     .   Gus Bradley     .    Gus Bradley     .   Renaldo Hill    **    Renaldo Hill    .  Derrick Ansley  DC  Jesse Minter    **   Jesse Minter    .
+LV       nan             ?   John Pagano     ?   nan             ?   nan             ?    nan             ?   Gus Bradley     **   Patrick Graham  **  Patrick Graham  hc   Patrick Graham  .  Patrick Graham  hc
+MIA     Vance Joseph    **   nan             ?   nan             ?   nan             ?    Josh Boyer      ?    Josh Boyer      .   Josh Boyer      hc  Vic Fangio      DC  Anthony Weaver  DC   Anthony Weaver  .
+MIN      nan             ?   nan             ?   nan             ?   nan             ?    nan             ?    nan             ?    Ed Donatell     ?  Brian Flores    DC   Brian Flores    .   Brian Flores    .
+NE       Matt Patricia   .   Matt Patricia   .  Brian Flores    DC  Bill Belichick  DC  Bill Belichick  >hc  nan             >hc    Steve Belichick ?   Steve Belichick .  DeMarcus Coving **  Terrell William **
+NO       nan             ?   nan             ?   nan             ?   nan             ?    nan             ?    Dennis Allen    ?  Ryan Nielsen &  >hc  Joe Woods       DC   Joe Woods       .  Brandon Staley  **
+NYG     Steve Spagnuolo hc   Steve Spagnuolo .  James Bettcher  **   James Bettcher  .    nan             ?    Patrick Graham  ?   Don Martindale  **   Don Martindale  .  Shane Bowen     DC   Shane Bowen     .
+NYJ      Kacy Rodgers    .   Kacy Rodgers    .   Kacy Rodgers    .  Gregg Williams  **    Gregg Williams  .   Jeff Ulbrich    **    Jeff Ulbrich    .   Jeff Ulbrich    .   Jeff Ulbrich    .  Steve Wilks     **
+PHI      Jim Schwartz    ?   Jim Schwartz    .   Jim Schwartz    .   Jim Schwartz    .    Jim Schwartz    .   Jonathan Gannon **    Jonathan Gannon .  Sean Desai      DC  Vic Fangio      DC   Vic Fangio      .
+PIT      nan             ?   nan             ?   nan             ?   nan             ?    nan             ?    Keith Butler    ?   Teryl Austin    DC   Teryl Austin    .   Teryl Austin    .   Teryl Austin    .
+SEA      Kris Richard    .   Kris Richard    .  Ken Norton Jr.  DC   Ken Norton Jr.  .    Ken Norton Jr.  .    Ken Norton      .   Clint Hurtt     DC   Clint Hurtt     .  Aden Durde      **   Aden Durde      .
+SF       nan             ?   Robert Saleh    ?   Robert Saleh    .   Robert Saleh    .    Robert Saleh    .   DeMeco Ryans    DC    DeMeco Ryans    .  Steve Wilks     DC  Nick Sorensen   DC  Robert Saleh    DC
+TB       nan             ?   nan             ?   Mark Duffner    ?  Todd Bowles     **    Todd Bowles     .    Todd Bowles     .  Kacy Rodgers &  >hc   Kacy Rodgers &  .   Kacy Rodgers &  .  Larry Foote     DC
+TEN     Dick LeBeau     **   Dick LeBeau     .  Dean Pees       **   Dean Pees       .    nan             ?   Shane Bowen     DC    Shane Bowen     .   Shane Bowen     .  Dennard Wilson  **   Dennard Wilson  .
+WAS      Joe Barry       .  Greg Manusky    DC   Greg Manusky    .  Greg Manusky    hc   Jack Del Rio    **    Jack Del Rio    .    Jack Del Rio    .   Jack Del Rio    .  Joe Whitt Jr.   **   Joe Whitt Jr.   .
+
+--- cohort counts by season ---
+coaching_cohort  both  dc_only  dc_to_hc  hc_only  none  unknown
+season                                                          
+2016                2        1         0        1    16       12
+2017                3        4         0        1    13       11
+2018                5        5         0        1    11       10
+2019                4        2         0        2    14       10
+2020                4        2         2        0    16        8
+2021                8        6         1        0    12        5
+2022                5        4         3        2    16        2
+2023                4        9         0        2    17        0
+2024                6       11         0        1    14        0
+2025                6        6         0        1    19        0
+
+--- persistence (corr prior->current defense rating), 2016-2025 proxy ---
+none +0.17 (n592) | dc_only +0.33 (n200) | both +0.08 (n188) | dc_to_hc +0.50 (n20) | hc_only -0.02 (n44)

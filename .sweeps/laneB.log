@@ -1,0 +1,10 @@
+Lane B (v2) start Tue Sep  1 07:28:28 CDT 2026
+  mem_guard ok: 7421 MB free Tue Sep  1 07:28:29 CDT 2026
+[B1] weather Stage-2 wind-heavy (2019-24 wk8-18) Tue Sep  1 07:28:29 CDT 2026
+  done Tue Sep  1 08:45:52 CDT 2026
+  mem_guard ok: 5124 MB free Tue Sep  1 08:45:52 CDT 2026
+[B2] weather Stage-2 full span (2016-25 wk1-18) Tue Sep  1 08:45:52 CDT 2026
+  done Tue Sep  1 12:46:57 CDT 2026
+[B3] Phase-1 defense-blend design sweep Tue Sep  1 12:46:57 CDT 2026
+  SKIPPED - script not built yet
+LANE B DONE Tue Sep  1 12:46:57 CDT 2026

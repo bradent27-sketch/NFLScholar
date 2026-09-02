@@ -1,0 +1,130 @@
+2026-09-01 07:40:53.702 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.704 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.704 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.704 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.707 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.708 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.708 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.708 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.708 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.709 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.710 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.710 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.710 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.710 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.710 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.711 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.711 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.711 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.712 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.712 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.712 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.712 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.713 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.714 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.714 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.714 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.715 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.715 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.716 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.717 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.718 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.735 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.736 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.736 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.737 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.737 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.738 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.738 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.739 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.739 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.743 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.771 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:53.771 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 07:40:53.772 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:54.265 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:54.860 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:54.861 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 07:40:55.202 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:57.826 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-01 07:40:57.894 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+target=REMATCH_WEIGHT_MULT  shipped=1.6
+mode=set  values=[1.0, 1.3, 2.0, 2.5]
+years=[2024, 2025] weeks=4-15 scoring=Full PPR
+
+2024 w4 done
+2024 w5 done
+2024 w6 done
+2024 w7 done
+2024 w8 done
+2024 w9 done
+2024 w10 done
+2024 w11 done
+2024 w12 done
+2024 w13 done
+2024 w14 done
+2024 w15 done
+2026-09-01 08:14:29.348 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 08:14:30.798 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w4 done
+2025 w5 done
+2025 w6 done
+2025 w7 done
+2025 w8 done
+2025 w9 done
+2025 w10 done
+2025 w11 done
+2025 w12 done
+2025 w13 done
+2025 w14 done
+2025 w15 done
+
+==============================================================================
+REMATCH_WEIGHT_MULT  (set)  vs shipped 1.6
+==============================================================================
+
+--- value 1.0 ---
+  ALL        n=7333   MAE 4.461->4.460  dMAE -0.001  w-l 15-6 (p=0.08)  CI[-0.002,-0.000] *
+  QB         n=770    MAE 6.934->6.934  dMAE +0.000  w-l 11-4 (p=0.12)  CI[-0.005,+0.006]
+  RB         n=1931   MAE 4.361->4.359  dMAE -0.002  w-l 9-6 (p=0.61)  CI[-0.004,+0.000]
+  WR         n=3059   MAE 4.326->4.326  dMAE -0.001  w-l 11-8 (p=0.65)  CI[-0.003,+0.001]
+  TE         n=1573   MAE 3.637->3.634  dMAE -0.002  w-l 12-5 (p=0.14)  CI[-0.006,+0.001]
+  START-QB   n=538    MAE 6.379->6.311  dMAE -0.068  w-l 11-4 (p=0.12)  CI[-0.211,+0.007]
+  START-RB   n=854    MAE 6.190->6.174  dMAE -0.016  w-l 12-3 (p=0.04)  CI[-0.033,-0.002] *
+  START-WR   n=1104   MAE 6.300->6.329  dMAE +0.029  w-l 7-10 (p=0.63)  CI[-0.009,+0.080]
+  START-TE   n=424    MAE 5.542->5.554  dMAE +0.012  w-l 9-5 (p=0.42)  CI[-0.042,+0.081]
+
+--- value 1.3 ---
+  ALL        n=7333   MAE 4.461->4.461  dMAE -0.001  w-l 15-4 (p=0.02)  CI[-0.001,-0.000] *
+  QB         n=770    MAE 6.934->6.935  dMAE +0.000  w-l 10-4 (p=0.18)  CI[-0.002,+0.003]
+  RB         n=1931   MAE 4.361->4.360  dMAE -0.001  w-l 8-5 (p=0.58)  CI[-0.003,+0.000]
+  WR         n=3059   MAE 4.326->4.326  dMAE -0.001  w-l 12-5 (p=0.14)  CI[-0.002,+0.000]
+  TE         n=1573   MAE 3.637->3.636  dMAE -0.001  w-l 8-4 (p=0.39)  CI[-0.003,+0.000]
+  START-QB   n=538    MAE 6.379->6.283  dMAE -0.095  w-l 10-4 (p=0.18)  CI[-0.291,+0.004]
+  START-RB   n=854    MAE 6.190->6.181  dMAE -0.009  w-l 8-5 (p=0.58)  CI[-0.023,+0.002]
+  START-WR   n=1104   MAE 6.300->6.313  dMAE +0.013  w-l 8-8 (p=1.00)  CI[-0.016,+0.058]
+  START-TE   n=424    MAE 5.542->5.576  dMAE +0.034  w-l 8-5 (p=0.58)  CI[-0.038,+0.120]
+
+--- value 2.0 ---
+  ALL        n=7333   MAE 4.461->4.462  dMAE +0.001  w-l 5-14 (p=0.06)  CI[+0.000,+0.002] *
+  QB         n=770    MAE 6.934->6.933  dMAE -0.001  w-l 6-7 (p=1.00)  CI[-0.004,+0.002]
+  RB         n=1931   MAE 4.361->4.364  dMAE +0.003  w-l 6-10 (p=0.45)  CI[+0.001,+0.005] *
+  WR         n=3059   MAE 4.326->4.327  dMAE +0.001  w-l 7-9 (p=0.80)  CI[-0.000,+0.002]
+  TE         n=1573   MAE 3.637->3.638  dMAE +0.001  w-l 5-9 (p=0.42)  CI[-0.001,+0.003]
+  START-QB   n=538    MAE 6.379->6.293  dMAE -0.086  w-l 4-6 (p=0.75)  CI[-0.274,+0.002]
+  START-RB   n=854    MAE 6.190->6.168  dMAE -0.022  w-l 4-11 (p=0.12)  CI[-0.073,+0.009]
+  START-WR   n=1104   MAE 6.300->6.298  dMAE -0.002  w-l 7-8 (p=1.00)  CI[-0.042,+0.033]
+  START-TE   n=424    MAE 5.542->5.529  dMAE -0.013  w-l 3-10 (p=0.09)  CI[-0.043,+0.008]
+
+--- value 2.5 ---
+  ALL        n=7333   MAE 4.461->4.464  dMAE +0.003  w-l 5-15 (p=0.04)  CI[+0.001,+0.005] *
+  QB         n=770    MAE 6.934->6.934  dMAE -0.001  w-l 5-10 (p=0.30)  CI[-0.008,+0.005]
+  RB         n=1931   MAE 4.361->4.365  dMAE +0.004  w-l 4-12 (p=0.08)  CI[-0.000,+0.009]
+  WR         n=3059   MAE 4.326->4.329  dMAE +0.002  w-l 6-13 (p=0.17)  CI[+0.000,+0.005] *
+  TE         n=1573   MAE 3.637->3.639  dMAE +0.002  w-l 8-10 (p=0.81)  CI[-0.001,+0.006]
+  START-QB   n=538    MAE 6.379->6.301  dMAE -0.078  w-l 6-9 (p=0.61)  CI[-0.224,+0.006]
+  START-RB   n=854    MAE 6.190->6.143  dMAE -0.048  w-l 5-10 (p=0.30)  CI[-0.122,+0.006]
+  START-WR   n=1104   MAE 6.300->6.297  dMAE -0.003  w-l 9-8 (p=1.00)  CI[-0.035,+0.024]
+  START-TE   n=424    MAE 5.542->5.575  dMAE +0.033  w-l 4-10 (p=0.18)  CI[-0.024,+0.126]
+
+(dMAE negative = the swept value beats the shipped constant. * = 95% CI excludes 0.)

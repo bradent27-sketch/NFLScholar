@@ -763,6 +763,55 @@ def test_charted_short_sample_returning_starter_recovers_without_treating_source
     assert restored[1] == 0.168
 
 
+def test_injury_shortened_prior_year_does_not_suppress_a_proven_multi_year_role():
+    # Garrett Wilson, NYJ 2026 wk1: 6 played games in 2025 (all 84-100% snaps)
+    # then a season-ending injury; a full 2024 at ~95% snaps; rank-1 on the
+    # current chart; role_confidence 0.93 off his last healthy games. The
+    # pre-fix path pinned `evidence` at its 0.20 floor purely because 6 == the
+    # WR minimum-games threshold, recovering him to only ~0.71 team snaps.
+    # With N-2 corroboration + confidence he should land near his real role.
+    restored, used, reasons = wp.restore_cold_start_returning_role_share(
+        np.array([0.516, 0.516]),          # injury-depressed whole-season share
+        np.array([0.954, 0.954]),          # active-game share
+        np.array([6.0, 6.0]),              # exactly the WR minimum
+        np.array(['NYJ', 'NYJ']), np.array(['NYJ', 'NYJ']), 'WR',
+        pre_absence_share=np.array([0.94, 0.94]),
+        depth_rank=np.array([1.0, 1.0]),
+        terminal_gap_weeks=np.array([12.0, 12.0]),
+        prior2_games=np.array([17.0, 2.0]),        # row 1: no real N-2 sample
+        prior2_active_share=np.array([0.95, 0.95]),
+        role_confidence=np.array([0.93, 0.93]),
+        return_details=True,
+    )
+    # Row 0 is fully corroborated -> pulled at least 85% of the way to the role.
+    assert restored[0] >= 0.516 + 0.85 * (0.95 - 0.516) - 1e-6
+    assert restored[0] > 0.85
+    assert reasons[0] == 'proven multi-year every-down role restored (injury-shortened prior year)'
+    # Row 1 has the same prior year but no qualifying N-2 season, so it stays
+    # on the ordinary (more conservative) recovery.
+    assert restored[1] < restored[0] - 0.05
+    assert reasons[1] == 'continuous returning active/pre-absence role recovery'
+
+
+def test_returning_role_recovery_has_no_more_evidence_lower_projection_cliff():
+    # A rank-1 charted returning starter one game either side of the
+    # minimum-games threshold must not see his projection DROP as he crosses
+    # from the short-sample path to the standard path.
+    common = dict(
+        pre_absence_share=np.array([0.95, 0.95]),
+        depth_rank=np.array([1.0, 1.0]),
+        terminal_gap_weeks=np.array([12.0, 12.0]),
+        return_details=True,
+    )
+    below, _, _ = wp.restore_cold_start_returning_role_share(
+        np.array([0.30, 0.30]), np.array([0.95, 0.95]), np.array([5.0, 5.0]),
+        np.array(['NYG', 'NYG']), np.array(['NYG', 'NYG']), 'WR', **common)
+    at, _, _ = wp.restore_cold_start_returning_role_share(
+        np.array([0.30, 0.30]), np.array([0.95, 0.95]), np.array([6.0, 6.0]),
+        np.array(['NYG', 'NYG']), np.array(['NYG', 'NYG']), 'WR', **common)
+    assert at[0] >= below[0] - 1e-6
+
+
 def test_regular_season_late_games_remain_in_a_returning_receiver_prior():
     # Drake London audit regression: the late low-output games must remain
     # rate evidence when they were real full-role games.  This is deliberately
@@ -1218,11 +1267,13 @@ def test_v2_two_year_td_prior_requires_a_comparable_opportunity_role():
 
 def test_td_prior_credibility_regresses_a_thin_one_season_rate_but_spares_a_veteran():
     pos_rate = np.array([0.030])
-    # RJ Harvey shape: ~120 carries, one role season, hot 0.055 rate.
+    # RJ Harvey shape: ~120 carries, one role season, hot 0.055 rate. After the
+    # 2026-08-30 K softening (rushing K 220->130) a thin one-season sample still
+    # lands close to a coin-flip credibility - about half its rate regressed.
     harvey, cred_h, long_h = wp.credibility_shrunk_td_prior(
         np.array([0.055]), np.array([120.0]), np.array([1.0]), pos_rate, 'rushing_attempts')
-    assert cred_h[0] < 0.45 and long_h[0] == 1.0
-    assert pos_rate[0] < harvey[0] < 0.050          # pulled most of the way to the mean
+    assert cred_h[0] < 0.52 and long_h[0] == 1.0
+    assert pos_rate[0] < harvey[0] < 0.048          # still pulled well toward the mean
 
     # Derrick Henry shape: ~1100 carries over 4 role seasons, 0.045 rate.
     henry, cred_y, long_y = wp.credibility_shrunk_td_prior(

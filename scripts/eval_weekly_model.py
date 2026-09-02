@@ -42,14 +42,24 @@ Usage:
 """
 import argparse
 import os
+import re
 import sys
+
+# This box's console is cp1252; when stdout is redirected to a file the Greek
+# rho in the table header (rank-corr column) raises UnicodeEncodeError. Force
+# UTF-8 on our streams so redirected runs match interactive ones.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except (AttributeError, ValueError):
+        pass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
-from data.weekly_projections import build_weekly_projections, MODEL_FEATURES  # noqa: E402
+from data.weekly_projections import build_weekly_projections, MODEL_FEATURES, DEFAULT_FEATURES  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
 
 # How many players per position anyone would actually consider starting in a
@@ -60,17 +70,27 @@ STARTABLE_N = {'QB': 24, 'RB': 40, 'WR': 55, 'TE': 20}
 
 
 def _parse_variant(name):
-    """'base' -> no features; 'all' -> every feature; otherwise a
-    '+'-separated list of feature names."""
+    """'base' -> no features; 'all' -> every feature; 'default' -> the shipped
+    DEFAULT_FEATURES set. Otherwise a list of feature-name tokens combined
+    left-to-right: a '+'-joined token is added, a '-'-joined token is removed,
+    and a 'default' token expands to DEFAULT_FEATURES. So
+    'default+v2_historical_ourlads' adds a flag to the shipped set and
+    'default-v2_receiver_vacancy_pecking_order' ablates one out of it."""
     if name in ('base', 'none'):
         return frozenset()
     if name == 'all':
         return frozenset(MODEL_FEATURES)
-    feats = frozenset(p for p in name.split('+') if p)
+    # Split while keeping the +/- operators; a bare leading token is an add.
+    tokens = re.findall(r'[+-]?[^+-]+', name)
+    feats = set()
+    for tok in tokens:
+        op, key = ('-', tok[1:]) if tok.startswith('-') else ('+', tok.lstrip('+'))
+        expanded = set(DEFAULT_FEATURES) if key == 'default' else {key}
+        feats = (feats | expanded) if op == '+' else (feats - expanded)
     unknown = feats - set(MODEL_FEATURES)
     if unknown:
         raise SystemExit(f"unknown feature(s): {sorted(unknown)}; known: {sorted(MODEL_FEATURES)}")
-    return feats
+    return frozenset(feats)
 
 
 def _actual_points(stats_df, name_col, week, scoring_col):

@@ -35,16 +35,43 @@ import pandas as pd  # noqa: E402
 from data.weekly_projections import (  # noqa: E402
     build_weekly_projections, redistribute_v2_vacated_usage,
     redistribute_rb_vacancy_with_allocator,
+    _ALL_PROJECTION_STATS, WEEKLY_CALIBRATION, DEFAULT_FEATURES,
 )
-from data.transforms import load_and_merge_data  # noqa: E402
+from data.transforms import load_and_merge_data, score_projected_stats  # noqa: E402
 
 SCORE_COL = 'fantasy_points_ppr'
+SCORING_MODE = 'Full PPR'
+
+
+def _rescore_model_points(board):
+    """Recompute 'Model Proj Pts' from the (now redistributed) stat line.
+
+    Mirrors build_weekly_projections' own post-vacancy re-score block. The
+    redistributors move raw volume columns (targets, rushing_attempts, ...)
+    but never touch the points column, so without this every recipient's
+    'Model Proj Pts' is still its PRE-vacancy value and the closer/worse
+    check reads b == a for every case (a silent no-op).
+    """
+    stat_cols = [c for c in _ALL_PROJECTION_STATS if c in board.columns]
+    if not stat_cols or 'Model Proj Pts' not in board.columns:
+        return
+    pts = [max(0.0, score_projected_stats(d, SCORING_MODE))
+           for d in board[stat_cols].fillna(0.0).to_dict('records')]
+    if 'calibration' in DEFAULT_FEATURES and 'Pos' in board.columns:
+        slopes = board['Pos'].map(lambda p: WEEKLY_CALIBRATION.get(p, (1.0, 0.0)))
+        pts = [min(v, sl * v + ic) for v, (sl, ic) in zip(pts, slopes)]
+    board['Model Proj Pts'] = np.round(np.clip(pts, 0.0, None), 2)
 VOLUME_BY_POS = {
     'RB': ['rushing_attempts', 'targets'],
     'WR': ['targets'], 'TE': ['targets'], 'QB': ['passing_attempts'],
 }
 PRE_SNAP_MIN = 55.0      # "was a real starter the weeks before"
 PRE_GAMES_MIN = 2
+
+# Flipped by --no-pecking so this script can A/B the WR/TE vacancy
+# `v2_receiver_vacancy_pecking_order` reshape (eval_weekly_model can't - it
+# runs apply_injury=False so no vacancy pass ever fires).
+RECEIVER_PECKING = 'v2_receiver_vacancy_pecking_order' in DEFAULT_FEATURES
 
 
 def _actual_week(stats_df, name_col, week):
@@ -102,6 +129,16 @@ def run_week(year, week, pos_filter):
 
         before = board.set_index(key)
         one = board.copy()
+        # build_weekly_projections drops its `_full_<stat>` pre-vacancy volume
+        # columns before returning, but the shipped redistributors size the
+        # vacated volume from exactly those columns (falling back to the live
+        # volume column otherwise - which we zero below, hence the old 0%
+        # result). This board is the injury=False projection, so its current
+        # volume IS the pre-vacancy full volume; re-attach it under the
+        # `_full_` names the redistributors expect BEFORE zeroing the row.
+        for _vc in ('rushing_attempts', 'targets', 'passing_attempts'):
+            if _vc in one.columns:
+                one[f'_full_{_vc}'] = pd.to_numeric(one[_vc], errors='coerce').fillna(0.0)
         vol_cols = [c for c in VOLUME_BY_POS.get(ppos, []) if c in one.columns]
         dep = ['receptions', 'receiving_yards', 'receiving_tds', 'rushing_yards',
                'rushing_tds', 'passing_yards', 'passing_completions', 'passing_tds']
@@ -109,16 +146,22 @@ def run_week(year, week, pos_filter):
 
         profiles = {player: {'plays_probability': 0.0, 'source_year': year,
                              'source': 'in-hindsight absence (validation)'}}
-        if ppos == 'RB':
-            one, rb_ledger = redistribute_rb_vacancy_with_allocator(
-                one, profiles, as_of_year=year,
-                injury_provenance={player: {'year': year, 'source': 'validation'}})
-            one, _n, other_ledger = redistribute_v2_vacated_usage(
-                one, profiles, skip_rb=True, skip_receivers=True)
-            led = (rb_ledger.to_dict('records') if rb_ledger is not None and not rb_ledger.empty else []) + other_ledger
-        else:
-            one, _n, led = redistribute_v2_vacated_usage(one, profiles)
+        # Mirror build_weekly_projections' DEFAULT path exactly for EVERY
+        # source position: the allocator owns RB carries/targets AND WR/TE
+        # target vacancy (its source_role in {WR,TE} branch), and
+        # redistribute_v2_vacated_usage is left only the QB pass handoff.
+        # (The old code sent WR/TE sources through the full v2 helper, a
+        # different path than production - so it never exercised the
+        # allocator's receiver branch or the pecking-order reshape.)
+        one, rb_ledger = redistribute_rb_vacancy_with_allocator(
+            one, profiles, as_of_year=year,
+            injury_provenance={player: {'year': year, 'source': 'validation'}},
+            receiver_pecking_order=RECEIVER_PECKING)
+        one, _n, other_ledger = redistribute_v2_vacated_usage(
+            one, profiles, skip_rb=True, skip_receivers=True)
+        led = (rb_ledger.to_dict('records') if rb_ledger is not None and not rb_ledger.empty else []) + other_ledger
 
+        _rescore_model_points(one)
         after = one.set_index(key)
         moved = [e for e in led if float(e.get('allocated', 0) or 0) > 0]
         recips = set()
@@ -155,7 +198,14 @@ def main():
     ap.add_argument('--year', type=int, default=2025)
     ap.add_argument('--weeks', default='6,9,12,15')
     ap.add_argument('--pos', default='', help="comma list e.g. RB,WR - default all")
+    ap.add_argument('--no-pecking', action='store_true',
+                    help="ablate v2_receiver_vacancy_pecking_order (WR/TE vacancy "
+                         "reverts to the raw-target-proportion split)")
     args = ap.parse_args()
+    global RECEIVER_PECKING
+    if args.no_pecking:
+        RECEIVER_PECKING = False
+    print(f"receiver_pecking_order = {RECEIVER_PECKING}")
     if '-' in args.weeks:
         lo, hi = args.weeks.split('-'); weeks = list(range(int(lo), int(hi) + 1))
     else:

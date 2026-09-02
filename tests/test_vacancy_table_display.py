@@ -2,8 +2,11 @@
 
 Covers the pure decision helper `_summarize_vacancy_entry` (no Streamlit) and
 the `team_rank` metadata the ledger producers now attach for it.  Requested
-2026-08-30: a sub-1.5-target/game (sub-3-carry) OUT player is not worth a full
-distribution, and recipients below the trusted tier get rolled into one line.
+2026-08-30: a small-source OUT player is not worth a full distribution, and
+recipients below the trusted tier get rolled into one line.  Tightened
+2026-08-31: the "small source" bar is >1 vacated target / carry per game (was
+1.5 / 3.0), and it now collapses even when the open player is a tiny
+recipient - the one-line form is the informative caption, not a stub.
 """
 
 import numpy as np
@@ -40,27 +43,38 @@ def test_tier_cutoff_is_position_group_aware():
 # --- negligible source ---------------------------------------------------
 
 def test_sub_threshold_target_source_collapses_to_one_line():
-    summ = _summarize_vacancy_entry(_entry(vacated=1.2, source_player='Bit Part WR',
-                                           recipients=[_rec('WR One', 1.0, 1)]),
-                                    this_player='WR One')
-    # this_player is a recipient here -> still shown in full despite the small source.
+    small = _entry(vacated=0.6, allocated=0.6, unallocated=0.0,
+                   source_player='John Michael Gyllenborg',
+                   recipients=[_rec('WR One', 0.6, 1)],
+                   reason='Allocator-weighted core-RB injury redistribution.')
+    # Not a recipient -> one-line, and the line is the informative caption
+    # (source, vacated, redistributed, unfilled, reason), not a stub.
+    summ = _summarize_vacancy_entry(small, this_player='Someone Else')
+    assert summ['kind'] == 'negligible'
+    assert summ['text'] == ('John Michael Gyllenborg out — 0.6 targets vacated; '
+                            '0.6 redistributed to active teammates, 0.0 left unfilled. '
+                            'Allocator-weighted core-RB injury redistribution.')
+
+    # New 2026-08-31: the open player being one of the (tiny) recipients no
+    # longer forces the full grid - a 0.6-target vacancy is still one line.
+    summ = _summarize_vacancy_entry(small, this_player='WR One')
+    assert summ['kind'] == 'negligible'
+
+    # Just over the 1-per-game bar -> full distribution.
+    summ = _summarize_vacancy_entry(_entry(vacated=1.4, source_player='Real WR',
+                                           recipients=[_rec('WR One', 1.2, 1)]),
+                                    this_player='Someone Else')
     assert summ['kind'] == 'full'
 
-    summ = _summarize_vacancy_entry(_entry(vacated=1.2, source_player='Bit Part WR',
-                                           recipients=[_rec('WR One', 1.0, 1)]),
-                                    this_player='Someone Else')
-    assert summ['kind'] == 'negligible'
-    assert '1.2 targets/game vacated' in summ['text']
 
-
-def test_carry_source_uses_a_three_per_game_bar():
+def test_carry_source_uses_a_one_per_game_bar():
     small = _summarize_vacancy_entry(
-        _entry(volume='rushing_attempts', vacated=2.0,
-               recipients=[_rec('RB One', 2.0, 1)]), this_player='x')
+        _entry(volume='rushing_attempts', vacated=0.7,
+               recipients=[_rec('RB One', 0.7, 1)]), this_player='x')
     assert small['kind'] == 'negligible'
     big = _summarize_vacancy_entry(
-        _entry(volume='rushing_attempts', vacated=3.5,
-               recipients=[_rec('RB One', 3.0, 1)]), this_player='x')
+        _entry(volume='rushing_attempts', vacated=1.5,
+               recipients=[_rec('RB One', 1.4, 1)]), this_player='x')
     assert big['kind'] == 'full'
 
 

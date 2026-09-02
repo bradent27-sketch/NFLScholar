@@ -493,6 +493,60 @@ def test_vacancy_admits_the_next_chart_slot_when_a_higher_rank_is_unavailable():
     assert float(fourth['expected_snap_share']) < 0.15
 
 
+def test_one_injury_reaches_the_chart_rb4_but_not_the_rb5():
+    """RB_CHART_VACANCY_EXTENSION_MAX: a single out top-three back promotes the
+    chart RB4 into the credible set - it does NOT reach the RB5 (the live
+    Kendre-Miller case). RB4 competes for a little work; RB5 gets nothing."""
+    common = dict(same_team=True, prior_active_snap_share=0.05, prior_whole_snap_share=0.04,
+                  prior_active_carry_share=0.04, prior_active_target_share=0.02, draft_capital=np.nan)
+    candidates = [
+        _candidate('HS', 'Lead', ourlads_depth_rank=1, prior_games=16,
+                   prior_active_snap_share=0.62, prior_whole_snap_share=0.58,
+                   prior_active_carry_share=0.52, prior_active_target_share=0.28, availability=0.0),
+        _candidate('HS', 'Two', ourlads_depth_rank=2, prior_games=12,
+                   prior_active_snap_share=0.28, prior_whole_snap_share=0.25,
+                   prior_active_carry_share=0.22, prior_active_target_share=0.12),
+        _candidate('HS', 'Three', ourlads_depth_rank=3, prior_games=10,
+                   prior_active_snap_share=0.14, prior_whole_snap_share=0.12,
+                   prior_active_carry_share=0.11, prior_active_target_share=0.07),
+        _candidate('HS', 'Chart Four', ourlads_depth_rank=4, prior_games=6, **common),
+        _candidate('HS', 'Chart Five', ourlads_depth_rank=5, prior_games=6, **common),
+    ]
+    allocations, _ = _allocation_and_ledger(candidates)
+    assert bool(_player_row(allocations, 'Chart Four')['eligible_core_rb'])
+    assert float(_player_row(allocations, 'Chart Four')['expected_snap_share']) > 0.0
+    assert not bool(_player_row(allocations, 'Chart Five')['eligible_core_rb'])
+    assert float(_player_row(allocations, 'Chart Five')['expected_snap_share']) == 0.0
+
+
+def test_continuation_only_chart_listing_is_a_deep_reserve_regardless_of_nominal_rank():
+    """Ourlads lists an overflow backfield in a second column, so a genuine
+    5th-stringer can carry a nominal depth_rank of 4 (Kendre Miller, NO 2026).
+    A `chart_deprioritized` candidate is excluded from the credible set even
+    with a top-2 back out and even though his rank number would otherwise
+    clear the (extended) ceiling."""
+    candidates = [
+        _candidate('CC', 'Lead', ourlads_depth_rank=1, same_team=True, prior_games=16,
+                   prior_active_snap_share=0.60, prior_active_carry_share=0.50,
+                   prior_active_target_share=0.28, availability=0.0),
+        _candidate('CC', 'Two', ourlads_depth_rank=2, same_team=True, prior_games=12,
+                   prior_active_snap_share=0.30, prior_active_carry_share=0.24,
+                   prior_active_target_share=0.12),
+        _candidate('CC', 'Three', ourlads_depth_rank=3, same_team=True, prior_games=10,
+                   prior_active_snap_share=0.14, prior_active_carry_share=0.11,
+                   prior_active_target_share=0.07),
+        _candidate('CC', 'Continuation Four', ourlads_depth_rank=4, same_team=True, prior_games=9,
+                   prior_active_snap_share=0.22, prior_active_carry_share=0.18,
+                   prior_active_target_share=0.09, chart_deprioritized=True),
+    ]
+    allocations, _ = _allocation_and_ledger(candidates)
+    cont = _player_row(allocations, 'Continuation Four')
+    assert not bool(cont['eligible_core_rb'])
+    assert float(cont['expected_snap_share']) == 0.0
+    # The two healthy real backs still split the room.
+    assert float(_player_row(allocations, 'Two')['expected_snap_share']) > 0.3
+
+
 def test_weak_ourlads_fullback_evidence_is_excluded_despite_broad_rb_position():
     """The D.J. Herman / Max Bredeson-shaped case: `functional_position`
     still resolves 'RB' when the roster's own depth_chart_position disagrees
@@ -608,6 +662,65 @@ def test_vacancy_ignores_fullback_and_wr_sources_for_achane_core_rb_volume():
     assert not ingold.empty
     assert float(ingold['allocated'].sum()) == 0.0
     assert ingold['functional_source_role'].eq('FB').all()
+
+
+def _receiver_room_frame():
+    """A HOU-shaped room: alpha WR1, a high-target TE1, an OUT WR2 with real
+    target volume, two clear backups, a reserve, and a buried tail."""
+    def _row(player, pos, tgt, full=None):
+        return {'Player': player, 'Pos': pos, 'Team': 'HOU', 'functional_position': pos,
+                'Expected Snap Share': max(0.05, tgt / 10.0),
+                'targets': tgt, 'receptions': tgt * 0.66, 'receiving_yards': tgt * 8.0,
+                '_full_targets': tgt if full is None else full}
+    return pd.DataFrame([
+        _row('Alpha WR', 'WR', 8.5),
+        _row('TE1', 'TE', 5.2),
+        _row('Out WR2', 'WR', 0.0, full=6.5),
+        _row('WR3', 'WR', 2.2),
+        _row('WR4', 'WR', 1.7),
+        _row('WR5', 'WR', 0.9),
+        _row('WR6', 'WR', 0.3),
+        _row('WR7', 'WR', 0.12),
+        _row('WR8', 'WR', 0.11),
+        _row('TE3', 'TE', 0.2),
+    ])
+
+
+def _run_receiver_vacancy(frame, pecking_order):
+    profiles = {'Out WR2': {'plays_probability': 0.0, 'status': 'out'}}
+    provenance = {'Out WR2': {'year': 2026, 'week': 1, 'source': 'current_week_report'}}
+    out, _ = rba.redistribute_rb_vacancy_with_allocator(
+        frame, profiles, as_of_year=2026, injury_provenance=provenance,
+        receiver_pecking_order=pecking_order)
+    return {r['Player']: float(r['targets']) - float(_player_row(frame, r['Player'])['targets'])
+            for _, r in out.iterrows()}
+
+
+def test_receiver_vacancy_pecking_order_shifts_share_off_the_alpha():
+    frame = _receiver_room_frame()
+    default_gains = _run_receiver_vacancy(frame, pecking_order=False)
+    pecking_gains = _run_receiver_vacancy(frame, pecking_order=True)
+    total = sum(v for v in pecking_gains.values() if v > 0)
+
+    # Baseline behaviour: a raw-target split hands the alpha the single
+    # largest slice of the vacated targets.
+    assert default_gains['Alpha WR'] == max(default_gains.values())
+
+    # Alpha keeps only a ~10-15% bump, and is no longer the top recipient.
+    assert 0.08 * total < pecking_gains['Alpha WR'] < 0.20 * total
+    assert pecking_gains['WR3'] > pecking_gains['Alpha WR']
+
+    # The two players immediately behind the injured man get the bulk.
+    assert pecking_gains['WR3'] + pecking_gains['WR4'] > 0.45 * total
+
+    # Same-position affinity: a departed WR feeds WRs more than the TE1, even
+    # though TE1 out-targets both backups pre-injury.
+    assert pecking_gains['WR3'] > pecking_gains['TE1']
+
+    # The clear reserve (WR5) still gets a real piece; the buried tail gets
+    # almost nothing.
+    assert pecking_gains['WR5'] > pecking_gains['WR6'] > 0.0
+    assert pecking_gains['WR7'] + pecking_gains['WR8'] < 0.05 * total
 
 
 def test_core_rb_vacancy_keeps_carries_and_targets_in_separate_core_rb_recipient_pools():
@@ -949,6 +1062,205 @@ def test_snap_anchored_volume_keeps_a_team_changed_lead_back_ahead_of_the_incumb
         # per-snap tilt) instead of being dragged toward 50/50.
         assert abs(new_ratio - snap_ratio) < 0.12
         assert abs(old_ratio - snap_ratio) > abs(new_ratio - snap_ratio)
+
+
+def test_snap_anchored_volume_pulls_a_vacancy_promoted_chart_rb3_toward_the_lead():
+    """NO 2026 wk1 shape: charted RB1 (Etienne), charted RB2 (Kamara) OUT,
+    charted RB3 (Neal) with a real share. Without the flag, Neal is
+    effective-rank 2 once Kamara is removed, so he skips the RB1<-RB3+ depth
+    nudge entirely and lands ~34% team snaps. Under snap_anchored_volume the
+    nudge's DONOR test keys off Neal's LITERAL chart rank (3), so his excess
+    above the rank-3 target is pulled toward the lead - Etienne up, Neal down,
+    RB4 untouched, team total conserved.
+    """
+    candidates = [
+        _candidate('NO', 'Lead', ourlads_depth_rank=1, same_team=True, prior_games=15,
+                   prior_active_snap_share=0.52, prior_whole_snap_share=0.48,
+                   prior_active_carry_share=0.40, prior_active_target_share=0.22,
+                   core_rb_snap_capacity=1.0),
+        _candidate('NO', 'Out Back', ourlads_depth_rank=2, same_team=True, availability=0.0,
+                   is_active=False, prior_games=14, prior_active_snap_share=0.55,
+                   prior_whole_snap_share=0.50, core_rb_snap_capacity=1.0),
+        _candidate('NO', 'Chart Third', ourlads_depth_rank=3, same_team=True, prior_games=12,
+                   prior_active_snap_share=0.30, prior_whole_snap_share=0.26,
+                   prior_active_carry_share=0.18, prior_active_target_share=0.16,
+                   core_rb_snap_capacity=1.0),
+        _candidate('NO', 'Chart Fourth', ourlads_depth_rank=4, same_team=True, prior_games=8,
+                   prior_active_snap_share=0.12, prior_whole_snap_share=0.10,
+                   core_rb_snap_capacity=1.0),
+    ]
+    off, _ = rba.allocate_preseason_rb_roles(pd.DataFrame(candidates), snap_anchored_volume=False)
+    on, on_ledger = rba.allocate_preseason_rb_roles(pd.DataFrame(candidates), snap_anchored_volume=True)
+    _assert_team_capacity_conservation(on, on_ledger, 'NO')
+
+    lead_off = float(_player_row(off, 'Lead')['expected_snap_share'])
+    third_off = float(_player_row(off, 'Chart Third')['expected_snap_share'])
+    lead_on = float(_player_row(on, 'Lead')['expected_snap_share'])
+    third_on = float(_player_row(on, 'Chart Third')['expected_snap_share'])
+    fourth_off = float(_player_row(off, 'Chart Fourth')['expected_snap_share'])
+    fourth_on = float(_player_row(on, 'Chart Fourth')['expected_snap_share'])
+
+    # Precondition: without the flag the vacancy-promoted RB3 really does hold
+    # an outsized share (otherwise there is nothing for the flag to pull).
+    assert third_off > rba.RB_DEPTH_RANK_SNAP_TARGET_RANK3 + 0.05
+    # The flag moves share from the chart RB3 to the lead...
+    assert third_on < third_off - 0.02
+    assert lead_on > lead_off + 0.02
+    # ...conserved between exactly those two (the RB4 is not a participant here).
+    assert abs((lead_on - lead_off) - (third_off - third_on)) < 1e-6
+    assert abs(fourth_on - fourth_off) < 1e-6
+
+
+def test_chart_deprioritized_drops_the_interrupted_pre_injury_role_credit():
+    """A back the current chart lists only as a continuation / second-unit row
+    (Kendre Miller, NO 2026: charted behind the primary RB block, lc_red) should
+    not have a stale pre-injury role credited back to him. `_role_base` normally
+    adds 0.45 * (pre_absence - base) for an interrupted season; with
+    `chart_deprioritized` set that pre_gap term is zeroed, so the role tracks
+    the (shrunk) current base instead of the old pre-injury share.
+    """
+    base_row = {
+        'base_snap_share': 0.015, 'prior_active_snap_share': 0.25,
+        'prior_whole_snap_share': 0.10, 'pre_absence_snap_share': 0.34,
+        'interrupted_season': True,
+    }
+    without = rba._role_base(pd.DataFrame([{**base_row, 'chart_deprioritized': False}]))
+    with_flag = rba._role_base(pd.DataFrame([{**base_row, 'chart_deprioritized': True}]))
+    without = float(without.iloc[0])
+    with_flag = float(with_flag.iloc[0])
+    # Without the flag the interrupted pre_gap credit lifts the role well above
+    # the 0.015 current base (0.015 + 0.45 * (0.34 - 0.015) ~= 0.16).
+    assert without > 0.10
+    # With it, the role collapses back toward the current base - at least halved.
+    assert with_flag <= without * 0.5
+    assert abs(with_flag - 0.015) < 1e-6
+    # A row that never sets the column behaves exactly as before (no regression).
+    legacy = float(rba._role_base(pd.DataFrame([base_row])).iloc[0])
+    assert abs(legacy - without) < 1e-9
+
+
+def test_team_rb_snap_share_target_is_capped_at_the_committee_max():
+    """A genuinely high measured 2-RB committee capacity (ATL 2025 ~1.09) must
+    read as slightly over a full backfield, not ride the whole-backfield
+    rescale target arbitrarily far past 1.0. RB_TEAM_SNAP_SHARE_MAX caps it;
+    a modest committee (~1.03) is still NOT compressed back to a flat 1.0.
+    """
+    def _team_snap_sum(cap):
+        cands = [
+            _candidate('ATL', 'Lead', ourlads_depth_rank=1, same_team=True, prior_games=16,
+                       prior_active_snap_share=0.80, prior_whole_snap_share=0.78,
+                       prior_active_carry_share=0.62, prior_active_target_share=0.30,
+                       core_rb_snap_capacity=cap, rb_carry_capacity=27.0, rb_target_capacity=6.0),
+            _candidate('ATL', 'Committee Back', ourlads_depth_rank=2, same_team=True, prior_games=15,
+                       prior_active_snap_share=0.32, prior_whole_snap_share=0.28,
+                       prior_active_carry_share=0.24, prior_active_target_share=0.10,
+                       core_rb_snap_capacity=cap, rb_carry_capacity=27.0, rb_target_capacity=6.0),
+        ]
+        alloc, _ = rba.allocate_preseason_rb_roles(pd.DataFrame(cands))
+        return float(_team_rows(alloc, 'ATL')['expected_snap_share'].sum())
+
+    high = _team_snap_sum(1.20)
+    assert high <= rba.RB_TEAM_SNAP_SHARE_MAX + 1e-6
+    assert high > 1.0  # not compressed to a flat full backfield
+
+    modest = _team_snap_sum(1.03)
+    assert 1.02 < modest <= rba.RB_TEAM_SNAP_SHARE_MAX + 1e-6  # left near its own measured capacity
+
+
+def _tc_lead_back_room():
+    """Etienne-shape team-changed lead (cross-team, depressed prior per-game
+    rate) charted ahead of a same-team incumbent with a still-high rate."""
+    return [
+        _candidate('NO', 'Team Changed Lead', ourlads_depth_rank=1, same_team=False,
+                   draft_capital=25, base_snap_share=0.56, prior_active_snap_share=0.55,
+                   prior_whole_snap_share=0.50, prior_games=16,
+                   prior_carries_per_game=11.0, prior_targets_per_game=2.2,
+                   rb_carry_capacity=26.0, rb_target_capacity=6.0, core_rb_snap_capacity=1.0),
+        _candidate('NO', 'Incumbent', ourlads_depth_rank=2, same_team=True,
+                   draft_capital=67, base_snap_share=0.46, prior_active_snap_share=0.62,
+                   prior_whole_snap_share=0.58, prior_games=14,
+                   prior_carries_per_game=15.5, prior_targets_per_game=4.6,
+                   rb_carry_capacity=26.0, rb_target_capacity=6.0, core_rb_snap_capacity=1.0),
+    ]
+
+
+def test_rb_vol_tilt_strength_interpolates_between_legacy_and_snap_anchored():
+    """RB_VOL_TILT_STRENGTH is a clean dial: 0.0 reproduces the flag-OFF
+    carry/target split exactly, 1.0 reproduces the full snap-anchored tilt
+    exactly, and 0.5 lands strictly between the two on the team-changed lead's
+    share of the backfield."""
+    room = pd.DataFrame(_tc_lead_back_room())
+    off, _ = rba.allocate_preseason_rb_roles(room, snap_anchored_volume=False)
+
+    def _lead_ratio(frame, col):
+        lead = float(_player_row(frame, 'Team Changed Lead')[col])
+        inc = float(_player_row(frame, 'Incumbent')[col])
+        return lead / (lead + inc)
+
+    original = rba.RB_VOL_TILT_STRENGTH
+    try:
+        rba.RB_VOL_TILT_STRENGTH = 0.0
+        s0, _ = rba.allocate_preseason_rb_roles(room, snap_anchored_volume=True)
+        rba.RB_VOL_TILT_STRENGTH = 1.0
+        s1, _ = rba.allocate_preseason_rb_roles(room, snap_anchored_volume=True)
+        rba.RB_VOL_TILT_STRENGTH = 0.5
+        s_half, _ = rba.allocate_preseason_rb_roles(room, snap_anchored_volume=True)
+    finally:
+        rba.RB_VOL_TILT_STRENGTH = original
+
+    for col in ('carry_share', 'target_share'):
+        off_r = _lead_ratio(off, col)
+        s0_r = _lead_ratio(s0, col)
+        s1_r = _lead_ratio(s1, col)
+        half_r = _lead_ratio(s_half, col)
+        # strength 0.0 == flag OFF; strength 1.0 moves the lead's share up
+        assert abs(s0_r - off_r) < 1e-6
+        assert s1_r > s0_r + 0.02
+        # half strength is strictly between, and near the midpoint
+        assert s0_r < half_r < s1_r
+        assert abs(half_r - 0.5 * (s0_r + s1_r)) < 0.03
+
+
+def test_rb_vol_vacancy_strength_scales_the_out_top3_concentration():
+    """RB_VOL_VACANCY_STRENGTH dials the OUT-charted-top-3 snap concentration:
+    0.0 leaves a vacancy-promoted chart RB3 at ~his flag-OFF share, 1.0 pulls
+    the full excess to the lead, 0.5 lands between."""
+    candidates = pd.DataFrame([
+        _candidate('NO', 'Lead', ourlads_depth_rank=1, same_team=True, prior_games=15,
+                   prior_active_snap_share=0.52, prior_whole_snap_share=0.48,
+                   prior_active_carry_share=0.40, prior_active_target_share=0.22,
+                   core_rb_snap_capacity=1.0),
+        _candidate('NO', 'Out Back', ourlads_depth_rank=2, same_team=True, availability=0.0,
+                   is_active=False, prior_games=14, prior_active_snap_share=0.55,
+                   prior_whole_snap_share=0.50, core_rb_snap_capacity=1.0),
+        _candidate('NO', 'Chart Third', ourlads_depth_rank=3, same_team=True, prior_games=12,
+                   prior_active_snap_share=0.30, prior_whole_snap_share=0.26,
+                   prior_active_carry_share=0.18, prior_active_target_share=0.16,
+                   core_rb_snap_capacity=1.0),
+    ])
+    off, _ = rba.allocate_preseason_rb_roles(candidates, snap_anchored_volume=False)
+    third_off = float(_player_row(off, 'Chart Third')['expected_snap_share'])
+
+    original = rba.RB_VOL_VACANCY_STRENGTH
+    try:
+        rba.RB_VOL_VACANCY_STRENGTH = 0.0
+        v0, _ = rba.allocate_preseason_rb_roles(candidates, snap_anchored_volume=True)
+        rba.RB_VOL_VACANCY_STRENGTH = 1.0
+        v1, _ = rba.allocate_preseason_rb_roles(candidates, snap_anchored_volume=True)
+        rba.RB_VOL_VACANCY_STRENGTH = 0.5
+        v_half, _ = rba.allocate_preseason_rb_roles(candidates, snap_anchored_volume=True)
+    finally:
+        rba.RB_VOL_VACANCY_STRENGTH = original
+
+    third_v0 = float(_player_row(v0, 'Chart Third')['expected_snap_share'])
+    third_v1 = float(_player_row(v1, 'Chart Third')['expected_snap_share'])
+    third_half = float(_player_row(v_half, 'Chart Third')['expected_snap_share'])
+
+    # strength 0 ~ flag OFF for the vacancy pieces; strength 1 pulls share off the RB3
+    assert abs(third_v0 - third_off) < 0.02
+    assert third_v1 < third_v0 - 0.02
+    # half strength sits between the two endpoints
+    assert third_v1 < third_half < third_v0 + 1e-6
 
 
 def main():

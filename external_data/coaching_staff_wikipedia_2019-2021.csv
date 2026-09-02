@@ -1,0 +1,97 @@
+season,team,hc,oc,dc,page,note
+2019,ARI,Kliff Kingsbury,,Vance Joseph,2019 Arizona Cardinals season,
+2019,ATL,Dan Quinn (American football),Dirk Koetter,,2019 Atlanta Falcons season,
+2019,BAL,John Harbaugh,Greg Roman,Don Martindale,2019 Baltimore Ravens season,
+2019,BUF,Sean McDermott,Brian Daboll,Leslie Frazier,2019 Buffalo Bills season,
+2019,CAR,Linda O'Hora,Norv Turner,Eric Washington (American football),2019 Carolina Panthers season,
+2019,CHI,Matt Nagy,Mark Helfrich (American football),Chuck Pagano,2019 Chicago Bears season,
+2019,CIN,Zac Taylor,Brian Callahan,Lou Anarumo,2019 Cincinnati Bengals season,
+2019,CLE,Freddie Kitchens,Todd Monken,Steve Wilks,2019 Cleveland Browns season,
+2019,DAL,Jason Garrett,Kellen Moore,,2019 Dallas Cowboys season,
+2019,DEN,Vic Fangio,Rich Scangarello,Ed Donatell,2019 Denver Broncos season,
+2019,DET,,,,2019 Detroit Lions season,fetch-fail:HTTPError
+2019,GB,,,,2019 Green Bay Packers season,fetch-fail:HTTPError
+2019,HOU,,,,2019 Houston Texans season,fetch-fail:HTTPError
+2019,IND,,,,2019 Indianapolis Colts season,fetch-fail:HTTPError
+2019,JAX,,,,2019 Jacksonville Jaguars season,fetch-fail:HTTPError
+2019,KC,,,,2019 Kansas City Chiefs season,fetch-fail:HTTPError
+2019,LA,,,,2019 Los Angeles Rams season,fetch-fail:HTTPError
+2019,LAC,,,,2019 Los Angeles Chargers season,fetch-fail:HTTPError
+2019,LV,,,,2019 Oakland Raiders season,fetch-fail:HTTPError
+2019,MIA,,,,2019 Miami Dolphins season,fetch-fail:HTTPError
+2019,MIN,,,,2019 Minnesota Vikings season,fetch-fail:HTTPError
+2019,NE,,,,2019 New England Patriots season,fetch-fail:HTTPError
+2019,NO,,,,2019 New Orleans Saints season,fetch-fail:HTTPError
+2019,NYG,,,,2019 New York Giants season,fetch-fail:HTTPError
+2019,NYJ,,,,2019 New York Jets season,fetch-fail:HTTPError
+2019,PHI,,,,2019 Philadelphia Eagles season,fetch-fail:HTTPError
+2019,PIT,,,,2019 Pittsburgh Steelers season,fetch-fail:HTTPError
+2019,SEA,,,,2019 Seattle Seahawks season,fetch-fail:HTTPError
+2019,SF,,,,2019 San Francisco 49ers season,fetch-fail:HTTPError
+2019,TB,,,,2019 Tampa Bay Buccaneers season,fetch-fail:HTTPError
+2019,TEN,,,,2019 Tennessee Titans season,fetch-fail:HTTPError
+2019,WAS,,,,2019 Washington Redskins season,fetch-fail:HTTPError
+2020,ARI,,,,2020 Arizona Cardinals season,fetch-fail:HTTPError
+2020,ATL,,,,2020 Atlanta Falcons season,fetch-fail:HTTPError
+2020,BAL,,,,2020 Baltimore Ravens season,fetch-fail:HTTPError
+2020,BUF,,,,2020 Buffalo Bills season,fetch-fail:HTTPError
+2020,CAR,,,,2020 Carolina Panthers season,fetch-fail:HTTPError
+2020,CHI,,,,2020 Chicago Bears season,fetch-fail:HTTPError
+2020,CIN,,,,2020 Cincinnati Bengals season,fetch-fail:HTTPError
+2020,CLE,,,,2020 Cleveland Browns season,fetch-fail:HTTPError
+2020,DAL,,,,2020 Dallas Cowboys season,fetch-fail:HTTPError
+2020,DEN,,,,2020 Denver Broncos season,fetch-fail:HTTPError
+2020,DET,,,,2020 Detroit Lions season,fetch-fail:HTTPError
+2020,GB,,,,2020 Green Bay Packers season,fetch-fail:HTTPError
+2020,HOU,,,,2020 Houston Texans season,fetch-fail:HTTPError
+2020,IND,,,,2020 Indianapolis Colts season,fetch-fail:HTTPError
+2020,JAX,,,,2020 Jacksonville Jaguars season,fetch-fail:HTTPError
+2020,KC,,,,2020 Kansas City Chiefs season,fetch-fail:HTTPError
+2020,LA,,,,2020 Los Angeles Rams season,fetch-fail:HTTPError
+2020,LAC,,,,2020 Los Angeles Chargers season,fetch-fail:HTTPError
+2020,LV,,,,2020 Las Vegas Raiders season,fetch-fail:HTTPError
+2020,MIA,,,,2020 Miami Dolphins season,fetch-fail:HTTPError
+2020,MIN,,,,2020 Minnesota Vikings season,fetch-fail:HTTPError
+2020,NE,,,,2020 New England Patriots season,fetch-fail:HTTPError
+2020,NO,,,,2020 New Orleans Saints season,fetch-fail:HTTPError
+2020,NYG,,,,2020 New York Giants season,fetch-fail:HTTPError
+2020,NYJ,,,,2020 New York Jets season,fetch-fail:HTTPError
+2020,PHI,,,,2020 Philadelphia Eagles season,fetch-fail:HTTPError
+2020,PIT,,,,2020 Pittsburgh Steelers season,fetch-fail:HTTPError
+2020,SEA,,,,2020 Seattle Seahawks season,fetch-fail:HTTPError
+2020,SF,,,,2020 San Francisco 49ers season,fetch-fail:HTTPError
+2020,TB,,,,2020 Tampa Bay Buccaneers season,fetch-fail:HTTPError
+2020,TEN,,,,2020 Tennessee Titans season,fetch-fail:HTTPError
+2020,WAS,,,,2020 Washington Football Team season,fetch-fail:HTTPError
+2021,ARI,,,,2021 Arizona Cardinals season,fetch-fail:HTTPError
+2021,ATL,,,,2021 Atlanta Falcons season,fetch-fail:HTTPError
+2021,BAL,,,,2021 Baltimore Ravens season,fetch-fail:HTTPError
+2021,BUF,,,,2021 Buffalo Bills season,fetch-fail:HTTPError
+2021,CAR,,,,2021 Carolina Panthers season,fetch-fail:HTTPError
+2021,CHI,,,,2021 Chicago Bears season,fetch-fail:HTTPError
+2021,CIN,,,,2021 Cincinnati Bengals season,fetch-fail:HTTPError
+2021,CLE,,,,2021 Cleveland Browns season,fetch-fail:HTTPError
+2021,DAL,,,,2021 Dallas Cowboys season,fetch-fail:HTTPError
+2021,DEN,,,,2021 Denver Broncos season,fetch-fail:HTTPError
+2021,DET,,,,2021 Detroit Lions season,fetch-fail:HTTPError
+2021,GB,,,,2021 Green Bay Packers season,fetch-fail:HTTPError
+2021,HOU,,,,2021 Houston Texans season,fetch-fail:HTTPError
+2021,IND,,,,2021 Indianapolis Colts season,fetch-fail:HTTPError
+2021,JAX,,,,2021 Jacksonville Jaguars season,fetch-fail:HTTPError
+2021,KC,,,,2021 Kansas City Chiefs season,fetch-fail:HTTPError
+2021,LA,,,,2021 Los Angeles Rams season,fetch-fail:HTTPError
+2021,LAC,,,,2021 Los Angeles Chargers season,fetch-fail:HTTPError
+2021,LV,,,,2021 Las Vegas Raiders season,fetch-fail:HTTPError
+2021,MIA,,,,2021 Miami Dolphins season,fetch-fail:HTTPError
+2021,MIN,,,,2021 Minnesota Vikings season,fetch-fail:HTTPError
+2021,NE,,,,2021 New England Patriots season,fetch-fail:HTTPError
+2021,NO,,,,2021 New Orleans Saints season,fetch-fail:HTTPError
+2021,NYG,,,,2021 New York Giants season,fetch-fail:HTTPError
+2021,NYJ,,,,2021 New York Jets season,fetch-fail:HTTPError
+2021,PHI,,,,2021 Philadelphia Eagles season,fetch-fail:HTTPError
+2021,PIT,,,,2021 Pittsburgh Steelers season,fetch-fail:HTTPError
+2021,SEA,,,,2021 Seattle Seahawks season,fetch-fail:HTTPError
+2021,SF,,,,2021 San Francisco 49ers season,fetch-fail:HTTPError
+2021,TB,,,,2021 Tampa Bay Buccaneers season,fetch-fail:HTTPError
+2021,TEN,,,,2021 Tennessee Titans season,fetch-fail:HTTPError
+2021,WAS,,,,2021 Washington Football Team season,fetch-fail:HTTPError

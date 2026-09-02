@@ -41,7 +41,24 @@ from data.utils import clean_name_exact, clean_name_for_merge
 PARSER_VERSION = "2026.1"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 OURLADS_IMPORT_PATH = _REPO_ROOT / "external_data" / "ourlads_depth_charts.csv"
+# Frozen pre-Week-1 archive, one row per team per past season, built by
+# scripts/import_ourlads_historical.py. load_ourlads_snapshot(year) falls back
+# to this when the live snapshot has no rows for a past year - so a Week-1..3
+# cold-start backtest can see the chart the model would have had at kickoff.
+OURLADS_HISTORY_PATH = _REPO_ROOT / "external_data" / "ourlads_depth_charts_history.csv"
 OURLADS_KEY_PATH = _REPO_ROOT / "external_data" / "ourlads_depth_chart_key.txt"
+
+# History-CSV `slot` -> the model's coarse source position. Anything not here
+# (O-line, defense, special teams) falls through and is dropped by the
+# _SOURCE_POSITIONS filter, exactly like the live loader.
+_HISTORY_SLOT_TO_POSITION = {
+    "QB": "QB", "RB": "RB", "FB": "FB", "TE": "TE",
+    "WR": "WR", "LWR": "WR", "RWR": "WR", "SWR": "WR",
+}
+_HISTORY_UNIT_TO_LABEL = {
+    "OFF": "Offense", "DEF": "Defense", "ST": "Special Teams",
+    "PS": "Practice Squad", "RES": "Reserves",
+}
 # Drop fresh saved team pages here; the Depth Charts tab's "Import from
 # ourlads_inbox/" button and scripts/import_ourlads.py both read this folder.
 OURLADS_INBOX_DIR = _REPO_ROOT / "external_data" / "ourlads_inbox"
@@ -681,24 +698,8 @@ def save_ourlads_snapshot_from_dir(directory: str | Path = OURLADS_INBOX_DIR,
     return snapshot, report
 
 
-def load_ourlads_snapshot(year: int | None = None,
-                          path: str | Path = OURLADS_IMPORT_PATH) -> tuple[pd.DataFrame, str | None]:
-    """Load an already-normalized local snapshot and validate its schema."""
-    target = Path(path)
-    empty = pd.DataFrame(columns=OURLADS_COLUMNS)
-    if not target.exists():
-        return empty, None
-    try:
-        frame = pd.read_csv(target, dtype={"team": str, "player": str, "position": str,
-                                            "position_label": str, "source_file": str})
-    except Exception as exc:
-        return empty, f"Could not read {target.name}: {exc}"
-    missing = [column for column in OURLADS_COLUMNS if column not in frame.columns]
-    if missing:
-        return empty, f"{target.name} is missing required column(s): {', '.join(missing)}."
-    # Preserve an optional locally reviewed GSIS/PFF enrichment.  The raw
-    # saved-page schema remains backwards-compatible, but a stable source id
-    # should not be discarded before the authoritative resolver sees it.
+def _finalize_snapshot_frame(frame: pd.DataFrame, year: int | None) -> pd.DataFrame:
+    """Shared normalization for a raw OURLADS_COLUMNS frame (live or historical)."""
     optional_ids = [column for column in _OPTIONAL_SOURCE_ID_COLUMNS if column in frame.columns]
     frame = frame.loc[:, list(OURLADS_COLUMNS) + optional_ids].copy()
     frame["year"] = pd.to_numeric(frame["year"], errors="coerce")
@@ -722,7 +723,88 @@ def load_ourlads_snapshot(year: int | None = None,
     frame["player_key"] = clean_name_exact(frame["player"])
     frame = frame[(frame["team"] != "") & frame["position"].isin(_SOURCE_POSITIONS)
                   & frame["player"].ne("")].copy()
-    return frame.reset_index(drop=True), None
+    return frame.reset_index(drop=True)
+
+
+def _historical_snapshot(year: int, path: str | Path = OURLADS_HISTORY_PATH) -> tuple[pd.DataFrame, str | None]:
+    """Adapt the frozen pre-Week-1 archive CSV to an OURLADS_COLUMNS snapshot.
+
+    Archive rows carry no injury colour and no continuation ("second unit")
+    listings, so ``is_inactive``/``status_class`` are blank and
+    ``position_occurrence`` is 0 for every row - a known, documented gap of
+    this source relative to the live printer-friendly import.
+    """
+    target = Path(path)
+    empty = pd.DataFrame(columns=OURLADS_COLUMNS)
+    if not target.exists():
+        return empty, None
+    try:
+        hist = pd.read_csv(target, dtype=str)
+    except Exception as exc:
+        return empty, f"Could not read {target.name}: {exc}"
+    hist = hist[pd.to_numeric(hist["year"], errors="coerce").eq(int(year))].copy()
+    if hist.empty:
+        return empty, None
+    slot = hist["slot"].astype(str).str.upper().str.strip()
+    out = pd.DataFrame(index=hist.index)
+    out["year"] = pd.to_numeric(hist["year"], errors="coerce")
+    out["team"] = hist["team"].astype(str)
+    out["unit"] = hist["unit"].map(_HISTORY_UNIT_TO_LABEL).fillna(hist["unit"])
+    out["position_label"] = slot
+    out["position"] = slot.map(_HISTORY_SLOT_TO_POSITION).fillna(slot)
+    out["depth_rank"] = pd.to_numeric(hist["slot_rank"], errors="coerce")
+    out["source_row"] = 0
+    out["source_slot"] = pd.to_numeric(hist["slot_rank"], errors="coerce")
+    out["position_occurrence"] = 0
+    out["is_listed_starter"] = pd.to_numeric(hist["slot_rank"], errors="coerce").eq(1)
+    out["is_inactive"] = False
+    out["status_class"] = ""
+    out["source_player_id"] = ""
+    out["player"] = (hist["player_first"].fillna("").astype(str).str.strip() + " "
+                     + hist["player_last"].fillna("").astype(str).str.strip()).str.strip()
+    out["player_key"] = clean_name_exact(out["player"])
+    out["raw_player"] = hist.get("player_raw", out["player"])
+    out["source_updated_at"] = hist.get("last_updated", "")
+    out["source_file"] = target.name
+    out["source_url"] = ""
+    out["parser_version"] = "historical-archive"
+    return _finalize_snapshot_frame(out, int(year)), None
+
+
+def load_ourlads_snapshot(year: int | None = None,
+                          path: str | Path = OURLADS_IMPORT_PATH,
+                          allow_historical: bool = False) -> tuple[pd.DataFrame, str | None]:
+    """Load an already-normalized local snapshot and validate its schema.
+
+    With ``allow_historical=True`` (the weekly model passes this only under
+    ``v2_historical_ourlads``), a past ``year`` with no rows in the live
+    snapshot falls back to the frozen pre-Week-1 archive
+    (``OURLADS_HISTORY_PATH``) - a time-valid ~09/01 chart, so a cold-start
+    backtest can see what the model would have had at kickoff. Default off
+    keeps every existing backtest and the live path untouched.
+    """
+    empty = pd.DataFrame(columns=OURLADS_COLUMNS)
+
+    def _fallback():
+        if allow_historical and year is not None:
+            return _historical_snapshot(year)
+        return empty, None
+
+    target = Path(path)
+    if not target.exists():
+        return _fallback()
+    try:
+        frame = pd.read_csv(target, dtype={"team": str, "player": str, "position": str,
+                                            "position_label": str, "source_file": str})
+    except Exception as exc:
+        return empty, f"Could not read {target.name}: {exc}"
+    missing = [column for column in OURLADS_COLUMNS if column not in frame.columns]
+    if missing:
+        return empty, f"{target.name} is missing required column(s): {', '.join(missing)}."
+    finalized = _finalize_snapshot_frame(frame, year)
+    if finalized.empty and year is not None:
+        return _fallback()
+    return finalized, None
 
 
 _IDENTITY_MATCH_SPECS = (

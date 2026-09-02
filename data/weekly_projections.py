@@ -106,6 +106,7 @@ what lets the exact same function double as the backtest harness in
 docs/weekly_projections_methodology.md - project week N with only what was
 known before week N, then compare to what actually happened.
 """
+import os
 from pathlib import Path
 
 import numpy as np
@@ -562,10 +563,18 @@ MODEL_FEATURES = (
     'v2_availability',     # availability/injury resolver revision; see v2_fantasypros_availability
     'v2_vacancy',           # see teammate_vacancy above
     'v2_preseason_rb_allocator',  # team-constrained cold-start RB roles
-    'v2_rb_snap_anchored_volume',  # cold-start RB carry/target split = snap
-                             # allocation + bounded per-snap tilt, not a raw
-                             # prior per-GAME rate. See RB_VOL_* in
-                             # data/rb_role_allocator.py.
+    'v2_rb_snap_anchored_volume',  # cold-start RB: (1) carry/target split =
+                             # snap allocation + bounded per-snap tilt, not a
+                             # raw prior per-GAME rate; (2) when a charted
+                             # top-3 RB is OUT, concentrate the snap allocation
+                             # toward the lead (vacancy-promoted chart RB3 no
+                             # longer skips the depth nudge; chart RB4+ gets a
+                             # smaller phantom floor). See RB_VOL_* in
+                             # data/rb_role_allocator.py. NOT in
+                             # DEFAULT_FEATURES (see below). Strength of each
+                             # half is a separate 0..1 dial - RB_VOL_TILT_STRENGTH
+                             # / RB_VOL_VACANCY_STRENGTH, env-overridable - swept
+                             # by scripts/sweep_rb_snap_anchored.py.
     'v2_pass_capacity',    # team-constrained WR/TE/RB target conservation
     'v2_qb_volume_blend',  # QB1 volume: team dropbacks x evidence-weighted player style
     'v2_fantasypros_availability',  # FantasyPros-sourced injury signal, healthy by default
@@ -611,10 +620,43 @@ MODEL_FEATURES = (
     'v2_venue_mult',        # indoor/outdoor venue scaling ALONE, same
                              # unbundling as above. Not yet backtested
                              # standalone.
+    'v2_weather_adjustment',  # per-stat outdoor WIND effect for QB/WR/TE
+                             # (no RB, no temperature), fitted out-of-sample
+                             # with the windy-stadium confound removed - see
+                             # scripts/analyze_wind_response.py and the
+                             # WEATHER_WIND_SLOPE table. Recorded schedule wind
+                             # for a past week; Open-Meteo forecast
+                             # (data/weather.py) for a live one.
     'v2_defense_prior_games_override',  # sweep hook for DEFENSE_PRIOR_GAMES
                              # (currently 12.0) - see that constant's own note
                              # and scripts/sweep_defense_prior_games.py. A no-op
                              # unless DEFENSE_PRIOR_GAMES_OVERRIDE is also set.
+    'v2_coaching_aware_defense_prior',  # scale DEFENSE_PRIOR_GAMES per team by
+                             # its off-season coaching-change cohort: HC+DC (or
+                             # lone new HC) reset -> shorter prior leash (~8);
+                             # coordinator-only promotion under a retained HC ->
+                             # longer leash (~18); no signal -> unchanged. See
+                             # data/coaching_changes.py + scripts/analyze_
+                             # coaching_defense_prior.py. Backtest-only; live
+                             # use needs current-season coordinator data.
+    'v2_historical_ourlads',  # let a HISTORICAL cold-start target (weeks 1-3 of
+                             # a past season) read the frozen pre-Week-1 Ourlads
+                             # archive (external_data/ourlads_depth_charts_history.csv,
+                             # 32x2022-2025). Off by default so existing
+                             # backtests / calibration fits are unchanged; ON
+                             # only for the cold-start eval that measures the
+                             # chart-dependent machinery (RB allocator, role
+                             # floor, QB1). The archive is a dated ~09/01
+                             # snapshot, so this is time-valid, not leakage.
+    'v2_receiver_vacancy_pecking_order',  # when a WR/TE is OUT, split the
+                             # vacated targets by a depth-tapered "next man
+                             # up" weighting instead of raw current-target
+                             # proportion - keeps the alpha to a bump and
+                             # sends the larger share to the players just
+                             # behind the injured man. See RECEIVER_VACANCY_*
+                             # in data/rb_role_allocator.py. Added to
+                             # DEFAULT_FEATURES 2026-08-30 per explicit
+                             # request; standalone backtest pending.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -701,6 +743,58 @@ DEFAULT_FEATURES = frozenset({
     'v2_fantasypros_availability',
     'calibration',
     'v2_role_change_by_stat',
+    # Added 2026-08-30 at the user's explicit request, then backtested on the
+    # 2023-2025 Week-1 cold-start window (overnight_backtest_log_2026-08-30.md
+    # section 7):
+    #   - v2_rb_snap_anchored_volume: REMOVED 2026-08-30 - the binary ablation
+    #     showed it hurt RB (START-RB -0.288 dMAE, 3-0 weeks): at full strength
+    #     it acts as a broad "concentrate toward the RB1" tilt on every
+    #     backfield, not the targeted team-changer fix it was built for. It
+    #     stays a switchable MODEL_FEATURES flag with two 0..1 strength dials
+    #     (RB_VOL_TILT_STRENGTH / RB_VOL_VACANCY_STRENGTH) so a lower-strength
+    #     setting can be re-backtested (scripts/sweep_rb_snap_anchored.py) -
+    #     see overnight_backtest_log_2026-08-30.md section 7d.
+    #   - v2_td_prior_credibility: KEPT despite a small measured RB cost
+    #     (-0.08 whole / -0.14 START-RB from removing it). It is a principled
+    #     small-sample regularizer - it shrinks a thin one-season hot TD rate
+    #     toward the position mean (the anti-"RJ Harvey" guardrail, see
+    #     credibility_shrunk_td_prior) - and a 3-correlated-week sample is too
+    #     thin to overrule that. Not an accuracy claim on this window.
+    'v2_td_prior_credibility',      # credibility-shrink a thin 1-season TD-rate prior
+    # Added 2026-08-30 at the user's explicit request after a live miscall
+    # (HOU's Collins ~12 targets with Higgins OUT). LIVE and inspectable now;
+    # standalone backtest still queued (weekly_rankings_backlog.md section 8).
+    'v2_receiver_vacancy_pecking_order',  # WR/TE vacancy -> depth-tapered split
+    # Shipped 2026-08-31 (backlog §8 #5). Implied-game-total volume elasticity,
+    # unbundled from the rejected `game_env`. 2024-25 wk4-17 confirm: whole-pool
+    # dMAE -0.010 (19-9 weeks), RB -0.024 CI-excludes-0, QB -0.055 (p=0.01),
+    # WR flat. Elasticities RB 0.28 / QB 0.42 / WR 0.14 / TE 0.30, clip
+    # (0.82, 1.24) - see GAME_TOTAL_ELASTICITY. total_line is posted for future
+    # weeks so this is forecast-safe.
+    'v2_game_total_elasticity',
+    # Shipped 2026-09-01. Per-stat outdoor WIND penalty (temperature was
+    # measured and is dead - no cold term exists). Whole-slate confirm
+    # (`--add v2_weather_adjustment`, 2019-25 wk1-18, n=37,739 over 115
+    # weeks): ALL -0.004 CI[-0.008,-0.001], QB -0.013 CI[-0.024,-0.003],
+    # RB -0.003 CI[-0.006,-0.001] (74-39 weeks, sign-test p=0.00) - three
+    # scopes CI-excludes-0, none significantly harmed. WR/TE whole-pool
+    # -0.003 each, CI spans 0.
+    #
+    # Wind-bucketed view (2018-24 wk6-18, after the NaN-bucket fix)
+    # confirms the mechanism rather than a coincidence: indoor games move
+    # EXACTLY 0.000 in every scope, 0-8mph ~0.000 (below the knee), and the
+    # gains scale with wind - QB -0.093 CI-excl-0 at 12-16mph and -0.278 at
+    # 16-20; RB -0.009 CI-excl-0 at 8-12 and -0.015 CI-excl-0 at 12-16.
+    #
+    # KNOWN WEAK PART, deliberately shipped as-is: the WR receiving slopes
+    # look too strong. WR is mildly WORSE above the knee at every bucket
+    # (+0.024 at 12-16, +0.016 at 16-20, +0.078 at 20+) though never
+    # significantly, and START-WR is +0.012 whole-slate. The net is still a
+    # clear win carried by QB/RB, so this ships now and the WR slope is a
+    # queued follow-up sweep (WEATHER_STRENGTH_WR env hook already exists) -
+    # see weekly_rankings_backlog.md. Forecast-safe: schedule wind is
+    # available for future weeks.
+    'v2_weather_adjustment',
 })
 
 
@@ -842,12 +936,25 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 # 12-flag ablation (2025 wk 4-17, docs/overnight_backtest_log_2026-08-30.md)
 # confirmed v2_defense_prior still nets clearly positive at DPG=12 and
 # v2_pass_capacity is still a real WR win after the uniform-dock revert.
+#
+# RE-FITTED 2026-08-30 (second, end of the pre-calibration stack) after:
+# +v2_receiver_vacancy_pecking_order, +v2_td_prior_credibility (with its K
+# softened - rushing 220->130 etc.), -v2_rb_snap_anchored_volume, and the new
+# always-on RB chart hard stop (RB_CHART_VACANCY_EXTENSION_MAX=1 +
+# unconditional continuation_only). Same 2021-2023 weeks 5-17 window, n=11,761.
+# Raw fit: QB (0.472, 8.129), RB (0.856, 1.952), WR (0.934, 1.924),
+# TE (0.942, 1.493) - within 0.001 slope / ~0.01 intercept of the fit above at
+# every position. Expected: all four changes are cold-start- or injury-only,
+# so they barely touch the in-season wk5-17 population this line is fit on.
+# Stored values below moved by <=0.006 (RB intercept); refreshed per the
+# "re-fit whenever DEFAULT_FEATURES changes" rule, not because anything
+# shifted. Half-strength + one-sided rationale above is unchanged.
 # ---------------------------------------------------------------------------
 WEEKLY_CALIBRATION = {
-    'QB': (0.736, 4.066),
-    'RB': (0.927, 0.982),
-    'WR': (0.967, 0.964),
-    'TE': (0.970, 0.748),
+    'QB': (0.736, 4.064),
+    'RB': (0.928, 0.976),
+    'WR': (0.967, 0.962),
+    'TE': (0.971, 0.747),
 }
 
 
@@ -1493,6 +1600,11 @@ def blend_defense_prior(current, prior, evidence, prior_games=DEFENSE_PRIOR_GAME
     completely unknown defense is neutral.  The returned frame is therefore
     safe to use as a direct matchup multiplier and carries no assumption that
     a season-total source existed before the historical target week.
+
+    ``prior_games`` is normally a scalar, but may also be a per-team Series
+    (index = defense team) so v2_coaching_aware_defense_prior can give a team
+    that reset its defensive staff a shorter prior leash than one that kept it.
+    Any team not covered by such a Series falls back to the scalar default.
     """
     current = current if current is not None else pd.DataFrame()
     prior = prior if prior is not None else pd.DataFrame()
@@ -1503,7 +1615,12 @@ def blend_defense_prior(current, prior, evidence, prior_games=DEFENSE_PRIOR_GAME
     cur = current.reindex(index=index, columns=columns)
     old = prior.reindex(index=index, columns=columns)
     n = pd.Series(evidence, dtype=float).reindex(index).fillna(0.0).clip(lower=0.0)
-    alpha = n / (n + float(prior_games))
+    if isinstance(prior_games, pd.Series):
+        pg = pd.to_numeric(prior_games, errors='coerce').reindex(index)
+        pg = pg.where(pg.notna(), float(DEFENSE_PRIOR_GAMES)).clip(lower=1.0)
+    else:
+        pg = float(prior_games)
+    alpha = n / (n + pg)
     out = cur.copy()
     for col in columns:
         c = pd.to_numeric(cur[col], errors='coerce')
@@ -2165,8 +2282,19 @@ TD_OPPORTUNITY_STAT = {
 #     shrunk rate (Henry-style longevity: we are very confident in the role).
 # TD stats only; monotone toward the league mean bar the small longevity
 # bump; a no-op in season once the player's own games take over.
-TD_PRIOR_CREDIBILITY_K = {'rushing_attempts': 220.0, 'targets': 90.0, 'passing_attempts': 340.0}
-TD_PRIOR_ONE_SEASON_CREDIBILITY_CAP = 0.60
+# K = the opportunity total at which the prior TD rate is 50% credible.
+# LOWERED 2026-08-30 (rushing 220->130, targets 90->55, passing 340->200) after
+# the cold-start ablation showed the old values over-regressed PROVEN
+# multi-season starters - a 2-year ~540-carry back kept only ~71% of his real
+# (goal-line-role) TD rate, which cost START-RB accuracy. The one-season cap
+# below still does the anti-"RJ Harvey" work: a ~130-carry single season lands
+# at ~0.50 credibility regardless of K.
+TD_PRIOR_CREDIBILITY_K = {'rushing_attempts': 130.0, 'targets': 55.0, 'passing_attempts': 200.0}
+# RAISED 2026-08-30 0.60 -> 0.70: only bites a player whose SINGLE season had
+# enough volume to exceed 0.60 credibility on its own (a real bellcow year, not
+# a repeat) - lets that survive better while a thin hot half-season (already
+# below 0.70) is untouched.
+TD_PRIOR_ONE_SEASON_CREDIBILITY_CAP = 0.70
 TD_PRIOR_ROLE_SEASON_MIN_GAMES = 6.0
 # A prior season counts toward "role_seasons" when the player's opportunity
 # per game that year was at least this fraction of his best prior season's.
@@ -2547,6 +2675,8 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
                                             prior_games, prior_team, current_team, pos,
                                             pre_absence_share=None, depth_rank=None,
                                             terminal_gap_weeks=None,
+                                            prior2_games=None, prior2_active_share=None,
+                                            role_confidence=None,
                                             return_details=False):
     """Continuously recover a proven returning skill player's active role.
 
@@ -2582,6 +2712,12 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
     current_team = pd.Series(current_team).astype(str).str.strip().str.upper().to_numpy()
     gaps = (np.asarray(terminal_gap_weeks, dtype=float)
             if terminal_gap_weeks is not None else np.zeros(len(whole), dtype=float))
+    games2 = (np.asarray(prior2_games, dtype=float)
+              if prior2_games is not None else np.full(len(whole), np.nan))
+    active2 = (np.asarray(prior2_active_share, dtype=float)
+               if prior2_active_share is not None else np.full(len(whole), np.nan))
+    confidence = (np.clip(np.asarray(role_confidence, dtype=float), 0.0, 1.0)
+                  if role_confidence is not None else np.full(len(whole), np.nan))
     minimum_games = COLD_START_RETURNING_ROLE_MIN_GAMES.get(str(pos).upper())
     if minimum_games is None:
         empty = np.zeros(len(whole), dtype=bool)
@@ -2611,20 +2747,74 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
         & (restored > whole + 0.05)
     )
     eligible = standard_eligible | charted_short_sample
-    evidence = np.clip((games - minimum_games + 1.0) / 10.0, 0.20, 0.70)
+    # Multi-year corroboration: a proven, same-role season TWO years back means
+    # the short prior-year sample is injury attrition, not role uncertainty -
+    # an injury-shortened year should not leave a genuine every-down player
+    # *less* trusted than a healthy one with the same active role. When the
+    # N-2 season clears the same games/role bar, fold its games into the
+    # evidence base (raise-only, capped) and let a high role_confidence lift
+    # the pull toward the observed role. See Garrett Wilson, NYJ 2026 wk1:
+    # 6 played games in 2025 (all 84-100% snaps) + a full 2024 at ~95% + a
+    # rank-1 chart, landing at 0.71 projected snaps purely because 6 == the WR
+    # minimum-games floor pinned `evidence` at its 0.20 minimum.
+    prior2_qualifies = (
+        np.isfinite(games2) & (games2 >= minimum_games)
+        & np.isfinite(active2) & (active2 >= 0.70)
+        & (prior_team == current_team)
+    )
+    effective_games = np.where(
+        prior2_qualifies,
+        np.minimum(games + np.nan_to_num(games2, nan=0.0), minimum_games + 12.0),
+        games,
+    )
+    evidence = np.clip((effective_games - minimum_games + 1.0) / 10.0, 0.20, 0.70)
     rank_bonus = np.where(ranks == 1, 0.08, np.where(ranks == 2, 0.03, 0.0))
-    standard_alpha = np.clip(0.28 + 0.42 * evidence + rank_bonus, 0.25, 0.78)
+    # A confidently measured role (the player's own last healthy games, before
+    # any injury gap) adds up to +0.10 of pull; only bites at role_confidence
+    # >= 0.80 so an uncertain sample gets nothing from it.
+    conf_bonus = np.where(
+        np.isfinite(confidence) & (confidence >= 0.80),
+        0.10 * np.clip((confidence - 0.80) / 0.15, 0.0, 1.0), 0.0)
+    standard_alpha = np.clip(0.28 + 0.42 * evidence + rank_bonus + conf_bonus, 0.25, 0.85)
     # Three qualifying games receive a 52% pull toward the observed active
     # role; it rises gently with more eligible evidence and can never exceed
     # a 75% snap projection on this short-sample path.
     short_alpha = np.clip(0.52 + 0.035 * (games - 3.0), 0.52, 0.60)
+    # A rank-1 returning starter sitting right at the minimum-games threshold
+    # must never get *less* pull than the sub-threshold short-sample path
+    # would have given him one game earlier - that discontinuity had "more
+    # evidence -> lower projection".
+    at_threshold = (ranks == 1) & np.isfinite(games) & (games <= minimum_games + 1)
+    standard_alpha = np.where(at_threshold, np.maximum(standard_alpha, short_alpha), standard_alpha)
     alpha = np.where(charted_short_sample, short_alpha, standard_alpha)
     recovered = whole + alpha * (restored - whole)
     recovered = np.where(charted_short_sample, np.minimum(recovered, 0.75), recovered)
+    # A multi-year every-down role, rank 1, high role_confidence, a genuinely
+    # near-full observed active share, and a full offseason removed from the
+    # terminal gap: the missed calendar is injury noise. Pull at least 85% of
+    # the way from the depressed whole-season share to the proven role. This
+    # is raise-only (np.maximum) and gated on every one of those checks.
+    fully_proven = (
+        prior2_qualifies & (ranks == 1)
+        & np.isfinite(confidence) & (confidence >= 0.85)
+        & (restored >= 0.85)
+    )
+    recovered = np.where(
+        fully_proven & standard_eligible,
+        np.maximum(recovered, whole + 0.85 * (restored - whole)),
+        recovered,
+    )
     values = np.where(eligible, recovered, whole)
     reasons = np.where(
         charted_short_sample, 'charted short-sample returning-starter recovery',
-        np.where(standard_eligible, 'continuous returning active/pre-absence role recovery', 'none'),
+        np.where(
+            standard_eligible & fully_proven,
+            'proven multi-year every-down role restored (injury-shortened prior year)',
+            np.where(
+                standard_eligible & prior2_qualifies,
+                'continuous returning role recovery (multi-year corroborated)',
+                np.where(standard_eligible,
+                         'continuous returning active/pre-absence role recovery', 'none'))),
     )
     if return_details:
         return values, eligible, reasons
@@ -2780,6 +2970,10 @@ def ourlads_player_audit_arrays(matches, teams, identity_keys, player_names):
     size = len(player_names)
     empty = {
         'source_rank': np.full(size, np.nan),
+        # position_occurrence of the strongest (lowest-rank) listing: 0 means
+        # the player IS in the primary source block for his position; >=1 means
+        # his only listing is a continuation / "second unit" overflow row.
+        'source_occurrence': np.full(size, np.nan),
         'source_status': np.full(size, '', dtype=object),
         'source_status_warning': np.full(size, '', dtype=object),
         'identity_match_method': np.full(size, '', dtype=object),
@@ -2835,6 +3029,8 @@ def ourlads_player_audit_arrays(matches, teams, identity_keys, player_names):
         source_rank = pd.to_numeric(pd.Series([row.get('source_rank', row.get('source_depth_rank'))]),
                                     errors='coerce').iloc[0]
         empty['source_rank'][index] = float(source_rank) if pd.notna(source_rank) else np.nan
+        _occ = pd.to_numeric(pd.Series([row.get('position_occurrence')]), errors='coerce').iloc[0]
+        empty['source_occurrence'][index] = float(_occ) if pd.notna(_occ) else np.nan
         empty['source_status'][index] = _audit_text(row.get('source_status', ''))
         empty['source_status_warning'][index] = _audit_text(row.get('source_status_warning', ''))
         empty['identity_match_method'][index] = _audit_text(row.get('match_method', ''))
@@ -3670,8 +3866,19 @@ def _target_margins_by_team(year, week):
 # so the next person to spot the wind column knows it was measured, and why
 # it was left out anyway. A real forecast feed would make this usable.
 # ---------------------------------------------------------------------------
-GAME_TOTAL_ELASTICITY = {'QB': 0.42, 'RB': 0.17, 'WR': 0.14, 'TE': 0.30}
-GAME_TOTAL_CLIP = (0.88, 1.15)
+# Per-position tune 2026-08-30/31 (backlog §8 #5, "GTE 2-season confirm").
+# k-sweep (§3g) said RB wants ~1.5-2x more implied-total elasticity, TE less,
+# QB/WR ~optimal. The 2024+2025 confirm (`--add v2_game_total_elasticity`,
+# .sweeps/gte_perpos_confirm_2024-2025.txt) CONFIRMED RB (0.17->0.28, full-pool
+# dMAE -0.024, CI excludes 0) and WR-stay-put, but REJECTED the TE cut
+# (0.30->0.22 made START-TE worse, +0.102 dMAE CI excludes 0 - the "TE wants
+# less" read was an artifact of the up-only k-sweep). So: RB 0.28, TE back to
+# 0.30, QB/WR unchanged; clip widened so a high-total game's RB multiplier
+# isn't clamped flat. `v2_game_total_elasticity` SHIPPED in DEFAULT_FEATURES
+# 2026-08-31 (the confirm above); still also reachable via the `game_env`
+# bundle flag.
+GAME_TOTAL_ELASTICITY = {'QB': 0.42, 'RB': 0.28, 'WR': 0.14, 'TE': 0.30}
+GAME_TOTAL_CLIP = (0.82, 1.24)
 INDOOR_ROOFS = ('dome', 'closed')
 # league-frequency-weighted to 1.0 at the ~28% of games played indoors
 VENUE_MULT = {
@@ -3680,6 +3887,133 @@ VENUE_MULT = {
     'WR': {'indoor': 1.028, 'outdoor': 0.989},
     'RB': {'indoor': 1.000, 'outdoor': 1.000},
 }
+
+# --- v2_weather_adjustment --------------------------------------------------
+# PER-STAT outdoor WIND effect. Two earlier passes failed: the v1 flat
+# fantasy-points penalty (wind redistributes, it does not just scale points),
+# and a v2 that carried an RB rush-up / QB-scramble-up term measured without
+# controls. This version keeps only what survives an out-of-sample fit with
+# the windy-stadium confound removed - see scripts/analyze_wind_response.py
+# and the WEATHER_WIND_SLOPE table below. Temperature is not modelled (no
+# measurable effect 2015-2025).
+#
+# Forecast feed: data/weather.py (Open-Meteo, keyless) for a live week;
+# recorded schedule wind for a backtest week.
+#
+# Fitted from scripts/analyze_wind_response.py (2015-2025, 39.5k outdoor
+# player-games): each stat / that player's own season mean, functional form +
+# knee chosen OUT OF SAMPLE (fit odd seasons -> score even, reversed), slope
+# re-fit after team-centering (removes the windy-stadium / run-heavy confound)
+# + game total, bootstrap 95% CI.
+#
+# IMPLEMENTED (a real directional effect that helps out of sample):
+#   QB  passing_attempts -0.44%/mph   passing_completions -0.62%
+#       passing_yards    -0.71%  (CI excl 0, best OOS gain +0.69%)
+#       passing_tds      -0.35%  (0.5x yards - per-game TD count is too noisy to
+#                                 fit directly, but it falls with yardage)
+#   WR  targets -0.26%   receptions -0.50%
+#       receiving_yards  -0.83%  (CI excl 0)     receiving_tds -1.00%
+#   TE  targets -0.27%   receptions -0.48%
+#       receiving_yards  -0.75%   receiving_tds  -0.75%
+#       (the TE story is efficiency: catch_rate -0.84%/10mph and yds/tgt
+#        -1.08%/10mph both CI-excl-0; carried here via receptions + yards)
+#
+# LEFT AT 1.0 (measured, did not survive):
+#   * RB - everything.  carries slope +0.017/10mph, CI [-0.009,+0.046]; the
+#     "more carries in wind" effect is entirely a windy-stadium confound and
+#     dies under team-centering.
+#   * QB rushing - "QBs scramble more" slope +0.175, CI [-0.058,+0.478], no OOS
+#     value.
+#   * QB interceptions / sacks and every direct TD stat - per-game rates too
+#     noisy to fit (CIs span zero widely).
+#   * TEMPERATURE - no measurable effect at any bucket; the cold block is gone.
+#
+# Knee is per-position (QB/WR effects start ~5 mph, TE ~8) and slope is per mph
+# of wind ABOVE that knee.  Sweep knobs: WEATHER_STRENGTH[_<POS>] scales depth,
+# WEATHER_WIND_KNEE_<POS> / WEATHER_KNEE_SHIFT move the knee.
+WEATHER_WIND_KNEE = {'QB': 5.0, 'WR': 5.0, 'TE': 8.0}
+WEATHER_WIND_KNEE_DEFAULT = 6.0
+WEATHER_WIND_SLOPE = {
+    'QB': {'passing_attempts': -0.0044, 'passing_completions': -0.0062,
+           'passing_yards': -0.0071, 'passing_tds': -0.0035},
+    'WR': {'targets': -0.0026, 'receptions': -0.0050,
+           'receiving_yards': -0.0083, 'receiving_tds': -0.0100},
+    'TE': {'targets': -0.0027, 'receptions': -0.0048,
+           'receiving_yards': -0.0075, 'receiving_tds': -0.0075},
+}
+WEATHER_STAT_CLAMP = (0.78, 1.25)   # no single stat multiplier outside this
+
+
+def _weather_strength(pos):
+    """Sweep knob (scripts/sweep_weather_strength.py): scales the depth of the
+    wind effect for one position. 0 = off, 1 = as-measured, >1 = deeper.
+    WEATHER_STRENGTH sets all four; WEATHER_STRENGTH_<POS> overrides one."""
+    try:
+        base = float(os.environ.get('WEATHER_STRENGTH', '1.0'))
+    except (TypeError, ValueError):
+        base = 1.0
+    try:
+        return max(0.0, float(os.environ.get(f'WEATHER_STRENGTH_{pos}', base)))
+    except (TypeError, ValueError):
+        return max(0.0, base)
+
+
+def _weather_knee(pos):
+    """Wind mph at which the effect starts, per position. Sweep-overridable:
+    WEATHER_WIND_KNEE_<POS> sets one, WEATHER_KNEE_SHIFT adds to every knee."""
+    base = WEATHER_WIND_KNEE.get(pos, WEATHER_WIND_KNEE_DEFAULT)
+    try:
+        base = float(os.environ.get(f'WEATHER_WIND_KNEE_{pos}', base))
+    except (TypeError, ValueError):
+        pass
+    try:
+        base += float(os.environ.get('WEATHER_KNEE_SHIFT', '0'))
+    except (TypeError, ValueError):
+        pass
+    return max(0.0, base)
+
+
+WEATHER_STRENGTH_BY_POS = {p: _weather_strength(p) for p in ('QB', 'RB', 'WR', 'TE')}
+
+
+def weather_stat_multipliers(pos, wind_mph, temp_f=None, is_outdoor=True):
+    """{stat_name: multiplier} for one outdoor game's wind. Empty dict for an
+    indoor game, missing wind, a position with no measured wind effect (RB), or
+    wind at/below the position's knee. ``temp_f`` is accepted for call-site
+    compatibility and ignored - temperature had no measurable effect."""
+    out = {}
+    if not is_outdoor or pos not in WEATHER_WIND_SLOPE:
+        return out
+    s = WEATHER_STRENGTH_BY_POS.get(pos, 1.0)
+    if s <= 0.0 or wind_mph is None or not np.isfinite(wind_mph):
+        return out
+    excess = max(0.0, float(wind_mph) - _weather_knee(pos))
+    if excess <= 0.0:
+        return out
+    for stat, slope in WEATHER_WIND_SLOPE[pos].items():
+        out[stat] = float(np.clip(1.0 + s * slope * excess, *WEATHER_STAT_CLAMP))
+    return out
+
+
+def weather_stat_multipliers_for_week(schedule_df, week, teams, pos, allow_forecast=True):
+    """team-index -> {stat: mult} for one week. Any team with no resolved
+    weather (bye / indoor / feed down) maps to an empty dict."""
+    blank = [{} for _ in teams]
+    if pos not in WEATHER_WIND_SLOPE:
+        return blank
+    try:
+        from data.weather import resolve_game_weather
+        wx = resolve_game_weather(schedule_df, week, allow_forecast=allow_forecast)
+    except Exception:
+        return blank
+    if not wx:
+        return blank
+    out = []
+    for team in teams:
+        obs = wx.get(str(team))
+        out.append(weather_stat_multipliers(pos, obs.wind_mph, obs.temp_f, obs.is_outdoor)
+                   if obs is not None else {})
+    return out
 
 
 def game_environment(schedule_df, week):
@@ -4623,8 +4957,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         'status': 'not applicable outside a live preseason cold start',
         'snapshot_teams': 0, 'matched_teams': 0, 'warnings': [],
     }
-    if cold_start and not historical_target:
-        ourlads_snapshot, ourlads_problem = load_ourlads_snapshot(year)
+    _hist_ourlads = 'v2_historical_ourlads' in feats
+    if cold_start and (not historical_target or _hist_ourlads):
+        ourlads_snapshot, ourlads_problem = load_ourlads_snapshot(
+            year, allow_historical=_hist_ourlads)
         if ourlads_problem:
             ourlads_source_contract['status'] = f'ignored: {ourlads_problem}'
             ourlads_source_contract['warnings'] = [ourlads_problem]
@@ -5538,6 +5874,21 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                 if ('v2_defense_prior_games_override' in feats
                                     and DEFENSE_PRIOR_GAMES_OVERRIDE is not None)
                                 else DEFENSE_PRIOR_GAMES)
+                if 'v2_coaching_aware_defense_prior' in feats:
+                    # Give a defense that reset its staff (HC+DC, or a lone new
+                    # HC) a shorter prior leash, and one that only promoted a
+                    # new coordinator under a retained HC a LONGER one - both
+                    # directions are what the year-over-year persistence and
+                    # the out-of-sample blend-weight sweep want (see
+                    # data/coaching_changes.py + scripts/analyze_coaching_
+                    # defense_prior.py). Teams with no cohort signal keep
+                    # prior_games_ unchanged, so this is safe to apply always.
+                    try:
+                        from data.coaching_changes import defense_prior_games_by_team
+                        prior_games_ = defense_prior_games_by_team(
+                            int(year), float(prior_games_), pos=pos)
+                    except Exception:
+                        pass
                 matchup_matrix = blend_defense_prior(
                     matchup_matrix, prior_matrix, _defense_game_evidence(
                         pos_rows, game_universe=hist, team_col=team_col),
@@ -5635,6 +5986,11 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         ourlads_role_rank = np.full(len(cur), np.nan)
         ourlads_role_floor = np.full(len(cur), np.nan)
         ourlads_role_label = np.full(len(cur), '', dtype=object)
+        # Charted only as a continuation / "second unit" overflow row - the
+        # chart affirmatively deprioritizes him. Set in the role-floor block
+        # below; consumed by the RB allocator (deep-reserve credibility stop)
+        # and by _role_base (drops the interrupted pre-injury role credit).
+        continuation_only = np.zeros(len(cur), dtype=bool)
         ourlads_audit = ourlads_player_audit_arrays(
             ourlads_signal.get('matches', pd.DataFrame()), team_keys_rv,
             identity_keys_rv, cur[name_col].to_numpy(dtype=object))
@@ -5819,7 +6175,30 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                         (np.isfinite(ourlads_role_rank) & (ourlads_role_rank >= 3))
                         | (~np.isfinite(ourlads_role_rank) & team_has_chart_arr)
                     )
-                    deep_bench_target = np.minimum(player_share, min(default_share, 0.03))
+                    # Also pull down a player the chart lists ONLY as a
+                    # `position_occurrence >= 1` continuation row (an Ourlads
+                    # "second unit" overflow - e.g. Kendre Miller, NO 2026,
+                    # charted in the RB4/RB5 SECOND column behind the primary
+                    # RB block AND lc_red) even when he has a real prior role,
+                    # so stale usage does not outrank the current chart's
+                    # explicit "deep reserve" placement. His nominal depth_rank
+                    # (4) is a two-column-layout artifact; the occurrence flag
+                    # is what marks him a genuine 5th-stringer. source_occurrence
+                    # is already identity-matched and row-aligned to `cur`.
+                    # Standing chart rule (not flag-gated): a continuation-only
+                    # listing is a hard "no relevant role" for the RB allocator.
+                    continuation_only = (
+                        np.isfinite(ourlads_audit['source_occurrence'])
+                        & (ourlads_audit['source_occurrence'] >= 1)
+                    )
+                    deep_or_unlisted = deep_or_unlisted | continuation_only
+                    # A plain deep/unlisted fallback is pulled toward ~3%; a
+                    # continuation-only chart listing (the chart affirmatively
+                    # puts him in a second unit) is pulled harder, toward ~1.5%.
+                    deep_bench_target = np.where(
+                        continuation_only,
+                        np.minimum(player_share, 0.015),
+                        np.minimum(player_share, min(default_share, 0.03)))
                     player_share = np.where(
                         deep_or_unlisted,
                         player_share + depth_chart_decay * (deep_bench_target - player_share),
@@ -5835,6 +6214,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     pre_absence_share=player_pre_absence_share,
                     depth_rank=np.where(player_availability > 0.01, ourlads_role_rank, np.nan),
                     terminal_gap_weeks=player_terminal_gap_weeks,
+                    prior2_games=player_prior2_games,
+                    prior2_active_share=player_prior2_active_share,
+                    role_confidence=cur['role_confidence'].to_numpy(dtype=float),
                     return_details=True,
                 )
                 preseason_role_source = np.where(returning_role_restored, returning_role_reason,
@@ -6024,6 +6406,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 ),
                 'draft_capital': pd.to_numeric(cur.get('draft_number', pd.Series(np.nan, index=cur.index)), errors='coerce').to_numpy(dtype=float),
                 'is_rookie': cur.get('is_rookie_flag', pd.Series(False, index=cur.index)).to_numpy(),
+                # Chart lists him only as a continuation/"second unit" row.
+                # The allocator treats this as a deep-reserve credibility stop
+                # (no relevant role off a single injury), and _role_base drops
+                # its interrupted-season / incumbent pre-injury-role credit:
+                # a current second-unit placement outranks a stale pre-gap role
+                # for a Week-1 projection.
+                'chart_deprioritized': np.asarray(continuation_only, dtype=bool),
                 'status': cur.get('status', pd.Series('', index=cur.index)).to_numpy(dtype=object),
                 'availability': cur[name_col].map(
                     lambda player: injury_profiles.get(player, {}).get('plays_probability', 1.0)).to_numpy(dtype=float),
@@ -6147,9 +6536,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 # A snap-anchored allocation can legitimately land well above
                 # 2x a player's depressed prior-team per-game rate (an
                 # every-down back who changed teams off a committee year), so
-                # widen the ratio clip when that path is on.
-                _rate_scale_hi = 2.75 if 'v2_rb_snap_anchored_volume' in feats else 2.00
-                _rate_scale_lo = 0.15 if 'v2_rb_snap_anchored_volume' in feats else 0.20
+                # widen the ratio clip when that path is on - scaled by the
+                # same RB_VOL_TILT_STRENGTH knob that blends the allocation, so
+                # a half-strength tilt gets a half-widened clip.
+                if 'v2_rb_snap_anchored_volume' in feats:
+                    from data.rb_role_allocator import RB_VOL_TILT_STRENGTH as _rb_vol_ts
+                    _ts = float(np.clip(_rb_vol_ts, 0.0, 1.0))
+                else:
+                    _ts = 0.0
+                _rate_scale_hi = 2.00 + _ts * 0.75
+                _rate_scale_lo = 0.20 - _ts * 0.05
                 rb_carry_rate_scale = np.where(
                     np.isfinite(prior_carry_rate) & (prior_carry_rate > 0.05),
                     np.clip(np.divide(rb_carry_allocation, prior_carry_rate,
@@ -6649,6 +7045,25 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         env_mult = (_game_env_multiplier(env, cur['Team'].astype(str).to_numpy(), pos, league_implied,
                                          use_total=use_total, use_venue=use_venue)
                     if env else np.ones(len(cur)))
+        # Per-STAT outdoor wind / cold redistribution (data/weather.py):
+        # recorded schedule weather for a past week, Open-Meteo forecast for a
+        # live one. A list of {stat: mult} dicts, one per player row; applied
+        # per-stat in the proj_cols loop below (NOT folded into env_mult -
+        # this one pushes pass stats down while pushing QB/RB rush stats up).
+        weather_stat_mult = None
+        if 'v2_weather_adjustment' in feats and pos in ('QB', 'RB', 'WR', 'TE'):
+            weather_stat_mult = weather_stat_multipliers_for_week(
+                schedule_df, week, cur['Team'].astype(str).to_numpy(), pos,
+                allow_forecast=not historical_target)
+            if cold_start and 'v2_cold_start_regression' in feats:
+                r = 1.0 - COLD_START_MULTIPLIER_REGRESSION
+                weather_stat_mult = [{k: 1.0 + r * (v - 1.0) for k, v in d.items()}
+                                     for d in weather_stat_mult]
+
+        def _wx(stat):
+            if not weather_stat_mult:
+                return 1.0
+            return np.array([d.get(stat, 1.0) for d in weather_stat_mult], dtype=float)
 
         if cold_start and 'v2_cold_start_regression' in feats:
             pace_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (pace_mult - 1.0)
@@ -6687,7 +7102,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     # - this factor is 1.0 for him regardless of his own
                     # injury status, so that path is untouched.
                     vacancy_volume[stat] = np.clip(
-                        proj_cols[stat] * pace_mult.to_numpy() * env_mult
+                        proj_cols[stat] * pace_mult.to_numpy() * env_mult * _wx(stat)
                         * qb_nonstarter_volume_factor, 0.0, None)
 
         for stat in proj_cols:
@@ -6699,8 +7114,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # happens to be dominated by one such game - same class of
             # small-sample artifact already floored in data/draft_projections.py
             # (see that file's matching comment), applied here too.
+            _wx_stat = _wx(stat)
             proj_cols[stat] = np.clip(
-                proj_cols[stat] * pace_mult.to_numpy() * inj_mult.to_numpy() * env_mult, 0.0, None)
+                proj_cols[stat] * pace_mult.to_numpy() * inj_mult.to_numpy() * env_mult * _wx_stat,
+                0.0, None)
             trace = stat_trace.get(stat)
             if trace is not None:
                 trace['pace_multiplier'] = pace_mult.to_numpy(dtype=float)
@@ -6708,6 +7125,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 trace['league_pace'] = np.full(len(cur), league_pace if league_pace else np.nan)
                 trace['availability_multiplier'] = inj_mult.to_numpy(dtype=float)
                 trace['environment_multiplier'] = np.asarray(env_mult, dtype=float)
+                if weather_stat_mult is not None:
+                    trace['weather_stat_multiplier'] = np.asarray(_wx_stat, dtype=float)
                 trace['environment_status'] = np.full(
                     len(cur), 'modeled' if 'game_env' in feats and env else
                     ('feature enabled; no usable line' if 'game_env' in feats else 'feature disabled'),
@@ -7387,6 +7806,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             result, rb_vacancy_frame = redistribute_rb_vacancy_with_allocator(
                 result, injury_profiles, as_of_year=year,
                 injury_provenance=injury_provenance,
+                receiver_pecking_order='v2_receiver_vacancy_pecking_order' in feats,
             )
             rb_vacancy_ledger = (rb_vacancy_frame.to_dict('records')
                                  if rb_vacancy_frame is not None and not rb_vacancy_frame.empty else [])

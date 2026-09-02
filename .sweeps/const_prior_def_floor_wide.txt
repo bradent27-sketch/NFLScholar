@@ -72,3 +72,80 @@ years=[2022, 2023, 2024, 2025] weeks=4-16 scoring=Full PPR
 2023 w6 done
 2023 w7 done
 2023 w8 done
+2023 w9 done
+2023 w10 done
+2023 w11 done
+2023 w12 done
+2023 w13 done
+2023 w14 done
+2023 w15 done
+2023 w16 done
+2026-09-01 21:18:56.983 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 21:18:59.239 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2024 w4 done
+2024 w5 done
+2024 w6 done
+2024 w7 done
+2024 w8 done
+2024 w9 done
+2024 w10 done
+2024 w11 done
+2024 w12 done
+2024 w13 done
+2024 w14 done
+2024 w15 done
+2024 w16 done
+2026-09-01 22:23:08.352 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 22:23:09.655 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w4 done
+2025 w5 done
+2025 w6 done
+2025 w7 done
+2025 w8 done
+2025 w9 done
+2025 w10 done
+2025 w11 done
+2025 w12 done
+2025 w13 done
+2025 w14 done
+2025 w15 done
+2025 w16 done
+
+==============================================================================
+PRIOR_SEASON_DEFENSE_RECENCY_FLOOR  (set)  vs shipped 0.8
+==============================================================================
+
+--- value 0.9 ---
+  ALL        n=15852  MAE 4.475->4.475  dMAE -0.000  w-l 31-20 (p=0.16)  CI[-0.001,+0.000]
+  QB         n=1648   MAE 6.691->6.690  dMAE -0.001  w-l 28-22 (p=0.48)  CI[-0.003,+0.000]
+  RB         n=4167   MAE 4.429->4.429  dMAE -0.001  w-l 32-18 (p=0.06)  CI[-0.002,+0.001]
+  WR         n=6664   MAE 4.409->4.409  dMAE +0.000  w-l 26-20 (p=0.46)  CI[-0.000,+0.001]
+  TE         n=3373   MAE 3.578->3.578  dMAE +0.001  w-l 16-23 (p=0.34)  CI[-0.000,+0.001]
+  START-QB   n=1154   MAE 6.096->6.092  dMAE -0.004  w-l 26-24 (p=0.89)  CI[-0.012,+0.017]
+  START-RB   n=1815   MAE 6.275->6.276  dMAE +0.001  w-l 33-19 (p=0.07)  CI[-0.017,+0.017]
+  START-WR   n=2449   MAE 6.339->6.343  dMAE +0.004  w-l 24-22 (p=0.88)  CI[-0.002,+0.013]
+  START-TE   n=897    MAE 5.325->5.341  dMAE +0.016  w-l 17-22 (p=0.52)  CI[-0.020,+0.056]
+
+--- value 0.95 ---
+  ALL        n=15852  MAE 4.475->4.475  dMAE -0.000  w-l 28-24 (p=0.68)  CI[-0.001,+0.000]
+  QB         n=1648   MAE 6.691->6.689  dMAE -0.002  w-l 32-20 (p=0.13)  CI[-0.003,-0.000] *
+  RB         n=4167   MAE 4.429->4.429  dMAE -0.001  w-l 30-20 (p=0.20)  CI[-0.002,+0.001]
+  WR         n=6664   MAE 4.409->4.409  dMAE +0.000  w-l 23-25 (p=0.89)  CI[-0.001,+0.001]
+  TE         n=3373   MAE 3.578->3.578  dMAE +0.001  w-l 19-26 (p=0.37)  CI[-0.000,+0.001]
+  START-QB   n=1154   MAE 6.096->6.100  dMAE +0.004  w-l 29-23 (p=0.49)  CI[-0.011,+0.030]
+  START-RB   n=1815   MAE 6.275->6.261  dMAE -0.014  w-l 29-22 (p=0.40)  CI[-0.034,+0.000]
+  START-WR   n=2449   MAE 6.339->6.345  dMAE +0.006  w-l 25-23 (p=0.89)  CI[-0.001,+0.017]
+  START-TE   n=897    MAE 5.325->5.364  dMAE +0.039  w-l 21-23 (p=0.88)  CI[-0.018,+0.127]
+
+--- value 1.0 ---
+  ALL        n=15852  MAE 4.475->4.475  dMAE -0.000  w-l 26-26 (p=1.00)  CI[-0.001,+0.000]
+  QB         n=1648   MAE 6.691->6.689  dMAE -0.002  w-l 29-23 (p=0.49)  CI[-0.004,-0.000] *
+  RB         n=4167   MAE 4.429->4.429  dMAE -0.001  w-l 28-24 (p=0.68)  CI[-0.003,+0.001]
+  WR         n=6664   MAE 4.409->4.410  dMAE +0.000  w-l 17-26 (p=0.22)  CI[-0.001,+0.001]
+  TE         n=3373   MAE 3.578->3.578  dMAE +0.000  w-l 22-25 (p=0.77)  CI[-0.001,+0.002]
+  START-QB   n=1154   MAE 6.096->6.086  dMAE -0.010  w-l 25-25 (p=1.00)  CI[-0.029,+0.019]
+  START-RB   n=1815   MAE 6.275->6.267  dMAE -0.008  w-l 29-20 (p=0.25)  CI[-0.026,+0.007]
+  START-WR   n=2449   MAE 6.339->6.347  dMAE +0.009  w-l 21-28 (p=0.39)  CI[-0.002,+0.022]
+  START-TE   n=897    MAE 5.325->5.398  dMAE +0.073  w-l 19-26 (p=0.37)  CI[+0.007,+0.159] *
+
+(dMAE negative = the swept value beats the shipped constant. * = 95% CI excludes 0.)

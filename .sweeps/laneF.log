@@ -1,1 +1,7 @@
 Lane F waiting for a free lane (D or E to finish) Tue Sep  1 20:23:33 CDT 2026
+  lane E freed Wed Sep  2 01:41:41 CDT 2026
+  mg ok 4894MB Wed Sep  2 01:41:42 CDT 2026
+[F1] TE scheme weight sweep 0.6-1.0 (2024+2025 wk2-18)
+  done Wed Sep  2 06:55:11 CDT 2026
+  mg ok 3823MB Wed Sep  2 06:55:11 CDT 2026
+[F2] WR scheme weight sweep 0.3-0.7 (2024+2025 wk2-18)

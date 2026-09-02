@@ -453,12 +453,32 @@ EARLY_SEASON_DEPTH_CHART_DECAY_WEEKS = 4
 # Extra weight multiplier on a past game whose opponent is the SAME team a
 # player faces again this week, stacked on top of its ordinary recency
 # weight - "there should be some weight allocated to it (not too much but a
-# decent amount)" per explicit request. 1.6x a same-recency ordinary game:
-# enough to matter (a recent rematch data point can materially move a rate)
-# without letting one game override the rest of a season's evidence, which
-# is what an override (rather than a weight bump) would risk on a small
-# sample.
-REMATCH_WEIGHT_MULT = 1.6
+# decent amount)" per explicit request. Originally 1.6x a same-recency
+# ordinary game, on the reasoning that a rematch data point should matter
+# without overriding a season of evidence.
+#
+# SET TO 1.0 (i.e. no bump at all) 2026-09-02, after the first backtest this
+# constant ever had. It was measured twice:
+#   * narrow sweep (2024-25 wk4-15, values 1.0/1.3/2.0/2.5) found a clean
+#     MONOTONE gradient - every value BELOW 1.6 helped and every value above
+#     hurt: 1.0 gave ALL -0.001 (CI excl 0) and START-RB -0.016 (CI excl 0),
+#     while 2.0 gave +0.001 and 2.5 gave +0.003 (both CI excl 0).
+#   * wide confirm (2022-25 wk4-16, values 1.0/1.2/1.3) reproduced it at all
+#     three: ALL -0.001 with a CI excluding 0 every time, nothing harmed.
+#     At 1.0 specifically: START-QB -0.021 (22-10 weeks), START-TE -0.004.
+#
+# The effect is small in absolute terms but it is consistent across two
+# independent windows and every tested value, which is more than most
+# hand-set constants in this file can claim. Reading: the rematch bump was
+# over-weighting the previous meeting - a single game against the same
+# opponent is not more informative than an equally recent game against a
+# different one, once opponent quality is already adjusted for elsewhere in
+# the model (build_team_game_quality_adjusted_matchup does exactly that).
+#
+# Left as a named constant rather than deleting the rematch code path: 1.0
+# makes it inert, the mechanism stays available and testable, and the
+# measurement above stays attached to the thing it measured.
+REMATCH_WEIGHT_MULT = 1.0
 
 # Bound on the forward DEFENSE matchup multiplier (_overall_matchup_multiplier
 # / _role_adjusted_multiplier / _continuous_role_adjusted_multiplier).

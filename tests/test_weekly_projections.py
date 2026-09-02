@@ -19,6 +19,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 pd.options.mode.string_storage = "python"
@@ -540,10 +541,42 @@ def test_weighted_player_rates_weighs_recent_games_more():
     assert out.loc['A', 'targets'] > flat_avg
 
 
-def test_weighted_player_rates_upweights_a_rematch_game():
-    # Two otherwise-identical-recency games at different values; the one
-    # against the SAME team as the upcoming opponent should pull the rate
-    # toward itself more than an ordinary equally-recent game would.
+def test_rematch_bump_is_neutral_at_the_shipped_multiplier():
+    """REMATCH_WEIGHT_MULT ships at 1.0 as of 2026-09-02, so a rematch game
+    must weigh EXACTLY the same as an equally-recent ordinary game.
+
+    This test previously asserted the opposite - that a rematch is upweighted
+    - which was the shipped behaviour at 1.6. That value was never backtested
+    until now, and when it was, every value below 1.6 helped and every value
+    above hurt, monotonically, across two independent windows. Opponent
+    quality is already adjusted for in
+    build_team_game_quality_adjusted_matchup, so a second helping of "same
+    opponent" was double-counting. The mechanism is retained and still
+    exercised by the test below; only its shipped strength changed."""
+    df_rematch = weekly([
+        {'name': 'A', 'week': 5, 'position': 'WR', 'opponent_team': 'KC', 'targets': 10},
+        {'name': 'A', 'week': 4, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 2},
+    ])
+    with_rematch, _ = wp._weighted_player_rates(
+        df_rematch, 'name', ['targets'], as_of_week=6,
+        matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'KC'})
+
+    df_no_rematch = weekly([
+        {'name': 'A', 'week': 5, 'position': 'WR', 'opponent_team': 'SEA', 'targets': 10},
+        {'name': 'A', 'week': 4, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 2},
+    ])
+    without_rematch, _ = wp._weighted_player_rates(
+        df_no_rematch, 'name', ['targets'], as_of_week=6,
+        matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'KC'})
+
+    assert with_rematch.loc['A', 'targets'] == pytest.approx(
+        without_rematch.loc['A', 'targets']),         "at REMATCH_WEIGHT_MULT=1.0 a rematch must carry no extra weight"
+
+
+def test_rematch_mechanism_still_works_when_the_multiplier_is_raised(monkeypatch):
+    """The code path is retained, not deleted - 1.0 only makes it inert. If
+    the constant is ever raised again this proves the wiring still bites."""
+    monkeypatch.setattr(wp, 'REMATCH_WEIGHT_MULT', 2.0)
     df_rematch = weekly([
         {'name': 'A', 'week': 5, 'position': 'WR', 'opponent_team': 'KC', 'targets': 10},
         {'name': 'A', 'week': 4, 'position': 'WR', 'opponent_team': 'BUF', 'targets': 2},

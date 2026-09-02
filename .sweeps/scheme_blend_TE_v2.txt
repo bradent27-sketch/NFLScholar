@@ -1,0 +1,183 @@
+2026-09-02 01:41:47.263 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.277 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.278 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.278 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.283 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.284 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.284 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.285 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.285 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.287 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.287 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.288 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.288 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.288 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.289 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.289 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.290 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.290 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.291 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.291 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.291 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.292 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.303 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.304 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.305 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.305 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.306 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.307 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.308 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.309 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.313 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.335 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.353 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.354 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.354 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.355 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.355 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.356 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.356 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.357 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.363 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+position=TE weights=[0.6, 0.7, 0.8, 0.9, 1.0]
+years=[2024, 2025] weeks=2-18 stats=['targets', 'receptions', 'receiving_yards']
+builds ~= 204
+
+2026-09-02 01:41:47.438 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:47.439 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 01:41:47.439 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:48.100 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:49.076 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:49.076 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 01:41:49.577 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:41:53.408 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 01:42:04.991 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2024 w2 done  [INERT - no row moved]
+2024 w3 done
+2024 w4 done
+2024 w5 done
+2024 w6 done
+2024 w7 done
+2024 w8 done
+2024 w9 done
+2024 w10 done
+2024 w11 done
+2024 w12 done
+2024 w13 done
+2024 w14 done
+2024 w15 done
+2024 w16 done
+2024 w17 done
+2024 w18 done
+2026-09-02 04:05:15.877 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 04:05:17.487 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w2 done  [INERT - no row moved]
+2025 w3 done
+2025 w4 done
+2025 w5 done
+2025 w6 done
+2025 w7 done
+2025 w8 done
+2025 w9 done
+2025 w10 done
+2025 w11 done
+2025 w12 done
+2025 w13 done
+2025 w14 done
+2025 w15 done
+2025 w16 done
+2025 w17 done
+2025 w18 done
+
+
+====================================================================================================
+FIXED SCHEME WEIGHT SWEEP - TE   (32 weeks where the feature actually moved a row)
+====================================================================================================
+
+--- targets ---
+weight   scope             n  MAE base   MAE var     dMAE      w-l              95% CI
+0.60     TE             2239     1.603     1.597   -0.006    20-12     [-0.010,-0.003] *
+0.60     START-TE        588     2.384     2.362   -0.022    22-10     [-0.055,+0.002]
+0.70     TE             2239     1.603     1.596   -0.007    21-11     [-0.011,-0.003] *
+0.70     START-TE        588     2.384     2.361   -0.024    20-12     [-0.057,+0.005]
+0.80     TE             2239     1.603     1.596   -0.008     23-9     [-0.012,-0.003] *
+0.80     START-TE        588     2.384     2.357   -0.027    19-13     [-0.066,+0.004]
+0.90     TE             2239     1.603     1.595   -0.008    22-10     [-0.013,-0.003] *
+0.90     START-TE        588     2.384     2.356   -0.028    20-12     [-0.063,-0.003] *
+1.00     TE             2239     1.603     1.595   -0.009    21-11     [-0.014,-0.003] *
+1.00     START-TE        588     2.384     2.346   -0.038    20-12     [-0.083,-0.003] *
+
+--- receptions ---
+weight   scope             n  MAE base   MAE var     dMAE      w-l              95% CI
+0.60     TE             2239     1.303     1.297   -0.006     24-8     [-0.010,-0.002] *
+0.60     START-TE        588     1.912     1.888   -0.024    21-11     [-0.050,-0.001] *
+0.70     TE             2239     1.303     1.296   -0.007     23-9     [-0.011,-0.002] *
+0.70     START-TE        588     1.912     1.879   -0.033     23-9     [-0.064,-0.005] *
+0.80     TE             2239     1.303     1.296   -0.007     24-8     [-0.011,-0.002] *
+0.80     START-TE        588     1.912     1.879   -0.033     23-9     [-0.061,-0.006] *
+0.90     TE             2239     1.303     1.296   -0.007    22-10     [-0.012,-0.002] *
+0.90     START-TE        588     1.912     1.888   -0.024     23-9     [-0.054,+0.004]
+1.00     TE             2239     1.303     1.296   -0.007    22-10     [-0.012,-0.001] *
+1.00     START-TE        588     1.912     1.879   -0.033    22-10     [-0.066,-0.002] *
+
+--- receiving_yards ---
+weight   scope             n  MAE base   MAE var     dMAE      w-l              95% CI
+0.60     TE             2239    15.221    15.202   -0.019    14-18     [-0.067,+0.024]
+0.60     START-TE        588    23.353    23.143   -0.210    17-15     [-0.499,+0.065]
+0.70     TE             2239    15.221    15.200   -0.021    14-18     [-0.075,+0.028]
+0.70     START-TE        588    23.353    23.050   -0.303    18-14     [-0.587,-0.030] *
+0.80     TE             2239    15.221    15.200   -0.020    14-18     [-0.080,+0.036]
+0.80     START-TE        588    23.353    23.113   -0.241    19-13     [-0.512,+0.049]
+0.90     TE             2239    15.221    15.202   -0.018    14-18     [-0.083,+0.044]
+0.90     START-TE        588    23.353    23.154   -0.200    19-13     [-0.457,+0.063]
+1.00     TE             2239    15.221    15.205   -0.016    14-18     [-0.088,+0.052]
+1.00     START-TE        588    23.353    23.149   -0.204    18-14     [-0.553,+0.150]
+
+
+====================================================================================================
+CROSS-SEASON CHECK - each season scored independently (the decisive test)
+====================================================================================================
+
+--- targets ---
+weight   scope           2024 dMAE    2025 dMAE            agree?
+0.60     TE                 -0.005       -0.008               yes
+0.60     START-TE           -0.027       -0.017               yes
+0.70     TE                 -0.005       -0.009               yes
+0.70     START-TE           -0.027       -0.020               yes
+0.80     TE                 -0.006       -0.009               yes
+0.80     START-TE           -0.036       -0.020               yes
+0.90     TE                 -0.006       -0.010               yes
+0.90     START-TE           -0.035       -0.023               yes
+1.00     TE                 -0.007       -0.010               yes
+1.00     START-TE           -0.043       -0.035               yes
+
+--- receptions ---
+weight   scope           2024 dMAE    2025 dMAE            agree?
+0.60     TE                 -0.005       -0.007               yes
+0.60     START-TE           -0.020       -0.029               yes
+0.70     TE                 -0.005       -0.008               yes
+0.70     START-TE           -0.041       -0.024               yes
+0.80     TE                 -0.006       -0.008               yes
+0.80     START-TE           -0.041       -0.026               yes
+0.90     TE                 -0.005       -0.008               yes
+0.90     START-TE           -0.035       -0.014               yes
+1.00     TE                 -0.005       -0.009               yes
+1.00     START-TE           -0.040       -0.028               yes
+
+--- receiving_yards ---
+weight   scope           2024 dMAE    2025 dMAE            agree?
+0.60     TE                 -0.033       -0.005               yes
+0.60     START-TE           -0.441       +0.027   NO - sign flips
+0.70     TE                 -0.032       -0.010               yes
+0.70     START-TE           -0.577       -0.021               yes
+0.80     TE                 -0.029       -0.012               yes
+0.80     START-TE           -0.543       +0.060   NO - sign flips
+0.90     TE                 -0.022       -0.014               yes
+0.90     START-TE           -0.490       +0.089   NO - sign flips
+1.00     TE                 -0.015       -0.017               yes
+1.00     START-TE           -0.510       +0.097   NO - sign flips
+
+(A weight that flips sign between seasons is not a finding, whatever the pooled
+ number says. Ship only what holds in both.)
+
+(dMAE negative = the fixed weight beats DEFAULT_FEATURES. * = 95% CI excludes 0.)

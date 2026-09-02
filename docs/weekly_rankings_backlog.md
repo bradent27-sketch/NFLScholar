@@ -54,6 +54,40 @@ Drop the whole archive from the repo once the model is finished and calibrated
 
 ---
 
+## 0b. OPEN QUEUE as of 2026-09-02 (post-sweep)
+
+Everything else is either shipped, retired with a written verdict, or an
+unbuilt parking-lot idea (§3 reconciliation, §4). These two are the real
+remaining work.
+
+**1. Startable TE vs the prior-season defense channel — NEW, unexplained.**
+Three independent runs on the night of 2026-09-01 point the same way, on a
+**shipped** flag (`v2_defense_prior`):
+
+| run | finding |
+|---|---|
+| coaching verdict, Leg A | removing the prior-defense channel entirely → START-TE **−0.058** CI[−0.101,−0.015] |
+| `PRIOR_SEASON_DEFENSE_RECENCY_FLOOR` wide | 1.00 → START-TE **+0.073** CI[+0.007,+0.159] |
+| `RECENCY_DECAY` fine | 0.86 → START-TE **−0.030** CI[−0.066,−0.004] |
+
+All three say the prior-season defense channel is mishandling tight ends.
+**Caveat before acting:** every one is weeks 2–10 (or wk4–16) and one scope of
+four, so this could still be multiple comparisons — the same trap the coaching
+work fell into three times. Needs its own confirm on a full-season window with
+a pre-registered decision rule before anything changes. Do NOT tune
+`DEFENSE_PRIOR_GAMES` or the floor off these numbers alone.
+
+**2. `v2_venue_mult` — built, gated, tests pass, never backtested standalone.**
+The last untested piece of the unbundled `game_env`; its sibling
+`v2_game_total_elasticity` shipped on its own confirm. One
+`backtest_component.py --add v2_venue_mult` run answers it.
+
+**In flight (do not queue against these):** Lane F — scheme blend weight,
+cross-season 2024+2025. Lane G — WR wind-strength ablation + the startable
+calibration prediction dump.
+
+---
+
 ## 1. 2026-08-29 session — status of each item
 
 | Item | Status | Notes |
@@ -163,29 +197,56 @@ TD-only). `v2_vacancy` and `v2_fantasypros_availability` are untestable this way
 
 ---
 
-## 3. Model pieces built + backtested, NOT shipped (candidate flags)
+## 3. FULL FLAG RECONCILIATION — every flag, current status (swept 2026-09-02)
 
-- **`v2_scheme_matchup`** — man/zone, scheme wins outright. Real TE win (START-TE
-  receiving_yards dMAE −0.052, directionally strong, borderline CI); WR wash. Off.
-- **`v2_scheme_alignment_blend`** — evidence-weighted ~50/50. **Best WR result of any
-  variant tested** (START-WR receiving_yards dMAE −0.297, CI excludes 0); for TE it
-  dilutes scheme-alone. Off.
-- **TE scheme:alignment fixed-weight blend sweep** (0.6/0.7/0.75/0.8/0.9) — was running
-  overnight to find the ratio that keeps alignment context but weights it below 50/50.
-  **Resolution not in the log — unknown.** `scripts/sweep_scheme_blend_weight.py`.
-- **WR fixed-weight blend sweep** (0.3/0.4/0.6/0.7) — confirmatory; evidence-weighted
-  default already looked best for WR. **Resolution unknown.**
-- **`v2_game_total_elasticity`** and **`v2_venue_mult`** — the rejected `game_env`
-  bundle (+0.012 MAE) unbundled into its two real parts (implied-total scaling,
-  indoor/outdoor venue). Built, tests pass, **never backtested standalone.**
-- **`v2_cold_start_regression`** — 25% pull-to-neutral on defense/context multipliers
-  at true cold start. Built, backtested, **not robust** (n=5 Week-1s only;
-  strength sweep 0.10/0.25/0.40/0.60 non-monotonic = noise). Not recommended;
-  code retained.
+23 shipped, 15 built-but-off. Every one of the 15 is accounted for below; there
+are no unknowns left in this list.
 
-**Rejected, code retained:** `game_env` bundle (+0.012 MAE), `volume_efficiency`
-(+0.051 MAE). Also built-but-off and not standalone-backtested: `v2_scheme_matchup`
-kin above.
+### Genuinely open — built and worth testing
+
+- **`v2_venue_mult`** — indoor/outdoor venue scaling, the other half of the
+  unbundled `game_env`. Built, gated (2 call sites), tests pass, **never
+  backtested standalone.** Its sibling `v2_game_total_elasticity` shipped
+  2026-08-31 on its own confirm, so this is the last untested piece of that
+  bundle. **This is the #1 hanging item.**
+- **`v2_scheme_matchup` / `v2_scheme_alignment_blend`** — scheme wins outright vs
+  an evidence-weighted blend. Scheme has a real TE win (START-TE receiving_yards
+  −0.052, borderline CI); the blend has the best WR result of any variant ever
+  tested (START-WR receiving_yards −0.297, CI excludes 0) but dilutes TE.
+  **IN FLIGHT:** Lane F is running the cross-season fixed-weight sweep on
+  2024+2025 (`scripts/sweep_scheme_blend_weight2.py`) — ship/kill/needs-2023.
+  The old "resolution unknown" entries are RESOLVED as a cause: the original
+  sweep could never have worked (2/3 of its seasons had no PFF weekly archive,
+  so the feature was inert; and it rebuilt the base per weight with no progress
+  output). See that script's header.
+
+### Rejected on evidence, code retained
+
+- **`v2_coaching_aware_defense_prior`** — **RETIRED 2026-09-02.** Six tests, three
+  with OOS validation. Full post-mortem: `docs/archive/coaching_defense_prior_RETIRED.md`.
+- **`game_env`** bundle (+0.012 MAE) — superseded by unbundling.
+- **`volume_efficiency`** (+0.051 MAE).
+- **`v2_rb_snap_anchored_volume`** — removed from DEFAULT 2026-08-30; cold-start
+  ablation showed removing it HELPS RB (START-RB −0.288).
+- **`v2_cold_start_regression`** — not robust (n=5 Week-1s; strength sweep
+  non-monotonic = noise).
+
+### Correctly off — not candidates, nothing to test
+
+- **`role_matchup`**, **`teammate_vacancy`** — legacy aliases, SUPERSEDED. Each
+  gates the identical branch as its v2 replacement already in DEFAULT
+  (`v2_continuous_roles`, `v2_vacancy`), which adds capability on top. Turning
+  them on changes nothing.
+- **`v2_defense_prior_games_override`** — sweep hook, never set outside a sweep.
+- **`v2_historical_ourlads`** — backtest-only (lets a cold-start backtest read the
+  frozen pre-Week-1 archive). Zero live-board effect by design.
+
+### Named but NEVER BUILT — zero gating code, ideas only
+
+`redzone_tds`, `role_trend`, `volume_faced`. Confirmed by grep: each appears once
+in `MODEL_FEATURES` and has **no `'<flag>' in feats` branch anywhere**. These are
+parking-lot ideas (§4), not built work awaiting a test. `redzone_tds` is the one
+with real supporting data already available (`build_redzone_usage`).
 
 ---
 

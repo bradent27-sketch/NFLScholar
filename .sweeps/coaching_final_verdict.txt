@@ -616,3 +616,151 @@ C:\Users\Admin\AppData\Local\Programs\Python\Python313\Lib\site-packages\numpy\l
 2021 w4 done (7 configs)
 2021 w5 done (7 configs)
 2021 w6 done (7 configs)
+2021 w7 done (7 configs)
+2021 w8 done (7 configs)
+2021 w9 done (7 configs)
+2021 w10 done (7 configs)
+2026-09-01 21:14:52.688 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 21:14:54.646 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2022 w2 done (7 configs)
+2022 w3 done (7 configs)
+2022 w4 done (7 configs)
+2022 w5 done (7 configs)
+2022 w6 done (7 configs)
+2022 w7 done (7 configs)
+2022 w8 done (7 configs)
+2022 w9 done (7 configs)
+2022 w10 done (7 configs)
+2026-09-01 21:48:19.920 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 21:48:20.995 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2023 w2 done (7 configs)
+2023 w3 done (7 configs)
+2023 w4 done (7 configs)
+2023 w5 done (7 configs)
+2023 w6 done (7 configs)
+2023 w7 done (7 configs)
+2023 w8 done (7 configs)
+2023 w9 done (7 configs)
+2023 w10 done (7 configs)
+2026-09-01 22:33:32.198 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 22:33:33.757 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2024 w2 done (7 configs)
+2024 w3 done (7 configs)
+2024 w4 done (7 configs)
+2024 w5 done (7 configs)
+2024 w6 done (7 configs)
+2024 w7 done (7 configs)
+2024 w8 done (7 configs)
+2024 w9 done (7 configs)
+2024 w10 done (7 configs)
+2026-09-01 23:58:36.152 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-01 23:58:38.054 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w2 done (7 configs)
+2025 w3 done (7 configs)
+2025 w4 done (7 configs)
+2025 w5 done (7 configs)
+2025 w6 done (7 configs)
+2025 w7 done (7 configs)
+2025 w8 done (7 configs)
+2025 w9 done (7 configs)
+2025 w10 done (7 configs)
+
+
+============================================================================================================
+LEG A - CHANNEL BUDGET: what is the WHOLE prior-season defense channel worth on startables?
+============================================================================================================
+Removing v2_defense_prior deletes the entire channel the coaching idea re-weights.
+Whatever that costs is a hard ceiling on any refinement of it.
+
+pos         n  MAE base  MAE no-prior     dMAE              95% CI
+QB       1980     6.879         6.869   -0.009     [-0.046,+0.028]
+RB       3098     6.466         6.473   +0.007     [-0.017,+0.029]
+WR       4380     6.571         6.581   +0.011     [-0.007,+0.028]
+TE       1570     5.624         5.566   -0.058     [-0.101,-0.015] *
+
+(positive dMAE = removing the prior-season channel HURTS, i.e. that is the channel's
+ value. The coaching adjustment competes for a slice of this number, never more.)
+
+
+============================================================================================================
+FULL GRID - every cohort table, startable subsets only (the objective that matters)
+============================================================================================================
+
+--- START-QB ---
+config                    n     dMAE              95% CI      w-l     dRho   flip-acc   prop-acc
+flat (control)         1980   +0.000     [+0.000,+0.000]      0-0  +0.0000        -          -  
+reset-mild             1980   -0.002     [-0.004,+0.001]    43-35  +0.0014      0.636      0.523
+reset-strong           1980   -0.005     [-0.012,+0.001]    45-36  +0.0040      0.613      0.518
+reset-extreme          1980   -0.006     [-0.016,+0.004]    39-42  +0.0066      0.573      0.509
+stable-long            1980   +0.003     [-0.001,+0.006]    39-41  -0.0006      0.509      0.473
+both-directions        1980   -0.000     [-0.005,+0.005]    39-41  +0.0017      0.542      0.494
+
+--- START-RB ---
+config                    n     dMAE              95% CI      w-l     dRho   flip-acc   prop-acc
+flat (control)         3098   +0.000     [+0.000,+0.000]      0-0  +0.0000        -          -  
+reset-mild             3098   -0.001     [-0.003,+0.001]    48-35  +0.0005      0.511      0.517
+reset-strong           3098   -0.002     [-0.006,+0.003]    47-43  +0.0006      0.543      0.525
+reset-extreme          3098   -0.003     [-0.010,+0.004]    47-43  +0.0007      0.530      0.516
+stable-long            3098   +0.000     [-0.004,+0.004]    41-48  +0.0004      0.566      0.501
+both-directions        3098   -0.000     [-0.006,+0.005]    43-47  +0.0007      0.531      0.508
+
+--- START-WR ---
+config                    n     dMAE              95% CI      w-l     dRho   flip-acc   prop-acc
+flat (control)         4380   +0.000     [+0.000,+0.000]      0-0  +0.0000        -          -  
+reset-mild             4380   -0.000     [-0.002,+0.001]    45-37  +0.0003      0.535      0.498
+reset-strong           4380   -0.001     [-0.004,+0.001]    43-45  +0.0009      0.489      0.510
+reset-extreme          4380   -0.001     [-0.005,+0.003]    43-44  +0.0013      0.484      0.510
+stable-long            4380   -0.001     [-0.003,+0.001]    43-42  +0.0008      0.506      0.516
+both-directions        4380   -0.001     [-0.004,+0.002]    43-45  +0.0011      0.517      0.506
+
+--- START-TE ---
+config                    n     dMAE              95% CI      w-l     dRho   flip-acc   prop-acc
+flat (control)         1570   +0.000     [+0.000,+0.000]      0-0  +0.0000        -          -  
+reset-mild             1570   -0.001     [-0.003,+0.002]    40-34  -0.0017      0.111      0.513
+reset-strong           1570   -0.004     [-0.009,+0.001]    49-38  -0.0010      0.464      0.499
+reset-extreme          1570   -0.008     [-0.017,+0.001]    46-40  -0.0009      0.505      0.501
+stable-long            1570   +0.004     [+0.000,+0.008]    35-48  +0.0002      0.783      0.458 *
+both-directions        1570   -0.000     [-0.005,+0.005]    41-44  -0.0012      0.500      0.487
+
+
+============================================================================================================
+LEG B - MECHANISM ORACLE: best config per position, chosen WITH HINDSIGHT on this same data
+============================================================================================================
+Deliberate overfitting. No honest procedure can beat it, so it is the ceiling of
+this mechanism. A small number here closes the question permanently.
+
+pos   oracle config            dMAE              95% CI   flip-acc
+QB    reset-extreme          -0.006     [-0.016,+0.004]      0.573
+RB    reset-extreme          -0.003     [-0.010,+0.004]      0.530
+WR    reset-strong           -0.001     [-0.004,+0.001]      0.489
+TE    reset-extreme          -0.008     [-0.017,+0.001]      0.505
+
+
+============================================================================================================
+LEG C - HONEST HOLDOUT: table chosen on 2016-2021, frozen, scored on 2022-2025
+============================================================================================================
+pos   picked on FIT         FIT dMAE  TEST dMAE           TEST 95% CI   flip-acc
+QB    both-directions         -0.003     +0.003       [-0.006,+0.012]      0.542
+RB    reset-extreme           -0.008     +0.004       [-0.007,+0.015]      0.500
+WR    reset-mild              -0.000     -0.001       [-0.003,+0.001]      0.500
+TE    reset-extreme           -0.013     -0.002       [-0.014,+0.010]      0.444
+
+(FIT minus TEST is the overfitting tax - how much of a 'promising' result was selection.)
+
+
+============================================================================================================
+LEG D - POWER: what could this design have detected?
+============================================================================================================
+MDE = smallest true startable dMAE detectable at 80% power, 5% two-sided.
+Any effect smaller than this is beyond what more runs of this design can resolve.
+
+pos     weeks   MDE (pts)     as % of startable MAE
+QB         90      0.0000                     0.00%
+RB         90      0.0000                     0.00%
+WR         90      0.0000                     0.00%
+TE         90      0.0000                     0.00%
+
+
+READ: ship only if a config is negative AND CI-excludes-0 in LEG C (honest holdout),
+with flip-acc > 0.50. LEG B being small means no future tuning can rescue it.
+LEG A being small means the whole channel was never worth much to begin with.

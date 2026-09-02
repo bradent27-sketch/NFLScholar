@@ -447,9 +447,22 @@ def _report(rows, configs):
           "Any effect smaller than this is beyond what more runs of this design can "
           "resolve.\n")
     print(f"{'pos':<6}{'weeks':>7}{'MDE (pts)':>12}{'  as % of startable MAE':>26}")
+    # MUST NOT be grid_labels[0] - that is 'flat (control)', a table of all
+    # 12s, which collapses to the shipped scalar and so produces a delta of
+    # EXACTLY zero every week by construction. Taking the std of that
+    # all-zeros vector reported MDE = 0.0000 for every position, i.e. "this
+    # design can detect an infinitely small effect", which is the opposite of
+    # the truth (bug hit on the first real run, 2026-09-01). Use the widest
+    # real config instead, and say which one the number came from.
+    mde_label = next((l for l in grid_labels if l != 'flat (control)'), None)
+    if mde_label is None:
+        return
+    print(f"(spread measured on '{mde_label}' - the control config is a no-op "
+          f"by construction and has zero variance)\n")
+    print(f"{'pos':<6}{'weeks':>7}{'MDE (pts)':>12}{'  as % of startable MAE':>26}")
     for pos in POSITIONS:
-        a = _agg(rows.get((grid_labels[0], pos), []))
-        if not a or not np.isfinite(a['mde']):
+        a = _agg(rows.get((mde_label, pos), []))
+        if not a or not np.isfinite(a['mde']) or a['mde'] <= 0:
             continue
         pct = 100.0 * a['mde'] / a['mae_b'] if a['mae_b'] else float('nan')
         print(f"{pos:<6}{a['weeks']:>7}{a['mde']:>12.4f}{pct:>25.2f}%")

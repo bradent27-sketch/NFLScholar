@@ -1021,12 +1021,73 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 # "re-fit whenever DEFAULT_FEATURES changes" rule, not because anything
 # shifted. Half-strength + one-sided rationale above is unchanged.
 # ---------------------------------------------------------------------------
+# ===========================================================================
+# V3 CALIBRATION - re-fit and RE-SHAPED 2026-09-02. Intended as the final
+# calibration for this model version.
+#
+# Fitted on 2019-2022, scored on 2023-2025, n=27,741 player-weeks
+# (scripts/fit_weekly_calibration_v3.py). Two more seasons than any previous
+# fit used - weekly stats go back to 2019 and only 2021-2023 had ever been
+# used.
+#
+# THE CONSTANTS BARELY MOVED. With two extra seasons the half-strength fit
+# lands at QB (0.737,4.263) / RB (0.921,1.014) / WR (0.961,1.122) /
+# TE (0.950,0.921) - within ~0.02 slope of the values this replaces, the
+# third refit running to the same conclusion. The line was never the problem.
+#
+# WHAT CHANGED IS THE SHAPE: the clamp is gone. This was applied ONE-SIDED,
+# np.minimum(raw, a + b*raw), so it could only push a projection DOWN. Solving
+# a + b*r < r for the old constants shows where each line actually bit:
+#
+#     QB above 15.4 pts    RB above 13.6 pts
+#     WR above 29.2 pts    TE above 25.8 pts
+#
+# WR and TE were therefore, in practice, UNCALIBRATED - their lines sat above
+# the identity for every realistic projection. Measured, not inferred: on the
+# 2023-25 hold-out the shipped WR and TE constants scored EXACTLY the same
+# MAE, startable MAE and bias as no calibration at all, to three decimals.
+#
+# The one-sided design was built for an over-dispersed model whose top came in
+# high. That premise no longer holds: every position now shows NEGATIVE bias
+# on the hold-out (QB -1.914, WR -1.634, TE -1.494, RB -0.654), i.e. the model
+# under-projects, and a downward-only correction cannot address that at all.
+#
+# Held-out result of going two-sided at the same half strength - the only form
+# tested that improves the startable pool at ALL FOUR positions:
+#
+#     pos   dSTART-MAE    startable bias
+#     QB      -0.166      -0.048 -> -0.168
+#     RB      -0.017      -0.354 -> -0.298
+#     WR      -0.029      -1.829 -> -1.113
+#     TE      -0.040      -1.870 -> -1.375
+#
+# and whole-pool bias roughly halves everywhere (QB -1.914 -> -0.997,
+# WR -1.634 -> -0.738, TE -1.494 -> -0.789).
+#
+# KNOWN COST, accepted deliberately: whole-pool MAE gets slightly worse for
+# RB (+0.106), WR (+0.063) and TE (+0.033), while QB improves a lot (-0.406).
+# Lifting an under-projected tail raises predictions above the median, and MAE
+# is minimised by the median - so this trades a little typical-week accuracy
+# on players nobody starts for materially better calibration on the ones they
+# do. Ranked on startable, not whole-pool, for that reason.
+#
+# Forms tested and rejected: full-strength (better bias, worse startable MAE
+# than half at QB/RB), and a per-quantile TIERED line (best single number
+# anywhere - RB startable 5.993 - but it needs four separate mechanisms
+# across the four positions and was worse than useless for WR two-sided,
+# +0.354). Half-strength two-sided is one mechanism, one edit, and wins
+# everywhere it is asked to.
+# ===========================================================================
 WEEKLY_CALIBRATION = {
-    'QB': (0.736, 4.064),
-    'RB': (0.928, 0.976),
-    'WR': (0.967, 0.962),
-    'TE': (0.971, 0.747),
+    'QB': (0.737, 4.263),
+    'RB': (0.921, 1.014),
+    'WR': (0.961, 1.122),
+    'TE': (0.950, 0.921),
 }
+# Two-sided since 2026-09-02 (see above). False restores the historical
+# downward-only clamp; kept as a named constant so the change is visible and
+# revertible rather than buried in an expression.
+WEEKLY_CALIBRATION_ONE_SIDED = False
 
 
 def _played_weeks_before(stats_df, as_of_week):
@@ -7409,8 +7470,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # displayed and read on its own terms.
             slope, intercept = WEEKLY_CALIBRATION[pos]
             raw = out['Model Proj Pts'].to_numpy(dtype=float)
-            out['Model Proj Pts'] = np.round(
-                np.clip(np.minimum(raw, intercept + slope * raw), 0.0, None), 2)
+            line = intercept + slope * raw
+            # Two-sided as of 2026-09-02 - the line is the calibrated value in
+            # BOTH directions. It used to be np.minimum(raw, line), which made
+            # the WR and TE lines inert (they sit above the identity at every
+            # realistic projection) and could not correct the under-projection
+            # the model actually shows. See WEEKLY_CALIBRATION's comment.
+            adjusted = np.minimum(raw, line) if WEEKLY_CALIBRATION_ONE_SIDED else line
+            out['Model Proj Pts'] = np.round(np.clip(adjusted, 0.0, None), 2)
         out['Calibrated Model Proj Pts'] = out['Model Proj Pts']
         if 'v2_availability' in feats or 'v2_fantasypros_availability' in feats:
             out['Availability'] = out['Player'].map(
@@ -7946,8 +8013,18 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                           for d in result[stat_cols].fillna(0.0).to_dict('records')]
             result['Raw Model Proj Pts'] = np.round(recomputed, 2)
             if 'calibration' in feats:
+                # SECOND calibration site - this one recomputes the point
+                # total after the vacancy/redistribution pass rewrote stat
+                # lines, and it OVERWRITES whatever the per-position pass
+                # above produced. It must therefore follow exactly the same
+                # one-sided/two-sided rule; it was missed when the primary
+                # site went two-sided on 2026-09-02, which silently kept the
+                # old downward-only behaviour for the whole board (caught by
+                # checking a live build: zero projections moved up).
                 slopes = result['Pos'].map(lambda p: WEEKLY_CALIBRATION.get(p, (1.0, 0.0)))
-                recomputed = [min(v, sl * v + ic) for v, (sl, ic) in zip(recomputed, slopes)]
+                recomputed = [
+                    (min(v, sl * v + ic) if WEEKLY_CALIBRATION_ONE_SIDED else sl * v + ic)
+                    for v, (sl, ic) in zip(recomputed, slopes)]
             result['Model Proj Pts'] = np.round(np.clip(recomputed, 0.0, None), 2)
             result['Calibrated Model Proj Pts'] = result['Model Proj Pts']
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)

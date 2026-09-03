@@ -17,6 +17,8 @@ the app's own dependencies, and `pytest tests/` works if pytest is installed.
 import os
 import sys
 
+import pathlib
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -539,6 +541,30 @@ def test_weighted_player_rates_weighs_recent_games_more():
                                     matchup_matrix=pd.DataFrame(), upcoming_opponent={'A': 'MIA'})
     flat_avg = 6.0
     assert out.loc['A', 'targets'] > flat_avg
+
+
+def test_calibration_is_two_sided_at_both_application_sites():
+    """The v3 calibration (2026-09-02) corrects in BOTH directions.
+
+    There are TWO places that apply WEEKLY_CALIBRATION: the per-position pass,
+    and a second pass that recomputes the point total after vacancy
+    redistribution and OVERWRITES it. When the first went two-sided the second
+    was missed, and because it wins, the whole board silently kept the old
+    downward-only behaviour - zero projections moved up on a live build. This
+    pins both sites to the same rule so they cannot drift apart again.
+    """
+    import re
+    src = pathlib.Path(wp.__file__).read_text(encoding='utf-8')
+    # Every site that applies the line must consult the flag, not hardcode a min().
+    assert src.count('WEEKLY_CALIBRATION_ONE_SIDED') >= 3,         "each application site must branch on the flag (plus its definition)"
+    assert not re.search(r'min\(v, sl \* v \+ ic\)(?!\s*if WEEKLY_CALIBRATION_ONE_SIDED)', src),         "an unconditional one-sided clamp is still present"
+    assert wp.WEEKLY_CALIBRATION_ONE_SIDED is False
+
+    # And the arithmetic itself must be able to move a projection UP: every
+    # position's line sits above the identity for a small projection, which is
+    # exactly the under-projected tail the one-sided form could never reach.
+    for pos, (slope, intercept) in wp.WEEKLY_CALIBRATION.items():
+        assert intercept + slope * 4.0 > 4.0, f"{pos} cannot correct upward at all"
 
 
 def test_scheme_matchup_override_is_scoped_to_tight_ends():

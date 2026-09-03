@@ -4004,11 +4004,36 @@ VENUE_MULT = {
 # WEATHER_WIND_KNEE_<POS> / WEATHER_KNEE_SHIFT move the knee.
 WEATHER_WIND_KNEE = {'QB': 5.0, 'WR': 5.0, 'TE': 8.0}
 WEATHER_WIND_KNEE_DEFAULT = 6.0
+# WR SLOPES ZEROED 2026-09-02. They were fitted out-of-sample like the rest,
+# and the fit was not wrong about the raw relationship - wind does correlate
+# with fewer WR receiving yards. But applying it as a projection penalty
+# measured WORSE on the scope that matters, at every strength tested
+# (scripts/sweep_weather_strength.py, ablation form, 2021-25 wk3-17). In that
+# harness a POSITIVE dMAE means "removing weather hurts", i.e. the feature is
+# earning its keep:
+#
+#     config          ALL      QB   START-QB   START-WR   START-TE
+#     shipped 1/1/1  +0.002  +0.012   +0.031    -0.021     -0.012
+#     no-WR          +0.002  +0.012   +0.029    -0.003     +0.007
+#     half-WR        +0.002  +0.012   +0.052*   -0.016     -0.001
+#     quarter-WR     +0.002  +0.012   +0.054*   -0.005     +0.011
+#
+# START-WR is NEGATIVE at every config - the WR penalty costs accuracy on
+# startable receivers - and it is least negative with the slopes at zero
+# (-0.003 vs -0.021), while ALL / QB / RB / TE are unchanged to three
+# decimals. The win this feature was shipped for lives entirely in QB and RB
+# (whole-slate QB -0.013 CI[-0.024,-0.003], RB -0.003 CI[-0.006,-0.001]);
+# the WR half was the known weak part called out in DEFAULT_FEATURES when it
+# shipped, and this is the follow-up sweep that was queued then.
+#
+# Kept as an explicit zero block rather than deleting the WR key: the
+# mechanism stays wired and a future sweep can re-test it by editing four
+# numbers, and the measurement above stays attached to what it measured.
 WEATHER_WIND_SLOPE = {
     'QB': {'passing_attempts': -0.0044, 'passing_completions': -0.0062,
            'passing_yards': -0.0071, 'passing_tds': -0.0035},
-    'WR': {'targets': -0.0026, 'receptions': -0.0050,
-           'receiving_yards': -0.0083, 'receiving_tds': -0.0100},
+    'WR': {'targets': 0.0, 'receptions': 0.0,
+           'receiving_yards': 0.0, 'receiving_tds': 0.0},
     'TE': {'targets': -0.0027, 'receptions': -0.0048,
            'receiving_yards': -0.0075, 'receiving_tds': -0.0075},
 }

@@ -16,6 +16,7 @@ import pandas as pd
 import pytest
 
 from data import weather as wx
+import data.weekly_projections as wp
 from data.weekly_projections import weather_stat_multipliers, WEATHER_STAT_CLAMP
 
 
@@ -93,11 +94,34 @@ def test_wind_pushes_pass_stats_down_and_leaves_rb_alone():
     assert m["passing_attempts"] < 1.0
     assert m["passing_yards"] < m["passing_completions"] < 1.0   # yards fall fastest
     assert m["passing_tds"] < 1.0
-    wr = weather_stat_multipliers("WR", 22, is_outdoor=True)
-    assert wr["receiving_yards"] < wr["receptions"] < wr["targets"] < 1.0
     te = weather_stat_multipliers("TE", 22, is_outdoor=True)
     assert te["receiving_yards"] < 1.0 and te["receptions"] < 1.0
     assert weather_stat_multipliers("RB", 30, is_outdoor=True) == {}   # RB: no measured wind effect
+
+
+def test_wr_wind_penalty_is_neutral_at_the_shipped_slopes():
+    """WR slopes ship at zero (2026-09-02), so wind must not move a WR stat.
+
+    This test previously asserted the opposite - that WR receiving stats fall
+    with wind - which was the shipped behaviour when v2_weather_adjustment
+    first went in, and was flagged then as its known weak part. The queued
+    follow-up sweep found START-WR measured WORSE at every strength tested
+    and least bad at zero, so the WR half was switched off. QB and RB carry
+    the confirmed win; see WEATHER_WIND_SLOPE's comment for the table.
+    """
+    wr = weather_stat_multipliers("WR", 22, is_outdoor=True)
+    assert wr, "the WR entry should still be PRESENT, just neutral"
+    assert all(v == 1.0 for v in wr.values()), wr
+
+
+def test_wr_wind_mechanism_still_works_if_the_slopes_are_restored(monkeypatch):
+    """Zeroed, not deleted - the wiring must still bite if re-enabled."""
+    restored = dict(wp.WEATHER_WIND_SLOPE)
+    restored["WR"] = {"targets": -0.0026, "receptions": -0.0050,
+                      "receiving_yards": -0.0083, "receiving_tds": -0.0100}
+    monkeypatch.setattr(wp, "WEATHER_WIND_SLOPE", restored)
+    wr = weather_stat_multipliers("WR", 22, is_outdoor=True)
+    assert wr["receiving_yards"] < wr["receptions"] < wr["targets"] < 1.0
 
 
 def test_wind_ignores_temperature():

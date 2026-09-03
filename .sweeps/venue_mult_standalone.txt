@@ -53,3 +53,94 @@
 2026-09-02 12:36:28.131 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
 2026-09-02 12:50:41.822 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
 2026-09-02 12:50:42.931 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 13:19:40.197 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 13:19:41.381 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+years=[2021, 2022, 2023, 2024, 2025] weeks=3-17 scoring=Full PPR
+ablating: []
+adding as candidate: ['v2_venue_mult']
+DEFAULT_FEATURES size: 23
+
+======================================================================
+v2_venue_mult  [add mode]
+======================================================================
+  ALL        n=22924  MAE base 4.532 vs variant 4.535  dMAE(var-base) +0.003  dRho(var-base) -0.000  weeks variant-won 33-42 (sign-test p=0.36)  boot95%CI[-0.001,+0.007]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  QB         n=2378   MAE base 6.691 vs variant 6.701  dMAE(var-base) +0.010  dRho(var-base) -0.002  weeks variant-won 36-39 (sign-test p=0.82)  boot95%CI[-0.007,+0.028]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  RB         n=6018   MAE base 4.567 vs variant 4.569  dMAE(var-base) +0.001  dRho(var-base) +0.000  weeks variant-won 28-47 (sign-test p=0.04)  boot95%CI[-0.003,+0.005]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  WR         n=9699   MAE base 4.448 vs variant 4.449  dMAE(var-base) +0.002  dRho(var-base) -0.000  weeks variant-won 38-37 (sign-test p=1.00)  boot95%CI[-0.003,+0.006]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  TE         n=4829   MAE base 3.596 vs variant 3.601  dMAE(var-base) +0.004  dRho(var-base) +0.000  weeks variant-won 31-44 (sign-test p=0.17)  boot95%CI[-0.002,+0.011]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-QB   n=1657   MAE base 6.062 vs variant 6.090  dMAE(var-base) +0.028  dRho(var-base) -0.002  weeks variant-won 34-41 (sign-test p=0.49)  boot95%CI[-0.011,+0.064]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-RB   n=2570   MAE base 6.435 vs variant 6.431  dMAE(var-base) -0.004  dRho(var-base) -0.002  weeks variant-won 41-34 (sign-test p=0.49)  boot95%CI[-0.027,+0.020]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-WR   n=3513   MAE base 6.401 vs variant 6.413  dMAE(var-base) +0.012  dRho(var-base) -0.004  weeks variant-won 27-48 (sign-test p=0.02)  boot95%CI[-0.016,+0.036]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+  START-TE   n=1288   MAE base 5.389 vs variant 5.408  dMAE(var-base) +0.019  dRho(var-base) +0.004  weeks variant-won 36-39 (sign-test p=0.82)  boot95%CI[-0.029,+0.065]  [CI includes 0 -> NOT distinguishable from noise at this sample]
+
+======================================================================
+TOP 25 LARGEST MISSES - shipped model (DEFAULT_FEATURES), startable cut, 9028 player-weeks scored
+======================================================================
+ year  wk  pos  player                     pred  actual   error  note
+ 2023   9   WR  Tank Dell                   8.2    59.2   -51.0  UNDERPROJECTED (boom)
+ 2023  11   WR  Tank Dell                  12.1    57.8   -45.7  UNDERPROJECTED (boom)
+ 2023   4   RB  De'Von Achane               9.6    54.0   -44.4  UNDERPROJECTED (boom)
+ 2021  17   WR  Ja'Marr Chase              12.6    55.6   -43.0  UNDERPROJECTED (boom)
+ 2023  13   RB  De'Von Achane               7.7    50.6   -42.9  UNDERPROJECTED (boom)
+ 2022   9   RB  Joe Mixon                  14.2    55.1   -40.8  UNDERPROJECTED (boom)
+ 2022  17   WR  Mike Evans                  9.8    48.7   -38.9  UNDERPROJECTED (boom)
+ 2023   5   WR  Ja'Marr Chase              15.0    52.2   -37.2  UNDERPROJECTED (boom)
+ 2023  16   WR  Amari Cooper               14.6    51.5   -36.9  UNDERPROJECTED (boom)
+ 2023   5   WR  DJ Moore                   12.5    49.0   -36.5  UNDERPROJECTED (boom)
+ 2024  10   WR  Ja'Marr Chase              19.1    55.4   -36.3  UNDERPROJECTED (boom)
+ 2021  11   RB  Jonathan Taylor            18.3    53.4   -35.1  UNDERPROJECTED (boom)
+ 2025  16   WR  Puka Nacua                 13.4    46.5   -33.1  UNDERPROJECTED (boom)
+ 2025   9   TE  Brock Bowers               10.4    43.3   -32.9  UNDERPROJECTED (boom)
+ 2023  14   WR  Odell Beckham Jr.           6.7    39.4   -32.7  UNDERPROJECTED (boom)
+ 2024  14   RB  Zach Charbonnet             6.1    38.3   -32.2  UNDERPROJECTED (boom)
+ 2025   3   WR  Tre Tucker                  8.9    40.9   -32.0  UNDERPROJECTED (boom)
+ 2021   4   WR  Tyreek Hill                15.9    47.6   -31.7  UNDERPROJECTED (boom)
+ 2024  14   WR  Puka Nacua                 11.0    41.8   -30.8  UNDERPROJECTED (boom)
+ 2022  12   RB  Josh Jacobs                17.6    48.3   -30.7  UNDERPROJECTED (boom)
+ 2021  12   RB  Leonard Fournette          13.5    44.1   -30.6  UNDERPROJECTED (boom)
+ 2023  10   WR  Tank Dell                   7.4    37.8   -30.4  UNDERPROJECTED (boom)
+ 2023   3   RB  Raheem Mostert             14.9    45.2   -30.3  UNDERPROJECTED (boom)
+ 2021   5   TE  Mark Andrews               11.5    41.7   -30.2  UNDERPROJECTED (boom)
+ 2023  16   RB  Breece Hall                12.9    43.1   -30.2  UNDERPROJECTED (boom)
+
+-- top 8 per position --
+
+  QB:
+    2025 w15 Trevor Lawrence         pred   16.7  actual   44.3  err  -27.6  (boom)
+    2022 w9  Justin Fields           pred   16.6  actual   42.7  err  -26.1  (boom)
+    2021 w5  Justin Herbert          pred   17.8  actual   42.8  err  -25.0  (boom)
+    2024 w15 Jared Goff              pred   16.1  actual   41.1  err  -24.9  (boom)
+    2023 w9  C.J. Stroud             pred   17.3  actual   41.8  err  -24.5  (boom)
+    2025 w7  Bo Nix                  pred   15.9  actual   40.0  err  -24.0  (boom)
+    2025 w11 Josh Allen              pred   19.4  actual   42.7  err  -23.3  (boom)
+    2021 w5  Lamar Jackson           pred   18.7  actual   41.9  err  -23.2  (boom)
+
+  RB:
+    2023 w4  De'Von Achane           pred    9.6  actual   54.0  err  -44.4  (boom)
+    2023 w13 De'Von Achane           pred    7.7  actual   50.6  err  -42.9  (boom)
+    2022 w9  Joe Mixon               pred   14.2  actual   55.1  err  -40.8  (boom)
+    2021 w11 Jonathan Taylor         pred   18.3  actual   53.4  err  -35.1  (boom)
+    2024 w14 Zach Charbonnet         pred    6.1  actual   38.3  err  -32.2  (boom)
+    2022 w12 Josh Jacobs             pred   17.6  actual   48.3  err  -30.7  (boom)
+    2021 w12 Leonard Fournette       pred   13.5  actual   44.1  err  -30.6  (boom)
+    2023 w3  Raheem Mostert          pred   14.9  actual   45.2  err  -30.3  (boom)
+
+  WR:
+    2023 w9  Tank Dell               pred    8.2  actual   59.2  err  -51.0  (boom)
+    2023 w11 Tank Dell               pred   12.1  actual   57.8  err  -45.7  (boom)
+    2021 w17 Ja'Marr Chase           pred   12.6  actual   55.6  err  -43.0  (boom)
+    2022 w17 Mike Evans              pred    9.8  actual   48.7  err  -38.9  (boom)
+    2023 w5  Ja'Marr Chase           pred   15.0  actual   52.2  err  -37.2  (boom)
+    2023 w16 Amari Cooper            pred   14.6  actual   51.5  err  -36.9  (boom)
+    2023 w5  DJ Moore                pred   12.5  actual   49.0  err  -36.5  (boom)
+    2024 w10 Ja'Marr Chase           pred   19.1  actual   55.4  err  -36.3  (boom)
+
+  TE:
+    2025 w9  Brock Bowers            pred   10.4  actual   43.3  err  -32.9  (boom)
+    2021 w5  Mark Andrews            pred   11.5  actual   41.7  err  -30.2  (boom)
+    2021 w13 George Kittle           pred    9.4  actual   39.6  err  -30.2  (boom)
+    2025 w15 Trey McBride            pred    9.8  actual   37.4  err  -27.6  (boom)
+    2021 w15 Travis Kelce            pred   13.9  actual   41.1  err  -27.2  (boom)
+    2021 w15 Mark Andrews            pred    8.9  actual   35.6  err  -26.7  (boom)
+    2023 w14 Evan Engram             pred    6.4  actual   32.5  err  -26.1  (boom)
+    2022 w16 T.J. Hockenson          pred   10.6  actual   35.9  err  -25.3  (boom)

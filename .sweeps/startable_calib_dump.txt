@@ -1,0 +1,164 @@
+2026-09-02 16:07:44.461 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.471 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.471 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.472 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.475 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.475 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.475 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.476 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.477 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.477 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.477 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.477 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.477 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.478 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.478 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.478 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.478 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.479 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.479 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.479 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.480 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.489 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.490 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.490 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.490 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.491 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.491 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.492 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.493 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.495 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.511 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.519 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.519 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.519 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.520 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.521 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.521 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.522 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.522 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.526 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+dumping shipped-model startable predictions: 2019-2025 wk4-17
+builds = 98 (base only, no variants)
+
+2026-09-02 16:07:44.566 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:44.566 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 16:07:44.566 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:45.054 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:45.560 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:45.560 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 16:07:45.885 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:53.753 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-02 16:07:53.821 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2019 w4 done
+2019 w5 done
+2019 w6 done
+2019 w7 done
+2019 w8 done
+2019 w9 done
+2019 w10 done
+2019 w11 done
+2019 w12 done
+2019 w13 done
+2019 w14 done
+2019 w15 done
+2019 w16 done
+2019 w17 done
+2026-09-02 16:13:52.781 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 16:13:53.714 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2020 w4 done
+2020 w5 done
+2020 w6 done
+2020 w7 done
+2020 w8 done
+2020 w9 done
+2020 w10 done
+2020 w11 done
+2020 w12 done
+2020 w13 done
+2020 w14 done
+2020 w15 done
+2020 w16 done
+2020 w17 done
+2026-09-02 16:20:10.647 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 16:20:11.661 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2021 w4 done
+2021 w5 done
+2021 w6 done
+2021 w7 done
+2021 w8 done
+2021 w9 done
+2021 w10 done
+2021 w11 done
+2021 w12 done
+2021 w13 done
+2021 w14 done
+2021 w15 done
+2021 w16 done
+2021 w17 done
+2026-09-02 16:26:37.432 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 16:26:38.401 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2022 w4 done
+2022 w5 done
+2022 w6 done
+2022 w7 done
+2022 w8 done
+2022 w9 done
+2022 w10 done
+2022 w11 done
+2022 w12 done
+2022 w13 done
+2022 w14 done
+2022 w15 done
+2022 w16 done
+2022 w17 done
+2026-09-02 16:33:07.890 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 16:33:08.889 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2023 w4 done
+2023 w5 done
+2023 w6 done
+2023 w7 done
+2023 w8 done
+2023 w9 done
+2023 w10 done
+2023 w11 done
+2023 w12 done
+2023 w13 done
+2023 w14 done
+2023 w15 done
+2023 w16 done
+2023 w17 done
+2026-09-02 16:39:32.551 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 16:39:33.600 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2024 w4 done
+2024 w5 done
+2024 w6 done
+2024 w7 done
+2024 w8 done
+2024 w9 done
+2024 w10 done
+2024 w11 done
+2024 w12 done
+2024 w13 done
+2024 w14 done
+2024 w15 done
+2024 w16 done
+2024 w17 done
+2026-09-02 16:52:57.922 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-02 16:52:59.040 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w4 done
+2025 w5 done
+2025 w6 done
+2025 w7 done
+2025 w8 done
+2025 w9 done
+2025 w10 done
+2025 w11 done
+2025 w12 done
+2025 w13 done
+2025 w14 done
+2025 w15 done
+2025 w16 done
+2025 w17 done
+
+wrote 11,738 player-weeks -> .sweeps\startable_predictions.csv

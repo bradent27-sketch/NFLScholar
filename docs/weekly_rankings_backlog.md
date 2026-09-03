@@ -60,6 +60,20 @@ Everything else is either shipped, retired with a written verdict, or an
 unbuilt parking-lot idea (§3 reconciliation, §4). These two are the real
 remaining work.
 
+**RESOLVED since this section was written (2026-09-02):**
+- `v2_venue_mult` — backtested standalone at last: 8 of 9 scopes worse, two
+  sign tests significant (RB 28-47 p=0.04, START-WR 27-48 p=0.02).
+  **RETIRED**, see `docs/archive/venue_mult_RETIRED.md`. Almost certainly
+  double-counting `v2_game_total_elasticity`, which already prices the dome
+  through the implied total.
+- Scheme blend — resolved. `v2_scheme_matchup` **SHIPPED for TE only**; WR
+  showed no startable win at any weight and the old "START-WR -0.297"
+  headline turned out to be one-season noise (-0.073, CI [-0.345,+0.203] on
+  a cross-season test).
+- WR wind slopes **zeroed** — the queued follow-up to the weather ship.
+  START-WR was negative at every strength; zero is least bad and leaves
+  QB/RB/TE untouched.
+
 **1. Startable TE vs the prior-season defense channel — NEW, unexplained.**
 Three independent runs on the night of 2026-09-01 point the same way, on a
 **shipped** flag (`v2_defense_prior`):
@@ -77,14 +91,17 @@ work fell into three times. Needs its own confirm on a full-season window with
 a pre-registered decision rule before anything changes. Do NOT tune
 `DEFENSE_PRIOR_GAMES` or the floor off these numbers alone.
 
-**2. `v2_venue_mult` — built, gated, tests pass, never backtested standalone.**
-The last untested piece of the unbundled `game_env`; its sibling
-`v2_game_total_elasticity` shipped on its own confirm. One
-`backtest_component.py --add v2_venue_mult` run answers it.
+**2. Startable calibration — measured, not shipped.** The prediction dump
+(`.sweeps/startable_predictions.csv`, 11,738 player-weeks 2019-25 wk4-17) is
+on disk, so `fit_startable_calibration.py --mode fit` is instant. Held out on
+2023-25, a per-tier median-matching offset helps RB (-0.068) and WR (-0.047)
+and hurts QB/TE. NOT shipped: a per-tier additive offset is monotone in rank
+so it cannot reorder anyone, the gains are ~1% of MAE, and it overlaps with
+`WEEKLY_CALIBRATION`, which is the principled home for this correction. See
+the calibration-refit note below.
 
-**In flight (do not queue against these):** Lane F — scheme blend weight,
-cross-season 2024+2025. Lane G — WR wind-strength ablation + the startable
-calibration prediction dump.
+**BACKTEST QUEUE IS EMPTY as of 2026-09-02.** Every flag in MODEL_FEATURES
+now has a verdict.
 
 ---
 

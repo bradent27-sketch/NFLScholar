@@ -39,6 +39,7 @@ import pandas as pd
 
 from data.draft_board import score_stats
 from data.draft_projections import PROJECTED_STATS
+from data.market_devig import implied_mean_from_line
 from data.odds_sources import BOOK_WEIGHTS, BOOK_WEIGHT_FALLBACK
 
 # Stats that carry most of a season projection, per position, with a typical
@@ -72,16 +73,14 @@ KEY_STATS = {
 # halves it. The same rule handles a QB priced without his rushing line.
 MIN_COVERAGE = 0.7
 
-# A market line is a MEDIAN (the point where the book wants equal money on
-# both sides), while a fantasy projection is a MEAN. For right-skewed counting
-# stats the mean sits above the median, so scoring the lines directly
-# understates the expected total. Touchdowns are the worst offender - a
-# roughly Poisson count where the tail is most of the fantasy value.
-#
-# These are deliberately modest. The honest version of this correction needs
-# each stat's full distribution, which the lines don't carry; overreaching
-# here would manufacture an edge out of an arithmetic assumption, which is
-# exactly the failure this module is supposed to help detect.
+# FALLBACK ONLY as of 2026-09-05. A line WITH two-sided odds is now converted
+# to an implied mean per-row in market_stat_lines via data.market_devig, which
+# de-leans the vig and inverts a real distribution (Poisson for counts,
+# Normal for yards) - that handles the median<mean skew properly instead of
+# with a flat multiplier. This dict is only used for a line that carries NO
+# usable P(over) (PrizePicks' bare board, a book that published no prices);
+# data.market_devig.MEDIAN_TO_MEAN_FALLBACK is the authoritative copy and this
+# one is kept in sync for the handful of call sites / docs that still name it.
 MEDIAN_TO_MEAN = {
     'passing_tds': 1.02, 'rushing_tds': 1.05, 'receiving_tds': 1.05,
 }
@@ -136,21 +135,38 @@ def market_stat_lines(props, season_only=True, board=None):
     # market instead of from us. Blending two already-finished projections
     # would have thrown that away.
     #
-    # Vectorized rather than a per-group Python loop (this runs on every
-    # board rebuild) - weight * line summed per group, divided by the summed
-    # weight of whichever books actually reported. Falls back to the plain
-    # (unweighted) mean only for the pathological case where every provider
-    # in a group is unrecognized (weight 0 is impossible via
-    # BOOK_WEIGHT_FALLBACK, so this only fires on an all-NaN weight column,
-    # which normalize_stat_for's callers never produce - kept as a guard
-    # rather than an assumption).
-    weight = df['provider'].map(_book_weight).astype(float)
+    # Each row's posted line -> the mean the market implies for it, BEFORE
+    # the multi-book blend: de-lean the two-sided vig and invert a real
+    # distribution (data.market_devig). A line with no usable P(over) falls
+    # back to the old flat MEDIAN_TO_MEAN multiplier, so a bare board is
+    # exactly as before. A line we can't convert at all keeps its raw number
+    # rather than dropping out.
+    period = df['period'] if 'period' in df.columns else pd.Series('game', index=df.index)
+    p_over = pd.to_numeric(df.get('p_over'), errors='coerce') if 'p_over' in df.columns \
+        else pd.Series(np.nan, index=df.index)
     line = pd.to_numeric(df['line'], errors='coerce')
+    implied = pd.Series(
+        [implied_mean_from_line(l, (po if pd.notna(po) else None), m, pos, per)
+         for l, po, m, pos, per in zip(line, p_over, df['market'],
+                                       df['position'], period)],
+        index=df.index, dtype='float64')
+    implied = implied.where(implied.notna(), line)
+
+    # PrizePicks posts bare numbers (no odds to de-vig). Per the user's call:
+    # a fallback only. If ANY other book priced this (player, stat), PP is
+    # dropped from the blended consensus; if PP is the only source, it's kept.
+    # It still counts toward `Books` and shows in the per-book breakdown.
+    is_pp = df['provider'].astype(str).map(lambda s: s.split(' (')[0]).eq('PrizePicks')
+    has_other = (pd.Series(~is_pp.to_numpy(), index=df.index)
+                 .groupby([df['player_key'], df['market']]).transform('any'))
+    weight = df['provider'].map(_book_weight).astype(float)
+    weight = weight.where(~(is_pp & has_other), 0.0)
+
     grouped = pd.DataFrame({'player_key': df['player_key'], 'market': df['market'],
-                            'w': weight, 'wl': weight * line, 'line': line})
+                            'w': weight, 'wl': weight * implied, 'val': implied})
     g = grouped.groupby(['player_key', 'market'])
     weight_sum = g['w'].sum()
-    consensus = (g['wl'].sum() / weight_sum).where(weight_sum > 0, g['line'].mean())
+    consensus = (g['wl'].sum() / weight_sum).where(weight_sum > 0, g['val'].mean())
     wide = consensus.unstack('market')
     meta = (df.sort_values('provider')
               .groupby('player_key')
@@ -164,6 +180,59 @@ def market_stat_lines(props, season_only=True, board=None):
         if stat not in out.columns:
             out[stat] = np.nan
     return out
+
+
+def market_book_stat_lines(props, season_only=True, board=None):
+    """One row per (player, stat, BOOK): the raw posted line, before the
+    weighted multi-book consensus ``market_stat_lines`` collapses them into
+    a single number per (player, stat).
+
+    Same input contract and same filters as ``market_stat_lines`` - scorable
+    rows only, ``PROJECTED_STATS`` markets only, ``period`` gated by
+    ``season_only``, and the same ``board``-driven name canonicalization so
+    two books spelling one player differently land on one ``player_key``.
+    Where one book posts the same (player, stat) more than once (a reissue),
+    the mean of those lines is taken so the result is still exactly one row
+    per book.
+
+    Returns columns ``player_key, player, team, position, market, provider,
+    line, p_over, implied_mean``. ``line`` is the raw posted number;
+    ``p_over`` is that book's de-vigged probability the over hits (NaN when
+    the book published no prices); ``implied_mean`` is the market mean the
+    devig implies for that book's line (data.market_devig) - the number the
+    consensus is actually built from. Showing raw next to implied is the
+    point: a shaded 1.5 that means 1.85 is visible. Empty frame (with those
+    columns) on empty or unusable input.
+    """
+    cols = ['player_key', 'player', 'team', 'position', 'market', 'provider',
+            'line', 'p_over', 'implied_mean']
+    if props is None or props.empty:
+        return pd.DataFrame(columns=cols)
+    df = canonicalize_props(props, board) if board is not None else props.copy()
+    if season_only:
+        df = df[df['period'] == 'season']
+    df = df[df['scorable'].fillna(False).astype(bool)]
+    df = df[df['market'].isin(PROJECTED_STATS)]
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    df = df.copy()
+    df['line'] = pd.to_numeric(df['line'], errors='coerce')
+    df['p_over'] = pd.to_numeric(df.get('p_over'), errors='coerce') if 'p_over' in df.columns \
+        else np.nan
+    df = df.dropna(subset=['line'])
+    if df.empty:
+        return pd.DataFrame(columns=cols)
+    df['_period'] = df['period'] if 'period' in df.columns else 'game'
+    out = (df.groupby(['player_key', 'market', 'provider'], as_index=False)
+             .agg(line=('line', 'mean'), p_over=('p_over', 'mean'),
+                  player=('player', 'first'), team=('team', 'first'),
+                  position=('position', 'first'), _period=('_period', 'first')))
+    out['implied_mean'] = [
+        implied_mean_from_line(l, (po if pd.notna(po) else None), m, pos, per)
+        for l, po, m, pos, per in zip(out['line'], out['p_over'], out['market'],
+                                      out['position'], out['_period'])]
+    out['implied_mean'] = pd.to_numeric(out['implied_mean'], errors='coerce').fillna(out['line'])
+    return out[cols]
 
 
 def score_market_lines(market_rows, scoring, positions=None):
@@ -189,10 +258,10 @@ def score_market_lines(market_rows, scoring, positions=None):
         pos = pos.where(pos.isin(KEY_STATS), filled.astype(str).str.upper())
     out['position'] = pos
 
+    # The stat columns arriving here are already market-implied MEANS
+    # (data.market_devig, applied per-row in market_stat_lines) - the flat
+    # median->mean multiplier that used to live here would double-count.
     scored = out.copy()
-    for stat, factor in MEDIAN_TO_MEAN.items():
-        if stat in scored.columns:
-            scored[stat] = pd.to_numeric(scored[stat], errors='coerce') * factor
     scored['position'] = out['position']
     out['Market Pts'] = score_stats(scored.fillna(0.0), scoring,
                                     position_col='position').round(1)
@@ -309,13 +378,12 @@ def build_book_projection(board, market_scored, scoring):
             book_value = pd.to_numeric(row.get(stat), errors='coerce') if stat in merged.columns else np.nan
 
             if pd.notna(book_value):
-                # A line is a MEDIAN; a projection is a MEAN. For the skewed
-                # counting stats the mean sits above, and touchdowns are the
-                # worst of them - see MEDIAN_TO_MEAN.
-                value = float(book_value) * MEDIAN_TO_MEAN.get(stat, 1.0)
+                # Already a market-implied MEAN (de-vigged + distribution-
+                # inverted upstream in market_stat_lines); scored straight.
+                value = float(book_value)
                 used += 1
                 priced_line[stat] = value
-                from_market.append((stat, float(book_value), value))
+                from_market.append((stat, value, value))
             else:
                 value = our_value
                 priced_line[stat] = 0.0

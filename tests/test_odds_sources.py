@@ -195,13 +195,22 @@ def test_odds_api_bookmakers_and_props():
     assert set(books['key']) == {'fanduel', 'draftkings'}
     assert books[books['key'] == 'fanduel']['markets'].iloc[0] == 'player_pass_yds'
 
+    # One row per (player, market, book) now - the Over/Under pair is folded
+    # into a single row so the two American prices can be de-vigged.
     props, err = parse_odds_api_props(payload)
-    assert err is None and len(props) == 3
+    assert err is None and len(props) == 2
     # Per-game, always - these must never reach the season-long comparison.
     assert (props['period'] == 'game').all()
+    mahomes = props[props['player'] == 'Patrick Mahomes'].iloc[0]
+    assert mahomes['line'] == 275.5
+    # -110 / -110 is an even market -> devigs to ~0.5 (posted line is the number).
+    assert abs(float(mahomes['p_over']) - 0.5) < 1e-6
+    # DraftKings posted only an Over -> no pair, no p_over.
+    jj = props[props['player'] == 'Justin Jefferson'].iloc[0]
+    assert pd.isna(jj['p_over'])
 
     only_fd, _ = parse_odds_api_props(payload, bookmaker='fanduel')
-    assert len(only_fd) == 2 and only_fd['provider'].str.contains('FanDuel').all()
+    assert len(only_fd) == 1 and only_fd['provider'].str.contains('FanDuel').all()
 
 
 def test_market_projection_scores_and_measures_coverage():
@@ -212,25 +221,22 @@ def test_market_projection_scores_and_measures_coverage():
     assert not rows.empty
 
     jj = rows[rows['player_key'] == 'justinjefferson'].iloc[0]
-    # Two providers priced the same receiver; a RELIABILITY-WEIGHTED average
-    # of the two is taken (data.odds_sources.BOOK_WEIGHTS: Underdog 15,
-    # PrizePicks 20), not a plain average/median of either one alone.
-    ud_w, pp_w = BOOK_WEIGHTS['Underdog'], BOOK_WEIGHTS['PrizePicks']
-
-    def _weighted(ud_val, pp_val):
-        return (ud_w * ud_val + pp_w * pp_val) / (ud_w + pp_w)
-
-    assert abs(float(jj['receiving_yards']) - _weighted(1275.5, 1240.5)) < 1e-9
-    assert abs(float(jj['receptions']) - _weighted(92.5, 90.5)) < 1e-9
+    # PrizePicks posts bare numbers with no odds to de-vig; per the user's
+    # call it's a fallback only. Underdog priced all the same stats here, so
+    # PP drops out of the blended consensus and the numbers are Underdog's.
+    # (Neither fixture carries prices, so a yardage line is unshifted and a
+    # TD line still gets the flat MEDIAN_TO_MEAN fallback bump.)
+    assert abs(float(jj['receiving_yards']) - 1275.5) < 1e-9
+    assert abs(float(jj['receptions']) - 92.5) < 1e-9
     assert 'Underdog' in jj['providers'] and 'PrizePicks' in jj['providers']
 
     scored = score_market_lines(rows, SCORING)
     jj_scored = scored[scored['player_key'] == 'justinjefferson'].iloc[0]
     assert float(jj_scored['Coverage']) == 1.0, "all three WR key stats priced"
 
-    yards = _weighted(1275.5, 1240.5)
-    recs = _weighted(92.5, 90.5)
-    tds = _weighted(8.5, 9.5) * 1.05          # median-to-mean bump on TDs
+    yards = 1275.5
+    recs = 92.5
+    tds = 8.5 * 1.05          # median-to-mean fallback bump on TDs (no odds)
     expected = round(yards * 0.1 + recs * 1.0 + tds * 6, 1)
     assert abs(float(jj_scored['Market Pts']) - expected) < 0.15, (
         f"{jj_scored['Market Pts']} vs {expected}")
@@ -644,16 +650,16 @@ def test_two_books_average_per_stat_not_per_projection():
     rows = market_stat_lines(combine_props(ud, pp), season_only=True)
 
     jj = rows[rows['player_key'] == 'justinjefferson'].iloc[0]
-    # Reliability-weighted (BOOK_WEIGHTS: Underdog 15, PrizePicks 20), not a
-    # plain midpoint - see BOOK_WEIGHTS' own docstring.
-    ud_w, pp_w = BOOK_WEIGHTS['Underdog'], BOOK_WEIGHTS['PrizePicks']
-    expected = (ud_w * 1275.5 + pp_w * 1375.5) / (ud_w + pp_w)
-    assert abs(float(jj['receiving_yards']) - expected) < 1e-9, "two books -> weighted average"
+    # Underdog also priced receiving_yards, so PrizePicks (fallback-only) is
+    # dropped from the blend - the number is Underdog's alone.
+    assert abs(float(jj['receiving_yards']) - 1275.5) < 1e-9, "PP demoted; Underdog only"
     assert int(jj['Books']) == 2
     assert 'Underdog' in jj['providers'] and 'PrizePicks' in jj['providers']
 
     qb = rows[rows['player_key'] == 'patrickmahomes'].iloc[0]
-    assert float(qb['rushing_yards']) == 300.5, "a stat only one book priced survives"
+    # rushing_yards was priced ONLY by PrizePicks -> it's the fallback and is
+    # kept (a stat with no other source still counts).
+    assert float(qb['rushing_yards']) == 300.5, "PP kept where it's the only source"
     assert float(qb['passing_yards']) == 4225.5, "and the other book's stats are kept"
     assert int(qb['Books']) == 2
 
@@ -741,9 +747,9 @@ def test_two_books_spelling_one_player_differently_become_one_row():
     row = rows.iloc[0]
     assert row['player'] == 'James Cook III', "canonicalised to the board's spelling"
     assert int(row['Books']) == 2
-    ud_w, pp_w = BOOK_WEIGHTS['Underdog'], BOOK_WEIGHTS['PrizePicks']
-    expected = (ud_w * 1000.5 + pp_w * 1100.5) / (ud_w + pp_w)
-    assert abs(float(row['rushing_yards']) - expected) < 1e-9, "and they weighted-average"
+    # The two spellings still collapse to one player; the blended number is
+    # Underdog's (PrizePicks is fallback-only and Underdog priced this stat).
+    assert abs(float(row['rushing_yards']) - 1000.5) < 1e-9, "collapsed; Underdog value"
 
 
 def test_canonicalisation_still_refuses_two_genuinely_different_players():
@@ -906,6 +912,63 @@ def test_pinnacle_publishes_no_prices_so_claims_no_probability():
     props, _ = parse_pinnacle_payload(_fixture('pinnacle_nfl_matchups.json'))
     assert props['p_over'].isna().all()
     assert props['over_payout'].isna().all()
+
+
+def _pinnacle_game_feeds():
+    """A /matchups list + /markets/straight list for one game with two
+    per-game player props: a leaned rushing-yards line and an even one."""
+    matchups = [
+        {'id': 900, 'type': 'matchup', 'participants': [
+            {'name': 'Seattle Seahawks', 'alignment': 'home'},
+            {'name': 'New England Patriots', 'alignment': 'away'}]},
+        {'id': 901, 'type': 'special', 'units': 'Rushing Yards',
+         'parent': {'id': 900}, 'special': {'category': 'Player Props',
+                                            'description': 'TreVeyon Henderson Total Rushing Yards'},
+         'participants': [{'name': 'Over', 'id': 9011}, {'name': 'Under', 'id': 9012}]},
+        {'id': 902, 'type': 'special', 'units': 'Receiving Yards',
+         'parent': {'id': 900}, 'special': {'category': 'Player Props',
+                                            'description': 'Puka Nacua Total Receiving Yards'},
+         'participants': [{'name': 'Over', 'id': 9021}, {'name': 'Under', 'id': 9022}]},
+        # A team special in the same feed -> must not become a player row.
+        {'id': 903, 'type': 'special', 'special': {'category': 'Regular Season Wins',
+                                                   'description': 'Seattle Seahawks Total Regular Season Wins'},
+         'participants': [{'name': 'Over 9.5'}, {'name': 'Under 9.5'}]},
+    ]
+    markets = [
+        {'matchupId': 901, 'type': 'total', 'period': 0, 'prices': [
+            {'participantId': 9011, 'points': 30.5, 'price': 138},
+            {'participantId': 9012, 'points': 30.5, 'price': -185}]},
+        {'matchupId': 902, 'type': 'total', 'period': 0, 'prices': [
+            {'participantId': 9021, 'points': 71.5, 'price': -110},
+            {'participantId': 9022, 'points': 71.5, 'price': -110}]},
+    ]
+    return matchups, markets
+
+
+def test_pinnacle_per_game_props_need_the_markets_join():
+    matchups, markets = _pinnacle_game_feeds()
+    # /matchups alone -> the per-game props have no inline line, so nothing.
+    alone, _ = parse_pinnacle_payload(matchups)
+    assert alone.empty or (alone['period'] != 'game').all()
+    # with the markets feed -> two priced, de-vigged game lines.
+    joined, err = parse_pinnacle_payload(matchups, markets)
+    assert err is None, err
+    assert list(joined.columns) == PROP_COLUMNS
+    game = joined[joined['period'] == 'game'].set_index('player')
+    assert set(game.index) == {'TreVeyon Henderson', 'Puka Nacua'}
+    assert 'Seahawks' not in ' '.join(joined['player'])
+
+
+def test_pinnacle_per_game_line_is_the_posted_number_p_over_is_the_lean():
+    matchups, markets = _pinnacle_game_feeds()
+    joined, _ = parse_pinnacle_payload(matchups, markets)
+    g = joined[joined['period'] == 'game'].set_index('player')
+    # The posted line is unchanged; the price lean lives in p_over.
+    assert g.loc['TreVeyon Henderson', 'line'] == 30.5
+    assert g.loc['TreVeyon Henderson', 'market'] == 'rushing_yards'
+    assert g.loc['TreVeyon Henderson', 'p_over'] < 0.45      # +138 / -185 -> under favoured
+    assert g.loc['Puka Nacua', 'line'] == 71.5
+    assert abs(g.loc['Puka Nacua', 'p_over'] - 0.5) < 1e-6   # -110 / -110 -> even
 
 
 # --- DraftKings ------------------------------------------------------------
@@ -1116,8 +1179,8 @@ def test_weekly_snapshot_round_trips_and_survives_a_bad_file():
     summary = weekly_summary(game)
     assert set(summary.columns) == {'Book', 'Lines', 'Players', 'Markets'}
     consensus = weekly_consensus(game)
-    assert list(consensus.columns[:6]) == ['Player', 'Team', 'Market',
-                                           'Consensus', 'Books', 'Spread']
+    assert list(consensus.columns[:7]) == ['Player', 'Team', 'Market',
+                                           'Consensus', 'Market proj', 'Books', 'Spread']
     assert (consensus['Books'] >= 1).all()
 
 
@@ -1181,6 +1244,44 @@ def test_weekly_consensus_medians_across_books_and_reports_the_spread():
     assert out['Consensus'].iloc[0] == 62.5, "median of the three, not the mean"
     assert out['Books'].iloc[0] == 3
     assert out['Spread'].iloc[0] == 4.0
+    # No p_over on any row -> the de-vigged projection is just the posted
+    # consensus, unchanged.
+    assert out['Market proj'].iloc[0] == 62.5
+
+
+def test_weekly_consensus_backfills_a_blank_team_from_another_book():
+    """Pinnacle's per-game props name no team; a blank team must not split a
+    player into two pivot rows - it's filled from a book that does name one."""
+    from data.odds_weekly import weekly_consensus
+    rows = pd.DataFrame([
+        {'provider': 'Underdog', 'player': 'A Back', 'player_key': 'aback', 'team': 'KC',
+         'position': 'RB', 'market': 'rushing_yards', 'market_raw': 'x', 'scorable': True,
+         'line': 60.5, 'over_payout': None, 'under_payout': None, 'p_over': None,
+         'period': 'game', 'source_id': '1'},
+        {'provider': 'Pinnacle', 'player': 'A Back', 'player_key': 'aback', 'team': '',
+         'position': '', 'market': 'rushing_yards', 'market_raw': 'x', 'scorable': True,
+         'line': 62.5, 'over_payout': 1.87, 'under_payout': 1.87, 'p_over': 0.5,
+         'period': 'game', 'source_id': '2'},
+    ])
+    out = weekly_consensus(rows)
+    assert len(out) == 1, "one player+stat row, both books stacked into it"
+    assert out['Team'].iloc[0] == 'KC'
+    assert out['Books'].iloc[0] == 2
+
+
+def test_weekly_consensus_market_proj_shifts_for_a_leaned_price():
+    """A book that prices the over above 50% is really calling for a number
+    ABOVE its posted line - 'Market proj' carries that, 'Consensus' does not."""
+    from data.odds_weekly import weekly_consensus
+    rows = pd.DataFrame([
+        {'provider': 'DraftKings', 'player': 'A Passer', 'player_key': 'apasser',
+         'team': 'KC', 'position': 'QB', 'market': 'passing_tds', 'market_raw': 'Pass TDs',
+         'scorable': True, 'line': 1.5, 'over_payout': None, 'under_payout': None,
+         'p_over': 0.60, 'period': 'game', 'source_id': 'x'},
+    ])
+    out = weekly_consensus(rows)
+    assert out['Consensus'].iloc[0] == 1.5
+    assert out['Market proj'].iloc[0] > 1.7, "over favoured -> mean above the posted line"
 
 
 def test_browser_fallback_is_switchable_and_reports_itself():

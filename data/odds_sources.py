@@ -237,6 +237,14 @@ STAT_ALIASES = {
     'receivingtds': 'receiving_tds', 'receivingtouchdowns': 'receiving_tds', 'rectds': 'receiving_tds',
     'receptions': 'receptions', 'recs': 'receptions', 'catches': 'receptions',
     'targets': 'targets',
+
+    # The Odds API player-prop market keys (config.ODDS_API_PLAYER_PROP_MARKETS),
+    # with the 'player_' prefix stripped by parse_odds_api_props. Most collapse
+    # onto rows already above (passyds, passtds, passattempts, rushyds,
+    # rushattempts, receptions); these two are the spellings that otherwise
+    # fall through and leave a sharp-book line unscorable.
+    'receptionyds': 'receiving_yards',
+    'passinterceptions': 'passing_interceptions',
 }
 
 # Lines whose stat is a COMBINATION the projection model doesn't carry as a
@@ -610,6 +618,19 @@ def parse_underdog_payload(payload, sport='NFL'):
             side = {'higher': 'over', 'lower': 'under'}.get(choice, choice)
             payouts[side] = pd.to_numeric(option.get('payout_multiplier'), errors='coerce')
 
+        # Underdog publishes a per-side payout multiplier (decimal-odds shaped).
+        # A standard pick has both sides equal -> devigs to 0.5 (no lean, the
+        # line is the number). A discount/boost pick shades one side and that
+        # shows up as p_over != 0.5. Only trust a clean two-way (both sides a
+        # real >1 multiplier); a lopsided special pick is left unpriced.
+        over_pay, under_pay = payouts.get('over'), payouts.get('under')
+        p_over = None
+        if (pd.notna(over_pay) and pd.notna(under_pay)
+                and 1.0 < float(over_pay) < 10.0 and 1.0 < float(under_pay) < 10.0):
+            devigged = devig_two_way_decimal(over_pay, under_pay)
+            if devigged is not None and 0.05 <= devigged <= 0.95:
+                p_over = devigged
+
         team_uuid = str(player.get('team_id') or appearance.get('team_id') or '')
 
         name = ' '.join(str(player.get(k) or '').strip()
@@ -623,8 +644,9 @@ def parse_underdog_payload(payload, sport='NFL'):
             'market_raw': str(stat_ref.get('stat') or ''),
             'scorable': bool(scorable),
             'line': line.get('stat_value'),
-            'over_payout': payouts.get('over'),
-            'under_payout': payouts.get('under'),
+            'over_payout': over_pay,
+            'under_payout': under_pay,
+            'p_over': p_over,
             'period': _underdog_period(appearance),
             'source_id': str(line.get('id') or ''),
         })
@@ -1524,88 +1546,166 @@ def fetch_draftkings_lines():
 # ---------------------------------------------------------------------------
 
 # Pinnacle splits its answer in two: /matchups describes WHAT is priced and
-# /markets carries the PRICES. The lines themselves are in the matchup
-# participant names, so the matchup feed alone is enough to read a median off
-# - which is most of what a draft board wants. Without the markets call there
-# are no prices, so nothing can be devigged; that is recorded as a null
-# p_over rather than guessed at.
+# /markets/straight carries the PRICES (line + American odds per participant).
+#
+#   SEASON player props ("NFL 2026/2027 - Zay Flowers Regular Season Receiving
+#   Yards") carry the line inline in the participant name ("Over 974.5 yards"),
+#   so /matchups alone is enough for those - no price, p_over stays null.
+#
+#   PER-GAME player props ("Puka Nacua Total Receiving Yards", category
+#   "Player Props", parented to a game matchup) have BARE "Over"/"Under"
+#   participants - the line and the two prices live only in /markets/straight,
+#   keyed by matchupId. Joining the two feeds is what turns these into scored
+#   weekly lines WITH a de-vigged p_over, and Pinnacle is the sharpest book on
+#   the board (BOOK_WEIGHTS), so this is the one whose lean matters most.
 PINNACLE_NFL_LEAGUE_ID = 889
 PINNACLE_MATCHUPS_URL = f'https://guest.api.arcadia.pinnacle.com/0.1/leagues/{PINNACLE_NFL_LEAGUE_ID}/matchups'
+PINNACLE_MARKETS_URL = f'https://guest.api.arcadia.pinnacle.com/0.1/leagues/{PINNACLE_NFL_LEAGUE_ID}/markets/straight'
 
 # "NFL 2026/2027 - Zay Flowers Regular Season Receiving Yards"
 _PIN_SPECIAL = re.compile(r'^NFL \d{4}/\d{4} - (?P<player>.+?) Regular Season (?P<stat>.+)$')
 # "Over 974.5 yards" - the unit word is optional and varies by stat.
 _PIN_SIDE = re.compile(r'^(?P<side>Over|Under)\s+(?P<line>-?[\d.]+)\s*\w*\s*$')
+# Per-game player prop: "Puka Nacua Total Receiving Yards" (the stat also
+# arrives cleanly in matchup['units'], which is what actually gets normalized).
+_PIN_GAME_PROP = re.compile(r'^(?P<player>.+?) Total (?P<stat>.+)$')
 
 
-def parse_pinnacle_payload(payload):
+def _pinnacle_markets_index(markets):
+    """{matchupId: {participantId: {'points': line, 'price': american}}} for the
+    period-0 straight total on each matchup - the shape a per-game player prop
+    needs joined back onto it."""
+    index = {}
+    if not isinstance(markets, list):
+        return index
+    for entry in markets:
+        if not isinstance(entry, dict) or entry.get('type') != 'total':
+            continue
+        if entry.get('period') not in (0, None):
+            continue
+        mid = entry.get('matchupId')
+        if mid is None:
+            continue
+        by_participant = index.setdefault(mid, {})
+        for price in entry.get('prices') or []:
+            pid = price.get('participantId')
+            if pid is not None and pid not in by_participant:
+                by_participant[pid] = {'points': price.get('points'), 'price': price.get('price')}
+    return index
+
+
+def parse_pinnacle_payload(payload, markets=None):
     """
-    Pinnacle's guest matchup feed -> normalized props.
+    Pinnacle's guest feeds -> normalized props.
 
-    Season player props arrive as `type: "special"` matchups whose
-    special.description carries the player and stat, and whose two
-    participants carry the side and the number.
+    `payload` is the /matchups list. `markets` is the optional
+    /markets/straight list - pass it to unlock the PER-GAME player props
+    (which have no inline line); without it only the SEASON props resolve,
+    the historical behaviour.
 
-    The team-facing specials in the same feed ("Pittsburgh Steelers Total
-    Regular Season Wins", "New York Giants To Make the Playoffs", "NFC North
-    Winner") do not match the description pattern, so they drop out without
-    needing to be enumerated.
+    Season props arrive as `type: "special"` matchups whose
+    special.description carries the player and stat and whose participants
+    carry the side and the number. Team-facing specials ("... Total Regular
+    Season Wins", "... To Make the Playoffs") don't match the description
+    pattern and drop out. Per-game props are `type: "special"`,
+    `special.category == "Player Props"`, parented to a `type: "matchup"`
+    game; their line + prices come from the markets join.
     """
     if not isinstance(payload, list):
         return _empty_props(), "Pinnacle returned an unexpected payload shape."
+
+    games = {m.get('id'): m for m in payload
+             if isinstance(m, dict) and m.get('type') == 'matchup'}
+    market_index = _pinnacle_markets_index(markets)
 
     rows = []
     for matchup in payload:
         if not isinstance(matchup, dict) or matchup.get('type') != 'special':
             continue
-        described = _PIN_SPECIAL.match(
-            str(((matchup.get('special') or {}).get('description')) or ''))
-        if not described:
-            continue
+        special = matchup.get('special') or {}
+        description = str(special.get('description') or '')
         participants = matchup.get('participants') or []
         if len(participants) != 2:
             continue
-        sides = {}
-        for part in participants:
-            hit = _PIN_SIDE.match(str(part.get('name') or ''))
-            if hit:
-                sides[hit.group('side').lower()] = hit.group('line')
-        if 'over' not in sides:
+
+        described = _PIN_SPECIAL.match(description)
+        if described:
+            sides = {}
+            for part in participants:
+                hit = _PIN_SIDE.match(str(part.get('name') or ''))
+                if hit:
+                    sides[hit.group('side').lower()] = hit.group('line')
+            if 'over' not in sides:
+                continue
+            market_name, scorable = normalize_stat(described.group('stat'))
+            rows.append({
+                'provider': 'Pinnacle',
+                'player': described.group('player').strip(),
+                'team': '', 'position': '',
+                'market': market_name or described.group('stat'),
+                'market_raw': described.group('stat'),
+                'scorable': bool(scorable),
+                'line': sides['over'],
+                # Season feed carries no price - blank, not a placeholder 1.0.
+                'over_payout': None, 'under_payout': None, 'p_over': None,
+                'period': 'season',
+                'source_id': str(matchup.get('id') or ''),
+            })
             continue
 
-        market_name, scorable = normalize_stat(described.group('stat'))
+        # Per-game player prop: line + prices come from the markets join.
+        if special.get('category') != 'Player Props' or not matchup.get('parent'):
+            continue
+        game_prop = _PIN_GAME_PROP.match(description)
+        if not game_prop:
+            continue
+        priced = market_index.get(matchup.get('id'))
+        if not priced:
+            continue
+        side_ids = {str(p.get('name') or '').lower(): p.get('id') for p in participants}
+        over = priced.get(side_ids.get('over'))
+        under = priced.get(side_ids.get('under'))
+        if not over or over.get('points') is None:
+            continue
+        over_price, under_price = over.get('price'), (under or {}).get('price')
+        p_over = devig_two_way(over_price, under_price) if under_price is not None else None
+        if p_over is not None and not (0.02 <= p_over <= 0.98):
+            p_over = None
+
+        stat_label = str(matchup.get('units') or game_prop.group('stat'))
+        market_name, scorable = normalize_stat(stat_label)
         rows.append({
             'provider': 'Pinnacle',
-            'player': described.group('player').strip(),
-            'team': '',
-            'position': '',
-            'market': market_name or described.group('stat'),
-            'market_raw': described.group('stat'),
+            'player': game_prop.group('player').strip(),
+            'team': '', 'position': '',
+            'market': market_name or stat_label,
+            'market_raw': stat_label,
             'scorable': bool(scorable),
-            'line': sides['over'],
-            # No prices in the matchup feed. Blank rather than a placeholder,
-            # for the same reason PrizePicks leaves them blank: an invented
-            # 1.0 reads downstream as a real even-money quote.
-            'over_payout': None,
-            'under_payout': None,
-            'p_over': None,
-            'period': 'season',
+            'line': over.get('points'),
+            'over_payout': american_to_decimal(over_price),
+            'under_payout': american_to_decimal(under_price),
+            'p_over': p_over,
+            'period': 'game',
             'source_id': str(matchup.get('id') or ''),
         })
 
     props = _finalize(rows)
     if props.empty:
-        return props, "Pinnacle returned no season-long player lines."
+        return props, "Pinnacle returned no player lines."
     return props, None
 
 
 @st.cache_data(ttl=FETCH_TTL, show_spinner=False)
 def fetch_pinnacle_lines():
-    """Live Pinnacle season props. Returns (props, error)."""
+    """Live Pinnacle props - season AND per-game. Returns (props, error).
+
+    Fetches both guest feeds; a failed /markets call is non-fatal (the
+    season props still resolve, just without the per-game additions)."""
     payload, err = _get_json(PINNACLE_MATCHUPS_URL)
     if err:
         return _empty_props(), err
-    return parse_pinnacle_payload(payload)
+    markets, markets_err = _get_json(PINNACLE_MARKETS_URL)
+    return parse_pinnacle_payload(payload, None if markets_err else markets)
 
 
 # ---------------------------------------------------------------------------
@@ -1665,20 +1765,41 @@ def parse_odds_api_props(payload, provider='The Odds API', bookmaker=None):
             for market in book.get('markets') or []:
                 market_name, scorable = normalize_stat(
                     str(market.get('key') or '').replace('player_', ''))
+                # Pair the Over and Under outcomes for each player so the two
+                # American prices can be de-vigged into a p_over, the same
+                # way the Underdog parser turns a two-way payout into one -
+                # a book pricing the over at -140 is calling for a number
+                # above its posted line, and nothing downstream can recover
+                # that from a bare line. One row per (player, market, book).
+                sides = {}
                 for outcome in market.get('outcomes') or []:
+                    who = outcome.get('description') or outcome.get('name')
+                    side = str(outcome.get('name', '')).lower()
+                    if side not in ('over', 'under'):
+                        continue
+                    entry = sides.setdefault(str(who or ''), {'point': outcome.get('point')})
+                    entry[side] = outcome.get('price')
+                    if entry.get('point') is None:
+                        entry['point'] = outcome.get('point')
+                for who, entry in sides.items():
+                    over_price, under_price = entry.get('over'), entry.get('under')
+                    p_over = None
+                    if over_price is not None and under_price is not None:
+                        devigged = devig_two_way(over_price, under_price)
+                        if devigged is not None and 0.02 <= devigged <= 0.98:
+                            p_over = devigged
                     rows.append({
                         'provider': f"{provider}: {book.get('title') or key}",
-                        'player': outcome.get('description') or outcome.get('name'),
+                        'player': who,
                         'team': '',
                         'position': '',
                         'market': market_name or str(market.get('key') or ''),
                         'market_raw': str(market.get('key') or ''),
                         'scorable': bool(scorable),
-                        'line': outcome.get('point'),
-                        'over_payout': outcome.get('price') if str(
-                            outcome.get('name', '')).lower() == 'over' else None,
-                        'under_payout': outcome.get('price') if str(
-                            outcome.get('name', '')).lower() == 'under' else None,
+                        'line': entry.get('point'),
+                        'over_payout': american_to_decimal(over_price),
+                        'under_payout': american_to_decimal(under_price),
+                        'p_over': p_over,
                         'period': 'game',
                         'source_id': str(event.get('id') or ''),
                     })

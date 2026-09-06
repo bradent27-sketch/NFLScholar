@@ -36,7 +36,7 @@ import pandas as pd
 
 from data.odds_sources import (
     _empty_props, combine_props, fetch_prizepicks_lines, fetch_underdog_lines,
-    fetch_draftkings_weekly_lines, load_saved_book_payload,
+    fetch_draftkings_weekly_lines, fetch_pinnacle_lines, load_saved_book_payload,
     parse_prizepicks_payload, parse_underdog_payload, parse_draftkings_payloads,
 )
 
@@ -60,10 +60,13 @@ WEEKLY_SAVED_SOURCES = {
     'DraftKings': ('DraftKings Weekly', parse_draftkings_payloads),
 }
 
-# The books that need no key and no quota. All three are pulled together on
-# a weekly load; The Odds API is deliberately NOT in this list - it costs
-# credits and is only ever spent on an explicit request.
-WEEKLY_BOOKS = ('PrizePicks', 'Underdog', 'DraftKings')
+# The books that need no key and no quota. All four are pulled together on a
+# weekly load; The Odds API is deliberately NOT in this list - it costs
+# credits and is only ever spent on an explicit request. Pinnacle joined
+# 2026-09-06: its guest /matchups + /markets/straight feeds carry per-game
+# player props with prices (BOOK_WEIGHTS puts it highest - the sharpest lean
+# on the board), and neither feed is blocked to a plain request.
+WEEKLY_BOOKS = ('PrizePicks', 'Underdog', 'DraftKings', 'Pinnacle')
 
 WEEKLY_SNAPSHOT_PATH = os.path.join('external_data', 'weekly_props_snapshot.json')
 
@@ -168,6 +171,10 @@ def fetch_weekly_props(books=WEEKLY_BOOKS):
                 props, err = fetch_underdog_lines()
             elif name == 'DraftKings':
                 props, err = fetch_draftkings_weekly_lines()
+            elif name == 'Pinnacle':
+                # fetch_pinnacle_lines returns season + per-game rows; the
+                # period == 'game' filter just below keeps only the weekly ones.
+                props, err = fetch_pinnacle_lines()
             else:
                 continue
             source = 'live'
@@ -241,15 +248,45 @@ def weekly_consensus(props):
     scorable = props[props['scorable'].astype(bool)].copy()
     if scorable.empty:
         return pd.DataFrame()
+    # Backfill a blank team from another book's row for the same player -
+    # Pinnacle's per-game props name no team, and an empty string would split
+    # a player into two pivot rows (one per team value) instead of stacking
+    # his books side by side.
+    scorable['team'] = scorable['team'].fillna('').astype(str)
+    _known = (scorable[scorable['team'].str.strip() != '']
+              .drop_duplicates('player').set_index('player')['team'])
+    _blank = scorable['team'].str.strip() == ''
+    scorable.loc[_blank, 'team'] = scorable.loc[_blank, 'player'].map(_known).fillna('')
+    # De-vigged mean per row: where a book published over/under prices (its
+    # p_over), the posted line is not the market's mean - a leaned line
+    # implies a number off to one side. implied_mean_from_line carries that;
+    # with no p_over it returns the line unchanged, so 'Market proj' equals
+    # 'Consensus' for a board of pure pick'em (PrizePicks / bare Underdog).
+    from data.market_devig import implied_mean_from_line
+    _line = pd.to_numeric(scorable['line'], errors='coerce')
+    _p_over = (pd.to_numeric(scorable['p_over'], errors='coerce')
+               if 'p_over' in scorable.columns else pd.Series(float('nan'), index=scorable.index))
+    _period = scorable['period'] if 'period' in scorable.columns else pd.Series('game', index=scorable.index)
+    _position = scorable['position'] if 'position' in scorable.columns else pd.Series('', index=scorable.index)
+    scorable['_implied_mean'] = [
+        implied_mean_from_line(ln, (po if pd.notna(po) else None), mk, ps or None, pe)
+        for ln, po, mk, ps, pe in zip(_line, _p_over, scorable['market'], _position, _period)
+    ]
+    scorable['_implied_mean'] = pd.to_numeric(scorable['_implied_mean'], errors='coerce').fillna(_line)
+
     wide = scorable.pivot_table(index=['player', 'team', 'market'],
                                 columns='provider', values='line', aggfunc='median')
+    imp = scorable.pivot_table(index=['player', 'team', 'market'],
+                               columns='provider', values='_implied_mean', aggfunc='median')
     books = list(wide.columns)
+    imp = imp.reindex(index=wide.index, columns=books)
     wide['Consensus'] = wide[books].median(axis=1)
+    wide['Market proj'] = imp[books].median(axis=1).round(2)
     wide['Books'] = wide[books].notna().sum(axis=1)
     wide['Spread'] = (wide[books].max(axis=1) - wide[books].min(axis=1)).round(2)
     out = wide.reset_index().rename(columns={'player': 'Player', 'team': 'Team',
                                              'market': 'Market'})
-    ordered = ['Player', 'Team', 'Market', 'Consensus', 'Books', 'Spread'] + books
+    ordered = ['Player', 'Team', 'Market', 'Consensus', 'Market proj', 'Books', 'Spread'] + books
     return out[ordered].sort_values(['Player', 'Market']).reset_index(drop=True)
 
 
@@ -288,3 +325,18 @@ def weekly_market_projection(props, scoring, board=None):
         return pd.DataFrame(), {'players': 0}
     scored = score_market_lines(rows, scoring)
     return scored, {'players': int(len(scored))}
+
+
+def weekly_market_book_lines(props, board=None):
+    """This week's player-prop lines as one row per (player, stat, book) -
+    the un-blended companion to ``weekly_market_projection`` for a UI that
+    wants to show which book posted what alongside the consensus.
+
+    ``season_only=False`` for the same reason ``weekly_market_projection``
+    sets it: a ``weekly_props()`` frame is already ``period == 'game'`` only.
+    Empty frame on empty/unusable input.
+    """
+    from data.odds_projections import market_book_stat_lines
+    if props is None or props.empty:
+        return pd.DataFrame()
+    return market_book_stat_lines(props, season_only=False, board=board)

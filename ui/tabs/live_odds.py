@@ -130,6 +130,77 @@ def _build_props_comparison_table(props_long_df):
     return pivot
 
 
+def _render_odds_api_devig(props_data, player_q='', market_filter=None):
+    """The sharp books (FanDuel / DraftKings / Pinnacle / BetMGM / ...) this
+    fetch just returned, de-vigged the same way the free weekly board is:
+    each book's Over/Under prices -> a p_over -> an implied market mean, then
+    a reliability-weighted consensus across books.
+
+    This reuses the fetch that already happened for the cross-book table
+    above - it does NOT spend another credit. It only appears once player
+    props have been loaded for the game.
+    """
+    from data.odds_sources import parse_odds_api_props
+    from data.odds_projections import market_book_stat_lines, market_stat_lines
+
+    props, err = parse_odds_api_props(props_data)
+    if props is None or props.empty:
+        return
+    props = props[props['scorable'].astype(bool)]
+    if props.empty:
+        st.caption("De-vigged view: none of these markets map to a stat this app scores.")
+        return
+
+    book_lines = market_book_stat_lines(props, season_only=False)
+    consensus_wide = market_stat_lines(props, season_only=False)
+    if book_lines.empty:
+        return
+    consensus = consensus_wide.iloc[0].to_dict() if not consensus_wide.empty else {}
+
+    bl = book_lines.copy()
+    bl['book'] = bl['provider'].astype(str).str.split(' (', regex=False).str[0].str.split(': ').str[-1]
+    if player_q:
+        bl = bl[bl['player'].str.contains(player_q, case=False, na=False)]
+    if market_filter:
+        want = {m.lower().replace(' ', '_') for m in market_filter}
+        bl = bl[bl['market'].str.lower().isin(want) | bl['market_raw'].str.lower().isin(want)] \
+            if 'market_raw' in bl.columns else bl[bl['market'].str.lower().isin(want)]
+    if bl.empty:
+        return
+
+    bl['line'] = pd.to_numeric(bl['line'], errors='coerce')
+    bl['implied_mean'] = pd.to_numeric(bl.get('implied_mean'), errors='coerce').fillna(bl['line'])
+
+    def _cell(raw, imp):
+        if pd.isna(raw):
+            return '—'
+        if pd.notna(imp) and abs(float(imp) - float(raw)) >= 0.05:
+            return f"{float(raw):.2f} → {float(imp):.2f}"
+        return f"{float(raw):.2f}"
+
+    rows = []
+    for (player, market), chunk in bl.groupby(['player', 'market']):
+        row = {'Player': player, 'Market': market.replace('_', ' ').title()}
+        for _, r in chunk.iterrows():
+            row[r['book']] = _cell(r['line'], r['implied_mean'])
+        avg = consensus.get(market)
+        row['Market proj'] = f"{float(avg):.2f}" if avg is not None and pd.notna(avg) else '—'
+        rows.append(row)
+    table = pd.DataFrame(rows).fillna('—')
+    front = ['Player', 'Market']
+    book_cols = [c for c in table.columns if c not in front + ['Market proj']]
+    table = table[front + sorted(book_cols) + ['Market proj']].sort_values(['Player', 'Market'])
+
+    st.markdown(
+        "**De-vigged market projection** — each book cell is its raw posted line, with an arrow to "
+        "the mean its Over/Under prices actually imply. **Market proj** is the reliability-weighted "
+        "consensus of those de-vigged numbers, the same treatment the free weekly board gets."
+    )
+    st.dataframe(style_plain_dataframe(table.set_index('Player')),
+                 width="stretch", height=df_auto_height(min(len(table), 30)))
+    st.caption("Reuses the props fetch above — no extra API credit spent.")
+
+
 def _fmt_age(stamp):
     if stamp is None:
         return "never"
@@ -217,7 +288,9 @@ def _render_weekly_props():
 
     st.markdown("#### This week's player props")
     st.caption(
-        "PrizePicks, Underdog and DraftKings — no key, no quota, no request limit. "
+        "PrizePicks, Underdog, DraftKings and Pinnacle — no key, no quota, no request limit. "
+        "Pinnacle is the sharpest book here and prices its per-game lines with real "
+        "over/under odds, so its lean feeds `Market proj` (the de-vigged column) most. "
         "Books post the coming weekend on Tuesday or Wednesday, so this reloads on its "
         "own the first time you open it after Tuesday morning. Hit refresh whenever you "
         "want the current numbers rather than the ones posted at the start of the week."
@@ -236,11 +309,12 @@ def _render_weekly_props():
         )
 
     force = st.button("🔄 Refresh weekly lines", key="weekly_props_refresh",
-                      help="Goes back to all three books now, ignoring the saved snapshot.")
+                      help="Goes back to all four books now, ignoring the saved snapshot.")
     force = _render_weekly_uploads() or force
     if force:
         for fn in ('fetch_prizepicks_lines', 'fetch_underdog_lines',
-                   'fetch_draftkings_weekly_lines', 'dk_weekly_subcategories'):
+                   'fetch_draftkings_weekly_lines', 'dk_weekly_subcategories',
+                   'fetch_pinnacle_lines'):
             getattr(__import__('data.odds_sources', fromlist=[fn]), fn).clear()
 
     with skeleton_loader("table", n_rows=5, n_cols=5):
@@ -315,10 +389,13 @@ def _render_weekly_props():
         view = view.sort_values(_by, ascending=_asc)
 
     st.markdown(
-        "**Consensus board** — one row per player and stat. `Consensus` is the median "
-        "across whichever books priced him, `Books` is how many did, and `Spread` is the "
-        "gap between the highest and lowest. A stat every book agrees on is settled; the "
-        "wide ones are where a disagreement is worth reading."
+        "**Consensus board** — one row per player and stat. `Consensus` is the median posted "
+        "line across whichever books priced him; `Market proj` is that same median AFTER "
+        "de-vigging — where a book gives over/under prices, a leaned line implies a number off "
+        "to one side, and `Market proj` carries that shift while `Consensus` does not (they match "
+        "for a pure pick'em board). `Books` is how many priced him, `Spread` is the gap between "
+        "the highest and lowest posted line. A stat every book agrees on is settled; the wide "
+        "ones are where a disagreement is worth reading."
     )
     # NOT set_index('Player'). A player has one row per stat here, so that
     # index is non-unique and pandas' Styler refuses to apply against it -
@@ -494,5 +571,7 @@ def render():
                         style_plain_dataframe(comparison_df.set_index('Player')),
                         width="stretch", height=df_auto_height(min(len(comparison_df), 30))
                     )
+
+                _render_odds_api_devig(props_data, player_q, market_filter)
             else:
                 st.info("No player props posted for this game yet by any tracked bookmaker.")

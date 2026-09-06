@@ -13,9 +13,10 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 pd.options.mode.string_storage = "python"
 
+import ui.tabs.live_odds as live_odds  # noqa: E402
 from ui.tabs.live_odds import (  # noqa: E402
     _build_lines_table, _lines_consensus, _build_props_long_table,
-    _build_props_comparison_table,
+    _build_props_comparison_table, _render_odds_api_devig,
 )
 
 
@@ -122,6 +123,63 @@ def test_props_comparison_sorts_by_player_then_market():
 
 def test_empty_props_long_table_yields_empty_comparison():
     assert _build_props_comparison_table(pd.DataFrame()).empty
+
+
+class _Sink:
+    def __init__(self, monkeypatch):
+        self.text, self.frames = [], []
+        monkeypatch.setattr(live_odds.st, "markdown", lambda b, *a, **k: self.text.append(str(b)))
+        monkeypatch.setattr(live_odds.st, "caption", lambda b, *a, **k: self.text.append(str(b)))
+        monkeypatch.setattr(live_odds.st, "dataframe", lambda f, *a, **k: self.frames.append(f))
+        monkeypatch.setattr(live_odds, "style_plain_dataframe", lambda f, *a, **k: f)
+        monkeypatch.setattr(live_odds, "df_auto_height", lambda *a, **k: 200)
+
+    @property
+    def joined(self):
+        return "\n".join(self.text)
+
+
+def _leaned_props_payload():
+    """One event, two books; DK leans the receiving-yards over, FanDuel is even.
+    A yardage line has no median->mean skew term, so an even price implies its
+    own number and a leaned one does not."""
+    return {
+        'id': 'evt-9',
+        'bookmakers': [
+            {'key': 'draftkings', 'title': 'DraftKings', 'markets': [
+                {'key': 'player_reception_yds', 'outcomes': [
+                    {'name': 'Over', 'description': 'Stefon Diggs', 'point': 68.5, 'price': -170},
+                    {'name': 'Under', 'description': 'Stefon Diggs', 'point': 68.5, 'price': 135},
+                ]}]},
+            {'key': 'fanduel', 'title': 'FanDuel', 'markets': [
+                {'key': 'player_reception_yds', 'outcomes': [
+                    {'name': 'Over', 'description': 'Stefon Diggs', 'point': 68.5, 'price': -110},
+                    {'name': 'Under', 'description': 'Stefon Diggs', 'point': 68.5, 'price': -110},
+                ]}]},
+        ],
+    }
+
+
+def test_odds_api_devig_view_shows_the_leaned_line_shift(monkeypatch):
+    sink = _Sink(monkeypatch)
+    _render_odds_api_devig(_leaned_props_payload())
+    assert sink.frames, "expected a de-vigged table"
+    frame = sink.frames[0].reset_index()
+    cells = " ".join(str(v) for v in frame.values.ravel())
+    # DK's -170/+135 over lean -> its cell carries an arrow to a number above 68.5
+    assert "→" in cells
+    dk_col = [c for c in frame.columns if 'DraftKings' in str(c)][0]
+    assert "→" in str(frame[dk_col].iloc[0])
+    # FanDuel's even price on a yardage line -> implies its own number, no arrow
+    fd_col = [c for c in frame.columns if 'FanDuel' in str(c)][0]
+    assert "→" not in str(frame[fd_col].iloc[0])
+    assert "no extra API credit" in sink.joined
+
+
+def test_odds_api_devig_view_is_silent_on_an_empty_payload(monkeypatch):
+    sink = _Sink(monkeypatch)
+    _render_odds_api_devig({'id': 'x', 'bookmakers': []})
+    assert not sink.frames and not sink.text
 
 
 def main():

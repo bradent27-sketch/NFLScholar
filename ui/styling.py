@@ -1512,7 +1512,7 @@ def get_tier_color(tier):
 
 
 def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None, tier_cols=None,
-                          position_cols=None, label_cols=None):
+                          position_cols=None, label_cols=None, decimals_by_col=None):
     """
     Sortable Styler for st.dataframe (historical totals, risers, rookie
     watch, rankings, VORP sheet, odds tables, coverage scheme tendencies).
@@ -1589,6 +1589,16 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     American odds) still shows a bare trailing ".0". Both read as visual
     noise/inconsistent precision across tables that otherwise look
     deliberately formatted.
+
+    decimals_by_col: dict of {column_name: decimal_count}, a PER-CALL override
+    of that auto-detection, taking precedence over the module-level
+    _FORCED_DECIMALS. It exists because the heuristic's 0-or-1 choice is wrong
+    for any column whose real values live below 0.1 - a preseason allocation
+    share of 0.112 renders as a useless "0.1", and three such shares in one
+    table all render identically. Per-call rather than another _FORCED_DECIMALS
+    entry so a generic column name ("allocated", "capacity") can be given the
+    precision one table needs without changing how every other table that
+    happens to share the name renders.
     """
     numeric_pct_cols = numeric_pct_cols or {}
     diverging_cols = diverging_cols or {}
@@ -1596,6 +1606,7 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     tier_cols = tier_cols or {}
     position_cols = position_cols or {}
     label_cols = label_cols or {}
+    decimals_by_col = decimals_by_col or {}
     pct_arrays = {col: list(vals) for col, vals in numeric_pct_cols.items()}
     matchup_arrays = {col: list(vals) for col, vals in matchup_pct_cols.items()}
     tier_arrays = {col: list(vals) for col, vals in tier_cols.items()}
@@ -1699,7 +1710,9 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
         # They carry no decimals to decide on, so they're skipped outright.
         if pd.api.types.is_bool_dtype(df[col]) or not pd.api.types.is_numeric_dtype(df[col]):
             continue
-        if col in _FORCED_DECIMALS:
+        if col in decimals_by_col:
+            decimals = int(decimals_by_col[col])
+        elif col in _FORCED_DECIMALS:
             decimals = _FORCED_DECIMALS[col]
         else:
             non_null = df[col].dropna()

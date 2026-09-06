@@ -1,0 +1,136 @@
+2026-09-04 13:26:02.781 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.782 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.782 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.783 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.785 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.786 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.786 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.787 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.788 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.788 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.788 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.788 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.789 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.789 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.789 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.789 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.790 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.790 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.790 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.790 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.791 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.792 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.792 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.793 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.793 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.793 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.794 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.795 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.795 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.797 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.814 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.815 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.816 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.816 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.817 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.817 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.818 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.818 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.819 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.823 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.850 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:02.851 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 13:26:02.851 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:03.338 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:03.861 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:03.861 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 13:26:04.260 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:06.894 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 13:26:06.963 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2021 w3: pool 387  base/var built
+2021 w4: pool 415  base/var built
+2021 w5: pool 439  base/var built
+2021 w6: pool 398  base/var built
+2021 w7: pool 387  base/var built
+2021 w8: pool 462  base/var built
+2021 w9: pool 439  base/var built
+2021 w10: pool 457  base/var built
+2021 w11: pool 505  base/var built
+2021 w12: pool 517  base/var built
+2021 w13: pool 478  base/var built
+2021 w14: pool 497  base/var built
+2021 w15: pool 576  base/var built
+2021 w16: pool 588  base/var built
+2021 w17: pool 601  base/var built
+2021 w18: pool 609  base/var built
+2026-09-04 13:41:07.854 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 13:41:08.820 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2022 w3: pool 379  base/var built
+2022 w4: pool 411  base/var built
+2022 w5: pool 439  base/var built
+2022 w6: pool 406  base/var built
+2022 w7: pool 422  base/var built
+2022 w8: pool 460  base/var built
+2022 w9: pool 408  base/var built
+2022 w10: pool 450  base/var built
+2022 w11: pool 470  base/var built
+2022 w12: pool 540  base/var built
+2022 w13: pool 520  base/var built
+2022 w14: pool 459  base/var built
+2022 w15: pool 566  base/var built
+2022 w16: pool 573  base/var built
+2022 w17: pool 538  base/var built
+2022 w18: pool 584  base/var built
+2026-09-04 14:12:17.437 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 14:12:18.464 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2023 w3: pool 378  base/var built
+2023 w4: pool 410  base/var built
+2023 w5: pool 386  base/var built
+2023 w6: pool 424  base/var built
+2023 w7: pool 379  base/var built
+2023 w8: pool 483  base/var built
+2023 w9: pool 429  base/var built
+2023 w10: pool 438  base/var built
+2023 w11: pool 448  base/var built
+2023 w12: pool 518  base/var built
+2023 w13: pool 422  base/var built
+2023 w14: pool 501  base/var built
+2023 w15: pool 533  base/var built
+2023 w16: pool 544  base/var built
+2023 w17: pool 551  base/var built
+2023 w18: pool 557  base/var built
+
+============================================================================================
+GAME-TOTAL PER-STAT ELASTICITY - held-out confirm   years=[2021, 2022, 2023] weeks=[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+============================================================================================
+dMAE = variant - base.  NEGATIVE = per-stat elasticity is MORE accurate than the flat one.
+
+scope              n   MAE base    MAE var      dMAE                95% CI    wk W-L   sign p
+ALL            14581      4.618      4.617    -0.001  [-0.007,+0.006]       25-23    0.885
+QB              1511      6.220      6.235    +0.014  [-0.009,+0.038]       20-28    0.312
+RB              3827      4.785      4.785    +0.000  [-0.008,+0.008]       25-23    0.885
+WR              6209      4.614      4.611    -0.003  [-0.010,+0.004]       25-23    0.885
+TE              3034      3.618      3.613    -0.005  [-0.018,+0.009]       29-19    0.193
+START-QB        1044      5.979      6.019    +0.040  [-0.011,+0.092]       18-30    0.111
+START-RB        1603      6.510      6.518    +0.008  [-0.036,+0.055]       25-23    0.885
+START-WR        2253      6.482      6.476    -0.006  [-0.043,+0.028]       25-23    0.885
+START-TE         803      5.273      5.232    -0.041  [-0.114,+0.037]       25-23    0.885
+
+============================================================================================
+PER-STAT MAE (startable pool)   NEGATIVE dMAE = per-stat elasticity helps that stat
+============================================================================================
+stat                       wk n      obs   MAE base    MAE var      dMAE                95% CI      W-L
+passing_yards                48     1044     63.435     62.855    -0.580  [-1.357,+0.188]      26-22
+passing_attempts             48     1044      7.671      7.536    -0.136  [-0.270,+0.008]      32-16
+passing_completions          48     1044      5.327      5.261    -0.066  [-0.150,+0.021]      31-17
+passing_tds                  48     1044      0.907      0.905    -0.002  [-0.004,+0.001]      26-20
+passing_interceptions        48     1044      0.716      0.718    +0.001  [-0.002,+0.004]      22-26
+rushing_yards                48     2647     21.909     21.819    -0.090  [-0.143,-0.036] *    33-15
+rushing_attempts             48     2647      3.701      3.682    -0.019  [-0.038,-0.000] *    32-16
+rushing_tds                  48     2647      0.436      0.435    -0.000  [-0.001,+0.000]      26-21
+targets                      48     4659      2.335      2.334    -0.001  [-0.011,+0.010]      26-22
+receptions                   48     4659      1.834      1.831    -0.003  [-0.010,+0.005]      27-21
+receiving_yards              48     4659     24.081     24.073    -0.009  [-0.074,+0.056]      24-24
+receiving_tds                48     4659      0.361      0.360    -0.001  [-0.001,-0.000] *    36-12
+
+* = bootstrap 95% CI on the pooled weekly dMAE excludes zero.

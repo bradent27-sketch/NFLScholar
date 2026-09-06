@@ -106,7 +106,9 @@ what lets the exact same function double as the backtest harness in
 docs/weekly_projections_methodology.md - project week N with only what was
 known before week N, then compare to what actually happened.
 """
+import json
 import os
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -144,6 +146,7 @@ from data.pff_alignment import (
     load_weekly_scheme_defense_profiles, scheme_defense_residual_multiplier,
     SCHEME_DEFENSE_SUPPORTED_POSITIONS,
     blend_alignment_profile_toward_prior2,
+    blend_defense_profiles_toward_prior, PFF_DEFENSE_PRIOR_BLEND_W0,
     _attach_offense_leave_one_out_baselines,
 )
 
@@ -357,6 +360,17 @@ QB1_INSEASON_MAX_STALE_TEAM_GAMES = 2
 COLD_START_RETURNING_ROLE_MIN_GAMES = {'RB': 8, 'WR': 6, 'TE': 6}
 COLD_START_RETURNING_ROLE_MIN_ACTIVE_SHARE = 0.60
 COLD_START_RETURNING_ROLE_CAP = 0.95
+
+# v2_new_team_starter_restoration (2026-09-04): the team-change exclusion
+# above is deliberate in general (a new offense may not use a player the same
+# way), but it has no carve-out for the case where the NEW team's own chart
+# already answers that question - a proven veteran (Waddle MIA->DEN, Evans
+# TB->SF) charted as the new team's rank-1 starter, still projected off his
+# stale whole-season share (which an injury-interrupted year like Evans's
+# depresses hard) because nothing lets a same-team-only mechanism see the new
+# chart. See restore_cold_start_returning_role_share's allow_new_team_starter.
+NEW_TEAM_STARTER_MIN_ROLE_SIGNAL = 0.65
+NEW_TEAM_STARTER_CAP = 0.80
 
 # Two-season cold-start blend, added 2026-08-24 at explicit request: a down
 # year, an abbreviated/injury-shortened season, or a genuinely thin sample
@@ -709,6 +723,53 @@ MODEL_FEATURES = (
                              # in data/rb_role_allocator.py. Added to
                              # DEFAULT_FEATURES 2026-08-30 per explicit
                              # request; standalone backtest pending.
+    'v2_pff_defense_prior_blend',  # fold a completed prior season's PFF
+                             # alignment/scheme DEFENSE profile into the
+                             # current-season one, weight decaying as
+                             # current-season games accumulate (smooth
+                             # w0*g0/(g0+games)). Per-channel w0: the
+                             # 2026-09-04 transfer study found a defense's
+                             # slot/wide vulnerability does NOT carry
+                             # year-to-year net of its overall vulnerability
+                             # (so alignment w0=0, a no-op), while its
+                             # man/zone vulnerability does (scheme w0~0.4).
+                             # OFF by default; sweep + confirm on the
+                             # 2022-2025 weekly archive (2022/2023 backfilled
+                             # 2026-09-04). See data.pff_alignment.
+                             # blend_defense_profiles_toward_prior and
+                             # scripts/sweep_defense_prior_blend.py.
+    'v2_game_total_elasticity_perstat',  # implied game-total scaling with a
+                             # SEPARATE elasticity per (position, projected
+                             # stat) instead of the one flat per-position
+                             # number 'v2_game_total_elasticity' applies to
+                             # every stat alike. Reads a fitted
+                             # GAME_TOTAL_ELASTICITY_BY_STAT table (and, while
+                             # it's being explored, an override JSON written by
+                             # scripts/fit_game_total_elasticity_perstat.py);
+                             # per-stat clips are wider for TD/INT stats, where
+                             # the scoring-environment signal is strongest, and
+                             # (0.82,1.24) elsewhere. OFF by default - overnight
+                             # fit + confirm 2026-09-04, see
+                             # scripts/gte_perstat_confirm.py. Mutually
+                             # exclusive with 'v2_game_total_elasticity' (this
+                             # one wins the implied-total channel if both set;
+                             # venue stays on its own flag).
+    'v2_new_team_starter_restoration',  # let restore_cold_start_returning_role_
+                             # share recover a TEAM-CHANGER's role, not just a
+                             # same-team returner - only when the new team's own
+                             # chart lists him rank 1 and his own active role was
+                             # clearly starter-caliber. Capped lower
+                             # (NEW_TEAM_STARTER_CAP) than a same-team recovery.
+                             # OFF by default; backtest queued 2026-09-04
+                             # (Waddle MIA->DEN, Evans TB->SF cases).
+    'v2_receiver_cold_start_vacancy',  # at cold start, redistribute a departed
+                             # same-team veteran receiver's prior role to the
+                             # remaining WR/TE corps (apply_cold_start_receiver_
+                             # vacancy) - distinct from v2_receiver_vacancy_
+                             # pecking_order, which only reacts to a player
+                             # still in the pool and marked OUT this week. OFF
+                             # by default; backtest queued 2026-09-04 (GB
+                             # Watson/Golden/Reed after Doubs+Wicks departed).
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -866,6 +927,19 @@ DEFAULT_FEATURES = frozenset({
     # SCHEME_MATCHUP_SCORING_POSITIONS emptied, zero rows move at any
     # position; with it set to {'TE'}, TE and WR both move and RB/QB do not.
     'v2_scheme_matchup',
+    # Shipped 2026-09-05. Blends a completed prior season's PFF alignment +
+    # scheme DEFENSE profile into the current-season one, weight fading as
+    # current-season games accumulate (w = w0*G0/(G0+current_games); in-season
+    # only, never at cold start). Weights PFF_DEFENSE_PRIOR_BLEND_W0 =
+    # {alignment: 0.20, scheme: 0.40} - settled on a full-season held-out
+    # grid (scripts/sweep_defense_prior_blend.py, 2023-2025 wk3-18): WR
+    # dMAE -0.002 (p=0.002), receiving_yards -0.029*, every per-stat improves
+    # in all 3 seasons independently, no significant startable regression.
+    # The held-out MAE overrode the transfer study's align=0 prediction -
+    # see PFF_DEFENSE_PRIOR_BLEND_W0's own comment. Effect is small and
+    # bench-weighted; a WEEKLY_CALIBRATION re-fit is the rigorous follow-up
+    # (deferred - the ALL-scope move is -0.001).
+    'v2_pff_defense_prior_blend',
 })
 
 
@@ -2809,6 +2883,7 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
                                             terminal_gap_weeks=None,
                                             prior2_games=None, prior2_active_share=None,
                                             role_confidence=None,
+                                            allow_new_team_starter=False,
                                             return_details=False):
     """Continuously recover a proven returning skill player's active role.
 
@@ -2832,6 +2907,15 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
     gap, and a high active role, and is capped below a normal full-sample
     restoration.  ``return_details`` preserves the legacy two-value API for
     existing callers while exposing the audited recovery reason to V2.
+
+    ``allow_new_team_starter`` (v2_new_team_starter_restoration) opts into a
+    third, separately-capped path: a TEAM CHANGE is normally disqualifying
+    (a new offense may not use him the same way), but when the player is
+    charted rank 1 on the NEW team and his own active role was clearly
+    starter-caliber, the chart itself is the evidence that the role
+    transferred. Pulled less aggressively than a same-team recovery (capped
+    at NEW_TEAM_STARTER_CAP, not COLD_START_RETURNING_ROLE_CAP) since some
+    real uncertainty about a new offense remains.
     """
     whole = np.asarray(whole_season_share, dtype=float)
     active = np.asarray(active_game_share, dtype=float)
@@ -2878,7 +2962,23 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
         & (prior_team == current_team)
         & (restored > whole + 0.05)
     )
-    eligible = standard_eligible | charted_short_sample
+    # A team-changer the NEW chart independently confirms as its rank-1
+    # starter: the same-team requirement above exists because a new offense
+    # might not use him the same way, but a resolved starter chart is direct
+    # evidence on exactly that question. Requires a real prior sample (not a
+    # cameo) and a clearly starter-caliber active role - this is deliberately
+    # not available to a marginal or committee player who merely changed teams.
+    if allow_new_team_starter:
+        charted_new_team_starter = (
+            (ranks == 1)
+            & (prior_team != current_team)
+            & np.isfinite(games) & (games >= 3)
+            & (role_signal >= NEW_TEAM_STARTER_MIN_ROLE_SIGNAL)
+            & (restored > whole + 0.05)
+        )
+    else:
+        charted_new_team_starter = np.zeros(len(whole), dtype=bool)
+    eligible = standard_eligible | charted_short_sample | charted_new_team_starter
     # Multi-year corroboration: a proven, same-role season TWO years back means
     # the short prior-year sample is injury attrition, not role uncertainty -
     # an injury-shortened year should not leave a genuine every-down player
@@ -2918,9 +3018,15 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
     # evidence -> lower projection".
     at_threshold = (ranks == 1) & np.isfinite(games) & (games <= minimum_games + 1)
     standard_alpha = np.where(at_threshold, np.maximum(standard_alpha, short_alpha), standard_alpha)
-    alpha = np.where(charted_short_sample, short_alpha, standard_alpha)
+    # Same evidence-scaling as standard_alpha but a lower band throughout -
+    # genuine new-offense uncertainty means even a fully-proven track record
+    # should not pull as hard as an in-house recovery does.
+    new_team_alpha = np.clip(0.25 + 0.35 * evidence, 0.25, 0.60)
+    alpha = np.where(charted_short_sample, short_alpha,
+                     np.where(charted_new_team_starter, new_team_alpha, standard_alpha))
     recovered = whole + alpha * (restored - whole)
     recovered = np.where(charted_short_sample, np.minimum(recovered, 0.75), recovered)
+    recovered = np.where(charted_new_team_starter, np.minimum(recovered, NEW_TEAM_STARTER_CAP), recovered)
     # A multi-year every-down role, rank 1, high role_confidence, a genuinely
     # near-full observed active share, and a full offseason removed from the
     # terminal gap: the missed calendar is injury noise. Pull at least 85% of
@@ -2940,13 +3046,15 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
     reasons = np.where(
         charted_short_sample, 'charted short-sample returning-starter recovery',
         np.where(
-            standard_eligible & fully_proven,
-            'proven multi-year every-down role restored (injury-shortened prior year)',
+            charted_new_team_starter, 'charted new-team starter recovery',
             np.where(
-                standard_eligible & prior2_qualifies,
-                'continuous returning role recovery (multi-year corroborated)',
-                np.where(standard_eligible,
-                         'continuous returning active/pre-absence role recovery', 'none'))),
+                standard_eligible & fully_proven,
+                'proven multi-year every-down role restored (injury-shortened prior year)',
+                np.where(
+                    standard_eligible & prior2_qualifies,
+                    'continuous returning role recovery (multi-year corroborated)',
+                    np.where(standard_eligible,
+                             'continuous returning active/pre-absence role recovery', 'none')))),
     )
     if return_details:
         return values, eligible, reasons
@@ -3088,6 +3196,57 @@ def apply_buried_veteran_dock(player_share, player_prior_share, chart_rank, dept
                                np.full(len(share), RECEIVER_DEPTH_CUTOFF_SHARE_CAP), share))
     docked = share + depth_chart_decay * (target - share)
     return docked, (direct_backup | third_string)
+
+
+# v2_receiver_cold_start_vacancy (2026-09-04): redistribute_v2_vacated_usage
+# only reacts to a player still IN the current pool who is marked OUT by the
+# live injury feed - a receiver who left the roster entirely (free agency,
+# release, trade) never appears in that pool at all, so his prior role simply
+# vanishes instead of flowing to the teammates who inherit his snaps. Case
+# that surfaced it: Green Bay's 2025 WR corps summed to ~310% team snap share
+# across 6 players; with Doubs (77.6%) and Wicks (47.2%) both gone, the 2026
+# cold-start board's remaining corps sums to only ~160% - the vacancy is
+# simply deleted rather than reallocated to Watson/Golden/Reed.
+RECEIVER_COLD_START_VACANCY_MIN_SHARE = 0.30   # ignore a departed bit-part player
+RECEIVER_COLD_START_VACANCY_SURVIVAL = 0.70    # not all of a vacated role is real "up for grabs" opportunity
+RECEIVER_COLD_START_VACANCY_MAX_SHARE = 0.92   # never push a recipient past this via vacancy alone
+
+
+def apply_cold_start_receiver_vacancy(player_share, current_team, vacated_share_by_team):
+    """Redistribute a departed same-team receiver's prior role, at cold
+    start, to the remaining same-position corps - weighted by each
+    recipient's OWN current (post-restoration, post-buried-vet-dock) share,
+    so a docked/unproven reserve does not win an equal cut of a proven
+    starter's vacated role.
+
+    ``vacated_share_by_team`` is ``{team: total_vacated_share}``, built by
+    the caller from players present in last season's role reference for that
+    team/position who are absent from this season's pool entirely - this
+    function only does the allocation, not the roster-diff.
+
+    Raise-only (never reduces an existing share); a team with no qualifying
+    departure is untouched. Returns ``(share, applied_mask)``.
+    """
+    share = np.asarray(player_share, dtype=float).copy()
+    teams = pd.Series(current_team).astype(str).to_numpy()
+    applied = np.zeros(len(share), dtype=bool)
+    if not vacated_share_by_team:
+        return share, applied
+    for team, vacated in vacated_share_by_team.items():
+        if not vacated or vacated <= 0:
+            continue
+        recipients = np.where(teams == team)[0]
+        if len(recipients) == 0:
+            continue
+        weights = np.clip(share[recipients], 0.0, None)
+        if weights.sum() <= 0:
+            continue
+        pool = vacated * RECEIVER_COLD_START_VACANCY_SURVIVAL
+        bump = pool * (weights / weights.sum())
+        new_share = np.minimum(share[recipients] + bump, RECEIVER_COLD_START_VACANCY_MAX_SHARE)
+        applied[recipients] |= (new_share > share[recipients] + 1e-9)
+        share[recipients] = new_share
+    return share, applied
 
 
 def ourlads_player_audit_arrays(matches, teams, identity_keys, player_names):
@@ -4011,6 +4170,95 @@ def _target_margins_by_team(year, week):
 # bundle flag.
 GAME_TOTAL_ELASTICITY = {'QB': 0.42, 'RB': 0.28, 'WR': 0.14, 'TE': 0.30}
 GAME_TOTAL_CLIP = (0.82, 1.24)
+
+# --- v2_game_total_elasticity_perstat -------------------------------------
+# The flat per-position elasticity above scales EVERY projected stat by the
+# same implied-total factor. That is almost certainly wrong: a rich scoring
+# environment should move passing/receiving TDs hard, yardage moderately, and
+# attempts / carries / targets barely (those are game-script and pace, not
+# scoring environment). This table carries a SEPARATE elasticity per
+# (position, stat), fitted on 2016-2023 (out of sample vs the 2024-2025
+# confirm) as a Poisson/log-link rate model of game_stat / player_season_mean
+# against implied_team_total / league_avg - see
+# scripts/fit_game_total_elasticity_perstat.py.
+#
+# PROVISIONAL until that fit + scripts/gte_perstat_confirm.py report back:
+# every cell is seeded to the flat per-position number so the flag is
+# testable before the fit, and the fit script writes the real values to
+# GAME_TOTAL_ELASTICITY_BY_STAT_OVERRIDE_PATH, which _load_game_total_perstat
+# below layers on top at build time. When this ships, paste the fitted
+# numbers in here and delete the JSON-override read.
+_GTE_PERSTAT_STATS = (
+    'passing_yards', 'passing_attempts', 'passing_completions', 'passing_tds',
+    'passing_interceptions', 'rushing_yards', 'rushing_attempts', 'rushing_tds',
+    'targets', 'receptions', 'receiving_yards', 'receiving_tds')
+GAME_TOTAL_ELASTICITY_BY_STAT = {
+    pos: {stat: GAME_TOTAL_ELASTICITY.get(pos, 0.0) for stat in _GTE_PERSTAT_STATS}
+    for pos in ('QB', 'RB', 'WR', 'TE')
+}
+# Per-stat clip on the implied-total factor. Wider for the TD/INT stats
+# (that is where a high total genuinely does most of its work, and a
+# (0.82,1.24) clamp would flatten exactly the effect this flag exists to
+# capture); the default width everywhere else, matching GAME_TOTAL_CLIP.
+GAME_TOTAL_CLIP_BY_STAT = {
+    'passing_tds': (0.70, 1.55), 'rushing_tds': (0.70, 1.55),
+    'receiving_tds': (0.70, 1.55), 'passing_interceptions': (0.60, 1.70),
+}
+GAME_TOTAL_ELASTICITY_BY_STAT_OVERRIDE_PATH = os.path.join(
+    '.sweeps', 'gte_perstat_candidate.json')
+
+
+@lru_cache(maxsize=1)
+def _load_game_total_perstat():
+    """GAME_TOTAL_ELASTICITY_BY_STAT with the fit script's JSON override
+    layered on where present. Cached for the process; the override file is a
+    development artifact, not something that changes under a running app."""
+    table = {pos: dict(stats) for pos, stats in GAME_TOTAL_ELASTICITY_BY_STAT.items()}
+    try:
+        if os.path.exists(GAME_TOTAL_ELASTICITY_BY_STAT_OVERRIDE_PATH):
+            with open(GAME_TOTAL_ELASTICITY_BY_STAT_OVERRIDE_PATH, encoding='utf-8') as fh:
+                override = json.load(fh)
+            for pos, stats in (override or {}).items():
+                if pos in table and isinstance(stats, dict):
+                    for stat, beta in stats.items():
+                        b = float(beta)
+                        # A broken cell must not be able to blow up a build.
+                        if np.isfinite(b) and -0.5 <= b <= 1.5:
+                            table[pos][stat] = b
+    except (ValueError, OSError):
+        pass
+    return {pos: tuple(sorted(stats.items())) for pos, stats in table.items()}
+
+
+def _game_total_stat_multipliers(env, teams, pos, league_implied, stats):
+    """{stat: np.array(len(teams))} - the per-stat implied-total factor for
+    'v2_game_total_elasticity_perstat'. 1.0 for any team with no posted line
+    (the normal case more than a few weeks out) and for any stat with no
+    fitted elasticity, same degrade-gracefully convention as
+    _game_env_multiplier, which this replaces on the implied-total channel
+    when the per-stat flag is on (venue stays on _game_env_multiplier)."""
+    betas = dict(_load_game_total_perstat().get(pos, ()))
+    out = {stat: np.ones(len(teams)) for stat in stats}
+    if not env or not league_implied or league_implied <= 0:
+        return out
+    ratios = np.ones(len(teams))
+    have = np.zeros(len(teams), dtype=bool)
+    for i, team in enumerate(teams):
+        entry = env.get(str(team))
+        implied = entry.get('implied') if entry else None
+        if implied and implied > 0:
+            ratios[i] = implied / league_implied
+            have[i] = True
+    for stat in stats:
+        beta = betas.get(stat)
+        if not beta:
+            continue
+        lo, hi = GAME_TOTAL_CLIP_BY_STAT.get(stat, GAME_TOTAL_CLIP)
+        factor = np.clip(ratios ** beta, lo, hi)
+        out[stat] = np.where(have, factor, 1.0)
+    return out
+
+
 INDOOR_ROOFS = ('dome', 'closed')
 # league-frequency-weighted to 1.0 at the ~28% of games played indoors
 VENUE_MULT = {
@@ -4805,7 +5053,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     schedule_df = load_schedule(year)
     opponents = _week_opponents(schedule_df, week)
     env = game_environment(schedule_df, week) if (
-        'game_env' in feats or 'v2_game_total_elasticity' in feats or 'v2_venue_mult' in feats
+        'game_env' in feats or 'v2_game_total_elasticity' in feats
+        or 'v2_game_total_elasticity_perstat' in feats or 'v2_venue_mult' in feats
     ) else {}
     league_implied = None
     if env:
@@ -4965,6 +5214,24 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     year, as_of_week, schedule_df)
             pff_alignment_defense_profiles = alignment_defense_result.profiles
             pff_alignment_defense_team_games = alignment_defense_result.team_games
+            if ('v2_pff_defense_prior_blend' in feats and not cold_start
+                    and not pff_alignment_defense_profiles.empty):
+                # Fold the completed prior season's full-season alignment
+                # defense profile in, decaying as this season's games fill
+                # in. w0 defaults to 0 for the alignment channel (the
+                # 2026-09-04 transfer study: slot/wide vulnerability does not
+                # carry year to year) - so this is a no-op unless a sweep
+                # raises PFF_DEFENSE_PRIOR_BLEND_W0['alignment'].
+                try:
+                    _prior_align = load_weekly_alignment_defense_profiles(
+                        year - 1, PFF_ALIGNMENT_DEFENSE_COLD_START_AS_OF_WEEK,
+                        load_schedule(year - 1, include_postseason=True),
+                        include_postseason=True).profiles
+                    pff_alignment_defense_profiles = blend_defense_profiles_toward_prior(
+                        pff_alignment_defense_profiles, _prior_align, 'alignment',
+                        PFF_DEFENSE_PRIOR_BLEND_W0.get('alignment', 0.0))
+                except Exception:
+                    pass
             pff_alignment_defense_contract = {
                 'status': ('time-valid offensive-weekly alignment defense profiles available'
                            if alignment_defense_result.available
@@ -5050,6 +5317,22 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             scheme_defense_result = load_weekly_scheme_defense_profiles(
                 year, as_of_week, schedule_df)
             pff_scheme_defense_profiles = scheme_defense_result.profiles
+            if ('v2_pff_defense_prior_blend' in feats and not cold_start
+                    and not pff_scheme_defense_profiles.empty):
+                # The channel the transfer study said actually carries: a
+                # defense's man/zone vulnerability is a stable year-to-year
+                # trait (partial r ~0.35-0.49), so a completed prior season
+                # is real early-season evidence. w0 ~0.40, decaying as this
+                # season's games come in.
+                try:
+                    _prior_scheme = load_weekly_scheme_defense_profiles(
+                        year - 1, PFF_ALIGNMENT_DEFENSE_COLD_START_AS_OF_WEEK,
+                        load_schedule(year - 1, include_postseason=True)).profiles
+                    pff_scheme_defense_profiles = blend_defense_profiles_toward_prior(
+                        pff_scheme_defense_profiles, _prior_scheme, 'scheme',
+                        PFF_DEFENSE_PRIOR_BLEND_W0.get('scheme', 0.0))
+                except Exception:
+                    pass
             pff_scheme_defense_contract = {
                 'status': ('time-valid offensive-weekly scheme defense profiles available'
                            if scheme_defense_result.available
@@ -5874,6 +6157,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if 'v2_pff_alignment_matchup' in feats:
             pff_scheme_for_cur = pff_scheme_for_cur.reindex(cur.index)
             scheme_preview_columns = {'targets': [], 'receptions': [], 'yards': []}
+            # Per-scheme (man / zone) side allowed-ratios, for the projection
+            # decomposition's scheme-mix worked-calc table (a man row and a
+            # zone row that blend, by this player's own man/zone route share,
+            # into the candidate_multiplier above). Preview-only, same as the
+            # blended column - see pff_alignment.scheme_defense_residual_
+            # multiplier, which already carries the two side profiles.
+            scheme_side_ratio_columns = {
+                f'{stat}_{side}': [] for stat in scheme_preview_columns for side in ('man', 'zone')
+            }
             scheme_preview_reasons = []
             scheme_preview_available = []
             for row_index, opponent in zip(cur.index, cur['Opponent']):
@@ -5892,10 +6184,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 scheme_defense_previews[row_index] = previews
                 for stat in scheme_preview_columns:
                     scheme_preview_columns[stat].append(previews[stat].get('candidate_multiplier', 1.0))
+                    for side in ('man', 'zone'):
+                        side_profile = previews[stat].get(f'{side}_profile') or {}
+                        scheme_side_ratio_columns[f'{stat}_{side}'].append(
+                            side_profile.get('shrunk_allowed_ratio'))
                 scheme_preview_reasons.append(previews['targets'].get('reason', ''))
                 scheme_preview_available.append(bool(previews['targets'].get('candidate_available', False)))
             for stat, values in scheme_preview_columns.items():
                 pff_scheme_for_cur[f'scheme_defense_{stat}_candidate_multiplier'] = values
+            for key, values in scheme_side_ratio_columns.items():
+                pff_scheme_for_cur[f'scheme_defense_{key}_ratio'] = values
             pff_scheme_for_cur['scheme_defense_candidate_available'] = scheme_preview_available
             pff_scheme_for_cur['scheme_defense_reason'] = scheme_preview_reasons
             pff_scheme_for_cur['scheme_defense_scoring_active'] = False
@@ -6374,6 +6672,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     prior2_games=player_prior2_games,
                     prior2_active_share=player_prior2_active_share,
                     role_confidence=cur['role_confidence'].to_numpy(dtype=float),
+                    allow_new_team_starter='v2_new_team_starter_restoration' in feats,
                     return_details=True,
                 )
                 preseason_role_source = np.where(returning_role_restored, returning_role_reason,
@@ -6411,6 +6710,33 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                         _buried_vet_docked,
                         'Ourlads depth-chart dock (proven vet now charted as a backup)',
                         preseason_role_source)
+                if ('v2_receiver_cold_start_vacancy' in feats and cold_start
+                        and not prior_role_reference.empty):
+                    _prior_pos_rows = prior_role_reference
+                    if 'position' in _prior_pos_rows.columns:
+                        _prior_pos_rows = _prior_pos_rows[
+                            _prior_pos_rows['position'].astype(str).str.upper() == pos]
+                    _prior_team_by_ident = (
+                        _prior_pos_rows.drop_duplicates('_identity_key', keep='last')
+                        .set_index('_identity_key')['Team'])
+                    _current_idents_by_team = {}
+                    for _t, _k in zip(team_keys_rv.to_numpy(dtype=object),
+                                      identity_keys_rv.to_numpy(dtype=object)):
+                        _current_idents_by_team.setdefault(_t, set()).add(_k)
+                    _vacated_share_by_team = {}
+                    for _ident, _team in _prior_team_by_ident.items():
+                        if _ident in _current_idents_by_team.get(_team, ()):
+                            continue
+                        _s = prior_share_identity.get(_ident)
+                        if _s is not None and np.isfinite(_s) and _s >= RECEIVER_COLD_START_VACANCY_MIN_SHARE:
+                            _vacated_share_by_team[_team] = _vacated_share_by_team.get(_team, 0.0) + float(_s)
+                    player_share, _vacancy_applied = apply_cold_start_receiver_vacancy(
+                        player_share, team_keys_rv.to_numpy(dtype=object), _vacated_share_by_team)
+                    if _vacancy_applied.any():
+                        preseason_role_source = np.where(
+                            _vacancy_applied,
+                            'cold-start vacancy (departed teammate role redistributed)',
+                            preseason_role_source)
                 depth_rank_within_team = (
                     pd.Series(player_share, index=cur.index)
                     .groupby(team_keys_rv.to_numpy(dtype=object))
@@ -6618,7 +6944,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 )
             allocation, allocation_ledger = allocate_preseason_rb_roles(
                 allocator_input,
-                snap_anchored_volume='v2_rb_snap_anchored_volume' in feats)
+                snap_anchored_volume='v2_rb_snap_anchored_volume' in feats,
+                week=week)
             allocation = allocation.reindex(cur.index)
             if not allocation.empty:
                 player_share = allocation['expected_snap_share'].to_numpy(dtype=float)
@@ -7197,11 +7524,29 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             pace_mult = np.clip(opp_pace.fillna(league_pace) / league_pace, *PACE_CLIP)
 
         inj_mult = cur[name_col].map(injury_mult).fillna(1.0)
-        use_total = 'game_env' in feats or 'v2_game_total_elasticity' in feats
+        perstat_env = 'v2_game_total_elasticity_perstat' in feats
+        # The per-stat implied-total flag OWNS the implied-total channel when
+        # it's on - the flat _game_env_multiplier then does venue only, so the
+        # two never both scale the total.
+        use_total = ('game_env' in feats or 'v2_game_total_elasticity' in feats) and not perstat_env
         use_venue = 'game_env' in feats or 'v2_venue_mult' in feats
         env_mult = (_game_env_multiplier(env, cur['Team'].astype(str).to_numpy(), pos, league_implied,
                                          use_total=use_total, use_venue=use_venue)
                     if env else np.ones(len(cur)))
+        # {stat: per-player array} - the implied-total factor fitted separately
+        # per stat (data._game_total_stat_multipliers). Empty/all-ones unless
+        # the flag is on and a line is posted.
+        env_stat_mult = (
+            _game_total_stat_multipliers(env, cur['Team'].astype(str).to_numpy(), pos,
+                                         league_implied, tuple(proj_cols))
+            if perstat_env and env else {})
+        if env_stat_mult and cold_start and 'v2_cold_start_regression' in feats:
+            r = 1.0 - COLD_START_MULTIPLIER_REGRESSION
+            env_stat_mult = {s: 1.0 + r * (m - 1.0) for s, m in env_stat_mult.items()}
+
+        def _env(stat):
+            m = env_stat_mult.get(stat) if env_stat_mult else None
+            return m if m is not None else 1.0
         # Per-STAT outdoor wind / cold redistribution (data/weather.py):
         # recorded schedule weather for a past week, Open-Meteo forecast for a
         # live one. A list of {stat: mult} dicts, one per player row; applied
@@ -7259,7 +7604,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     # - this factor is 1.0 for him regardless of his own
                     # injury status, so that path is untouched.
                     vacancy_volume[stat] = np.clip(
-                        proj_cols[stat] * pace_mult.to_numpy() * env_mult * _wx(stat)
+                        proj_cols[stat] * pace_mult.to_numpy() * env_mult * _env(stat) * _wx(stat)
                         * qb_nonstarter_volume_factor, 0.0, None)
 
         for stat in proj_cols:
@@ -7272,8 +7617,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # small-sample artifact already floored in data/draft_projections.py
             # (see that file's matching comment), applied here too.
             _wx_stat = _wx(stat)
+            _env_stat = _env(stat)
             proj_cols[stat] = np.clip(
-                proj_cols[stat] * pace_mult.to_numpy() * inj_mult.to_numpy() * env_mult * _wx_stat,
+                proj_cols[stat] * pace_mult.to_numpy() * inj_mult.to_numpy()
+                * env_mult * _env_stat * _wx_stat,
                 0.0, None)
             trace = stat_trace.get(stat)
             if trace is not None:
@@ -7281,7 +7628,11 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 trace['opponent_defensive_pace'] = opp_pace.to_numpy(dtype=float)
                 trace['league_pace'] = np.full(len(cur), league_pace if league_pace else np.nan)
                 trace['availability_multiplier'] = inj_mult.to_numpy(dtype=float)
-                trace['environment_multiplier'] = np.asarray(env_mult, dtype=float)
+                # When the per-stat implied-total flag is on, the environment
+                # multiplier this stat actually saw is the venue-only scalar
+                # times this stat's own implied-total factor.
+                trace['environment_multiplier'] = np.asarray(env_mult, dtype=float) * np.asarray(
+                    _env_stat, dtype=float)
                 if weather_stat_mult is not None:
                     trace['weather_stat_multiplier'] = np.asarray(_wx_stat, dtype=float)
                 trace['environment_status'] = np.full(
@@ -7441,6 +7792,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'scheme_defense_targets_candidate_multiplier',
                 'scheme_defense_receptions_candidate_multiplier',
                 'scheme_defense_yards_candidate_multiplier',
+                'scheme_defense_targets_man_ratio', 'scheme_defense_targets_zone_ratio',
+                'scheme_defense_receptions_man_ratio', 'scheme_defense_receptions_zone_ratio',
+                'scheme_defense_yards_man_ratio', 'scheme_defense_yards_zone_ratio',
                 'scheme_defense_candidate_available', 'scheme_defense_reason',
                 'scheme_defense_scoring_active',
             ):
@@ -7761,10 +8115,19 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     int(year) - 1: _records(_odl_prior),
                     int(year) - 2: _records(_odl_prior2),
                 },
-                # Audit-only PFF slot/wide/inline + man/zone evidence for the
-                # Context tab. Every *_candidate_multiplier here is a preview
-                # only - see pff_alignment.py's module docstring - nothing in
-                # this dict has ever been multiplied into a scored stat.
+                # PFF slot/wide/inline + man/zone evidence for the projection
+                # decomposition. NOTE as of 2026-09-06: the man/zone
+                # (scheme) *_candidate_multiplier fields ARE scored for TIGHT
+                # ENDS (v2_scheme_matchup, SCHEME_MATCHUP_SCORING_POSITIONS)
+                # wherever scheme evidence is available - for a TE they are
+                # what 'Defense multiplier' in the primary table already
+                # shows, replacing the alignment number. The alignment
+                # *_candidate_multiplier fields are scored for WR (and are
+                # the TE fallback wherever scheme evidence is absent). The
+                # man_ratio / zone_ratio pair is the per-side allowed-ratio
+                # decomposition of each scheme multiplier (man row + zone row
+                # -> blend, weighted by this player's own man/zone route
+                # share), for the scheme-mix worked-calc table.
                 'alignment_scheme_evidence': {
                     'player_slot_rate': row.get('_profile_slot_alignment_rate'),
                     'player_wide_rate': row.get('_profile_wide_alignment_rate'),
@@ -7785,6 +8148,24 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'defense_scheme_candidate_available': bool(
                         row.get('_scheme_profile_scheme_defense_candidate_available', False)),
                     'defense_scheme_reason': row.get('_scheme_profile_scheme_defense_reason', ''),
+                    'defense_scheme_targets_candidate_multiplier': row.get(
+                        '_scheme_profile_scheme_defense_targets_candidate_multiplier'),
+                    'defense_scheme_receptions_candidate_multiplier': row.get(
+                        '_scheme_profile_scheme_defense_receptions_candidate_multiplier'),
+                    'defense_scheme_yards_candidate_multiplier': row.get(
+                        '_scheme_profile_scheme_defense_yards_candidate_multiplier'),
+                    'defense_scheme_targets_man_ratio': row.get(
+                        '_scheme_profile_scheme_defense_targets_man_ratio'),
+                    'defense_scheme_targets_zone_ratio': row.get(
+                        '_scheme_profile_scheme_defense_targets_zone_ratio'),
+                    'defense_scheme_receptions_man_ratio': row.get(
+                        '_scheme_profile_scheme_defense_receptions_man_ratio'),
+                    'defense_scheme_receptions_zone_ratio': row.get(
+                        '_scheme_profile_scheme_defense_receptions_zone_ratio'),
+                    'defense_scheme_yards_man_ratio': row.get(
+                        '_scheme_profile_scheme_defense_yards_man_ratio'),
+                    'defense_scheme_yards_zone_ratio': row.get(
+                        '_scheme_profile_scheme_defense_yards_zone_ratio'),
                 },
                 'role': role | {
                     'role_confidence': float(row['Role Confidence']),

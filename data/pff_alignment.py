@@ -58,6 +58,36 @@ ALIGNMENT_CONFIDENCE_HALF_WEIGHT = 60.0
 # They are intentionally conservative starting defaults, not fitted claims of
 # accuracy; a future backtest may tune them behind a named experiment.
 ALIGNMENT_DEFENSE_SHRINKAGE_GAMES = 4.0
+
+# --- v2_pff_defense_prior_blend --------------------------------------------
+# Blend a completed PRIOR season's alignment/scheme defense profile into the
+# current-season one, weight decaying as current-season games accumulate:
+#     w_prior = w0 * G0 / (G0 + current_comparison_games)
+# so w0 at Week 1 and w0/2 once G0 games of current evidence are in.
+#
+# SHIPPED 2026-09-05 (added to DEFAULT_FEATURES). Weights settled by
+# scripts/sweep_defense_prior_blend.py on a full-season held-out window
+# (2023-2025 wk3-18, 7-variant grid). The 2026-09-04 transfer study
+# (scripts/analyze_defense_split_transfer.py) had predicted alignment=0
+# (partial r ~0 year-to-year) and scheme~0.4 (partial r ~0.35-0.49) - the
+# held-out MAE agreed on scheme but NOT on alignment:
+#   - scheme-only (align 0) at any w0 0.2-0.6: dead flat on the full season
+#     (ALL ~0.000, START-TE consistently +0.01-0.02, recv_yds sign-flips
+#     every year). The early-season (wk1-8) whole-pool win did not survive.
+#   - scheme 0.40 / align 0.20: ALL -0.001 (p=0.04), WR -0.002 (p=0.002),
+#     receptions -0.002*, receiving_yards -0.029*, and - the decider - all
+#     three per-stats improve in EVERY one of 2023/2024/2025 independently.
+#     START-WR -0.011 / START-TE -0.010 (both better, neither significant),
+#     no significant startable regression.
+#   - align 0.40 gets a bigger recv_yds effect (-0.049*) but targets
+#     sign-flips and it adds a small significant START-RB cost (+0.006*), so
+#     0.20 is the safer pick.
+# Modest, bench-weighted, but real and stable. When correlation analysis and
+# held-out MAE disagreed on alignment, MAE won.
+PFF_DEFENSE_PRIOR_BLEND_W0 = {'alignment': 0.20, 'scheme': 0.40}
+PFF_DEFENSE_PRIOR_BLEND_G0 = 6.0
+PFF_DEFENSE_PRIOR_BLEND_MIN_PRIOR_GAMES = 6
+
 ALIGNMENT_DEFENSE_RAW_RATIO_CLIP = (0.50, 1.75)
 ALIGNMENT_DEFENSE_RESIDUAL_CLIP = (0.90, 1.10)
 # Final safety clip for alignment_defense_residual_multiplier's own
@@ -3075,6 +3105,67 @@ def lookup_scheme_defense_profile(
         return matches.iloc[0].to_dict()
     reason = "No matching scheme-defense profile" if matches.empty else "Ambiguous scheme-defense profile"
     return neutral_scheme_defense_profile(reason, **wanted)
+
+
+def blend_defense_profiles_toward_prior(
+    current: pd.DataFrame,
+    prior: pd.DataFrame,
+    split_col: str,
+    w0: float,
+    g0: float = PFF_DEFENSE_PRIOR_BLEND_G0,
+    min_prior_games: int = PFF_DEFENSE_PRIOR_BLEND_MIN_PRIOR_GAMES,
+) -> pd.DataFrame:
+    """Fold a completed prior season's defense profile into the current one.
+
+    ``current`` / ``prior`` are the frames returned by
+    ``load_weekly_{alignment,scheme}_defense_profiles`` for consecutive
+    seasons (``prior`` built with an ``as_of_week`` past Week 18 so it is the
+    whole regular season). ``split_col`` is ``"alignment"`` or ``"scheme"``.
+
+    For each ``(defense_team, position, split_col, stat)`` row that has a
+    prior-season counterpart with at least ``min_prior_games`` comparison
+    games, the consumed ``shrunk_allowed_ratio`` becomes
+
+        w * prior_ratio + (1 - w) * current_ratio,
+        w = w0 * g0 / (g0 + current_comparison_games)
+
+    Both inputs are already sample-size-shrunk toward 1.0 on their own
+    samples, so this is a blend of two stable estimates, not a raw pool.
+    ``w0 == 0`` returns ``current`` untouched (the alignment default - see
+    PFF_DEFENSE_PRIOR_BLEND_W0). A ``prior_blend_weight`` column is added for
+    the audit trail. Never raises: a missing column or empty prior returns
+    ``current`` unchanged.
+    """
+    if (w0 <= 0.0 or current is None or current.empty or prior is None or prior.empty
+            or split_col not in current.columns or split_col not in prior.columns):
+        out = current.copy() if current is not None else current
+        if out is not None and not out.empty:
+            out['prior_blend_weight'] = 0.0
+        return out
+
+    keys = ['defense_team', 'position', split_col, 'stat']
+    if not all(k in current.columns and k in prior.columns for k in keys):
+        out = current.copy()
+        out['prior_blend_weight'] = 0.0
+        return out
+
+    p = prior[keys + ['shrunk_allowed_ratio', 'comparison_games']].rename(
+        columns={'shrunk_allowed_ratio': '_prior_ratio', 'comparison_games': '_prior_games'})
+    out = current.merge(p, on=keys, how='left')
+
+    cur_games = pd.to_numeric(out.get('comparison_games'), errors='coerce').fillna(0.0)
+    w = w0 * g0 / (g0 + cur_games)
+    eligible = (
+        out['_prior_ratio'].notna()
+        & pd.to_numeric(out['_prior_games'], errors='coerce').fillna(0.0).ge(min_prior_games)
+        & pd.to_numeric(out['shrunk_allowed_ratio'], errors='coerce').notna()
+    )
+    w = w.where(eligible, 0.0)
+    blended = w * pd.to_numeric(out['_prior_ratio'], errors='coerce') \
+        + (1.0 - w) * pd.to_numeric(out['shrunk_allowed_ratio'], errors='coerce')
+    out['shrunk_allowed_ratio'] = np.where(eligible, blended, out['shrunk_allowed_ratio'])
+    out['prior_blend_weight'] = w.to_numpy()
+    return out.drop(columns=['_prior_ratio', '_prior_games'])
 
 
 def scheme_defense_residual_multiplier(

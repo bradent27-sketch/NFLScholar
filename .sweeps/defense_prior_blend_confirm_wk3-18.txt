@@ -1,0 +1,242 @@
+2026-09-05 04:12:03.361 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.362 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.363 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.363 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.366 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.366 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.367 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.367 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.368 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.368 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.368 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.369 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.369 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.369 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.369 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.370 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.370 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.370 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.370 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.371 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.371 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.372 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.372 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.372 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.373 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.373 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.374 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.374 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.375 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.377 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.393 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.393 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.394 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.394 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.394 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.395 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.396 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.396 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.396 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.400 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.427 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.427 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 04:12:03.428 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:03.911 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:04.453 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:04.454 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 04:12:04.785 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:07.380 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 04:12:17.795 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2023 w3: pool ok
+2023 w4: pool ok
+2023 w5: pool ok
+2023 w6: pool ok
+2023 w7: pool ok
+2023 w8: pool ok
+2023 w9: pool ok
+2023 w10: pool ok
+2023 w11: pool ok
+2023 w12: pool ok
+2023 w13: pool ok
+2023 w14: pool ok
+2023 w15: pool ok
+2023 w16: pool ok
+2023 w17: pool ok
+2023 w18: pool ok
+2026-09-05 07:29:12.811 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 07:29:13.961 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2024 w3: pool ok
+2024 w4: pool ok
+2024 w5: pool ok
+2024 w6: pool ok
+2024 w7: pool ok
+2024 w8: pool ok
+2024 w9: pool ok
+2024 w10: pool ok
+2024 w11: pool ok
+2024 w12: pool ok
+2024 w13: pool ok
+2024 w14: pool ok
+2024 w15: pool ok
+2024 w16: pool ok
+2024 w17: pool ok
+2024 w18: pool ok
+2026-09-05 11:19:51.360 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 11:19:52.566 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w3: pool ok
+2025 w4: pool ok
+2025 w5: pool ok
+2025 w6: pool ok
+2025 w7: pool ok
+2025 w8: pool ok
+2025 w9: pool ok
+2025 w10: pool ok
+2025 w11: pool ok
+2025 w12: pool ok
+2025 w13: pool ok
+2025 w14: pool ok
+2025 w15: pool ok
+2025 w16: pool ok
+2025 w17: pool ok
+2025 w18: pool ok
+
+================================================================================================
+ALIGNMENT/SCHEME A/B   years=[2023, 2024, 2025] weeks=[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+================================================================================================
+dMAE = variant - base.  NEGATIVE = variant more accurate.  * = bootstrap 95% CI excludes 0.
+
+--- scheme w0=0.20 / align 0.00
+scope              n   MAEbase    MAEvar     dMAE              95% CI      W-L       p
+ALL            14864     4.516     4.516   +0.000  [-0.000,+0.000]      25-23   0.885
+WR              6283     4.476     4.476   +0.000  [-0.001,+0.001]      22-22   1.000
+TE              3142     3.609     3.609   +0.000  [-0.001,+0.002]      21-24   0.766
+START-WR        2245     6.455     6.446   -0.009  [-0.019,-0.002] *    26-20   0.461
+START-TE         828     5.447     5.463   +0.016  [-0.003,+0.048]      23-21   0.880
+START-QB        1063     6.218     6.218   +0.000  [+0.000,+0.000]        0-1   1.000
+START-RB        1648     6.325     6.325   -0.001  [-0.013,+0.009]        2-2   1.000
+per-stat (startable recv pool)
+  targets                 4721     2.281     2.281   -0.000  [-0.001,+0.000]  
+  receptions              4721     1.786     1.786   -0.000  [-0.001,+0.000]  
+  receiving_yards         4721    23.540    23.538   -0.003  [-0.008,+0.002]  
+  per-season stability (startable recv pool) - each year scored independently:
+    targets           2023:+0.000  2024:-0.001  2025:-0.000     agree? NO - sign flips
+    receptions        2023:+0.000  2024:-0.000  2025:-0.001     agree? NO - sign flips
+    receiving_yards   2023:-0.002  2024:+0.000  2025:-0.007     agree? NO - sign flips
+  (a stat whose sign flips year to year is not a finding, whatever the pooled row says)
+
+--- scheme w0=0.30 / align 0.00
+scope              n   MAEbase    MAEvar     dMAE              95% CI      W-L       p
+ALL            14864     4.516     4.516   -0.000  [-0.001,+0.000]      28-20   0.312
+WR              6283     4.476     4.475   -0.000  [-0.001,+0.000]      26-19   0.371
+TE              3142     3.609     3.608   -0.000  [-0.003,+0.002]      24-22   0.883
+START-WR        2245     6.455     6.445   -0.010  [-0.023,-0.000] *    28-20   0.312
+START-TE         828     5.447     5.466   +0.018  [-0.012,+0.053]      22-25   0.771
+START-QB        1063     6.218     6.218   +0.000  [-0.000,+0.000]        1-1   1.000
+START-RB        1648     6.325     6.324   -0.001  [-0.014,+0.009]        3-3   1.000
+per-stat (startable recv pool)
+  targets                 4721     2.281     2.281   +0.000  [-0.001,+0.001]  
+  receptions              4721     1.786     1.785   -0.000  [-0.001,+0.000]  
+  receiving_yards         4721    23.540    23.537   -0.004  [-0.013,+0.004]  
+  per-season stability (startable recv pool) - each year scored independently:
+    targets           2023:+0.001  2024:-0.000  2025:-0.000     agree? NO - sign flips
+    receptions        2023:+0.000  2024:-0.000  2025:-0.001     agree? NO - sign flips
+    receiving_yards   2023:+0.001  2024:-0.000  2025:-0.013     agree? NO - sign flips
+  (a stat whose sign flips year to year is not a finding, whatever the pooled row says)
+
+--- scheme w0=0.40 / align 0.00
+scope              n   MAEbase    MAEvar     dMAE              95% CI      W-L       p
+ALL            14864     4.516     4.516   -0.000  [-0.001,+0.000]      28-19   0.243
+WR              6283     4.476     4.475   -0.001  [-0.001,+0.000]      26-22   0.665
+TE              3142     3.609     3.608   -0.001  [-0.003,+0.002]      27-21   0.471
+START-WR        2245     6.455     6.443   -0.012  [-0.025,+0.001]      26-22   0.665
+START-TE         828     5.447     5.470   +0.023  [-0.009,+0.054]      26-22   0.665
+START-QB        1063     6.218     6.218   +0.000  [-0.000,+0.000]        1-1   1.000
+START-RB        1648     6.325     6.331   +0.005  [-0.001,+0.014]        3-5   0.727
+per-stat (startable recv pool)
+  targets                 4721     2.281     2.281   +0.000  [-0.001,+0.001]  
+  receptions              4721     1.786     1.785   -0.001  [-0.001,+0.000]  
+  receiving_yards         4721    23.540    23.538   -0.002  [-0.014,+0.008]  
+  per-season stability (startable recv pool) - each year scored independently:
+    targets           2023:+0.001  2024:-0.001  2025:-0.000     agree? NO - sign flips
+    receptions        2023:+0.001  2024:-0.001  2025:-0.002     agree? NO - sign flips
+    receiving_yards   2023:+0.003  2024:+0.002  2025:-0.012     agree? NO - sign flips
+  (a stat whose sign flips year to year is not a finding, whatever the pooled row says)
+
+--- scheme w0=0.50 / align 0.00
+scope              n   MAEbase    MAEvar     dMAE              95% CI      W-L       p
+ALL            14864     4.516     4.516   -0.001  [-0.001,+0.000]      29-19   0.193
+WR              6283     4.476     4.475   -0.001  [-0.002,+0.000]      25-23   0.885
+TE              3142     3.609     3.607   -0.002  [-0.005,+0.001]      27-19   0.302
+START-WR        2245     6.455     6.447   -0.008  [-0.019,+0.003]      25-23   0.885
+START-TE         828     5.447     5.457   +0.010  [-0.023,+0.041]      25-23   0.885
+START-QB        1063     6.218     6.220   +0.001  [-0.000,+0.005]        1-2   1.000
+START-RB        1648     6.325     6.332   +0.006  [-0.001,+0.015]        3-6   0.508
+per-stat (startable recv pool)
+  targets                 4721     2.281     2.281   -0.000  [-0.001,+0.001]  
+  receptions              4721     1.786     1.785   -0.001  [-0.002,+0.000]  
+  receiving_yards         4721    23.540    23.536   -0.004  [-0.019,+0.008]  
+  per-season stability (startable recv pool) - each year scored independently:
+    targets           2023:+0.002  2024:-0.001  2025:-0.001     agree? NO - sign flips
+    receptions        2023:+0.001  2024:-0.001  2025:-0.002     agree? NO - sign flips
+    receiving_yards   2023:+0.001  2024:+0.003  2025:-0.016     agree? NO - sign flips
+  (a stat whose sign flips year to year is not a finding, whatever the pooled row says)
+
+--- scheme w0=0.60 / align 0.00
+scope              n   MAEbase    MAEvar     dMAE              95% CI      W-L       p
+ALL            14864     4.516     4.515   -0.001  [-0.002,+0.000]      30-18   0.111
+WR              6283     4.476     4.475   -0.001  [-0.002,+0.001]      23-24   1.000
+TE              3142     3.609     3.606   -0.002  [-0.006,+0.001]      29-19   0.193
+START-WR        2245     6.455     6.447   -0.008  [-0.021,+0.005]      22-26   0.665
+START-TE         828     5.447     5.457   +0.010  [-0.028,+0.040]      25-23   0.885
+START-QB        1063     6.218     6.223   +0.005  [-0.000,+0.006]        1-3   0.625
+START-RB        1648     6.325     6.328   +0.003  [-0.008,+0.012]        3-5   0.727
+per-stat (startable recv pool)
+  targets                 4721     2.281     2.280   -0.000  [-0.002,+0.001]  
+  receptions              4721     1.786     1.785   -0.001  [-0.002,+0.000]  
+  receiving_yards         4721    23.540    23.534   -0.006  [-0.026,+0.010]  
+  per-season stability (startable recv pool) - each year scored independently:
+    targets           2023:+0.002  2024:-0.002  2025:-0.001     agree? NO - sign flips
+    receptions        2023:+0.000  2024:-0.001  2025:-0.002     agree? NO - sign flips
+    receiving_yards   2023:-0.003  2024:+0.007  2025:-0.023     agree? NO - sign flips
+  (a stat whose sign flips year to year is not a finding, whatever the pooled row says)
+
+--- scheme w0=0.40 / align w0=0.20
+scope              n   MAEbase    MAEvar     dMAE              95% CI      W-L       p
+ALL            14864     4.516     4.515   -0.001  [-0.002,-0.001] *    31-16   0.040
+WR              6283     4.476     4.474   -0.002  [-0.003,-0.001] *    35-13   0.002
+TE              3142     3.609     3.607   -0.002  [-0.005,+0.001]      28-19   0.243
+START-WR        2245     6.455     6.445   -0.011  [-0.030,+0.006]      27-21   0.471
+START-TE         828     5.447     5.437   -0.010  [-0.049,+0.029]      25-23   0.885
+START-QB        1063     6.218     6.221   +0.003  [-0.001,+0.003]        1-2   1.000
+START-RB        1648     6.325     6.326   +0.001  [-0.012,+0.008]        4-8   0.388
+per-stat (startable recv pool)
+  targets                 4721     2.281     2.280   -0.001  [-0.003,+0.000]  
+  receptions              4721     1.786     1.784   -0.002  [-0.003,-0.001] *
+  receiving_yards         4721    23.540    23.512   -0.029  [-0.048,-0.011] *
+  per-season stability (startable recv pool) - each year scored independently:
+    targets           2023:-0.001  2024:-0.000  2025:-0.002     agree? yes
+    receptions        2023:-0.001  2024:-0.001  2025:-0.004     agree? yes
+    receiving_yards   2023:-0.027  2024:-0.020  2025:-0.039     agree? yes
+  (a stat whose sign flips year to year is not a finding, whatever the pooled row says)
+
+--- scheme w0=0.40 / align w0=0.40
+scope              n   MAEbase    MAEvar     dMAE              95% CI      W-L       p
+ALL            14864     4.516     4.515   -0.002  [-0.003,-0.000] *    31-17   0.059
+WR              6283     4.476     4.472   -0.003  [-0.006,-0.001] *    28-19   0.243
+TE              3142     3.609     3.607   -0.002  [-0.006,+0.002]      25-23   0.885
+START-WR        2245     6.455     6.440   -0.016  [-0.037,+0.003]      28-20   0.312
+START-TE         828     5.447     5.455   +0.008  [-0.026,+0.043]      24-24   1.000
+START-QB        1063     6.218     6.221   +0.003  [-0.001,+0.007]        1-3   0.625
+START-RB        1648     6.325     6.332   +0.006  [+0.000,+0.014] *      5-5   1.000
+per-stat (startable recv pool)
+  targets                 4721     2.281     2.279   -0.002  [-0.004,+0.000]  
+  receptions              4721     1.786     1.783   -0.003  [-0.005,-0.001] *
+  receiving_yards         4721    23.540    23.492   -0.049  [-0.078,-0.022] *
+  per-season stability (startable recv pool) - each year scored independently:
+    targets           2023:-0.002  2024:+0.001  2025:-0.004     agree? NO - sign flips
+    receptions        2023:-0.002  2024:-0.002  2025:-0.005     agree? yes
+    receiving_yards   2023:-0.041  2024:-0.047  2025:-0.057     agree? yes
+  (a stat whose sign flips year to year is not a finding, whatever the pooled row says)
+
+
+wrote .sweeps/defense_prior_blend_outliers.csv

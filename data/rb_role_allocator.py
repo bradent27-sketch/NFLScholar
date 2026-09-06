@@ -28,6 +28,26 @@ DEFAULT_CORE_RB_SNAP_CAPACITY = 1.00
 DEFAULT_RB_CARRY_CAPACITY = 21.0
 DEFAULT_RB_TARGET_CAPACITY = 5.0
 MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE = 0.86
+# Week 1 ONLY (see `week` param below) tighter individual snap-share cap.
+# A real back can and does clear 86%+ in-season when volume is genuinely
+# concentrated for a few weeks - that is not this constant's business. Week 1
+# is different: it is a full-season PROJECTION built off limited, often
+# thin evidence, and 2026-09-04 live review found it landing two backs
+# (Gibbs, McCaffrey) above any real 2025 workhorse's actual full-season
+# snap share on the strength of that thin evidence alone. Same redistribution
+# machinery as MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE (_bounded_allocation) - the
+# trimmed share moves to teammates, never vanishes.
+RB_WEEK1_MAX_INDIVIDUAL_SNAP_SHARE = 0.82
+# How far a WEEK-1, no-same-team-backstop player's carry/target share may
+# sit from his own snap share before it gets pulled back (see
+# _bound_share_toward_snap and the cross-team-evidence note in the per-team
+# loop). Sized to sit ABOVE a real role-split's normal range - Aaron Jones
+# (established, ungated) legitimately runs -6.6/+4.8 points off his own
+# snap share in the receiving-back direction - so a genuine, still-thin
+# same-team split signal is not flattened; it only stops the specific
+# failure this exists for, an unrelated OLD team's rate silently costing a
+# new arrival ~20 points on BOTH axes at once (Travis Etienne, 2026-09-04).
+RB_WEEK1_CROSS_TEAM_SHARE_TOLERANCE = 0.08
 VACANCY_SURVIVAL = 0.80
 
 # Season-scoped RB eligibility, redone 2026-08-24 at explicit request after a
@@ -47,6 +67,18 @@ RB_ELIGIBILITY_MIN_GAMES_2025 = 5
 RB_ELIGIBILITY_MIN_SHARE_2025 = 0.15
 RB_ELIGIBILITY_PRIOR2_MIN_GAMES = 4
 RB_ELIGIBILITY_PRIOR2_STARTER_SHARE = 0.40
+
+# Minimum prior combined carry+target involvement for weak_fb_evidence's
+# "has real evidence" side - see that guard's own comment. A true fullback
+# can clear both prior_games>0 and a real SNAP share (his job is blocking)
+# while touching the ball almost never, so neither of those alone tells
+# blocking from ball-carrying apart. Sized off Patrick Ricard's real 2025
+# line (5 games, 45.6% snap share, 0.2 carries + 0.4 targets/game = 0.6
+# combined) found 2026-09-04 clearing the games/snap-share check and
+# drawing real core-RB capacity; a genuine complementary back clears this
+# by a wide margin even in a thin committee role.
+RB_MIN_PRIOR_TOUCH_RATE_FOR_FB_GUARD = 1.0     # combined carries+targets per game
+RB_MIN_PRIOR_TOUCH_SHARE_FOR_FB_GUARD = 0.05   # combined carry+target SHARE, when that's what's on hand
 
 # Without an imported Ourlads chart, every "eligible" candidate on a team
 # used to compete on raw score alone - no penalty at all for being the
@@ -425,6 +457,43 @@ def _other_fraction(charted_players: int) -> float:
     return {0: 0.25, 1: 0.18, 2: 0.10}.get(int(charted_players), 0.05)
 
 
+def _bound_share_toward_snap(alloc: pd.Series, cap: float, snap_fraction: pd.Series,
+                             bound_mask: pd.Series, tolerance: float) -> pd.Series:
+    """Pull a GATED player's implied share (``alloc / cap``) to within
+    ``tolerance`` of his own snap_fraction, redistributing the delta to his
+    UNGATED teammates proportional to their own already-allocated share -
+    same conservation rule as ``_bounded_allocation`` (the total never
+    changes, nothing vanishes or is fabricated).
+
+    Why this has to be a SEPARATE, later pass rather than just feeding
+    ``_bounded_allocation`` an evidence term equal to snap_fraction (which
+    is what the caller does first, see the cross-team-evidence note above):
+    ``_bounded_allocation`` splits a team's TOTAL capacity by each player's
+    score RELATIVE TO HIS TEAMMATES' scores. Making one player's own score
+    internally consistent with his own snap_fraction does not, by itself,
+    make his resulting SHARE track that snap_fraction - his teammates'
+    (untouched, real) evidence can still be relatively over- or under-
+    weighted and pull the split away from him regardless. This pass fixes
+    the actual output number the caller asked to bound, not an upstream
+    ingredient that only usually gets there.
+    """
+    if cap <= 0 or not bound_mask.any():
+        return alloc
+    share = (alloc / cap).clip(lower=0.0)
+    target = snap_fraction.clip(lower=0.0)
+    desired_share = share.clip(lower=(target - tolerance).clip(lower=0.0), upper=target + tolerance)
+    desired_share = desired_share.where(bound_mask, share)
+    desired = desired_share * cap
+    delta = float((alloc - desired).where(bound_mask, 0.0).sum())
+    out = alloc.where(~bound_mask, desired)
+    if abs(delta) > 1e-9:
+        donors = out.index[~bound_mask.to_numpy() & (out.to_numpy() > 0)]
+        if len(donors):
+            weights = out.loc[donors]
+            out.loc[donors] = out.loc[donors] + delta * (weights / weights.sum())
+    return out.clip(lower=0.0)
+
+
 def _bounded_allocation(scores: pd.Series, total: float, max_each: float | None = None) -> pd.Series:
     """Allocate ``total`` by nonnegative scores with an optional hard cap."""
     result = pd.Series(0.0, index=scores.index, dtype=float)
@@ -544,8 +613,15 @@ def _role_base(group: pd.DataFrame) -> pd.Series:
 
 
 def allocate_preseason_rb_roles(candidates: pd.DataFrame,
-                                snap_anchored_volume: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+                                snap_anchored_volume: bool = False,
+                                week: int | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Reconcile core-RB Week-1 roles to independent team capacities.
+
+    ``week`` (2026-09-04): the caller's literal target week, used ONLY to
+    gate two Week-1-specific guards - see RB_WEEK1_MAX_INDIVIDUAL_SNAP_SHARE
+    and the cross-team carry/target evidence note below. ``None`` (every
+    existing caller/test) preserves prior behavior exactly; this function
+    otherwise has no notion of which week it is being asked about.
 
     Required inputs are intentionally modest.  The public names documented in
     the V2 handoff are accepted in either lower-case or UI-style title case;
@@ -604,6 +680,21 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
     else:
         has_observed_prior_role = _text(out, observed_prior_column).str.lower().isin(
             {"1", "true", "yes", "y"})
+    # Touch-volume evidence, for weak_fb_evidence's guard ONLY (see its own
+    # comment) - deliberately not merged into has_observed_prior_role above,
+    # which other eligibility logic (season_2025_qualified) already relies
+    # on meaning "any recorded role at all," games or snap share included.
+    # Checks whichever representation the caller supplied - a SHARE
+    # (0-1, the allocator's own documented schema) or a per-game RATE
+    # (what weekly_projections.py's live caller actually populates today).
+    _prior_touch_share = (_numeric(out, "prior_active_carry_share").fillna(0.0)
+                          + _numeric(out, "prior_active_target_share").fillna(0.0))
+    _prior_touch_rate = (
+        _numeric(out, "prior_carries_per_game", "prior_carry_rate", "prior_carries").fillna(0.0)
+        + _numeric(out, "prior_targets_per_game", "prior_target_rate", "prior_targets").fillna(0.0))
+    has_observed_prior_touches = (
+        _prior_touch_share.gt(RB_MIN_PRIOR_TOUCH_SHARE_FOR_FB_GUARD)
+        | _prior_touch_rate.gt(RB_MIN_PRIOR_TOUCH_RATE_FOR_FB_GUARD))
     draft_capital = _numeric(out, "draft_capital", "draft_number")
     is_rookie = _text(out, "is_rookie", "is_rookie_flag", default="").str.lower().isin({"1", "true", "yes"})
     core = out["functional_position"].eq("RB") & ~status.isin(INELIGIBLE_ROSTER_STATUSES)
@@ -716,8 +807,19 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
     # no established-incumbent backstop, i.e. exactly the "unproven depth
     # fullback the roster feed happens to broadly tag RB" case, not a real
     # RB with a track record.
+    #
+    # "No observed prior role" originally meant only prior_games>0 / any
+    # recorded snap share - which a career blocking fullback clears just as
+    # easily as a real committee back, since his job is legitimate real
+    # snaps with almost no touches. Extended 2026-09-04 (Patrick Ricard: 5
+    # games, 45.6% snap share, 0.6 combined carries+targets/game in 2025 -
+    # cleared the original check and drew real core-RB capacity) to also
+    # require some real TOUCH volume specifically - has_observed_prior_
+    # touches above. Still additive only: a player can lose eligibility here
+    # that the games/snap check alone would have kept, never gain it back.
     ourlads_fb_signal = _text(out, "ourlads_position", default="").str.upper().eq("FB")
-    weak_fb_evidence = ourlads_fb_signal & ~has_observed_prior_role & ~incumbent_backstop
+    weak_fb_evidence = (ourlads_fb_signal & ~incumbent_backstop
+                        & (~has_observed_prior_role | ~has_observed_prior_touches))
     eligible = core & credible & availability.gt(0.01) & ~weak_fb_evidence
     out["core_rb"] = core
     out["eligible_core_rb"] = eligible
@@ -742,6 +844,7 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
                                             np.where(fallback_credible, "observed role/draft fallback",
                                                      "no credible role evidence"))))))
     ledger: list[dict[str, Any]] = []
+    is_week1 = week == 1
 
     for team, group in out.groupby("_rb_team", sort=False, observed=True):
         if not team:
@@ -863,7 +966,8 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
         # cannot ride the whole-backfield target arbitrarily far past 1.0.
         snap_share_target = min(max(snap_capacity, RB_TEAM_SNAP_SHARE_TARGET),
                                 RB_TEAM_SNAP_SHARE_MAX)
-        snap_alloc = _bounded_allocation(snap_alloc, snap_share_target, MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE)
+        _snap_cap = RB_WEEK1_MAX_INDIVIDUAL_SNAP_SHARE if is_week1 else MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE
+        snap_alloc = _bounded_allocation(snap_alloc, snap_share_target, _snap_cap)
 
         prior_carry_rate = _numeric(candidates_team, "prior_carries_per_game", "prior_carry_rate", "prior_carries")
         prior_target_rate = _numeric(candidates_team, "prior_targets_per_game", "prior_target_rate", "prior_targets")
@@ -873,6 +977,34 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
         # RB_VOL_TILT_STRENGTH < 1.
         carry_evidence = (prior_carry_rate / max(carry_capacity, 0.01)).clip(lower=0.0).fillna(snap_fraction)
         target_evidence = (prior_target_rate / max(target_capacity, 0.01)).clip(lower=0.0).fillna(snap_fraction)
+        _no_backstop_new_team = pd.Series(False, index=indexes)
+        # WEEK 1 ONLY (2026-09-04): for a player with no same-team incumbent
+        # backstop who also changed teams, prior_carry_rate/prior_target_rate
+        # are his OLD team's per-game rates - dividing them by THIS team's
+        # carry_capacity/target_capacity is not a share of anything real, it
+        # is two different offenses' volumes collided through a mismatched
+        # denominator. Confirmed live: Travis Etienne (JAX->NO) landed ~20
+        # points of carry share AND target share below his own snap share -
+        # both axes moving together, not the real carry/receiving trade-off
+        # an established committee (Aaron Jones/Jordan Mason-shaped) shows,
+        # because the SAME contaminated evidence term drags both down at
+        # once. This is the identical cross-team distrust
+        # v2_rb_snap_anchored_volume's tilt path already applies via `trust`
+        # above - deliberately NOT that flag: turning it on rescores every
+        # player's concentration/rank-discount too and measured negative on
+        # START-RB broadly (.sweeps/ablate_rb_snap_anchored_wk1.txt,
+        # "the etienne case is a true outlier" - the user's own verdict on
+        # that broad version). This instead neutralizes ONLY the
+        # cross-team-contaminated evidence term, ONLY for the narrow subset
+        # with no offsetting evidence, so both scores fall back to pure
+        # snap_fraction (carry share = target share = snap share) rather
+        # than the mismatched ratio - an established player's real,
+        # differentiated evidence is untouched either way.
+        if is_week1:
+            _no_backstop_new_team = pd.Series(
+                (~same_team.to_numpy()) & (~incumbent_backstop.loc[indexes].to_numpy()), index=indexes)
+            carry_evidence = carry_evidence.where(~_no_backstop_new_team, snap_fraction)
+            target_evidence = target_evidence.where(~_no_backstop_new_team, snap_fraction)
         carry_score_legacy = (0.62 * snap_fraction + 0.38 * carry_evidence).clip(lower=0.005) * availability.loc[indexes]
         target_score_legacy = (0.50 * snap_fraction + 0.50 * target_evidence).clip(lower=0.005) * availability.loc[indexes]
         _carry_cap = carry_capacity * (1.0 - other_fraction)
@@ -919,6 +1051,27 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
             # early-down carries; the two vectors intentionally remain separate.
             carry_alloc = _bounded_allocation(carry_score_legacy, _carry_cap)
             target_alloc = _bounded_allocation(target_score_legacy, _target_cap)
+
+        if _no_backstop_new_team.any():
+            # Neutralizing the evidence term above (carry_evidence/target_
+            # evidence) is not sufficient on its own: _bounded_allocation
+            # splits the team's capacity by each player's score RELATIVE TO
+            # HIS TEAMMATES, so an untouched teammate's real evidence can
+            # still pull the split away from this player's own honest
+            # snap-proportional score. This second pass bounds the actual
+            # OUTPUT share directly - see _bound_share_toward_snap.
+            # The share/target comparison must use the TRUE team capacity
+            # (matching snap_fraction's own denominator and what the board
+            # displays as carry/target share) - NOT _carry_cap/_target_cap,
+            # which are already reduced by other_fraction and would compare
+            # two different-sized pies. _bound_share_toward_snap's actual
+            # redistribution is an absolute delta, so this is safe either way.
+            carry_alloc = _bound_share_toward_snap(
+                carry_alloc, carry_capacity, snap_fraction, _no_backstop_new_team,
+                RB_WEEK1_CROSS_TEAM_SHARE_TOLERANCE)
+            target_alloc = _bound_share_toward_snap(
+                target_alloc, target_capacity, snap_fraction, _no_backstop_new_team,
+                RB_WEEK1_CROSS_TEAM_SHARE_TOLERANCE)
 
         out.loc[indexes, "expected_snap_share"] = snap_alloc
         # Keep the allocation in the same unit as the capacity ledger.  The

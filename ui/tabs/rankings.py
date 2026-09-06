@@ -30,7 +30,8 @@ from data.transforms import (load_and_merge_data, build_recent_form_rank, build_
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
 from data.weekly_projections import build_weekly_projections
-from data.odds_weekly import weekly_props, weekly_market_projection
+from data.odds_weekly import weekly_props, weekly_market_projection, weekly_market_book_lines
+from data.draft_projections import PROJECTED_STATS as _MARKET_PROJECTED_STATS
 from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
 from data.availability_overrides import availability_fingerprint, AVAILABILITY_OVERRIDE_PATH
 from data.pass_capacity_allocator import (
@@ -204,6 +205,27 @@ def _close_projection_dialog():
 
 _DECOMPOSITION_2DP_STATS = {'passing_tds', 'rushing_tds', 'receiving_tds', 'passing_interceptions'}
 
+# A decomposition stat key -> the market/consensus column that prices the
+# same thing. Books label rush/pass attempts 'carries'/'attempts' where the
+# model calls them 'rushing_attempts'/'passing_attempts'; 'targets' has no
+# routine market line, so it maps to a name the consensus frame never
+# carries and simply shows a dash. Used for the side-by-side "Market avg"
+# column in the decomposition primary table.
+_DECOMP_TO_MARKET_STAT = {
+    'passing_yards': 'passing_yards', 'passing_tds': 'passing_tds',
+    'passing_interceptions': 'passing_interceptions', 'passing_attempts': 'attempts',
+    'rushing_yards': 'rushing_yards', 'rushing_tds': 'rushing_tds',
+    'rushing_attempts': 'carries', 'carries': 'carries',
+    'receptions': 'receptions', 'receiving_yards': 'receiving_yards',
+    'receiving_tds': 'receiving_tds', 'targets': 'targets',
+}
+# The stats data.transforms.score_projected_stats actually assigns points to
+# (attempts/carries/targets score nothing), so the only ones that matter
+# when backfilling a partial market total with the model's own value.
+_MARKET_SCORING_STATS = ('passing_yards', 'passing_tds', 'passing_interceptions',
+                         'rushing_yards', 'rushing_tds', 'receptions',
+                         'receiving_yards', 'receiving_tds')
+
 
 def _fmt_stat(stat, value, signed=False):
     """Reception/yard/attempt-type stats display at 1 decimal, TD/INT-type
@@ -313,10 +335,18 @@ _ALIGNMENT_MIX_STATS = (
 )
 
 
-def _render_alignment_mix(detail):
+def _render_alignment_mix(detail, reference_only=False):
     """Player slot/wide/inline alignment mix + the worked calculation behind
     the defense-allowed multiplier that mix produces - WR/TE only, and only
     when a PFF alignment archive is actually loaded for this run.
+
+    reference_only (TE, 2026-09-06): a TE's 'Defense multiplier' is the
+    SCHEME (man/zone) blend, not this alignment blend, wherever scheme
+    evidence exists - see _render_scheme_mix, rendered just above this for a
+    TE. In that mode the alignment table is retained as context only and the
+    header/caption say so, rather than claiming it reconciles with the
+    primary table (it does not, for a TE, except in the weeks/stats where
+    scheme evidence is absent and alignment is the fallback that scored).
 
     ALWAYS VISIBLE (no expander) as of 2026-08-26, per explicit request -
     this used to be collapsed by default. The table below shows, for each
@@ -345,7 +375,8 @@ def _render_alignment_mix(detail):
     non_slot = role.get('non_slot_alignment_rate')
     if slot is None and wide is None and inline is None:
         return
-    st.markdown("**Alignment mix (slot / wide / inline)**")
+    st.markdown("**Alignment mix (slot / wide / inline)"
+                + (" — reference only**" if reference_only else "**"))
     weeks = role.get('source_week_count')
     st.caption(
         f"Source: {role.get('source_kind', 'unknown')}, {weeks if weeks else 0} week(s) "
@@ -427,19 +458,125 @@ def _render_alignment_mix(detail):
 
     table = pd.DataFrame(table_rows + [totals_row])
     st.dataframe(style_plain_dataframe(table), hide_index=True, width="stretch", height=df_auto_height(len(table)))
+    reconcile_clause = (
+        "For a TIGHT END these numbers are CONTEXT ONLY - the primary table's 'Defense multiplier' "
+        "uses the scheme (man/zone) blend shown above this, not this alignment blend, wherever scheme "
+        "evidence exists. Alignment is the TE fallback only in the weeks/stats where scheme evidence is "
+        "absent."
+        if reference_only else
+        "The bottom row's multiplier is the blend weighted by this player's own alignment mix (not a "
+        "plain average) - it REPLACES 'Defense multiplier' in the table above for this stat when active, "
+        "not a second adjustment on top of it. 'Combined' matches the primary table's projected value "
+        "except for team-capacity and vacancy adjustments, which still apply downstream there."
+    )
     st.caption(
         "/Game = this player's own per-game projected rate for that stat, split by his own alignment "
         "share (not a separately measured per-alignment rate). 'Allowed×' = the opponent's allowed-by-"
         "alignment multiplier for that alignment. 'Combined' = /Game × Allowed× × game context "
-        "(script/pace/availability/environment). The bottom row's multiplier is the blend weighted by "
-        "this player's own alignment mix (not a plain average) - it REPLACES 'Defense multiplier' in the "
-        "table above for this stat when active, not a second adjustment on top of it. 'Combined' matches "
-        "the primary table's projected value except for team-capacity and vacancy adjustments, which still "
-        "apply downstream there."
+        "(script/pace/availability/environment). " + reconcile_clause
     )
 
 
-def _render_decomposition_primary_table(detail):
+def _render_scheme_mix(detail):
+    """TE only: the man/zone (scheme) worked calculation behind the
+    'Defense multiplier' the primary table shows for a tight end.
+
+    Parallel to _render_alignment_mix, but THIS is the table that
+    reconciles with the primary table for a TE: v2_scheme_matchup replaces
+    the alignment number with this man/zone blend wherever scheme evidence
+    exists (SCHEME_MATCHUP_SCORING_POSITIONS == {'TE'}; see the
+    scheme_player_factor np.where in data/weekly_projections.py). The
+    alignment mix table is still rendered right after this one, in
+    reference_only mode, for whoever wants that context.
+
+    Each stat gets a Man row and a Zone row: this player's own per-game
+    projected rate for the stat, split by his own man/zone route share (NOT
+    a separately measured per-scheme rate, same reasoning as the alignment
+    table), times the opponent's allowed-by-scheme ratio for that side,
+    times game context. The bottom 'Blend (all)' row is the man/zone-share-
+    weighted blend - the same number 'Defense multiplier' uses above when
+    scheme is active for that stat.
+    """
+    if detail.get('position') != 'TE':
+        return
+    evidence = detail.get('alignment_scheme_evidence', {})
+    if not evidence.get('player_scheme_available'):
+        return
+    man = evidence.get('player_man_route_share')
+    zone = evidence.get('player_zone_route_share')
+    if man is None or not pd.notna(man):
+        return
+    man = float(man)
+    zone = float(zone) if zone is not None and pd.notna(zone) else max(0.0, 1.0 - man)
+    total = man + zone
+    man_share = man / total if total > 0 else 0.0
+    zone_share = zone / total if total > 0 else 0.0
+
+    st.markdown("**Scheme mix (man / zone)**")
+    sample_weight = evidence.get('player_scheme_sample_weight')
+    st.caption(
+        f"This player's man/zone route split (Man {man:.0%} · Zone {zone:.0%})"
+        + (f", sample weight {float(sample_weight):.2f}." if sample_weight is not None and pd.notna(sample_weight)
+           else ".")
+    )
+    if not evidence.get('defense_scheme_candidate_available'):
+        st.caption(
+            "Defense-allowed-by-scheme residual is neutral (1.0×) for this matchup: "
+            + (evidence.get('defense_scheme_reason') or 'insufficient man/zone comparison evidence.')
+            + " The primary table's 'Defense multiplier' falls back to the alignment number "
+              "(or the broad matchup) for this stat - see the reference table below."
+        )
+        return
+
+    splits_col = f"{detail.get('player', 'Player')}'s Splits"
+    sides = [('man', 'Man', man_share), ('zone', 'Zone', zone_share)]
+    table_rows = [{splits_col: f"{label} — {share:.1%}"} for _key, label, share in sides]
+    totals_row = {splits_col: "Blend (all)"}
+
+    for stat, pff_stat, stat_label in _ALIGNMENT_MIX_STATS:
+        stat_vals = detail.get('stats', {}).get(stat, {})
+        blended_rate = stat_vals.get('blended_rate')
+        blended_mult = evidence.get(f'defense_scheme_{pff_stat}_candidate_multiplier')
+        context_mult = (
+            float(stat_vals.get('script_multiplier', 1.0))
+            * float(stat_vals.get('pace_multiplier', 1.0))
+            * float(stat_vals.get('availability_multiplier', 1.0))
+            * float(stat_vals.get('environment_multiplier', 1.0))
+        )
+        per_game_col = f'{stat_label} /Game'
+        mult_col = f'{stat_label} Allowed×'
+        combined_col = f'{stat_label} Combined'
+        for row, (key, _label, share) in zip(table_rows, sides):
+            ratio = evidence.get(f'defense_scheme_{pff_stat}_{key}_ratio')
+            per_game = (blended_rate * share) if blended_rate is not None else None
+            row[per_game_col] = _fmt_stat(stat, per_game)
+            row[mult_col] = f"{float(ratio):.3f}×" if ratio is not None and pd.notna(ratio) else '—'
+            if per_game is not None and ratio is not None and pd.notna(ratio):
+                row[combined_col] = _fmt_stat(stat, per_game * float(ratio) * context_mult)
+            else:
+                row[combined_col] = '—'
+        totals_row[per_game_col] = _fmt_stat(stat, blended_rate)
+        totals_row[mult_col] = (f"{float(blended_mult):.3f}×"
+                                if blended_mult is not None and pd.notna(blended_mult) else '—')
+        totals_row[combined_col] = (
+            _fmt_stat(stat, blended_rate * float(blended_mult) * context_mult)
+            if blended_rate is not None and blended_mult is not None and pd.notna(blended_mult) else '—')
+
+    table = pd.DataFrame(table_rows + [totals_row])
+    st.dataframe(style_plain_dataframe(table), hide_index=True, width="stretch", height=df_auto_height(len(table)))
+    st.caption(
+        "/Game = this player's own per-game projected rate for that stat, split by his own man/zone "
+        "route share (not a separately measured per-scheme rate). 'Allowed×' = the opponent's allowed-"
+        "by-scheme ratio for that side, back-calculated from every offense it faced this season. "
+        "'Combined' = /Game × Allowed× × game context (script/pace/availability/environment). The bottom "
+        "row's multiplier is the blend weighted by this player's own man/zone mix - it IS 'Defense "
+        "multiplier' in the primary table for this stat (v2_scheme_matchup, tight ends), so 'Combined' "
+        "matches that table's projected value except for team-capacity and vacancy, which apply "
+        "downstream there."
+    )
+
+
+def _render_decomposition_primary_table(detail, market_detail=None):
     """The at-a-glance table: one row per projected stat, left-to-right in
     build order - Raw Average -> Season average (adj) -> Player Projection
     -> [Weighted average, only in-season] -> Defense multiplier -> Context
@@ -481,6 +618,16 @@ def _render_decomposition_primary_table(detail):
     scoring_mode = detail.get('scoring_mode') or 'Full PPR'
     has_current_season_data = any(
         (values.get('current_games') or 0.0) > 0 for values in stats.values())
+    # Raw posted-line consensus (plain median of what each book actually
+    # posted) alongside the de-vigged 'Market avg' (market_detail['consensus'],
+    # which market_stat_lines shifts for vig lean / count-line skew). Showing
+    # both is the whole point of the 2026-09-05 devig work - the gap between
+    # them is the implied-odds adjustment.
+    raw_market_consensus = {}
+    _bl = (market_detail or {}).get('book_lines')
+    if _bl is not None and not getattr(_bl, 'empty', True) and 'line' in _bl.columns:
+        _bl_line = pd.to_numeric(_bl['line'], errors='coerce')
+        raw_market_consensus = _bl_line.groupby(_bl['market']).median().to_dict()
     rows = []
     stage_totals = {stage: {} for stage in (
         'raw_average', 'season_adj', 'player_projection', 'after_defense',
@@ -566,20 +713,33 @@ def _render_decomposition_primary_table(detail):
             'Season average (adj)': _fmt_stat(stat, season_adj_val),
             'Player Projection': _fmt_stat(stat, player_proj_val),
             'Weighted average': _fmt_stat(stat, weighted_avg_val),
-            # Defense multiplier already IS the alignment-specific number for
-            # a WR/TE row with available alignment evidence (it replaces the
-            # broad role/defense matchup outright since the 2026-08-26
-            # redesign - see alignment_player_factor in
-            # data/weekly_projections.py) - a separate "Alignment residual"
-            # column used to show here too, but it was always identical to
-            # this one and was removed 2026-08-26 as pure redundancy. The
-            # always-visible "Alignment mix" section below breaks this same
-            # number down by slot/wide/inline for whoever wants that detail.
+            # 'Defense multiplier' already IS the position-specific residual
+            # for a WR/TE row wherever evidence exists - it replaces the
+            # broad role/defense matchup outright (2026-08-26 redesign, see
+            # the alignment_player_factor / scheme_player_factor np.where in
+            # data/weekly_projections.py), not a factor multiplied alongside
+            # it. For a WR that residual is the slot/wide/inline (alignment)
+            # blend; for a TE it is the man/zone (scheme) blend wherever
+            # scheme evidence exists, and the alignment blend only in the
+            # weeks/stats where it does not (2026-09-06). The always-visible
+            # worked-calc section below breaks this same number down - the
+            # scheme mix table for a TE (with the alignment table kept after
+            # it as reference), the alignment mix table for a WR.
             'Defense multiplier': f"{matchup_mult:.3f}×",
             'Context multiplier': f"{context_mult:.3f}×",
             'Team capacity Δ': _fmt_stat(stat, capacity_raw, signed=True),
             'Vacancy Δ': _fmt_stat(stat, vacancy_raw, signed=True),
             'Projected value': _fmt_stat(stat, final_val),
+            # Side-by-side market numbers for the SAME stat. 'Market line' is
+            # the plain median of what the books posted; 'Market avg' is the
+            # weighted multi-book consensus AFTER de-vigging
+            # (data.odds_projections.market_stat_lines) - the gap between the
+            # two is the implied-odds shift. Both dash when no book posted a
+            # line; never the model's own value standing in.
+            'Market line': _fmt_stat(stat, raw_market_consensus.get(
+                _DECOMP_TO_MARKET_STAT.get(stat, stat))),
+            'Market avg': _fmt_stat(stat, (market_detail or {}).get('consensus', {}).get(
+                _DECOMP_TO_MARKET_STAT.get(stat, stat))),
             '_vacancy_raw': vacancy_raw,
             '_capacity_raw': capacity_raw,
             '_defense_mult': matchup_mult,
@@ -598,6 +758,12 @@ def _render_decomposition_primary_table(detail):
         display_cols.append('Team capacity Δ')
     display_cols.append('Vacancy Δ')
     display_cols.append('Projected value')
+    show_market = market_detail is not None and (
+        market_detail.get('consensus') or market_detail.get('market_points_partial') is not None)
+    if show_market:
+        if any(r.get('Market line', '—') != '—' for r in rows):
+            display_cols.append('Market line')
+        display_cols.append('Market avg')
 
     # Trailing "Fantasy points at this stage" row, inside this same table
     # per explicit request ("not a separate table... it should be within
@@ -614,6 +780,16 @@ def _render_decomposition_primary_table(detail):
     }
     points_row = {'Stat': 'Fantasy points at this stage'}
     for col in display_cols[1:]:
+        if col == 'Market avg':
+            # The REAL market total - only the stats books actually priced,
+            # scored, gaps left out. Deliberately NOT the model-backfilled
+            # "full" figure the ranking table shows: inside the
+            # decomposition a missing market line reads as a dash, never as
+            # the model's number wearing a market label.
+            partial = (market_detail or {}).get('market_points_partial')
+            points_row[col] = (f"{max(0.0, float(partial)):.1f} pts"
+                               if partial is not None and pd.notna(partial) else '—')
+            continue
         stage_key = stage_by_col.get(col)
         stat_dict = stage_totals.get(stage_key, {}) if stage_key else {}
         points_row[col] = (f"{max(0.0, score_projected_stats(stat_dict, scoring_mode)):.1f} pts"
@@ -657,6 +833,17 @@ def _render_decomposition_primary_table(detail):
     style_grid = pd.DataFrame({col: _style_column(col) for col in display_cols})
     styler = display_table.style.apply(lambda _: style_grid, axis=None)
     st.dataframe(styler, hide_index=True, width="stretch", height=df_auto_height(len(display_table)))
+
+    if show_market:
+        st.caption(
+            "**Market line** is the plain median of what the books posted; **Market avg** is the "
+            "weighted multi-book consensus for that same stat AFTER de-vigging — a book pricing the "
+            "over at −140/+110 is really calling for a number above its posted line, and Market avg "
+            "carries that, Market line does not. Both from the live weekly board (PrizePicks / "
+            "Underdog / DraftKings); a dash where no book posted one. The trailing points figure "
+            "under Market avg counts ONLY the stats the market actually priced; the full, "
+            "model-backfilled market total for lineup comparison is on the ranking table, not here."
+        )
 
     note_text = " / ".join(sorted(raw_average_notes)) if raw_average_notes else "prior-season history"
     st.caption(
@@ -1027,40 +1214,71 @@ def _render_context_deep_dive(detail):
     # candidate_available is the real "is this replacing the general defense
     # multiplier right now" signal since the 2026-08-26 redesign - see the
     # np.where in weekly_projections.py's alignment_player_factor block.
+    evidence = detail.get('alignment_scheme_evidence', {})
+    _te_scheme_scored = (detail.get('position') == 'TE'
+                         and bool(evidence.get('defense_scheme_candidate_available')))
     if role.get('alignment_defense_candidate_available'):
-        st.caption("PFF alignment-defense residual: ACTIVE (v2_pff_alignment_matchup) - this player's own "
-                  "allowed-by-alignment mix is replacing the general defense/role matchup for this stat, "
-                  "not adding to it. See 'Defense multiplier' in the table above and the always-visible "
-                  "Alignment mix section for the full breakdown.")
+        if _te_scheme_scored:
+            st.caption("PFF alignment-defense residual: computed but SUPERSEDED for this tight end - the "
+                      "man/zone (scheme) blend below is what replaces the general defense/role matchup in "
+                      "'Defense multiplier'. Alignment is the fallback only where scheme evidence is absent.")
+        else:
+            st.caption("PFF alignment-defense residual: ACTIVE (v2_pff_alignment_matchup) - this player's own "
+                      "allowed-by-alignment mix is replacing the general defense/role matchup for this stat, "
+                      "not adding to it. See 'Defense multiplier' in the table above and the always-visible "
+                      "Alignment mix section for the full breakdown.")
     elif role.get('alignment_available'):
         st.caption("PFF alignment-defense residual: no comparison evidence for this defense/stat yet - "
-                  "falling back to the general defense/role matchup.")
+                  "falling back to the general defense/role matchup"
+                  + (" (or the scheme blend below, for this tight end)." if _te_scheme_scored else "."))
+    if _te_scheme_scored:
+        st.caption("PFF scheme-defense residual: ACTIVE (v2_scheme_matchup, tight ends) - this player's own "
+                  "man/zone route split against the opponent's allowed-by-scheme ratios is what feeds "
+                  "'Defense multiplier'. Full breakdown in the Scheme mix table on the Overview tab.")
 
-    evidence = detail.get('alignment_scheme_evidence', {})
     if evidence.get('player_scheme_available'):
         man, zone = evidence.get('player_man_route_share'), evidence.get('player_zone_route_share')
         if man is not None and pd.notna(man):
             st.markdown("**PFF man/zone role**")
             st.caption(f"Man: {float(man):.0%}"
                       + (f" · Zone: {float(zone):.0%}" if zone is not None and pd.notna(zone) else ""))
+    # Which residual actually feeds 'Defense multiplier' depends on position:
+    # WR -> alignment (slot/wide/inline); TE -> scheme (man/zone) wherever
+    # scheme evidence exists, alignment only as the fallback (2026-09-06,
+    # v2_scheme_matchup for tight ends). So the "(applied)" tag follows the
+    # scored side for this position, not always alignment.
+    pos = detail.get('position')
+    align_avail = bool(role.get('alignment_defense_candidate_available'))
+    scheme_avail = bool(evidence.get('defense_scheme_candidate_available'))
+    scheme_scored = pos == 'TE' and scheme_avail
+    align_scored = align_avail and not scheme_scored
     defense_bits = []
-    slot_applied = bool(role.get('alignment_defense_candidate_available'))
     if evidence.get('defense_alignment_candidate_available'):
         mult = evidence.get('defense_slot_candidate_multiplier')
         if mult is not None and pd.notna(mult):
-            defense_bits.append(f"slot-weighted {float(mult):.3f}×" + (" (applied)" if slot_applied else " (candidate)"))
-    if evidence.get('defense_scheme_candidate_available'):
+            tag = " (applied)" if align_scored else (
+                " (reference)" if pos == 'TE' else " (candidate)")
+            defense_bits.append(f"slot-weighted {float(mult):.3f}×" + tag)
+    if scheme_avail:
         mult = evidence.get('defense_man_candidate_multiplier')
         if mult is not None and pd.notna(mult):
-            defense_bits.append(f"man-weighted {float(mult):.3f}× (candidate)")
+            tag = " (applied)" if scheme_scored else " (candidate)"
+            defense_bits.append(f"man-weighted {float(mult):.3f}×" + tag)
     if defense_bits:
         st.markdown("**Opponent alignment/scheme vulnerability**")
+        if scheme_scored:
+            tail = ("'Applied' (the man/zone blend) is already folded into this stat's Defense "
+                    "multiplier above; the slot-weighted number is reference only for a TE.")
+        elif align_scored:
+            tail = ("'Applied' (the alignment blend) is already folded into this stat's Defense "
+                    "multiplier above."
+                    + (" 'Candidate' man/zone scheme is audit-only for a WR."
+                       if evidence.get('defense_scheme_candidate_available') else ""))
+        else:
+            tail = "'Candidate' entries are audit-only for this matchup (no evidence has been applied)."
         st.caption(
             f"{detail['opponent']}'s defense, back-calculated from every offense it actually faced this "
-            f"season — " + " · ".join(defense_bits) + ". "
-            + ("'Applied' is already folded into this stat's Defense multiplier above. "
-               if slot_applied else "")
-            + "'Candidate' entries remain audit-only (man/zone scheme is dormant everywhere)."
+            f"season — " + " · ".join(defense_bits) + ". " + tail
         )
 
 
@@ -1498,6 +1716,17 @@ def _render_decomposition_audit_body(detail):
     if role.get('alignment_available') and role.get('alignment_note'):
         st.caption(f"Alignment: {role['alignment_note']}")
 
+    # Every share/volume column in the two RB allocation tables at three
+    # decimals. style_plain_dataframe's auto-detection would give these one,
+    # which is not enough resolution for an allocation share: a third back's
+    # 0.112 target share and a fourth's 0.061 both collapse to "0.1", and the
+    # whole point of the table is to show how the team's capacity split.
+    _RB_ALLOCATION_DECIMALS = {
+        'capacity': 3, 'allocated': 3, 'unallocated': 3, 'other_fraction': 3,
+        'Expected Snap Share': 3, 'Preseason carry share': 3, 'Preseason target share': 3,
+        'Projected carries': 3, 'Projected targets': 3,
+    }
+
     if detail.get('position') == 'RB' and (
             role.get('rb_allocator_applied')
             or role.get('rb_allocation_eligibility_reason')
@@ -1515,11 +1744,17 @@ def _render_decomposition_audit_body(detail):
                                        'candidate_count', 'other_fraction', 'reason')
                 if column in capacity_frame.columns
             ]
-            st.dataframe(style_plain_dataframe(capacity_frame[display_columns]), hide_index=True, width="stretch")
+            st.dataframe(
+                style_plain_dataframe(capacity_frame[display_columns],
+                                      decimals_by_col=_RB_ALLOCATION_DECIMALS),
+                hide_index=True, width="stretch")
         allocation = detail.get('rb_team_allocation', [])
         if allocation:
             with st.expander("Team RB allocation and projected opportunities"):
-                st.dataframe(style_plain_dataframe(pd.DataFrame(allocation)), hide_index=True, width="stretch")
+                st.dataframe(
+                    style_plain_dataframe(pd.DataFrame(allocation),
+                                          decimals_by_col=_RB_ALLOCATION_DECIMALS),
+                    hide_index=True, width="stretch")
         source = role.get('rb_allocation_source') or 'not recorded'
         reason = role.get('rb_allocation_eligibility_reason') or 'not recorded'
         st.caption(f"Allocator eligibility: {reason}. Source: {source}.")
@@ -1653,7 +1888,132 @@ def _render_decomposition_audit_body(detail):
     st.caption("Market and FantasyPros values in the ranking table are comparisons, never inputs to this projection.")
 
 
-def _open_projection_dialog(detail):
+# Market prop-stat name -> a readable row label for the "Market lines" tab.
+# Anything not listed falls back to a title-cased split, which is already
+# fine for the fumble / field-goal buckets a skill player never carries.
+_MARKET_STAT_LABEL = {
+    'passing_yards': 'Passing yards', 'passing_tds': 'Passing TDs',
+    'passing_interceptions': 'Interceptions', 'attempts': 'Pass attempts',
+    'carries': 'Rush attempts', 'rushing_yards': 'Rushing yards',
+    'rushing_tds': 'Rushing TDs', 'targets': 'Targets', 'receptions': 'Receptions',
+    'receiving_yards': 'Receiving yards', 'receiving_tds': 'Receiving TDs',
+}
+# Row order for that tab: pass, then rush, then catch - the same volume-first
+# sequence every other stat display in the app uses.
+_MARKET_STAT_ORDER = [
+    'attempts', 'passing_yards', 'passing_tds', 'passing_interceptions',
+    'carries', 'rushing_yards', 'rushing_tds',
+    'targets', 'receptions', 'receiving_yards', 'receiving_tds',
+]
+
+
+def _render_market_lines_tab(detail, market_detail):
+    """Every live sportsbook/DFS line pulled for this player, one row per
+    stat and one column per book, with the weighted consensus ('Market proj')
+    beside them - the same board the Weekly Rankings 'Market Proj Pts'
+    column is scored from, laid open so a single book's outlier is visible.
+
+    Each book cell shows the RAW posted line, and where that book's
+    over/under prices imply a different mean (vig lean, or a skewed count
+    line) an arrow to the de-vigged number. 'Market proj' is the
+    reliability-weighted multi-book consensus of those de-vigged numbers
+    (data.odds_projections.market_stat_lines - real books weighted over the
+    pick'em products), identical to the number the ranking table and the
+    Overview tab's 'Market avg' column use, not a plain mean of the cells
+    in its row.
+    """
+    if not market_detail:
+        st.caption(
+            "No live market lines matched this player. The weekly board (PrizePicks / Underdog / "
+            "DraftKings) is only the CURRENT posted slate — a past week, or a player no book has "
+            "priced yet, shows nothing here. Pull it in **📡 Live data pulls → Market props**."
+        )
+        return
+
+    book_lines = market_detail.get('book_lines')
+    consensus = market_detail.get('consensus') or {}
+    scoring_mode = market_detail.get('scoring_mode') or detail.get('scoring_mode') or 'Full PPR'
+
+    summary_bits = []
+    model_total = detail.get('raw_points')
+    if model_total is not None and pd.notna(model_total):
+        summary_bits.append(f"Model {float(model_total):.1f} pts")
+    partial = market_detail.get('market_points_partial')
+    if partial is not None and pd.notna(partial):
+        summary_bits.append(f"Market, priced only {float(partial):.1f} pts")
+    full = market_detail.get('market_points_full')
+    if full is not None and pd.notna(full):
+        summary_bits.append(f"Market, model-backfilled {float(full):.1f} pts")
+    cov = market_detail.get('coverage')
+    if cov is not None and pd.notna(cov):
+        summary_bits.append(f"{float(cov) * 100:.0f}% of a typical week priced")
+    if summary_bits:
+        st.markdown("  ·  ".join(summary_bits))
+
+    if book_lines is None or getattr(book_lines, 'empty', True):
+        st.caption(
+            "A market total is available for this player but no per-book stat lines came through "
+            "with it — nothing to break down."
+        )
+        return
+
+    bl = book_lines.copy()
+    bl['book'] = bl['provider'].astype(str).str.split(' (', regex=False).str[0]
+    bl['line'] = pd.to_numeric(bl['line'], errors='coerce')
+    has_implied = 'implied_mean' in bl.columns
+    if has_implied:
+        bl['implied_mean'] = pd.to_numeric(bl['implied_mean'], errors='coerce').fillna(bl['line'])
+    raw_wide = bl.pivot_table(index='market', columns='book', values='line', aggfunc='mean')
+    imp_wide = (bl.pivot_table(index='market', columns='book', values='implied_mean', aggfunc='mean')
+                if has_implied else raw_wide)
+    book_cols = sorted(raw_wide.columns)
+    raw_wide = raw_wide[book_cols]
+    imp_wide = imp_wide.reindex(index=raw_wide.index, columns=book_cols)
+
+    ordered = [s for s in _MARKET_STAT_ORDER if s in raw_wide.index]
+    ordered += [s for s in raw_wide.index if s not in ordered]
+    raw_wide = raw_wide.reindex(ordered)
+    imp_wide = imp_wide.reindex(ordered)
+    stat_labels = [_MARKET_STAT_LABEL.get(s, s.replace('_', ' ').capitalize()) for s in ordered]
+
+    # Each book cell: raw posted line, and — when the book's prices imply a
+    # different mean (vig lean, or a skewed count line) — an arrow to the
+    # de-vigged number the consensus is actually built from. 'Market proj' is
+    # the reliability-weighted consensus of those de-vigged numbers.
+    def _cell(raw, imp):
+        if pd.isna(raw):
+            return '—'
+        if has_implied and pd.notna(imp) and abs(float(imp) - float(raw)) >= 0.05:
+            return f"{float(raw):.2f} → {float(imp):.2f}"
+        return f"{float(raw):.2f}"
+
+    rows = []
+    for stat, label in zip(ordered, stat_labels):
+        row = {'Stat': label}
+        for book in book_cols:
+            row[book] = _cell(raw_wide.at[stat, book], imp_wide.at[stat, book])
+        avg = consensus.get(stat, np.nan)
+        row['Market proj'] = f"{float(avg):.2f}" if pd.notna(avg) else '—'
+        rows.append(row)
+    wide = pd.DataFrame(rows, columns=['Stat'] + book_cols + ['Market proj'])
+    st.dataframe(
+        style_plain_dataframe(wide),
+        hide_index=True, width="stretch", height=df_auto_height(len(wide)))
+    any_shift = any(' → ' in str(v) for r in rows for v in r.values())
+    st.caption(
+        f"Lines re-scored under {scoring_mode}. Each book cell is its **raw posted line**"
+        + (", with an arrow to the **de-vigged mean** where the book's over/under prices lean one "
+           "way (an even-priced line shows no arrow). " if any_shift else " — no book's prices "
+           "shifted a line this time. ")
+        + "**Market proj** is the reliability-weighted consensus of the de-vigged numbers (real "
+        "sportsbooks weighted above the pick'em products), the exact figure behind **Market Proj "
+        "Pts** on the board. A blank cell means that book didn't post that stat. 'Model-backfilled' "
+        "fills any stat the market skipped with this app's own projection so the board's market "
+        "total is never a partial sum — that fill never appears here, only in the ranking-table number."
+    )
+
+
+def _open_projection_dialog(detail, market_detail=None):
     """Open the backend-produced weekly projection decomposition: a header
     (identity, top-line points, matchup toughness) always on top, then three
     tabs - Overview (primary at-a-glance table + tabbed Deep Dive), Range of
@@ -1668,12 +2028,23 @@ def _open_projection_dialog(detail):
     def _body():
         _render_decomposition_header(detail)
 
-        tab_overview, tab_outcomes, tab_audit, tab_news = st.tabs(
-            ["Overview", "Range of outcomes", "Role, audit & data sources", "News"])
+        tab_overview, tab_market, tab_outcomes, tab_audit, tab_news = st.tabs(
+            ["Overview", "Market lines", "Range of outcomes",
+             "Role, audit & data sources", "News"])
 
         with tab_overview:
-            _render_decomposition_primary_table(detail)
-            _render_alignment_mix(detail)
+            _render_decomposition_primary_table(detail, market_detail)
+            # For a TE the primary table's 'Defense multiplier' is the
+            # man/zone (scheme) blend, so lead with that worked-calc table
+            # and render the alignment table right after it as reference
+            # only. For a WR (alignment scores, scheme does not) it stays
+            # the single alignment table. _render_scheme_mix is a no-op for
+            # anyone but a TE with scheme evidence.
+            if detail.get('position') == 'TE':
+                _render_scheme_mix(detail)
+                _render_alignment_mix(detail, reference_only=True)
+            else:
+                _render_alignment_mix(detail)
 
             stats = detail.get('stats', {})
             if stats:
@@ -1701,6 +2072,9 @@ def _open_projection_dialog(detail):
                             detail, stat, game_log_by_season, defense_log_by_season, default_year)
                 with deep_dive_tabs[-1]:
                     _render_context_deep_dive(detail)
+
+        with tab_market:
+            _render_market_lines_tab(detail, market_detail)
 
         with tab_outcomes:
             distribution = detail.get('distribution')
@@ -2125,8 +2499,8 @@ def _render_weekly_market_pull(wk_scoring, name_pool):
     caption says so plainly rather than silently mismatching.
     """
     st.caption(
-        "PrizePicks, Underdog and DraftKings — no key, no quota. The same live weekly board "
-        "the Live Odds tab pulls, scored under the scoring mode selected above into a "
+        "PrizePicks, Underdog, DraftKings and Pinnacle — no key, no quota. The same live weekly "
+        "board the Live Odds tab pulls, scored under the scoring mode selected above into a "
         "projected-points column here instead of a raw line list. This is always the CURRENT "
         "posted slate, not necessarily the season/week picked above."
     )
@@ -2147,7 +2521,17 @@ def _render_weekly_market_pull(wk_scoring, name_pool):
         st.caption("Lines came back but none mapped to a stat this app scores.")
         return pd.DataFrame()
     st.success(f"{mmeta['players']} players priced from the live board.")
-    return scored.rename(columns={'player': 'Player'})
+    out = scored.rename(columns={'player': 'Player'})
+    # Two companion frames the projection decomposition dialog needs, carried
+    # on .attrs rather than by widening this hub's return signature: the
+    # per-(player, stat, book) raw lines for the "Market lines" tab, and the
+    # list of consensus stat columns present on `scored` for the primary
+    # table's side-by-side "Market avg" column. Safe here because this frame
+    # is only ever a merge SOURCE downstream (_attach_by_name's right side),
+    # never re-concatenated - the operations that would drop .attrs.
+    out.attrs['book_lines'] = weekly_market_book_lines(props, board=name_pool)
+    out.attrs['consensus_stats'] = [c for c in _MARKET_PROJECTED_STATS if c in scored.columns]
+    return out
 
 
 def _attach_by_name(base_df, other_df, value_cols, prefix):
@@ -2402,19 +2786,74 @@ def render():
             src_col = 'FP ' + _fantasypros_points_column(wk_scoring)
             if src_col in merged_model.columns:
                 merged_model = merged_model.rename(columns={src_col: 'FantasyPros Proj Pts'})
+        # Per-player market detail for the projection decomposition dialog,
+        # keyed the way the row-select handler keys a row: (Player, Pos,
+        # Team). Built here, before the stat columns are renamed to their
+        # display labels below, so the raw model stat line is still readable
+        # for the backfill. Always a dict so `.get` is safe with no market
+        # pull.
+        market_by_key = {}
+        consensus_stats = (market_df.attrs.get('consensus_stats', [])
+                           if market_df is not None else [])
         if market_df is not None and not market_df.empty:
-            merged_model = _attach_by_name(merged_model, market_df, ['Market Pts', 'Coverage'], 'Mkt ')
-            merged_model = merged_model.rename(
-                columns={'Mkt Market Pts': 'Market Proj Pts', 'Mkt Coverage': 'Market Coverage'})
+            merged_model = _attach_by_name(
+                merged_model, market_df,
+                ['Market Pts', 'Coverage', 'player_key'] + consensus_stats, 'Mkt ')
+            merged_model = merged_model.rename(columns={'Mkt Coverage': 'Market Coverage'})
+
+            # REQUEST (2026-09-02): the board's market total must never be a
+            # truncated sum. score_market_lines scores a stat the books
+            # haven't posted yet (common days out from kickoff) as ZERO,
+            # which drags the total well below the model's and makes the
+            # side-by-side comparison meaningless. Here - and ONLY here, on
+            # the single ranking-table number, never inside the
+            # decomposition - each unpriced scoring stat is filled with this
+            # app's own projection for it, so "Market Proj Pts" is always a
+            # complete, like-for-like figure. The raw partial stays on
+            # 'Mkt Market Pts' for the decomposition's own honest read.
+            _priced = [st_ for st_ in _MARKET_SCORING_STATS
+                       if st_ in consensus_stats and f'Mkt {st_}' in merged_model.columns
+                       and st_ in merged_model.columns]
+
+            def _model_pts_on_priced(row):
+                d = {st_: float(row[st_]) for st_ in _priced
+                     if pd.notna(row.get(f'Mkt {st_}')) and pd.notna(row.get(st_))}
+                return score_projected_stats(d, wk_scoring) if d else 0.0
+
+            partial = pd.to_numeric(merged_model.get('Mkt Market Pts'), errors='coerce')
+            raw_model_total = pd.to_numeric(
+                merged_model.get('Raw Model Proj Pts'), errors='coerce')
+            model_on_priced = merged_model.apply(_model_pts_on_priced, axis=1)
+            backfill = (raw_model_total - model_on_priced).clip(lower=0.0)
+            merged_model['Market Proj Pts'] = (partial + backfill).round(1)
+
+            for _, r in merged_model.iterrows():
+                cons = {st_: float(r[f'Mkt {st_}']) for st_ in consensus_stats
+                        if f'Mkt {st_}' in merged_model.columns and pd.notna(r.get(f'Mkt {st_}'))}
+                partial_v = float(r['Mkt Market Pts']) if pd.notna(r.get('Mkt Market Pts')) else None
+                if not cons and partial_v is None:
+                    continue
+                full_v = float(r['Market Proj Pts']) if pd.notna(r.get('Market Proj Pts')) else None
+                cov_raw = r.get('Market Coverage')
+                cov = float(cov_raw) if cov_raw is not None and pd.notna(cov_raw) else None
+                pk = r.get('Mkt player_key')
+                bl = None
+                _bl_all = market_df.attrs.get('book_lines')
+                if _bl_all is not None and not _bl_all.empty and pd.notna(pk):
+                    sub = _bl_all[_bl_all['player_key'] == pk]
+                    if not sub.empty:
+                        bl = sub[['market', 'provider', 'line']].copy()
+                market_by_key[(r['Player'], r['Pos'], r['Team'])] = {
+                    'consensus': cons, 'book_lines': bl,
+                    'market_points_partial': partial_v, 'market_points_full': full_v,
+                    'coverage': cov, 'scoring_mode': wk_scoring,
+                }
+
             if 'Market Coverage' in merged_model.columns:
-                # Missing stats price as ZERO in Market Proj Pts by design
-                # (data.odds_projections.score_market_lines' own docstring -
-                # keeping the market number independent of this app's model
-                # means a gap can't be filled in), which is exactly why a
-                # partial line reads "very low" with no explanation unless
-                # this rides right alongside it - a book that only posted a
-                # receptions prop for someone shows a real but partial
-                # number, not a broken one.
+                # A book that posted only a receptions prop shows a real but
+                # PARTIAL coverage number next to the (now backfilled) total,
+                # so a thin line still reads as thin rather than as a broken
+                # projection.
                 merged_model['Market Coverage'] = merged_model['Market Coverage'].map(
                     lambda v: f"{v * 100:.0f}%" if pd.notna(v) else None)
         # Ranking column, directly after Opponent, colored by TIER rather
@@ -2598,6 +3037,7 @@ def render():
                 # numbers instead of the pre-injury breakdown.
                 st.session_state[_PROJECTION_DETAIL_KEY] = {
                     'config': detail_config, 'detail': fresh, 'key': prev_key,
+                    'market_detail': market_by_key.get(prev_key),
                 }
             else:
                 # A real board switch (week / scoring), or nothing to
@@ -2621,6 +3061,7 @@ def render():
                 if detail:
                     st.session_state[_PROJECTION_DETAIL_KEY] = {
                         'config': detail_config, 'detail': detail, 'key': row_key,
+                        'market_detail': market_by_key.get(row_key),
                     }
 
         st.dataframe(
@@ -2643,7 +3084,7 @@ def render():
         )
         selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
         if selected_state and selected_state.get('config') == detail_config:
-            _open_projection_dialog(selected_state.get('detail'))
+            _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))
         shown_note = f"Showing {len(display_df)} of {total_filtered} {group_label} players"
         if total_filtered > len(display_df):
             st.caption(f"{shown_note} — widen \"Show\" above to see more.")
@@ -2672,9 +3113,12 @@ def render():
             "season as it grows, opponent/pace/game-script adjusted - see "
             "docs/weekly_projections_methodology.md), with the stat line it's built from shown "
             "alongside it. **Market Proj Pts** is this week's live sportsbook player-prop lines "
-            "re-scored under this league's settings — missing stats price as zero, so **Market "
-            "Coverage** shows how much of a typical week's points the posted lines actually cover; "
-            "a low number means a partial line, not a bad projection. **FantasyPros Proj Pts** is "
+            "re-scored under this league's settings, with any stat no book has posted yet filled "
+            "in from this app's own projection so the total is always a complete, like-for-like "
+            "number rather than a truncated sum — **Market Coverage** shows how much of it the "
+            "real posted lines actually cover (a low number means more of it is model-backfilled). "
+            "Open a player's decomposition → **Market lines** for the per-book breakdown, where a "
+            "missing stat stays blank and nothing is backfilled. **FantasyPros Proj Pts** is "
             "their analysts' number, pulled live above. Independent reads, shown side by side, "
             "never blended."
         )

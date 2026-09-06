@@ -54,6 +54,84 @@ Drop the whole archive from the repo once the model is finished and calibrated
 
 ---
 
+## 0c. OPEN QUEUE as of 2026-09-04 — cold-start new-team/vacancy fixes
+
+### SHIPPED 2026-09-05 — `v2_pff_defense_prior_blend`
+
+Added to `DEFAULT_FEATURES`; `PFF_DEFENSE_PRIOR_BLEND_W0` set to
+`{alignment: 0.20, scheme: 0.40}` (was `{0.0, 0.40}`). Blends a completed
+prior season's PFF alignment + scheme DEFENSE profile into the current-season
+one, weight fading as current-season games accumulate
+(`w = w0*G0/(G0+current_games)`, G0=6, in-season only — never at cold start).
+
+Settled by `scripts/sweep_defense_prior_blend.py` on a full-season held-out
+grid (2023-2025 wk3-18, 7 variants, `.sweeps/defense_prior_blend_confirm_
+wk3-18.txt`):
+
+| variant | ALL | WR | recv_yds | per-season |
+|---|---|---|---|---|
+| scheme-only, w0 0.2-0.6 | ~0.000 | ~0.000 | sign-flips | START-TE +0.01-0.02 every weight |
+| **scheme 0.40 / align 0.20** | −0.001 (p=.04) | **−0.002 (p=.002)** | −0.029* | all 3 stats agree, 2023/24/25 |
+| scheme 0.40 / align 0.40 | −0.002* | −0.003* | −0.049* | targets sign-flips; START-RB +0.006* |
+
+The early-season K2 whole-pool win (`.sweeps/defense_prior_blend_sweep_wk1-8.txt`)
+did NOT survive scheme-only on the full season. The 2026-09-04 transfer
+study had predicted align=0 (partial r ~0 year-to-year); held-out MAE said
+0.20, and MAE won. Effect is small and bench-weighted (START-WR −0.011 /
+START-TE −0.010, neither significant). **Owed:** a `WEEKLY_CALIBRATION`
+re-fit — this is the first DEFAULT change since 2026-08-30 that touches the
+in-season wk5-17 fit population, though the ALL-scope move is only −0.001 so
+the calibration impact is expected negligible.
+
+Not committed to git yet (large pile of unrelated uncommitted session work
+on the branch).
+
+---
+
+Three live-board diagnoses this session, two new MODEL_FEATURES-only flags
+built in response (not yet backtested — Lane L, see below).
+
+**Waddle (MIA->DEN) / Evans (TB->SF) — new-team starters stuck on stale
+whole-season share.** `restore_cold_start_returning_role_share` requires
+`prior_team == current_team` on every eligibility path, so a team-changer
+never recovers off his own active-role evidence no matter how strong, or how
+clearly the NEW team's chart confirms him a starter. Live numbers: Waddle
+71.4% snap vs his own 77.7% recent/93.9% route; Evans 45% vs 72%
+recent/90.1% route (worse — his 2025 was also injury-interrupted, so his
+whole-season share is depressed on top of the team-change block). Built
+**`v2_new_team_starter_restoration`**: a third, more conservative eligibility
+path (`new_team_alpha` capped at `NEW_TEAM_STARTER_CAP=0.80`, both below the
+same-team path) requiring the new chart to independently confirm rank 1 +
+>=3 games of real evidence + role signal >=0.65. Off by default. 7 new unit
+tests (`test_new_team_starter_*`, `test_cold_start_receiver_vacancy_*` in
+`tests/test_weekly_projections.py`), 495/495 suite green.
+
+**Watson (GB) — a departed teammate's role just evaporates.** Not a
+restoration problem — his own mechanism works fine (53.5% off a 68% active
+share, evidence-weighted for only 10/17 games played). The gap: GB's 2025 WR
+corps summed to ~310% team snap share (6 players); Doubs (77.6%) and Wicks
+(47.2%) are both gone for 2026, and the remaining corps' 2026 board sums to
+only ~160%. `redistribute_v2_vacated_usage` / `v2_receiver_vacancy_pecking_
+order` only fire off a **live in-season OUT** designation on a player still
+in the pool — a released/traded veteran isn't in the pool at all, so nothing
+ever sees his vacancy. Built **`v2_receiver_cold_start_vacancy`**
+(`apply_cold_start_receiver_vacancy`): at cold start, diffs last season's
+role reference against this season's pool per team/position, and
+redistributes `RECEIVER_COLD_START_VACANCY_SURVIVAL` (0.70) of a departed
+player's prior share to the remaining corps, weighted by each recipient's
+own current share. Off by default.
+
+**Queued — Lane L** (`.sweeps/_laneL.sh`, sequenced behind Lane K):
+L1 GTE pooled 5-year reconfirm + TD calibration (Brier/log-loss on
+Poisson-implied P(TD>=1) — see §GTE below), L2 TE2 buried-vet dock test
+(does dropping the TE-2 exemption help, `RECEIVER_BURIED_VET_BACKUP_SLOT_
+RANK_TE` 3->2), L3 `v2_new_team_starter_restoration` Week-1 backtest
+(2022-2025), L4 `v2_receiver_cold_start_vacancy` Week-1 backtest
+(2022-2025). Nothing here is in DEFAULT_FEATURES yet — all four report back
+before any ship decision.
+
+---
+
 ## 0b. OPEN QUEUE as of 2026-09-02 (post-sweep)
 
 Everything else is either shipped, retired with a written verdict, or an
@@ -337,6 +415,64 @@ carries a comment pointing here.
 
 - **#2 build-board flow** — shipped, unverified in a browser.
 - **Vacancy-fill table (#3)** — shipped this session.
+- **TE scheme decomposition (2026-09-06)** — shipped. The primary decomposition
+  table's 'Defense multiplier' for a TE was already the man/zone (scheme) blend
+  (`matchup_multiplier` captured post the `scheme_player_factor` np.where), but
+  nothing surfaced that: the only worked-calc table was the alignment one and the
+  audit caption said scheme was "dormant everywhere". Now: `_render_scheme_mix`
+  (rankings.py) renders a Man/Zone/Blend worked-calc table for a TE that
+  reconciles with the primary table; `_render_alignment_mix(reference_only=True)`
+  keeps the alignment table below it, relabelled context-only; audit captions are
+  position-aware. Plumbing: `alignment_scheme_evidence` now carries the
+  receptions/yards scheme multipliers + per-side (man/zone) allowed ratios
+  (`scheme_defense_{stat}_{man,zone}_ratio`, added to the `_scheme_profile_`
+  export in `build_weekly_projections`). Tests: `tests/test_scheme_mix_decomposition.py`.
+- **Market lines: raw + de-vigged side by side (2026-09-06)** — shipped.
+  - `weekly_consensus` (odds_weekly.py): new `Market proj` column = median of the
+    de-vigged `implied_mean` per book, beside the raw `Consensus`. Equal for a
+    pure pick'em board (no `p_over`); shifts where a book prices the O/U.
+  - `_render_market_lines_tab` (rankings.py): each book cell now shows
+    `raw → devigged` when the book's prices lean; 'Average' renamed 'Market proj'.
+  - Primary decomposition table: new `Market line` column (plain book-median)
+    beside `Market avg` (de-vigged consensus) — the gap is the implied-odds shift.
+  - `parse_odds_api_props` (odds_sources.py): rewritten to pair Over/Under
+    outcomes per (player, market, book) and compute `p_over` via `devig_two_way`,
+    so Odds-API sharp-book lines are devig-ready. `STAT_ALIASES` gains the two
+    Odds-API market spellings (`receptionyds`, `passinterceptions`) that were
+    falling through unscorable.
+  - `_render_odds_api_devig` (live_odds.py): after "Load player props for this
+    game" in the paid section, a de-vigged consensus table across every sharp
+    book the fetch returned (FanDuel / DraftKings / Pinnacle / BetMGM / …) — the
+    credit-gated "pull sharp lines" view. Reuses the fetch; no extra credit.
+  - Tests: `tests/test_live_odds_tables.py`, `tests/test_odds_sources.py`,
+    `tests/test_odds_market.py` updated; full suite 513 pass.
+  - **Pinnacle per-game player props (2026-09-06) — SHIPPED.** Probed the guest
+    API live: `/0.1/leagues/889/matchups` carries per-game player props as
+    `type:special`, `special.category:"Player Props"`, parented to a game
+    matchup, with BARE "Over"/"Under" participants (no inline line); the line +
+    American prices are in `/0.1/leagues/889/markets/straight` keyed by
+    `matchupId`. Both feeds return 200 to a plain request. `parse_pinnacle_payload`
+    now takes an optional `markets` arg and joins the two → `period='game'` rows
+    with a de-vigged `p_over` (`_pinnacle_markets_index` builds the join map).
+    `fetch_pinnacle_lines` fetches both (a `/markets` failure is non-fatal — season
+    props still resolve). `'Pinnacle'` added to `WEEKLY_BOOKS`; `BOOK_WEIGHTS`
+    already had it highest (25). `weekly_consensus` backfills Pinnacle's blank
+    `team` from another book's row for the same player so it stacks rather than
+    splitting the pivot. Verified live: e.g. TreVeyon Henderson rush yds 30.5 line
+    → 21.8 `Market proj` (+138/−185 under lean); Kyler Murray rush 21.5 → 25.4.
+    Tests: `test_pinnacle_per_game_*`, `test_weekly_consensus_backfills_a_blank_team*`.
+  - **Still open:**
+    - *FanDuel weekly file* — checked the saved FanDuel content page: it carries
+      game LINES (spread/total/ML) + season-long player props only, NO weekly
+      player props. Those live on per-game FanDuel event pages behind extra
+      required params + Datadome (probed: 400 without them). Needs a real capture
+      from the user's browser, OR just use `_render_odds_api_devig` (Odds API
+      carries FanDuel weekly player props under licence — already working).
+    - *DraftKings weekly absent from a snapshot* — diagnosis only: the fetch path
+      is wired and correct; absence means either the snapshot predates the Week-1
+      board going up (a manual refresh fixes it) or DK is refusing the plain
+      request and needs the Playwright browser fallback. Both are surfaced in the
+      per-book status the tab already shows.
 - **Injury reports** are surfaced only in Draft HQ's News sub-tab
   (`nflreadpy.load_injuries`, 2019+) — not on the weekly rankings tab or the other
   tabs.

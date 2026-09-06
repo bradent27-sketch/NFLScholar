@@ -92,8 +92,8 @@ def _team_rows(frame, team):
     return frame.loc[frame[_column(frame, 'Team', 'team')].astype(str).eq(team)]
 
 
-def _allocation_and_ledger(candidates):
-    allocations, ledger = rba.allocate_preseason_rb_roles(pd.DataFrame(candidates))
+def _allocation_and_ledger(candidates, week=None):
+    allocations, ledger = rba.allocate_preseason_rb_roles(pd.DataFrame(candidates), week=week)
     assert isinstance(allocations, pd.DataFrame)
     required = {'expected_snap_share', 'carry_share', 'target_share', 'allocated_carries',
                 'allocated_targets', 'core_rb', 'allocation_source'}
@@ -589,6 +589,33 @@ def test_established_rb_evidence_stays_eligible_despite_a_conflicting_ourlads_fu
     converted = _player_row(allocations, 'Converted Back')
     assert bool(converted['eligible_core_rb'])
     assert float(converted['expected_snap_share']) > 0.0
+
+
+def test_career_blocking_fullback_excluded_despite_real_games_and_snap_share():
+    """The Patrick Ricard case, 2026-09-04: a career fullback can log real
+    games and even a real SNAP share (his job is blocking) while touching
+    the ball almost never - 5 games, 45.6% snap share, but 0.2 carries +
+    0.4 targets per game in his real 2025 line. That cleared the original
+    games/snap-share-only 'has_observed_prior_role' check and let him draw
+    real core-RB capacity from the actual backfield. weak_fb_evidence must
+    also check touch VOLUME, not just presence of games/snap share."""
+    candidates = [
+        _candidate('BLT', 'Lead Back', ourlads_depth_rank=1, same_team=True, prior_games=15,
+                   prior_active_snap_share=0.60, prior_whole_snap_share=0.55,
+                   prior_active_carry_share=0.50, prior_active_target_share=0.30),
+        _candidate('BLT', 'Blocking Fullback', ourlads_depth_rank=2, same_team=True,
+                   depth_chart_position='RB', ourlads_position='FB',
+                   prior_games=5, prior_active_snap_share=0.456, prior_whole_snap_share=0.40,
+                   prior_active_carry_share=np.nan, prior_active_target_share=np.nan,
+                   prior_carries_per_game=0.2, prior_targets_per_game=0.4),
+    ]
+    allocations, _ = _allocation_and_ledger(candidates)
+    fb = _player_row(allocations, 'Blocking Fullback')
+    assert not bool(fb['eligible_core_rb'])
+    assert float(fb['expected_snap_share']) == 0.0
+    assert 'fullback listing' in str(fb['allocation_eligibility_reason']).lower()
+    # The real lead back is unaffected by the fullback's exclusion.
+    assert float(_player_row(allocations, 'Lead Back')['expected_snap_share']) > 0.3
 
 
 def _vacancy_result_frame():
@@ -1261,6 +1288,85 @@ def test_rb_vol_vacancy_strength_scales_the_out_top3_concentration():
     assert third_v1 < third_v0 - 0.02
     # half strength sits between the two endpoints
     assert third_v1 < third_half < third_v0 + 1e-6
+
+
+def test_week1_snap_cap_is_tighter_than_the_general_individual_cap():
+    """2026-09-04: Gibbs/McCaffrey-shaped case - a thin-evidence Week-1
+    projection should not clear a real workhorse's actual ceiling. Week 1
+    caps at RB_WEEK1_MAX_INDIVIDUAL_SNAP_SHARE (0.82); every other week
+    keeps the general, higher MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE (0.86) -
+    a real back legitimately clearing 86%+ for a few in-season weeks is not
+    this guard's business."""
+    candidates = [
+        _candidate('DET', 'Bell Cow', ourlads_depth_rank=1, same_team=True, prior_games=16,
+                   prior_active_snap_share=0.99, prior_whole_snap_share=0.97,
+                   prior_active_carry_share=0.95, prior_active_target_share=0.90),
+        _candidate('DET', 'Third Stringer', ourlads_depth_rank=3, same_team=True, prior_games=2,
+                   prior_active_snap_share=0.01, prior_whole_snap_share=0.01,
+                   prior_active_carry_share=0.01, prior_active_target_share=0.01),
+    ]
+    week1, _ = _allocation_and_ledger(candidates, week=1)
+    other_week, _ = _allocation_and_ledger(candidates, week=8)
+    lead_week1 = float(_player_row(week1, 'Bell Cow')['expected_snap_share'])
+    lead_other = float(_player_row(other_week, 'Bell Cow')['expected_snap_share'])
+    assert lead_week1 <= rba.RB_WEEK1_MAX_INDIVIDUAL_SNAP_SHARE + 1e-6
+    assert lead_other <= rba.MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE + 1e-6
+    assert lead_week1 < lead_other, 'Week 1 cap must be strictly tighter than the general one'
+    # The trimmed share moved to the teammate, not vanished.
+    assert float(_player_row(week1, 'Third Stringer')['expected_snap_share']) > float(
+        _player_row(other_week, 'Third Stringer')['expected_snap_share'])
+
+
+def test_week1_new_team_no_backstop_carry_target_share_bounded_to_snap_share():
+    """The Travis Etienne case, 2026-09-04: a player with no same-team
+    incumbent backstop who also changed teams was landing ~20 points below
+    his own snap share on BOTH carry share and target share at once - his
+    OLD team's per-game rate divided by his NEW team's capacity is not a
+    share of anything real. Week-1 only; an established, same-team back's
+    real carry/receiving split (the Aaron Jones/Jordan Mason case) must stay
+    completely untouched, including when it swings the OTHER way (more
+    receiving work, less rushing work, still within tolerance)."""
+    candidates = [
+        _candidate('KC', 'New Arrival', ourlads_depth_rank=1, same_team=False, prior_games=15,
+                   prior_active_snap_share=0.70, prior_whole_snap_share=0.65,
+                   prior_carries_per_game=4.0, prior_targets_per_game=1.0),
+        _candidate('KC', 'Committee Mate', ourlads_depth_rank=2, same_team=True, prior_games=12,
+                   prior_active_snap_share=0.20, prior_whole_snap_share=0.18,
+                   prior_carries_per_game=8.0, prior_targets_per_game=4.0),
+    ]
+    week1, _ = _allocation_and_ledger(candidates, week=1)
+    row = _player_row(week1, 'New Arrival')
+    snap = float(row['expected_snap_share'])
+    carry_share = float(row['allocated_carries']) / float(row['rb_carry_capacity'])
+    target_share = float(row['allocated_targets']) / float(row['rb_target_capacity'])
+    assert abs(carry_share - snap) <= rba.RB_WEEK1_CROSS_TEAM_SHARE_TOLERANCE + 1e-6
+    assert abs(target_share - snap) <= rba.RB_WEEK1_CROSS_TEAM_SHARE_TOLERANCE + 1e-6
+
+    # Same shape, but WITH an incumbent backstop or WITH same_team=True -
+    # must NOT be bounded (a real committee split stays real).
+    candidates_backstop = [
+        _candidate('KC', 'New Arrival', ourlads_depth_rank=1, same_team=False, prior_games=15,
+                   established_incumbent_backstop=True,
+                   prior_active_snap_share=0.70, prior_whole_snap_share=0.65,
+                   prior_carries_per_game=1.0, prior_targets_per_game=0.5),
+        _candidate('KC', 'Committee Mate', ourlads_depth_rank=2, same_team=True, prior_games=12,
+                   prior_active_snap_share=0.20, prior_whole_snap_share=0.18,
+                   prior_carries_per_game=8.0, prior_targets_per_game=4.0),
+    ]
+    week1_bs, _ = _allocation_and_ledger(candidates_backstop)
+    row_bs = _player_row(week1_bs, 'New Arrival')
+    carry_share_bs = float(row_bs['allocated_carries']) / float(row_bs['rb_carry_capacity'])
+    assert abs(carry_share_bs - float(row_bs['expected_snap_share'])) > rba.RB_WEEK1_CROSS_TEAM_SHARE_TOLERANCE, (
+        'an incumbent backstop must not be bounded even at week 1')
+
+    # week=None (no week passed at all) must reproduce prior behavior exactly -
+    # no bounding regardless of same_team/backstop.
+    no_week, _ = _allocation_and_ledger(candidates)
+    row_nw = _player_row(no_week, 'New Arrival')
+    carry_share_nw = float(row_nw['allocated_carries']) / float(row_nw['rb_carry_capacity'])
+    assert abs(carry_share_nw - float(row_nw['expected_snap_share'])) > rba.RB_WEEK1_CROSS_TEAM_SHARE_TOLERANCE, (
+        'week=None must not engage the week-1 guard'
+    )
 
 
 def main():

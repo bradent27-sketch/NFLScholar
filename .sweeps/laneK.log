@@ -1,0 +1,21 @@
+Lane K waiting for Lane J Fri Sep  4 17:34:54 CDT 2026
+Lane J done; Lane K start Fri Sep  4 17:34:54 CDT 2026
+  mg ok 7838MB Fri Sep  4 17:34:54 CDT 2026
+[K1] ablate v2_pff_alignment_matchup + v2_scheme_matchup  2022-2025 wk3-18 Fri Sep  4 17:34:54 CDT 2026
+  K1 done rc=0 Fri Sep  4 21:04:17 CDT 2026
+  mg ok 10082MB Fri Sep  4 21:04:18 CDT 2026
+[K2] defense-prior-blend w0 sweep  2023-2025 wk1-8 Fri Sep  4 21:04:18 CDT 2026
+  K2 done rc=0 Sat Sep  5 01:34:00 CDT 2026
+  mg ok 7577MB Sat Sep  5 01:34:01 CDT 2026
+[K3] WR scheme scoring  2022-2025 wk3-18 Sat Sep  5 01:34:01 CDT 2026
+  K3 done rc=0 Sat Sep  5 04:09:28 CDT 2026
+  mg ok 7509MB Sat Sep  5 04:09:29 CDT 2026
+[K4] prior-blend full-season confirm scheme w0=0.40  2023-2025 wk3-18 Sat Sep  5 04:09:29 CDT 2026
+Lane K RESUMED from K4 (K1-K3 already done) Sat Sep  5 04:12:00 CDT 2026
+  mg ok 7322MB Sat Sep  5 04:12:01 CDT 2026
+[K4] prior-blend full-season confirm, FULL GRID (corrected)  2023-2025 wk3-18 Sat Sep  5 04:12:01 CDT 2026
+  K4 done rc=0 Sat Sep  5 15:10:26 CDT 2026
+  mg ok 5728MB Sat Sep  5 15:10:26 CDT 2026
+[K5] scheme/alignment fixed-weight blend sweep  2023-2025 wk4-14 Sat Sep  5 15:10:26 CDT 2026
+  K5 done rc=0 Sun Sep  6 04:58:58 CDT 2026
+LANE K DONE Sun Sep  6 04:58:58 CDT 2026

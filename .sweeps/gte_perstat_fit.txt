@@ -1,0 +1,119 @@
+2026-09-04 11:45:05.631 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.634 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.634 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.634 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.637 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.637 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.637 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.638 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.639 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.639 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.639 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.639 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.640 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.640 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.640 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.640 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.641 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.641 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.641 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.641 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.642 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.643 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.644 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.644 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.644 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.645 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.645 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.646 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.647 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.649 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.675 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.676 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.676 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.676 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.677 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.678 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.678 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.679 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.679 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.684 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.708 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:05.708 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:05.708 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:07.561 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:08.069 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:08.069 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:08.438 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-04 11:45:08.439 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:09.068 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:11.450 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:11.821 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:12.451 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:14.831 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:15.209 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:15.846 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:16.885 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:17.252 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:17.902 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:18.942 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:19.314 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:19.956 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:21.048 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:21.423 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:22.071 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:23.232 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:23.629 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:24.314 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:25.377 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-04 11:45:25.749 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+panel: 32,514 player-games  years=[np.int64(2016), np.int64(2017), np.int64(2018), np.int64(2019), np.int64(2020), np.int64(2021), np.int64(2022), np.int64(2023)]  implied-ratio range 0.41-1.56
+
+==============================================================================
+QB   (n player-games = 3,891)
+==============================================================================
+  passing_yards          n=3891   poisson b=+0.138  wls=+0.147  95%CI[+0.081,+0.205] *  quad=-0.148   (flat +0.420)
+  passing_attempts       n=3891   poisson b=+0.030  wls=+0.029  95%CI[-0.024,+0.080]    quad=-0.138   (flat +0.420)
+  passing_completions    n=3891   poisson b=+0.083  wls=+0.091  95%CI[+0.027,+0.145] *  quad=-0.141   (flat +0.420)
+  passing_tds            n=3891   poisson b=+0.266  wls=+0.261  95%CI[+0.112,+0.403] *  quad=-0.221   (flat +0.420)
+  passing_interceptions  n=3885   poisson b=-0.049  wls=-0.065  95%CI[-0.296,+0.154]    quad=-1.159   (flat +0.420)
+  rushing_yards          n=3789   poisson b=+0.188  wls=+0.175  95%CI[-0.024,+0.367]    quad=-0.482   (flat +0.420)
+  rushing_attempts       n=3891   poisson b=+0.139  wls=+0.149  95%CI[+0.030,+0.257] *  quad=-0.162   (flat +0.420)
+  rushing_tds            n=2956   poisson b=+0.235  wls=+0.282  95%CI[-0.161,+0.782]    quad=-0.435   (flat +0.420)
+
+==============================================================================
+RB   (n player-games = 7,355)
+==============================================================================
+  rushing_yards          n=7300   poisson b=+0.119  wls=+0.119  95%CI[+0.028,+0.229] *  quad=+0.378   (flat +0.280)
+  rushing_attempts       n=7309   poisson b=+0.051  wls=+0.055  95%CI[-0.011,+0.115]    quad=+0.025   (flat +0.280)
+  rushing_tds            n=6720   poisson b=+0.405  wls=+0.371  95%CI[+0.105,+0.582] *  quad=+0.542   (flat +0.280)
+  targets                n=7355   poisson b=+0.073  wls=+0.065  95%CI[-0.027,+0.154]    quad=+0.118   (flat +0.280)
+  receptions             n=7355   poisson b=+0.093  wls=+0.083  95%CI[-0.027,+0.180]    quad=+0.036   (flat +0.280)
+  receiving_yards        n=7355   poisson b=+0.193  wls=+0.169  95%CI[+0.050,+0.307] *  quad=-0.034   (flat +0.280)
+  receiving_tds          n=4326   poisson b=+0.317  wls=+0.270  95%CI[-0.158,+0.733]    quad=+0.990   (flat +0.280)
+
+==============================================================================
+WR   (n player-games = 14,028)
+==============================================================================
+  targets                n=14028  poisson b=+0.039  wls=+0.030  95%CI[-0.024,+0.078]    quad=-0.123   (flat +0.140)
+  receptions             n=14028  poisson b=+0.107  wls=+0.105  95%CI[+0.043,+0.152] *  quad=-0.216   (flat +0.140)
+  receiving_yards        n=14028  poisson b=+0.143  wls=+0.142  95%CI[+0.064,+0.210] *  quad=-0.182   (flat +0.140)
+  receiving_tds          n=12324  poisson b=+0.337  wls=+0.343  95%CI[+0.138,+0.551] *  quad=-0.494   (flat +0.140)
+
+==============================================================================
+TE   (n player-games = 7,240)
+==============================================================================
+  targets                n=7240   poisson b=+0.034  wls=+0.020  95%CI[-0.065,+0.101]    quad=-0.161   (flat +0.300)
+  receptions             n=7240   poisson b=+0.085  wls=+0.074  95%CI[-0.017,+0.157]    quad=-0.168   (flat +0.300)
+  receiving_yards        n=7230   poisson b=+0.180  wls=+0.176  95%CI[+0.057,+0.291] *  quad=-0.269   (flat +0.300)
+  receiving_tds          n=6102   poisson b=+0.401  wls=+0.350  95%CI[+0.047,+0.714] *  quad=+0.238   (flat +0.300)
+
+wrote .sweeps\gte_perstat_fit_2016-2023.csv
+wrote .sweeps\gte_perstat_candidate.json
+
+GAME_TOTAL_ELASTICITY_BY_STAT = {
+    'QB': {'passing_yards': +0.138, 'passing_attempts': +0.030, 'passing_completions': +0.083, 'passing_tds': +0.266, 'passing_interceptions': -0.049, 'rushing_yards': +0.188, 'rushing_attempts': +0.139, 'rushing_tds': +0.235},
+    'RB': {'rushing_yards': +0.119, 'rushing_attempts': +0.051, 'rushing_tds': +0.405, 'targets': +0.073, 'receptions': +0.093, 'receiving_yards': +0.193, 'receiving_tds': +0.317},
+    'WR': {'targets': +0.039, 'receptions': +0.107, 'receiving_yards': +0.143, 'receiving_tds': +0.337},
+    'TE': {'targets': +0.034, 'receptions': +0.085, 'receiving_yards': +0.180, 'receiving_tds': +0.401},
+}

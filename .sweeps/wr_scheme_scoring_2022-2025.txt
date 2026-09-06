@@ -1,0 +1,146 @@
+2026-09-05 01:34:02.862 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.863 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.863 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.864 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.867 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.867 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.868 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.868 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.869 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.869 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.869 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.869 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.870 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.870 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.870 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.870 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.871 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.871 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.871 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.872 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.872 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.873 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.873 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.873 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.874 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.874 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.875 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.875 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.876 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.878 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.894 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.894 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.895 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.895 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.895 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.896 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.897 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.897 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.898 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.901 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.928 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:02.928 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 01:34:02.928 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:03.398 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:03.918 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:03.918 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 01:34:04.246 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:06.795 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-05 01:34:17.829 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2022 w3: pool ok
+2022 w4: pool ok
+2022 w5: pool ok
+2022 w6: pool ok
+2022 w7: pool ok
+2022 w8: pool ok
+2022 w9: pool ok
+2022 w10: pool ok
+2022 w11: pool ok
+2022 w12: pool ok
+2022 w13: pool ok
+2022 w14: pool ok
+2022 w15: pool ok
+2022 w16: pool ok
+2022 w17: pool ok
+2022 w18: pool ok
+2026-09-05 02:05:15.952 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 02:05:16.972 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2023 w3: pool ok
+2023 w4: pool ok
+2023 w5: pool ok
+2023 w6: pool ok
+2023 w7: pool ok
+2023 w8: pool ok
+2023 w9: pool ok
+2023 w10: pool ok
+2023 w11: pool ok
+2023 w12: pool ok
+2023 w13: pool ok
+2023 w14: pool ok
+2023 w15: pool ok
+2023 w16: pool ok
+2023 w17: pool ok
+2023 w18: pool ok
+2026-09-05 02:41:21.667 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 02:41:22.814 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2024 w3: pool ok
+2024 w4: pool ok
+2024 w5: pool ok
+2024 w6: pool ok
+2024 w7: pool ok
+2024 w8: pool ok
+2024 w9: pool ok
+2024 w10: pool ok
+2024 w11: pool ok
+2024 w12: pool ok
+2024 w13: pool ok
+2024 w14: pool ok
+2024 w15: pool ok
+2024 w16: pool ok
+2024 w17: pool ok
+2024 w18: pool ok
+2026-09-05 03:25:09.139 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-05 03:25:10.261 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w3: pool ok
+2025 w4: pool ok
+2025 w5: pool ok
+2025 w6: pool ok
+2025 w7: pool ok
+2025 w8: pool ok
+2025 w9: pool ok
+2025 w10: pool ok
+2025 w11: pool ok
+2025 w12: pool ok
+2025 w13: pool ok
+2025 w14: pool ok
+2025 w15: pool ok
+2025 w16: pool ok
+2025 w17: pool ok
+2025 w18: pool ok
+
+================================================================================================
+ALIGNMENT/SCHEME A/B   years=[2022, 2023, 2024, 2025] weeks=[3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
+================================================================================================
+dMAE = variant - base.  NEGATIVE = variant more accurate.  * = bootstrap 95% CI excludes 0.
+
+--- WR added to scheme scoring
+scope              n   MAEbase    MAEvar     dMAE              95% CI      W-L       p
+ALL            19705     4.514     4.513   -0.001  [-0.003,+0.001]      34-30   0.708
+WR              8293     4.496     4.496   -0.001  [-0.007,+0.004]      35-29   0.532
+TE              4156     3.604     3.602   -0.002  [-0.007,+0.003]      34-29   0.615
+START-WR        3003     6.376     6.382   +0.006  [-0.030,+0.044]      34-30   0.708
+START-TE        1093     5.321     5.328   +0.007  [-0.027,+0.053]      30-33   0.801
+START-QB        1404     6.068     6.075   +0.007  [-0.003,+0.023]        1-3   0.625
+START-RB        2204     6.351     6.352   +0.000  [-0.009,+0.008]        4-2   0.688
+per-stat (startable recv pool)
+  targets                 6300     2.274     2.272   -0.003  [-0.006,+0.001]  
+  receptions              6300     1.790     1.788   -0.003  [-0.006,+0.001]  
+  receiving_yards         6300    23.422    23.382   -0.040  [-0.095,+0.018]  
+  per-season stability (startable recv pool) - each year scored independently:
+    targets           2022:+0.001  2023:-0.001  2024:-0.002  2025:-0.008  agree? NO - sign flips
+    receptions        2022:+0.001  2023:-0.004  2024:-0.004  2025:-0.003  agree? NO - sign flips
+    receiving_yards   2022:+0.065  2023:-0.043  2024:-0.135  2025:-0.046  agree? NO - sign flips
+  (a stat whose sign flips year to year is not a finding, whatever the pooled row says)
+
+
+wrote .sweeps/wr_scheme_scoring_outliers.csv

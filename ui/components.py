@@ -1023,7 +1023,7 @@ def render_weekly_board_uploads(key_prefix='weekly', wrap_in_expander=True):
     from data.import_sources import markdown_list
 
     _PP_URL = 'https://api.prizepicks.com/projections?league_id=9&per_page=1000'
-    _UD_URL = 'https://api.underdogfantasy.com/beta/v6/over_under_lines'
+    _UD_URL = 'https://api.underdogfantasy.com/v1/over_under_lines'
     # (save-key, uploader label, parser, source hint key)
     books = (
         ('PrizePicks Weekly', 'PrizePicks weekly projections JSON', parse_prizepicks_payload, 'prizepicks_weekly'),
@@ -1053,7 +1053,8 @@ def render_weekly_board_uploads(key_prefix='weekly', wrap_in_expander=True):
         st.markdown(
             "Paste-ready URLs (open in your own browser, save the raw JSON):\n\n"
             f"- PrizePicks weekly — `{_PP_URL}`  ·  league id from `https://api.prizepicks.com/leagues`\n"
-            f"- Underdog (season + weekly) — `{_UD_URL}`  ·  bump the version number if it 404s"
+            f"- Underdog (season + weekly) — `{_UD_URL}`  ·  the `/beta/vN/` paths now 426; "
+            "if `/v1/` stops too, copy `over_under_lines` from a logged-in browser's network tab"
         )
 
         # DraftKings weekly O/U ids drift week to week, so discover the LIVE

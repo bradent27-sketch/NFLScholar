@@ -60,10 +60,13 @@ IMPORT_SOURCES = {
     # --- season-long book lines --------------------------------------------
     'underdog': ImportSource(
         'Underdog — over/under lines',
-        'https://api.underdogfantasy.com/beta/v6/over_under_lines',
+        'https://api.underdogfantasy.com/v1/over_under_lines',
         'Save the JSON. One payload carries both the season-long and the weekly '
-        'board, so this same file serves Live Odds and Weekly Rankings. They '
-        'version the path (v6 now, was v5) — if it 404s, bump the number.',
+        'board, so this same file serves Live Odds and Weekly Rankings. As of '
+        '2026-09-07 the `/beta/vN/` paths return **426 upgrade_required** to a '
+        'plain open; the un-prefixed `/v1/` path above still works. If it '
+        'stops, open the board in a logged-in browser and copy the '
+        '`over_under_lines` response from the network tab.',
     ),
     'prizepicks_season': ImportSource(
         'PrizePicks — season (NFLSZN)',

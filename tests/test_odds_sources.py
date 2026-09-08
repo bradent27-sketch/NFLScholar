@@ -485,11 +485,14 @@ def test_underdog_endpoint_ladder():
     import data.odds_sources as osrc
 
     calls = []
+    # Pretend only the THIRD endpoint on the ladder answers, so the test
+    # covers "walk a few, then stop" without pinning to a version number
+    # (the ladder gets reordered whenever Underdog moves the path).
+    live = osrc.UNDERDOG_LINE_ENDPOINTS[2]
 
     def fake_get(url, params=None, headers=None):
         calls.append(url)
-        # Pretend only v5 is live.
-        if '/v5/' in url:
+        if url == live:
             return {'players': [], 'over_under_lines': []}, None
         return None, f"{url} returned 404: not found"
 
@@ -498,11 +501,9 @@ def test_underdog_endpoint_ladder():
         osrc._get_json = fake_get
         payload, url, err = osrc.fetch_underdog_payload()
         assert err is None and payload is not None
-        assert '/v5/' in url, url
+        assert url == live, url
         # Newest first, and it stops rather than walking the whole ladder.
-        assert calls == [osrc.UNDERDOG_LINE_ENDPOINTS[0],
-                         osrc.UNDERDOG_LINE_ENDPOINTS[1],
-                         osrc.UNDERDOG_LINE_ENDPOINTS[2]]
+        assert calls == list(osrc.UNDERDOG_LINE_ENDPOINTS[:3])
 
         # A refusal is about the client, not the version: walking on would
         # just collect four more 403s from a host that already said no.
@@ -512,6 +513,15 @@ def test_underdog_endpoint_ladder():
         payload, url, err = osrc.fetch_underdog_payload()
         assert payload is None and 'refused' in err
         assert len(calls) == 1, f"should stop on a refusal, tried {calls}"
+
+        # A 426 client-version gate stops the ladder the same way (each step
+        # would otherwise re-run the browser retry). See _get_json's 426 branch.
+        calls.clear()
+        osrc._get_json = lambda url, params=None, headers=None: (
+            calls.append(url) or (None, f"{url} requires a newer client (426 upgrade_required)"))
+        payload, url, err = osrc.fetch_underdog_payload()
+        assert payload is None and 'newer client' in err
+        assert len(calls) == 1, f"should stop on a 426, tried {calls}"
 
         # Every version dead: one actionable message naming what was tried.
         calls.clear()

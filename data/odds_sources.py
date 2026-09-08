@@ -88,14 +88,23 @@ DEFAULT_HEADERS = {
 # (the players/appearances/over_under_lines split), which is what makes this
 # safe - if a future version changes the shape, parse_underdog_payload
 # returns its "couldn't join" error rather than silently mis-parsing.
+#
+# 2026-09-07: the `/beta/vN/` paths flipped from "just bump the number" to a
+# hard client gate - v5 and v6 now answer **426 upgrade_required** ("A new
+# version is required to continue") to a plain GET, and v7+ 404. The
+# unauthenticated board moved to the un-prefixed **`/v1/over_under_lines`**,
+# which still serves the same {players, appearances, over_under_lines, games}
+# shape with no auth. That is now first on the ladder; the beta paths are
+# kept below it as fallbacks in case the gate is lifted or v1 is retired.
 UNDERDOG_LINE_ENDPOINTS = [
+    'https://api.underdogfantasy.com/v1/over_under_lines',
     'https://api.underdogfantasy.com/beta/v7/over_under_lines',
     'https://api.underdogfantasy.com/beta/v6/over_under_lines',
     'https://api.underdogfantasy.com/beta/v5/over_under_lines',
     'https://api.underdogfantasy.com/beta/v4/over_under_lines',
     'https://api.underdogfantasy.com/beta/v3/over_under_lines',
 ]
-UNDERDOG_LINES_URL = UNDERDOG_LINE_ENDPOINTS[2]
+UNDERDOG_LINES_URL = UNDERDOG_LINE_ENDPOINTS[0]
 PRIZEPICKS_PROJECTIONS_URL = 'https://api.prizepicks.com/projections'
 PRIZEPICKS_LEAGUES_URL = 'https://api.prizepicks.com/leagues'
 # PrizePicks' league id for the weekly NFL board. Confirmed against a real
@@ -586,6 +595,20 @@ def _get_json(url, params=None, headers=None):
                       + (browser_err or "Nothing further is attempted.") + hint)
     if resp.status_code == 429:
         return None, f"{url} rate-limited the request (429). Try again later."
+    if resp.status_code == 426:
+        # "Upgrade Required" - the path exists but wants a newer client than a
+        # plain GET presents. Underdog started gating its /beta/vN/ paths this
+        # way in Sept 2026. A logged-in browser usually carries whatever the
+        # gate checks, so try that; failing that it's a dead end for the free
+        # pull and the caller should fall back to a saved file.
+        payload, browser_err = _browser_retry(url, params)
+        if payload is not None:
+            return payload, None
+        return None, (
+            f"{url} requires a newer client (426 upgrade_required) - a plain "
+            "fetch can't pass that gate. "
+            + (browser_err or "Save the JSON from your own browser and upload "
+               "it in Draft HQ -> League settings -> Market lines."))
     return None, f"{url} returned {resp.status_code}: {resp.text[:200]}"
 
 
@@ -857,10 +880,12 @@ def fetch_underdog_payload(endpoints=None):
         if err is None:
             return payload, url, None
         attempts.append(f"{url.rsplit('/', 2)[-2]}: {err}")
-        # A refusal or a rate limit is about the CLIENT, not the version -
-        # walking further down the ladder would just repeat it four more
-        # times against an endpoint that has already said no.
-        if 'refused the request' in err or 'rate-limited' in err:
+        # A refusal, a rate limit, or a client-version gate (426) is about the
+        # CLIENT, not the version - walking further down the ladder would just
+        # repeat it against an endpoint that has already said no (and each 426
+        # step re-runs the browser retry). Stop and report.
+        if ('refused the request' in err or 'rate-limited' in err
+                or 'newer client' in err):
             return None, url, err
     return None, None, (
         "No Underdog endpoint version answered. They version this path and it "

@@ -11,8 +11,7 @@ import streamlit as st
 from config import ODDS_API_PLAYER_PROP_MARKETS
 from data.loaders import fetch_nfl_odds, fetch_nfl_player_props, load_saved_odds_api_key, save_odds_api_key
 from ui.styling import style_plain_dataframe, df_auto_height
-from data.odds_sources import parse_prizepicks_payload, parse_draftkings_payloads
-from ui.components import skeleton_loader, import_hint
+from ui.components import skeleton_loader, import_hint, render_weekly_board_uploads
 
 
 def _fmt_kickoff(iso_str):
@@ -214,65 +213,10 @@ def _fmt_age(stamp):
 
 
 def _render_weekly_uploads():
-    """
-    Drop a weekly board in by hand, per book. Returns True if anything was
-    saved, so the caller can rebuild the snapshot instead of serving the one
-    that predates the upload.
-
-    PrizePicks is the reason this exists. Cloudflare refuses this app whether
-    it asks as a script or through a browser, and the remaining ways past
-    that are ones this project won't use - so their weekly board arrives as a
-    file or not at all. The file is deliberately separate from the season
-    one: their weekly product is a different league, and saving one over the
-    other would swap season totals for single-game props, which would parse
-    perfectly and be wrong by two orders of magnitude.
-    """
-    from data.odds_sources import save_book_payload, MULTI_FILE_BOOKS
-
-    saved_any = False
-    from data.import_sources import markdown_list
-
-    with st.expander("📥 Load a weekly board from a saved file", expanded=False):
-        st.caption(
-            "Click a source, save the JSON it returns, drop it here. A saved file "
-            "wins over the live fetch for that book and keeps working when the book "
-            "refuses us."
-        )
-        st.markdown(markdown_list('prizepicks_weekly', 'underdog', 'draftkings_weekly'))
-        for provider, label in (('PrizePicks Weekly', 'PrizePicks weekly projections JSON'),
-                                ('DraftKings Weekly', 'DraftKings weekly boards JSON (one or more)')):
-            multi = provider in MULTI_FILE_BOOKS
-            upload = st.file_uploader(label, type=["json"], accept_multiple_files=multi,
-                                      key=f"weekly_upload_{provider.replace(' ', '_').lower()}")
-            if multi and upload:
-                payload, err = save_book_payload([f.getvalue() for f in upload], provider)
-            elif not multi and upload is not None:
-                payload, err = save_book_payload(upload.getvalue(), provider)
-            else:
-                continue
-
-            if err and payload is None:
-                st.error(err)
-                continue
-            if err:
-                st.warning(err)
-            parser = (parse_draftkings_payloads if provider.startswith('DraftKings')
-                      else parse_prizepicks_payload)
-            parsed, perr = parser(payload)
-            game = parsed[parsed['period'] == 'game'] if not parsed.empty else parsed
-            if perr and game.empty:
-                st.warning(f"Saved it, but: {perr}")
-            elif game.empty:
-                st.warning(
-                    "Saved it, but there are no single-game lines in that file. For "
-                    "PrizePicks make sure it's `league_id=9` — the season board parses "
-                    "fine and is the wrong product for this panel."
-                )
-            else:
-                st.success(f"Saved {len(game)} weekly {provider.split()[0]} lines "
-                           f"({game['player'].nunique()} players).")
-                saved_any = True
-    return saved_any
+    """Weekly board hand-upload panel - see ui.components.render_weekly_board_
+    uploads. Kept as a one-line wrapper so this tab's call site stays put and
+    the panel is shared verbatim with the Weekly Rankings "Market props" pull."""
+    return render_weekly_board_uploads(key_prefix='liveodds')
 
 
 def _render_weekly_props():

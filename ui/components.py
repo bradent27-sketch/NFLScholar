@@ -996,6 +996,140 @@ def import_hint(*keys, expanded=None):
         st.markdown(markdown_list(*keys))
 
 
+def render_weekly_board_uploads(key_prefix='weekly', wrap_in_expander=True):
+    """
+    Drop this week's board in by hand, per book. Returns True if anything was
+    saved, so the caller can force a fresh weekly_props() build instead of
+    serving the snapshot that predates the upload.
+
+    PrizePicks is the one that ALWAYS needs this - Cloudflare refuses this app
+    whether it asks as a script or through a browser, and the remaining ways
+    past that are ones this project won't use. Underdog and DraftKings fetch
+    themselves; their slots are a fallback for when a live pull is
+    rate-limited or the endpoint moves. PrizePicks' file is deliberately
+    separate from its season one (weekly is league 9, not NFLSZN); Underdog's
+    single payload carries BOTH season and weekly, so one file serves Draft
+    HQ and here.
+
+    Shared by the Live Odds tab and the Weekly Rankings "Market props" pull.
+    ``key_prefix`` keeps the two call sites' widget keys distinct;
+    ``wrap_in_expander`` is False for the Weekly Rankings call, which already
+    lives inside the "Live data pulls" expander (Streamlit forbids nesting).
+    """
+    from data.odds_sources import (save_book_payload, MULTI_FILE_BOOKS,
+                                   parse_prizepicks_payload, parse_draftkings_payloads,
+                                   parse_underdog_payload, dk_weekly_subcategories,
+                                   dk_subcategory_url, DK_NASH_BASE, DK_LEAGUE_NFL)
+    from data.import_sources import markdown_list
+
+    _PP_URL = 'https://api.prizepicks.com/projections?league_id=9&per_page=1000'
+    _UD_URL = 'https://api.underdogfantasy.com/beta/v6/over_under_lines'
+    # (save-key, uploader label, parser, source hint key)
+    books = (
+        ('PrizePicks Weekly', 'PrizePicks weekly projections JSON', parse_prizepicks_payload, 'prizepicks_weekly'),
+        ('Underdog', 'Underdog over_under_lines JSON  (one file = season + weekly)',
+         parse_underdog_payload, 'underdog'),
+        ('DraftKings Weekly', 'DraftKings weekly O/U boards JSON  (one file per stat, or several at once)',
+         parse_draftkings_payloads, 'draftkings_weekly'),
+    )
+    saved_any = False
+
+    @contextmanager
+    def _section():
+        if wrap_in_expander:
+            with st.expander("📥 Load a weekly board from a saved file", expanded=False):
+                yield
+        else:
+            st.markdown("**📥 Load a weekly board from a saved file**")
+            yield
+
+    with _section():
+        st.caption(
+            "Open a source, save the JSON it returns, drop it here. A saved file "
+            "wins over the live fetch for that book until you clear it. PrizePicks "
+            "always needs this; Underdog and DraftKings only if a live pull fails."
+        )
+        st.markdown(markdown_list(*(hint for *_x, hint in books)))
+        st.markdown(
+            "Paste-ready URLs (open in your own browser, save the raw JSON):\n\n"
+            f"- PrizePicks weekly — `{_PP_URL}`  ·  league id from `https://api.prizepicks.com/leagues`\n"
+            f"- Underdog (season + weekly) — `{_UD_URL}`  ·  bump the version number if it 404s"
+        )
+
+        # DraftKings weekly O/U ids drift week to week, so discover the LIVE
+        # ones and print each as a paste-ready URL - the same list the
+        # auto-fetch uses. Cached (@st.cache_data on dk_weekly_subcategories),
+        # so opening this panel repeatedly is one call per 30 min. An inner
+        # st.expander only when this panel is NOT itself already inside one
+        # (Streamlit forbids nesting) - otherwise a plain labelled block.
+        @contextmanager
+        def _dk_block():
+            if wrap_in_expander:
+                st.markdown("**DraftKings weekly O/U boards — live subcategory links (this week)**")
+                yield
+            else:
+                with st.expander("DraftKings weekly O/U boards — live subcategory links (this week)",
+                                 expanded=False):
+                    yield
+
+        with _dk_block():
+            try:
+                _dk_subs, _dk_err = dk_weekly_subcategories()
+            except Exception as _exc:  # never let a book's outage break the panel
+                _dk_subs, _dk_err = [], f"{type(_exc).__name__}: {_exc}"
+            if _dk_subs:
+                st.caption("Open each, save the JSON, drop them all into the DraftKings slot below. "
+                           "The auto-fetch already pulls these — this is the fallback list.")
+                st.markdown("\n".join(
+                    f"- **{_name}** — `{dk_subcategory_url(_sid, category=_cid)}`"
+                    for _cat, _name, _cid, _sid in _dk_subs))
+            else:
+                st.caption(
+                    (f"Discovery said: {_dk_err} " if _dk_err else "")
+                    + "No live weekly O/U board right now (normal before Tue/Wed). "
+                    "When it posts, open the overview page, find the subcategories whose "
+                    "name ends **O/U**, and open "
+                    f"`{DK_NASH_BASE}/leagues/{DK_LEAGUE_NFL}/categories/<cid>/subcategories/<sid>` "
+                    "for each. The plain-named ones without \"O/U\" are Milestones markets, not totals.")
+                st.markdown(f"Overview page: `{DK_NASH_BASE}/leagues/{DK_LEAGUE_NFL}`")
+
+        for provider, label, parser, _hint in books:
+            multi = provider in MULTI_FILE_BOOKS
+            upload = st.file_uploader(
+                label, type=["json"], accept_multiple_files=multi,
+                key=f"{key_prefix}_weekly_upload_{provider.replace(' ', '_').lower()}")
+            if multi and upload:
+                payload, err = save_book_payload([f.getvalue() for f in upload], provider)
+            elif not multi and upload is not None:
+                payload, err = save_book_payload(upload.getvalue(), provider)
+            else:
+                continue
+
+            if err and payload is None:
+                st.error(err)
+                continue
+            if err:
+                st.warning(err)
+            parsed, perr = parser(payload)
+            game = parsed[parsed['period'] == 'game'] if not parsed.empty else parsed
+            if perr and (parsed is None or parsed.empty):
+                st.warning(f"Saved it, but: {perr}")
+            elif game.empty:
+                st.info(
+                    f"Saved it — {0 if parsed is None or parsed.empty else len(parsed)} lines, "
+                    "but no single-game ones yet. That is the normal state before the "
+                    "weekly board posts (Tue/Wed). For PrizePicks, make sure the URL "
+                    "carried `league_id=9` — the season board parses fine and is the "
+                    "wrong product here."
+                )
+                saved_any = saved_any or (parsed is not None and not parsed.empty)
+            else:
+                st.success(f"Saved {len(game)} weekly {provider.split()[0]} lines "
+                           f"({game['player'].nunique()} players). Rebuild to use them.")
+                saved_any = True
+    return saved_any
+
+
 def position_filter_multiselect(df, key, pos_col='Pos', label="Filter by position"):
     """
     Fixed QB/RB/WR/TE/K + FLEX shortcut position filter - the alternative

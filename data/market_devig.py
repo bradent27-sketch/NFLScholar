@@ -36,12 +36,30 @@ import math
 
 # Stat -> distribution family. Anything not listed falls back to the
 # multiplier path (see implied_mean_from_line).
+#
+# Both name conventions are listed on purpose: this app's canonical props
+# vocabulary is 'attempts' (pass attempts) and 'carries' (rush attempts)
+# (data.draft_projections), while an nflverse-shaped caller may pass
+# 'passing_attempts' / 'rushing_attempts'. Omitting the short names silently
+# sent every pass-/rush-attempt line straight through un-devigged - the
+# posted number came back as the "implied mean" no matter how the odds
+# leaned (Dak Prescott 33.5 pass att, under -118 both books, still read 33.5).
 _COUNT_STATS = frozenset({
     'passing_tds', 'rushing_tds', 'receiving_tds', 'receptions',
-    'passing_interceptions', 'passing_completions', 'passing_attempts',
-    'rushing_attempts', 'targets',
+    'passing_interceptions', 'passing_completions', 'completions',
+    'passing_attempts', 'attempts', 'rushing_attempts', 'carries', 'targets',
 })
 _YARD_STATS = frozenset({'passing_yards', 'rushing_yards', 'receiving_yards'})
+
+# A "scores a TD" market is posted at a 0.5 line, so a de-vigged P(over) near
+# 0.7 inverts to a Poisson mean near 1.2 - and real single-game TD counts are
+# LESS dispersed than Poisson at the top (goal-line defenses, no 5-TD games),
+# so that overstates the elite backs. Cap the per-game non-passing-TD mean
+# an anytime line can imply; ~1.0/gm is already Henry/Gibbs peak-season
+# territory. Does not touch a genuine 1.5/2.5-line multi-TD market (its mean
+# lands well under the cap anyway).
+_TD_STATS = frozenset({'rushing_tds', 'receiving_tds'})
+_ANYTIME_TD_MEAN_CAP = 1.0
 
 # Rough single-GAME standard deviation per (position, yard stat). Only scales
 # the SIZE of the vig-lean shift, and only when a line is not evenly priced -
@@ -171,7 +189,10 @@ def implied_mean_from_line(line, p_over, market, position=None, period='game'):
         return value * MEDIAN_TO_MEAN_FALLBACK.get(market, 1.0)
 
     if market in _COUNT_STATS:
-        return poisson_mean_for_upper_tail(value, p)
+        mean = poisson_mean_for_upper_tail(value, p)
+        if market in _TD_STATS and value <= 1.5:
+            return min(mean, _ANYTIME_TD_MEAN_CAP)
+        return mean
     if market in _YARD_STATS:
         return value + norm_ppf(p) * _yard_sigma(position, market, period)
     return value

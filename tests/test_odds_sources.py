@@ -25,11 +25,12 @@ pd.options.mode.string_storage = "python"
 
 from data.odds_sources import (  # noqa: E402
     parse_underdog_payload, parse_prizepicks_payload, parse_odds_api_props,
-    standardize_team, normalize_stat, combine_props, load_props_fixture,
-    odds_api_bookmakers, PROP_COLUMNS, prizepicks_leagues,
+    standardize_team, normalize_stat, normalize_stat_for, combine_props,
+    load_props_fixture, odds_api_bookmakers, PROP_COLUMNS, prizepicks_leagues,
     implausible_period_rows, parse_fanduel_payload, parse_pinnacle_payload,
     devig_two_way, american_to_decimal, parse_draftkings_payload,
     parse_draftkings_payloads, BOOK_WEIGHTS,
+    _fit_anytime_td_devig, anytime_td_p_over,
 )
 from data.odds_projections import (  # noqa: E402
     market_stat_lines, score_market_lines, compare_to_board,
@@ -80,6 +81,9 @@ def test_stat_normalization():
     assert normalize_stat('rec_yds') == ('receiving_yards', True)
     assert normalize_stat('interceptions') == ('passing_interceptions', True)
     assert normalize_stat('Rushing Attempts') == ('carries', True)
+    # Pinnacle labels a QB's passing touchdowns "Touchdown Passes" (season
+    # and per-game) - it must score as passing_tds, not fall through unmapped.
+    assert normalize_stat('Touchdown Passes') == ('passing_tds', True)
     # Combination markets are recognized but never scorable: mapping
     # "rush+rec yards" onto rushing_yards would corrupt the projection.
     name, scorable = normalize_stat('rushing_receiving_yards')
@@ -92,10 +96,11 @@ def test_underdog_parses_and_joins():
     props, err = _underdog()
     assert err is None, err
     assert list(props.columns) == PROP_COLUMNS
-    # 13 lines in. Dropped: 1 suspended, 1 orphan appearance_id, 1 appearance
+    # 14 lines in. Dropped: 1 suspended, 1 orphan appearance_id, 1 appearance
     # whose player is missing, 1 MLB line (the payload carries every sport at
-    # once and this adapter is asked for NFL). 8 survive.
-    assert len(props) == 8, props[['player', 'market_raw', 'period']].to_string()
+    # once and this adapter is asked for NFL). 9 survive (one of them, l-0006,
+    # a shaded line that is kept as a row but marked scorable=False).
+    assert len(props) == 9, props[['player', 'market_raw', 'period']].to_string()
     assert 'Some Shortstop' not in set(props['player']), "MLB must be filtered out"
 
     jj = props[props['player'] == 'Justin Jefferson']
@@ -141,21 +146,117 @@ def test_underdog_team_ids_are_uuids_resolved_via_games():
 
 def test_underdog_payouts_and_partial_game_markets():
     props, _ = _underdog()
-    recs = props[(props['player'] == 'Justin Jefferson') & (props['market'] == 'receptions')]
-    assert float(recs['over_payout'].iloc[0]) == 0.95
-    assert float(recs['under_payout'].iloc[0]) == 1.05
+    # l-0006: Travis Etienne's season rush-yards line is SHADED (0.87x/-140
+    # over, 1.13x/+116 under). Its payouts are recorded, but it is dropped
+    # from scoring - shaded both sides is an "easy over" / "hard over" promo
+    # price, not a clean read of the middle.
+    shaded = props[(props['player'] == 'Travis Etienne') & (props['market'] == 'rushing_yards')].iloc[0]
+    assert float(shaded['over_payout']) == 0.87
+    assert float(shaded['under_payout']) == 1.13
+    assert bool(shaded['scorable']) is False
+    assert shaded['provider'] == 'Underdog (shaded)'
     # Quarter/half markets are real and must never reach the scoring path.
     partial = props[props['market_raw'] == 'period_1_receiving_yds']
     assert len(partial) == 1 and bool(partial['scorable'].iloc[0]) is False
 
 
-def test_underdog_combo_market_not_scorable():
-    """"Rush + Rec TDs" is Underdog's highest-volume NFL market and it is a
-    SUM - mapping it onto rushing_tds would inflate every back on the board."""
+def test_underdog_shaded_line_is_priced_for_display_but_not_scored():
+    """A shaded Underdog line still carries a de-vigged p_over (for the
+    per-book breakdown), but scorable is False and the provider is suffixed
+    so it never enters the consensus - the same treatment PrizePicks
+    demon/goblin picks already get. An even line (equal both sides) is
+    scored as before, on the flat MEDIAN_TO_MEAN path with p_over null."""
     props, _ = _underdog()
-    combo = props[props['market_raw'] == 'rush_rec_tds']
+
+    shaded = props[(props['player'] == 'Travis Etienne')
+                   & (props['market'] == 'rushing_yards')].iloc[0]
+    assert bool(shaded['scorable']) is False
+    assert shaded['provider'] == 'Underdog (shaded)'
+    assert shaded['p_over'] is not None and not pd.isna(shaded['p_over'])
+    assert float(shaded['p_over']) > 0.5, "the -140 (shorter) side is the over"
+    assert abs(float(shaded['p_over']) - devig_two_way(-140, 116)) < 1e-9
+
+    jj = props[props['player'] == 'Justin Jefferson']
+    for market in ('receiving_yards', 'receptions', 'receiving_tds'):
+        even = jj[(jj['market'] == market) & (jj['period'] == 'season')].iloc[0]
+        assert bool(even['scorable']) is True and even['provider'] == 'Underdog'
+        assert even['p_over'] is None or pd.isna(even['p_over'])
+
+
+def test_underdog_season_td_total_still_not_scorable():
+    """A SEASON rush+rec TD TOTAL (line ~14.5) is a genuine sum the scoring
+    model can't place - recognized, but left unscored."""
+    props, _ = _underdog()
+    combo = props[(props['market_raw'] == 'rush_rec_tds') & (props['line'] > 1.5)]
     assert len(combo) == 1
+    assert combo['market'].iloc[0] == 'rush_rec_tds'
     assert bool(combo['scorable'].iloc[0]) is False
+
+
+def test_anytime_td_labels_map_to_the_cross_book_sentinel():
+    for label in ('rush_rec_tds', 'Anytime TD Scorer', 'Player Touchdowns',
+                  'To Score A Touchdown', 'Anytime Touchdown'):
+        assert normalize_stat(label) == ('anytime_td', False), label
+    # position-aware wrapper defers to the same mapping
+    assert normalize_stat_for('rush_rec_tds', 'WR') == ('anytime_td', False)
+
+
+def test_anytime_td_one_way_devig_curve():
+    # A board's two-way anytime-TD rows: (over DECIMAL odds, devigged
+    # P(scores)). Raw implied from the lone over price OVERstates, more so for
+    # longshots - the fit's slope should come out > 1.
+    two_way = [(1.70, 0.47), (1.80, 0.44), (1.95, 0.40), (2.20, 0.34),
+               (2.60, 0.27), (3.20, 0.20), (4.20, 0.13), (1.65, 0.49),
+               (1.90, 0.42), (2.10, 0.36), (2.45, 0.30), (2.90, 0.24),
+               (3.70, 0.16), (5.00, 0.10), (1.75, 0.45), (2.05, 0.38)]
+    curve = _fit_anytime_td_devig(two_way)
+    assert curve is not None
+    _a, b = curve
+    assert b > 1.0                                   # favourite-longshot slope
+    fav = anytime_td_p_over(1.70, curve)             # short favourite
+    dog = anytime_td_p_over(7.00, curve)             # +600 longshot
+    assert 0.40 < fav < 0.55
+    assert dog < 0.15
+    assert anytime_td_p_over(1.70, curve) > anytime_td_p_over(3.00, curve)  # monotone
+    # Thin / degenerate sample -> None, and the flat fallback still returns a
+    # sane, shrunk probability.
+    assert _fit_anytime_td_devig(two_way[:5]) is None
+    assert 0.40 < anytime_td_p_over(2.0, None) < 0.46   # 1/2.0 = 0.5 -> 0.5/1.12
+
+
+def test_resolve_anytime_td_routes_and_devigs_by_board():
+    from data.odds_projections import resolve_anytime_td_markets
+    # Two-way rows (Pinnacle-style decimal over_payout, p_over set) span the
+    # curve; two one-way rows (DK-style, p_over None) get filled and routed.
+    tw = [{'provider': 'Pinnacle', 'player': f'P{i}', 'player_key': f'p{i}',
+           'position': '', 'market': 'anytime_td', 'market_raw': 'x',
+           'scorable': False, 'line': 0.5,
+           'over_payout': od, 'under_payout': 1.9, 'p_over': pp, 'period': 'game'}
+          for i, (od, pp) in enumerate([
+              (1.70, 0.47), (1.9, 0.42), (2.1, 0.36), (2.5, 0.30), (2.9, 0.25),
+              (3.4, 0.20), (4.2, 0.15), (1.65, 0.49), (2.0, 0.40), (2.3, 0.33),
+              (2.7, 0.27), (3.1, 0.22), (3.8, 0.17), (5.0, 0.11), (1.8, 0.45),
+              (2.2, 0.35)])]
+    ow = [{'provider': 'DraftKings', 'player': 'Bijan Robinson', 'player_key': 'bijanrobinson',
+           'position': '', 'market': 'anytime_td', 'market_raw': 'Anytime TD Scorer',
+           'scorable': False, 'line': 0.5, 'over_payout': 1.75, 'under_payout': None,
+           'p_over': None, 'period': 'game'},
+          {'provider': 'DraftKings', 'player': 'Mark Andrews', 'player_key': 'markandrews',
+           'position': '', 'market': 'anytime_td', 'market_raw': 'Anytime TD Scorer',
+           'scorable': False, 'line': 0.5, 'over_payout': 3.5, 'under_payout': None,
+           'p_over': None, 'period': 'game'}]
+    df = pd.DataFrame(tw + ow)
+    board = pd.DataFrame({'Player': ['Bijan Robinson', 'Mark Andrews'], 'Pos': ['RB', 'TE']})
+    out = resolve_anytime_td_markets(df, board)
+    bij = out[out['player'] == 'Bijan Robinson'].iloc[0]
+    andr = out[out['player'] == 'Mark Andrews'].iloc[0]
+    assert bij['market'] == 'rushing_tds' and bool(bij['scorable']) is True
+    assert andr['market'] == 'receiving_tds' and bool(andr['scorable']) is True
+    assert 0.30 < bij['p_over'] < 0.60         # short favourite, lightly shrunk
+    assert andr['p_over'] < bij['p_over']       # +250 dog lands lower
+    # a two-way row keeps its own de-vigged p_over and gets routed too
+    p0 = out[out['player'] == 'P0'].iloc[0]
+    assert abs(p0['p_over'] - 0.47) < 1e-9
 
 
 def test_prizepicks_parses_included_lookup():
@@ -222,10 +323,10 @@ def test_market_projection_scores_and_measures_coverage():
 
     jj = rows[rows['player_key'] == 'justinjefferson'].iloc[0]
     # PrizePicks posts bare numbers with no odds to de-vig; per the user's
-    # call it's a fallback only. Underdog priced all the same stats here, so
-    # PP drops out of the blended consensus and the numbers are Underdog's.
-    # (Neither fixture carries prices, so a yardage line is unshifted and a
-    # TD line still gets the flat MEDIAN_TO_MEAN fallback bump.)
+    # call it's a fallback only. Underdog priced all the same stats here with
+    # SYMMETRIC (even both sides) lines, so PP drops out of the blended
+    # consensus and the numbers are Underdog's, unshifted - a shaded Underdog
+    # line would be dropped from scoring entirely (see the shaded-line test).
     assert abs(float(jj['receiving_yards']) - 1275.5) < 1e-9
     assert abs(float(jj['receptions']) - 92.5) < 1e-9
     assert 'Underdog' in jj['providers'] and 'PrizePicks' in jj['providers']
@@ -462,8 +563,8 @@ def test_book_projection_uses_book_where_priced_and_us_where_not():
 
     jj = book[book['board_player'] == 'Justin Jefferson'].iloc[0]
     # Underdog priced yards (1275.5), receptions (92.5) and TDs (8.5) for him
-    # in this fixture, so all three come from the book; the TD line gets the
-    # median-to-mean bump.
+    # in this fixture, all even-money, so all three come from the book; the TD
+    # line gets the median-to-mean bump.
     expected = 1275.5 * 0.1 + 92.5 * 1.0 + 8.5 * 1.05 * 6
     assert abs(float(jj['Book Proj']) - expected) < 0.2, jj['Book Proj']
     assert int(jj['Book Stats']) == 3
@@ -1091,6 +1192,59 @@ def _dk_game_payload(market_name, label_prefix=''):
              'trueOdds': 1.91, 'outcomeType': 'Under'},
         ],
     }
+
+
+def _dk_weekly_ou_payload(stat='Receiving Yards', player='Jaxon Smith-Njigba',
+                          point=80.5, over_odds=1.87719299, under_odds=1.90909091,
+                          home=True):
+    """DraftKings' CONFIRMED weekly O/U shape (live Week-1 2026): marketType
+    name ends ' O/U', the line is a numeric `points` field on the selection,
+    the side is `outcomeType`, and the PLAYER is on the selection's
+    participants (the event's two participants are both clubs)."""
+    role = 'HomePlayer' if home else 'AwayPlayer'
+    part = [{'id': 'p1', 'name': player, 'type': 'Player', 'venueRole': role}]
+    return {
+        'events': [{'id': 'ev1', 'participants': [
+            {'name': 'SEA Seahawks', 'type': 'Team', 'venueRole': 'Home',
+             'metadata': {'rosettaTeamName': 'Seahawks', 'shortName': 'SEA'}},
+            {'name': 'NE Patriots', 'type': 'Team', 'venueRole': 'Away',
+             'metadata': {'rosettaTeamName': 'Patriots', 'shortName': 'NE'}},
+        ]}],
+        'markets': [{'id': 'm1', 'eventId': 'ev1', 'name': f'{player} {stat} O/U',
+                     'marketType': {'name': f'{stat} O/U'}}],
+        'selections': [
+            {'id': 's1', 'marketId': 'm1', 'label': 'Over', 'outcomeType': 'Over',
+             'points': point, 'trueOdds': over_odds, 'participants': part},
+            {'id': 's2', 'marketId': 'm1', 'label': 'Under', 'outcomeType': 'Under',
+             'points': point, 'trueOdds': under_odds, 'participants': part},
+        ],
+    }
+
+
+def test_draftkings_weekly_ou_shape_parses_with_line_odds_and_team():
+    props, err = parse_draftkings_payload(_dk_weekly_ou_payload())
+    assert err is None, err
+    row = props.iloc[0]
+    assert row['player'] == 'Jaxon Smith-Njigba'
+    assert row['market'] == 'receiving_yards' and row['period'] == 'game'
+    assert row['line'] == 80.5           # from selection.points, not a label
+    assert row['team'] == 'SEA'          # HomePlayer -> the event's Home club
+    # both prices present -> a real de-vigged p_over, over slightly favoured
+    assert 0.50 < float(row['p_over']) < 0.52
+    assert abs(float(row['p_over']) - devig_two_way(-114, -110)) < 1e-6
+
+
+def test_draftkings_weekly_ou_away_player_takes_the_away_club():
+    props, _ = parse_draftkings_payload(
+        _dk_weekly_ou_payload(player='A.J. Brown', home=False))
+    assert props.iloc[0]['team'] == 'NE'
+
+
+def test_draftkings_weekly_ou_rejects_scoped_and_combo_markets():
+    for stat in ('Rec Yards - 1Q', 'Combined Rec Yards', 'Most Receiving Yards',
+                 'Either Player Rec Yards'):
+        props, _ = parse_draftkings_payload(_dk_weekly_ou_payload(stat=stat))
+        assert props.empty, f"{stat!r} O/U must not be scored as a full-game total"
 
 
 def test_draftkings_classifies_game_vs_season_from_event_shape():

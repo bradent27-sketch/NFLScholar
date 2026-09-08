@@ -40,7 +40,78 @@ import pandas as pd
 from data.draft_board import score_stats
 from data.draft_projections import PROJECTED_STATS
 from data.market_devig import implied_mean_from_line
-from data.odds_sources import BOOK_WEIGHTS, BOOK_WEIGHT_FALLBACK
+from data.odds_sources import (BOOK_WEIGHTS, BOOK_WEIGHT_FALLBACK,
+                               _fit_anytime_td_devig, anytime_td_p_over)
+
+# 'anytime_td' sentinel -> the TD column a position actually carries. QB/RB
+# TDs are rushing, WR/TE are receiving; a TD is 6 points either way, so this
+# gives the right point total without a rush/rec split (see odds_sources
+# _ANYTIME_TD_STAT_BY_POS, kept in sync).
+_ANYTIME_TD_ROUTE = {'QB': 'rushing_tds', 'RB': 'rushing_tds', 'FB': 'rushing_tds',
+                     'WR': 'receiving_tds', 'TE': 'receiving_tds'}
+
+
+def resolve_anytime_td_markets(df, board=None):
+    """Turn the cross-book ``market == 'anytime_td'`` sentinel into real,
+    scorable TD rows.
+
+    Every book prices "does this player score a TD" at a 0.5 line but names
+    it differently and (Pinnacle, DraftKings) publishes no position - so the
+    parsers emit one sentinel and this one step, AFTER name canonicalization,
+    does the position-dependent work:
+
+      * route to rushing_tds / receiving_tds by the row's own position or,
+        failing that, the board's;
+      * fill a one-way row's missing p_over (DraftKings' lone "+odds", an
+        Underdog boost) from a logit-logit curve fitted on THIS frame's
+        two-way TD rows - every book's de-vigged TD probabilities pooled as
+        the ground truth, so the sharper the board the better the fill;
+      * mark scorable only where both the routing and a finite p_over landed.
+
+    A no-op when the frame carries no sentinel rows. ``df`` must already be
+    name-canonicalized (player_key set).
+    """
+    if df is None or getattr(df, 'empty', True) or 'market' not in df.columns:
+        return df
+    mask = (df['market'].astype(str) == 'anytime_td').to_numpy()
+    if not mask.any():
+        return df
+    out = df.copy()
+    idx = out.index[mask]
+
+    pos = out.loc[idx, 'position'].astype(str).str.upper()
+    unresolved = ~pos.isin(_ANYTIME_TD_ROUTE)
+    if unresolved.any() and 'player_key' in out.columns and board is not None \
+            and not getattr(board, 'empty', True) \
+            and 'Pos' in board.columns and 'Player' in board.columns:
+        from data.utils import clean_name_exact
+        bpos = dict(zip(clean_name_exact(board['Player']),
+                        board['Pos'].astype(str).str.upper()))
+        filled = out.loc[idx, 'player_key'].map(bpos)
+        pos = pos.where(~unresolved, filled.astype(str).str.upper())
+    routed = pos.map(_ANYTIME_TD_ROUTE)
+
+    # Normalize every book's stored over price to DECIMAL odds. Underdog holds
+    # a profit multiplier (decimal - 1); the sportsbooks hold decimal already.
+    prov = out.loc[idx, 'provider'].astype(str)
+    opay = pd.to_numeric(out.loc[idx, 'over_payout'], errors='coerce')
+    over_dec = opay.where(~prov.str.startswith('Underdog'), opay + 1.0)
+
+    p = pd.to_numeric(out.loc[idx, 'p_over'], errors='coerce')
+    two_way = pd.DataFrame({'over_dec': over_dec, 'p_over': p})
+    two_way = two_way[two_way['p_over'].notna() & two_way['over_dec'].notna()]
+    curve = _fit_anytime_td_devig(list(zip(two_way['over_dec'], two_way['p_over'])))
+
+    need = p.isna()
+    p = p.where(~need, over_dec.map(lambda v: anytime_td_p_over(v, curve) if pd.notna(v) else np.nan))
+
+    ok = routed.notna() & p.notna() & (p > 0.0) & (p < 1.0)
+    out.loc[idx, 'market'] = routed.where(routed.notna(), 'anytime_td').to_numpy()
+    out.loc[idx, 'position'] = pos.where(pos.isin(_ANYTIME_TD_ROUTE),
+                                         out.loc[idx, 'position']).to_numpy()
+    out.loc[idx, 'p_over'] = p.to_numpy()
+    out.loc[idx, 'scorable'] = ok.to_numpy()
+    return out
 
 # Stats that carry most of a season projection, per position, with a typical
 # per-season quantity for each. The quantities turn coverage into a
@@ -121,6 +192,7 @@ def market_stat_lines(props, season_only=True, board=None):
     # Identity is settled BEFORE grouping, so two books spelling one player
     # differently become one row that averages across both.
     df = canonicalize_props(props, board) if board is not None else props.copy()
+    df = resolve_anytime_td_markets(df, board)
     if season_only:
         df = df[df['period'] == 'season']
     df = df[df['scorable'].fillna(False).astype(bool)]
@@ -196,19 +268,22 @@ def market_book_stat_lines(props, season_only=True, board=None):
     per book.
 
     Returns columns ``player_key, player, team, position, market, provider,
-    line, p_over, implied_mean``. ``line`` is the raw posted number;
-    ``p_over`` is that book's de-vigged probability the over hits (NaN when
-    the book published no prices); ``implied_mean`` is the market mean the
-    devig implies for that book's line (data.market_devig) - the number the
-    consensus is actually built from. Showing raw next to implied is the
-    point: a shaded 1.5 that means 1.85 is visible. Empty frame (with those
-    columns) on empty or unusable input.
+    line, over_payout, under_payout, p_over, implied_mean``. ``line`` is the
+    raw posted number; ``over_payout`` / ``under_payout`` are that book's own
+    published prices for the two sides (decimal odds for a real sportsbook,
+    a payout multiplier for a DFS pick'em, NaN where a book publishes none);
+    ``p_over`` is the de-vigged probability the over hits (NaN when the book
+    published no prices); ``implied_mean`` is the market mean the devig
+    implies for that book's line (data.market_devig) - the number the
+    consensus is actually built from. Empty frame (with those columns) on
+    empty or unusable input.
     """
     cols = ['player_key', 'player', 'team', 'position', 'market', 'provider',
-            'line', 'p_over', 'implied_mean']
+            'line', 'over_payout', 'under_payout', 'p_over', 'implied_mean']
     if props is None or props.empty:
         return pd.DataFrame(columns=cols)
     df = canonicalize_props(props, board) if board is not None else props.copy()
+    df = resolve_anytime_td_markets(df, board)
     if season_only:
         df = df[df['period'] == 'season']
     df = df[df['scorable'].fillna(False).astype(bool)]
@@ -219,12 +294,15 @@ def market_book_stat_lines(props, season_only=True, board=None):
     df['line'] = pd.to_numeric(df['line'], errors='coerce')
     df['p_over'] = pd.to_numeric(df.get('p_over'), errors='coerce') if 'p_over' in df.columns \
         else np.nan
+    for _c in ('over_payout', 'under_payout'):
+        df[_c] = pd.to_numeric(df.get(_c), errors='coerce') if _c in df.columns else np.nan
     df = df.dropna(subset=['line'])
     if df.empty:
         return pd.DataFrame(columns=cols)
     df['_period'] = df['period'] if 'period' in df.columns else 'game'
     out = (df.groupby(['player_key', 'market', 'provider'], as_index=False)
              .agg(line=('line', 'mean'), p_over=('p_over', 'mean'),
+                  over_payout=('over_payout', 'mean'), under_payout=('under_payout', 'mean'),
                   player=('player', 'first'), team=('team', 'first'),
                   position=('position', 'first'), _period=('_period', 'first')))
     out['implied_mean'] = [

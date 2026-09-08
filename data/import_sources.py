@@ -60,9 +60,10 @@ IMPORT_SOURCES = {
     # --- season-long book lines --------------------------------------------
     'underdog': ImportSource(
         'Underdog — over/under lines',
-        'https://api.underdogfantasy.com/beta/v5/over_under_lines',
+        'https://api.underdogfantasy.com/beta/v6/over_under_lines',
         'Save the JSON. One payload carries both the season-long and the weekly '
-        'board, so this same file serves Live Odds too.',
+        'board, so this same file serves Live Odds and Weekly Rankings. They '
+        'version the path (v6 now, was v5) — if it 404s, bump the number.',
     ),
     'prizepicks_season': ImportSource(
         'PrizePicks — season (NFLSZN)',
@@ -104,11 +105,12 @@ IMPORT_SOURCES = {
     'draftkings_weekly': ImportSource(
         'DraftKings — weekly boards',
         'https://sportsbook-nash.draftkings.com/api/sportscontent/dkusoh/v1/leagues/88808',
-        "In season only — the board doesn't exist in the preseason. "
-        '**1.** Run `python scripts/probe_season_odds.py --weekly` — it prints the '
-        'live weekly ids as `category=<cid> subcategory=<sid>`. '
-        '**2.** Open `.../leagues/88808/categories/<cid>/subcategories/<sid>` for '
-        'each stat and save the JSON. **3.** Drop them all in together below.',
+        'Usually pulls itself — the app discovers the live weekly **O/U** '
+        'subcategories and fetches them. Upload only as a fallback: open each '
+        '`.../categories/<cid>/subcategories/<sid>` O/U board (Rec Yards '
+        '`1342/14114`, Receptions `1342/14115`, Pass Yards `1000/9524`, … — ids '
+        'drift weekly; the plain names without "O/U" are milestone markets, not '
+        'totals) and drop the JSONs in together.',
     ),
 
     # --- keys and ids -------------------------------------------------------

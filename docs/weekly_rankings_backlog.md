@@ -119,7 +119,19 @@ ever sees his vacancy. Built **`v2_receiver_cold_start_vacancy`**
 role reference against this season's pool per team/position, and
 redistributes `RECEIVER_COLD_START_VACANCY_SURVIVAL` (0.70) of a departed
 player's prior share to the remaining corps, weighted by each recipient's
-own current share. Off by default.
+own current share.
+
+**SHIPPED — 2026-09-07, in `DEFAULT_FEATURES`.** L4 backtest ran (fixed the
+arg-parse bug that had killed it), plus a 4-config confirmation vs. the
+then-shipped stack (`.sweeps/receiver_cold_start_vacancy_wk1_2022-2025.txt`,
+`.sweeps/split_vs_vacancy_combo_2022-2025.txt`). vacancy-alone: ALL
+**-0.019\***, WR **-0.098\*** (8-0 by week), START-WR **-0.275\***, at a
+non-significant START-TE +0.117 (2-6). It **replaced `v2_wr_te_capacity_
+split`** (see §"2026-09-07 pass" in the methodology doc) — the full
+`TE_MARGINAL_TARGET_WEIGHT` sweep showed that flag is a wash on ALL at
+every weight with a significant WR / START-WR cost, and the "combo" of both
+was strictly worse than vacancy alone (lost ALL significance, made
+START-TE significantly worse). `v2_wr_te_capacity_split` kept as opt-in.
 
 **Queued — Lane L** (`.sweeps/_laneL.sh`, sequenced behind Lane K):
 L1 GTE pooled 5-year reconfirm + TD calibration (Brier/log-loss on
@@ -129,6 +141,49 @@ RANK_TE` 3->2), L3 `v2_new_team_starter_restoration` Week-1 backtest
 (2022-2025), L4 `v2_receiver_cold_start_vacancy` Week-1 backtest
 (2022-2025). Nothing here is in DEFAULT_FEATURES yet — all four report back
 before any ship decision.
+
+**L2 RESULT — 2026-09-07, ran `scripts/sweep_te_buried_vet_slot.py` on
+2022-2025 wk1 (with `v2_wr_te_capacity_split` shipped, both arms).
+VERDICT: keep the TE-2 exemption, do NOT ship `RANK_TE` 3->2.**
+`.sweeps/te_buried_vet_slot_wk1_2022-2025.txt` + `..._ledger.csv`.
+- START-TE dMAE -0.077, CI [-0.279, +0.099], 2-1 weeks — a small gain, not
+  significant.
+- Bought at a SIGNIFICANT whole-board cost (ALL +0.030, CI excl 0) and WR
+  cost (+0.080, CI excl 0 — the pass-capacity split redistributes the
+  docked TE's freed targets to the WR room).
+- Per-stat startable-TE targets/receptions/rec_yds all move the *wrong* way
+  (+0.06 / +0.05 / +0.16).
+- The 83-row ledger shows the "proven vet now charted TE-2" gate does not
+  select cleanly for "won't play": it half-docks real receiving TE-2s
+  (2023 w1 Gesicki 7.00->3.96 vs actual 6.6; Granson, Parham, Foster
+  Moreau all hurt) while helping the true zeros. Net wash, and the
+  existing "TE-2 is often the receiving TE" rationale holds.
+- Follow-up for the Gadsden-shaped case (his decomp driver was NOT this
+  dock — it is `restore_cold_start_returning_role_share` restoring a
+  ~5-game injury-shortened rookie sample at 95%): tighten returning-role
+  restoration for a short pre-absence sample. Separate backtest.
+
+**L2b — GRADED grid, 2026-09-07. `scripts/sweep_te_buried_vet_slot_grid.py`,
+2022-2025 wk1, TE2 keep {0.8, 0.6, 0.4} x TE3 keep {0.6, 0.4, 0.2} (9 combos,
+slot rank 2, `RECEIVER_BURIED_VET_*_FRACTION_TE` dials).
+VERDICT: keep the exemption — NONE of the 9 is shippable.**
+`.sweeps/te_buried_vet_slot_grid_2022-2025.txt` + `..._grid_ledger.csv` (737 rows).
+- ALL: **every** combo +0.006 .. +0.031, **every one CI-excludes-0**. Whole
+  board significantly worse at all 9 strengths.
+- WR: **every** combo +0.028 .. +0.085, **every one CI-excludes-0** (the
+  capacity split feeds the docked TE's freed targets to the WR room).
+- START-TE: -0.078 .. -0.102, **not significant in any combo** (no CI
+  excludes 0). Best is 0.6/0.6 at -0.102.
+- Per-stat startable-TE targets / receptions / rec_yds are POSITIVE (worse)
+  in **all 9** combos (targets +0.02 .. +0.08) — the START-TE points nudge
+  is not coming from better volume, it is coin-flip shrinkage.
+- Ledger, mildest combo (0.8/0.6): 42 helped / 35 hurt, mean err 3.63->3.53.
+  Helps are near-zero TEs (Everett 0.9, Smythe 0.0, Bellinger 1.1); hurts
+  are real games (O.J. Howard 17.8, Foster Moreau 14.3, Parham 11.2, Hurst
+  15.1, Bowers 11.8). Same failure mode as the binary test.
+- The TE-2 chart-rank lever is a confirmed dead end for the TE
+  over-projection problem. The graded dials stay in the code (default None =
+  inert) but are not a promotion candidate.
 
 ---
 

@@ -209,7 +209,10 @@ def main():
     ap.add_argument('--scoring', default='Full PPR')
     a = ap.parse_args()
     years = [int(x) for x in a.years.replace(' ', '').split(',')]
-    w0, w1 = (int(x) for x in a.weeks.split('-'))
+    if '-' in a.weeks:
+        w0, w1 = (int(x) for x in a.weeks.split('-'))
+    else:
+        w0 = w1 = int(a.weeks)
     run(years, list(range(w0, w1 + 1)), a.scoring)
 
 

@@ -204,6 +204,17 @@ def weekly_props(force=False, books=WEEKLY_BOOKS, path=WEEKLY_SNAPSHOT_PATH, now
         return saved, {'fetched_at': fetched_at, 'from_network': False,
                        'status': status, 'stale': False}
 
+    if force:
+        # A forced pull must actually re-run each book's adapter - the
+        # per-book fetchers are @st.cache_data (30-min TTL), so without this
+        # "🔄 Refresh" / a fresh upload would silently reparse nothing and a
+        # parser fix (or a just-saved PrizePicks file that replaces a live
+        # book) would not show until the TTL lapsed.
+        for _fetcher in (fetch_prizepicks_lines, fetch_underdog_lines,
+                         fetch_draftkings_weekly_lines, fetch_pinnacle_lines):
+            if hasattr(_fetcher, 'clear'):
+                _fetcher.clear()
+
     props, status = fetch_weekly_props(books)
     now_utc = datetime.datetime.now(datetime.timezone.utc)
     if props.empty:
@@ -222,14 +233,17 @@ def weekly_props(force=False, books=WEEKLY_BOOKS, path=WEEKLY_SNAPSHOT_PATH, now
 
 def weekly_summary(props):
     """One row per book: how many lines, players and distinct markets."""
+    cols = ['Book', 'Lines', 'Players', 'Markets']
     if props is None or props.empty:
-        return pd.DataFrame(columns=['Book', 'Lines', 'Players', 'Markets'])
+        return pd.DataFrame(columns=cols)
     scorable = props[props['scorable'].astype(bool)] if 'scorable' in props else props
     rows = []
     for book, chunk in scorable.groupby('provider'):
         rows.append({'Book': book, 'Lines': len(chunk),
                      'Players': chunk['player'].nunique(),
                      'Markets': chunk['market'].nunique()})
+    if not rows:  # every line was a shaded / partial-game row - nothing scored
+        return pd.DataFrame(columns=cols)
     return pd.DataFrame(rows).sort_values('Lines', ascending=False).reset_index(drop=True)
 
 

@@ -23,7 +23,24 @@ import pandas as pd
 from data.player_aliases import stable_roster_identity_keys
 
 
-INELIGIBLE_ROSTER_STATUSES = frozenset({"RET", "CUT", "RES", "FA", "SUS", "NFI", "PUP"})
+# Hard roster-status codes that mean "not on the active roster for a healthy
+# week" - a Week-1 projection pool and the core-RB allocator both exclude
+# them. Covers BOTH status vocabularies the app sees:
+#   * the frozen local roster_weekly_*.csv snapshot (RET/CUT/RES/E14...)
+#   * the live nflverse feed (data.loaders._load_feed_roster), which is what a
+#     LIVE season actually reads since commit 38108c5. That feed spells
+#     practice squad ``DEV`` ("development squad"; status_description_abbr
+#     P0x) and the commissioner/roster exempt list ``EXE`` (E0x) - neither
+#     was in this set, so ~540 practice-squad players per season (Cedric
+#     Tillman, Stone Smartt, Trey Palmer on 2026 NO, and the same on every
+#     other team) flowed into the Week-1 board with real snap shares and
+#     target volume. A genuine Week-1 starter stuck on a lagging feed is
+#     re-added by apply_ourlads_starter_roster_overlay (starters only) or an
+#     explicit data/availability_overrides.csv row, so a hard drop here is
+#     safe. Found 2026-09-07; same bug class as the Adam Thielen RET fix
+#     (data/loaders.py) one status code later.
+INELIGIBLE_ROSTER_STATUSES = frozenset(
+    {"RET", "CUT", "RES", "FA", "SUS", "NFI", "PUP", "DEV", "EXE"})
 DEFAULT_CORE_RB_SNAP_CAPACITY = 1.00
 DEFAULT_RB_CARRY_CAPACITY = 21.0
 DEFAULT_RB_TARGET_CAPACITY = 5.0

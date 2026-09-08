@@ -49,6 +49,24 @@ def test_even_count_line_still_lifts_for_skew():
     assert lower < mu
 
 
+def test_attempts_and_carries_are_devigged_as_counts():
+    # The app's canonical prop names for pass/rush attempts are 'attempts'
+    # and 'carries' (not 'passing_attempts'/'rushing_attempts'). They must
+    # hit the Poisson path, not fall straight through un-devigged.
+    # Dak Prescott: 33.5 pass-att, both books lean UNDER -> mean below 33.5.
+    under = implied_mean_from_line(33.5, 0.481, 'attempts', 'QB')
+    assert 33.0 < under < 33.45
+    # An exactly even line is a MEDIAN; the large-count Poisson mean sits a
+    # hair above the number, and a juiced under still pulls below that.
+    even = implied_mean_from_line(33.5, 0.5, 'attempts', 'QB')
+    assert 33.5 <= even < 34.0
+    assert under < even
+    # 'carries' takes the same path.
+    rb = implied_mean_from_line(15.5, 0.44, 'carries', 'RB')
+    assert 14.5 < rb < 15.5
+    assert implied_mean_from_line(15.5, None, 'carries', 'RB') == 15.5   # bare board unchanged
+
+
 def test_even_yardage_line_is_unchanged():
     # A yardage line priced evenly implies its own number - no skew term.
     assert abs(implied_mean_from_line(74.5, 0.5, 'receiving_yards', 'WR') - 74.5) < 1e-6

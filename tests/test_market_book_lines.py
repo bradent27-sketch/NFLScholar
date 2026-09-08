@@ -38,7 +38,8 @@ def _props():
 def test_one_row_per_player_stat_book_scorable_only():
     bl = market_book_stat_lines(_props(), season_only=False)
     assert list(bl.columns) == ['player_key', 'player', 'team', 'position',
-                                'market', 'provider', 'line', 'p_over', 'implied_mean']
+                                'market', 'provider', 'line', 'over_payout',
+                                'under_payout', 'p_over', 'implied_mean']
     # 4 scorable (player, stat, book) combos; the (demon) row is gone
     assert len(bl) == 4
     assert 'PrizePicks (demon)' not in set(bl['provider'])
@@ -64,7 +65,7 @@ def test_average_matches_market_stat_lines_consensus():
 
 def test_empty_and_unusable_inputs_degrade_quietly():
     cols = ['player_key', 'player', 'team', 'position', 'market', 'provider',
-            'line', 'p_over', 'implied_mean']
+            'line', 'over_payout', 'under_payout', 'p_over', 'implied_mean']
     assert market_book_stat_lines(pd.DataFrame()).columns.tolist() == cols
     assert market_book_stat_lines(None).empty
     assert weekly_market_book_lines(pd.DataFrame()).empty

@@ -47,6 +47,8 @@ trusted/tail split, mirroring the audit trail already used by
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pandas as pd
 
@@ -70,7 +72,13 @@ FALLBACK_TARGET_PER_ATTEMPT = 0.95
 # ("If it is within + or - 1 it should probably be left alone. If not, then
 # probably can implement the fix."). Applies symmetrically to mild over- and
 # under-claims; a group outside the band is fit exactly as before.
-PASS_CAPACITY_DEADBAND = 1.0
+#
+# TIGHTENED 1.0 -> 0.5 on 2026-09-07: the +-1 band was letting a re-shaped
+# cold-start room stay ~1 target/player over budget uncorrected, and the
+# cold-start signed-bias check (wk1-2 2022-25) had every position projecting
+# HIGH - startable TE by +2.85 pts, 8 of 8 weeks. WEEKLY_CALIBRATION is being
+# re-fit (per-season-phase) alongside this change.
+PASS_CAPACITY_DEADBAND = 0.5
 
 # RUNNING BACKS GET THEIR OWN SUB-BUDGET, SEPARATE FROM WR/TE. Added
 # 2026-08-24 per a real, reported defect: this module used to rank a team's
@@ -99,6 +107,53 @@ FALLBACK_RB_CATCHER_SHARE = 0.14
 # both untouched, while a 3rd/4th reserve's incidental target draws from the
 # same real budget instead of a fabricated league-average share.
 PASS_CAPACITY_TRUSTED_TIER_RB = 2
+
+# WR-vs-TE SPLIT OF THE WR/TE RECONCILIATION (``wr_te_split=True``, wired
+# on only for a cold start / weeks 1-2 - see apply_pass_capacity_conservation
+# and the 'v2_wr_te_capacity_split' feature flag in data/weekly_projections.py).
+#
+# Without it, the WR/TE slice is fit with ONE uniform factor across every WR
+# and TE alike. That is wrong at cold start specifically, when the reason a
+# team's WR/TE claim is off its pass-attempt budget is almost always a
+# WR-ROOM change the offseason hasn't fully re-primed in the model: a WR
+# departs and his targets aren't reclaimed (claim << budget -> the symmetric
+# pass scales the TE UP alongside the WRs - LAC's Gadsden after Keenan Allen,
+# GB's Kraft after Doubs+Wicks, TB's Otton after Evans), or a high-volume WR
+# is added (claim >> budget -> the TE is docked proportionally with the WRs -
+# IND's Warren after Keenan Allen arrived). A WR-room change is ~80% a
+# WR-volume event; the tight end should barely move.
+#
+# The fix mirrors the RB carve-out one level down, but splits the SIGNED
+# OFF-BUDGET DELTA rather than the base claim: D = budget - (wr_claim +
+# te_claim); the TE sub-budget is te_claim + w_te*D and the WR sub-budget
+# absorbs the rest, then each sub-slice runs the identical uniform _fit_group
+# it does today. Each tight end keeps his OWN prior-year target rate as the
+# anchor (te_claim) - a genuine 12-personnel team's TE1 is untouched; only
+# the reconciliation from a WR-room imbalance is damped for him.
+#
+# NOT done as a prior-season TE-share slice of the WR/TE pie (the exact RB
+# design): that would clamp a legitimately ascendant tight end - a rookie
+# stud, a new scheme - back down to the team's STALE prior-season TE share,
+# and a TE role that just changed is precisely the case that breaks. The RB
+# carve-out is safe from this because RB receiving share is far more stable
+# year-to-year and a rookie back's receiving role does track team history.
+#
+# w_te = 0.20: a tight end's share of a MARGINAL team target is well below
+# his share of total targets (leaguewide TE target share ~0.22-0.24 overall;
+# the marginal/incremental target skews further to WRs). Env-overridable for
+# a sweep, clipped to [0, 1].
+def _env_float(name: str, default: float, lo: float, hi: float) -> float:
+    try:
+        return float(np.clip(float(os.environ[name]), lo, hi))
+    except (KeyError, TypeError, ValueError):
+        return default
+
+
+TE_MARGINAL_TARGET_WEIGHT = _env_float("TE_MARGINAL_TARGET_WEIGHT", 0.20, 0.0, 1.0)
+# Ledger-label only (same role as PASS_CAPACITY_TRUSTED_TIER_RB): a team
+# fields ~2 tight ends with any real target role, so the split TE sub-room's
+# trusted/tail line reads sensibly. Does not change the fit math.
+PASS_CAPACITY_TRUSTED_TIER_TE = 2
 
 CAPACITY_LEDGER_COLUMNS = [
     'team', 'position_group', 'capacity', 'capacity_source', 'trusted_claim', 'tail_claim',
@@ -199,6 +254,8 @@ def derive_team_rb_catcher_share(history: pd.DataFrame, team_col: str = 'team') 
 def apply_pass_capacity_conservation(
         result: pd.DataFrame, prior_history: pd.DataFrame | None = None,
         team_col: str = 'team', tier_size: int = PASS_CAPACITY_TRUSTED_TIER,
+        wr_te_split: bool = False,
+        te_marginal_target_weight: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit one team's RB/WR/TE targets (and dependents) to a real pass budget.
 
@@ -207,7 +264,23 @@ def apply_pass_capacity_conservation(
     present, ``receptions``/``receiving_yards``/``receiving_tds``. Returns
     ``(result, ledger)`` with the input's column set unchanged - only target
     and dependent-stat VALUES are rescaled, never dropped or added.
+
+    ``wr_te_split`` (default off; the weekly model turns it on only for a
+    cold start / weeks 1-2 via the 'v2_wr_te_capacity_split' feature flag):
+    reconcile the WR and TE sub-rooms against SEPARATE budgets instead of one
+    uniform WR/TE factor, so a WR-room-driven off-budget delta (a departed or
+    added wideout) lands ~80% on the WRs and only ``te_marginal_target_weight``
+    of it on the tight ends. See TE_MARGINAL_TARGET_WEIGHT's module comment.
+    Falls back to the single uniform fit when a team has no TE (or no WR) row,
+    or when the room is already within the deadband of its combined budget.
+
+    ``te_marginal_target_weight`` left at None reads the module-level
+    ``TE_MARGINAL_TARGET_WEIGHT`` at call time, so monkeypatching that global
+    (sweeps, env override) actually takes effect rather than being frozen to
+    whatever it was when this def was evaluated.
     """
+    if te_marginal_target_weight is None:
+        te_marginal_target_weight = TE_MARGINAL_TARGET_WEIGHT
     if result is None or result.empty or 'Team' not in result.columns or 'Pos' not in result.columns:
         return (result.copy() if result is not None else pd.DataFrame(),
                pd.DataFrame(columns=CAPACITY_LEDGER_COLUMNS))
@@ -231,7 +304,8 @@ def apply_pass_capacity_conservation(
 
     player_detail: list[dict] = []
 
-    def _fit_group(idx: pd.Index, group_capacity: float, group_tier: int) -> tuple[pd.Series, dict]:
+    def _fit_group(idx: pd.Index, group_capacity: float, group_tier: int,
+                   detail_label: str = '') -> tuple[pd.Series, dict]:
         """Fit one position group's targets to its sub-budget with a SINGLE
         UNIFORM proportional factor - every player scaled by the same
         ``group_capacity / claim``, over budget or under, so a genuine WR1
@@ -286,9 +360,14 @@ def apply_pass_capacity_conservation(
         # _fit_group is always called and fully consumed within the same
         # iteration, never stored for later.
         tier_by_idx = {**{j: 'trusted' for j in trusted_idx}, **{j: 'tail' for j in tail_idx}}
+        # The per-player room table in the UI groups on 'WR/TE'; a split
+        # WR-only / TE-only fit still reports its rows under the whole
+        # receiving room so that table keeps rendering (the split shows up
+        # in the team-level ledger rows instead - see the call site).
+        _dl = detail_label or group_label
         for j in idx:
             player_detail.append({
-                'team': team, 'position_group': group_label,
+                'team': team, 'position_group': _dl,
                 'player': out.loc[j, 'Player'] if 'Player' in out.columns else str(j),
                 'position': out.loc[j, 'Pos'] if 'Pos' in out.columns else '',
                 'tier': tier_by_idx.get(j, 'tail'),
@@ -341,13 +420,34 @@ def apply_pass_capacity_conservation(
             rb_capacity = 0.0
         other_capacity = capacity - rb_capacity
 
-        for group_idx, group_capacity, group_tier, group_label in (
-                (rb_idx, rb_capacity, PASS_CAPACITY_TRUSTED_TIER_RB, 'RB'),
-                (other_idx, other_capacity, tier_size, 'WR/TE'),
-        ):
+        # RB always fits as one slice. WR/TE fits as one uniform slice
+        # (default), OR - when wr_te_split is on and the room has both a WR
+        # and a TE and is materially off its combined budget - as two slices
+        # whose budgets split the SIGNED off-budget delta by
+        # te_marginal_target_weight. Anything else (TE-only room, WR-only
+        # room, room already within the deadband) falls back to the single
+        # slice unchanged. ``detail_label`` keeps the per-player room table
+        # grouped under 'WR/TE' even for a split slice (see _fit_group).
+        groups = [(rb_idx, rb_capacity, PASS_CAPACITY_TRUSTED_TIER_RB, 'RB', '')]
+        wr_idx = other_idx[positions.loc[other_idx].eq('WR').to_numpy()]
+        te_idx = other_idx[positions.loc[other_idx].eq('TE').to_numpy()]
+        wr_claim = float(out.loc[wr_idx, 'targets'].sum())
+        te_claim = float(out.loc[te_idx, 'targets'].sum())
+        other_delta = other_capacity - (wr_claim + te_claim)
+        if (wr_te_split and len(wr_idx) and len(te_idx)
+                and abs(other_delta) > PASS_CAPACITY_DEADBAND):
+            w_te = float(np.clip(te_marginal_target_weight, 0.0, 1.0))
+            te_budget = max(0.0, te_claim + w_te * other_delta)
+            wr_budget = max(0.0, other_capacity - te_budget)
+            groups.append((wr_idx, wr_budget, tier_size, 'WR', 'WR/TE'))
+            groups.append((te_idx, te_budget, PASS_CAPACITY_TRUSTED_TIER_TE, 'TE', 'WR/TE'))
+        else:
+            groups.append((other_idx, other_capacity, tier_size, 'WR/TE', ''))
+
+        for group_idx, group_capacity, group_tier, group_label, detail_label in groups:
             if not len(group_idx) or float(out.loc[group_idx, 'targets'].sum()) <= 0:
                 continue
-            allocated, ledger_row = _fit_group(group_idx, group_capacity, group_tier)
+            allocated, ledger_row = _fit_group(group_idx, group_capacity, group_tier, detail_label)
             factor_series = (allocated / out.loc[group_idx, 'targets'].replace(0.0, np.nan)).fillna(1.0)
             out.loc[group_idx, 'targets'] = allocated.round(3)
             for col in dependent_cols:

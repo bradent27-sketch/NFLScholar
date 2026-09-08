@@ -276,6 +276,110 @@ def test_thin_room_under_its_budget_is_scaled_up_symmetrically():
     assert _approx(entry['unallocated'], 0.0)
 
 
+def test_wr_te_split_is_off_by_default_and_keeps_the_uniform_wr_te_factor():
+    """The default call signature must be byte-for-byte the old behavior:
+    one uniform factor across every WR and TE alike. Under-budget room,
+    budget 38, claim 29 -> factor 38/29 for WR1 and TE1 identically."""
+    rows = [
+        _board_row('LAC', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=40.0),
+        _board_row('LAC', 'WR1', 'WR', 10.0), _board_row('LAC', 'WR2', 'WR', 7.0),
+        _board_row('LAC', 'WR3', 'WR', 4.0),
+        _board_row('LAC', 'TE1', 'TE', 6.0), _board_row('LAC', 'TE2', 'TE', 2.0),
+    ]
+    out, ledger = pca.apply_pass_capacity_conservation(pd.DataFrame(rows), prior_history=None)
+    factor = (40.0 * pca.FALLBACK_TARGET_PER_ATTEMPT) / 29.0
+    for player, before in (('WR1', 10.0), ('TE1', 6.0), ('TE2', 2.0)):
+        row = out[out['Player'].eq(player)].iloc[0]
+        assert _approx(row['targets'], before * factor, rel=1e-3)
+    assert set(ledger['position_group']) == {'WR/TE'}
+
+
+def test_wr_te_split_routes_most_of_an_under_budget_delta_to_the_wrs():
+    """wr_te_split=True: a WR-room-driven shortfall (a departed wideout not
+    reclaimed) scales the WRs up hard and the tight end only lightly - the
+    TE sub-room absorbs exactly TE_MARGINAL_TARGET_WEIGHT of the delta.
+    Budget 38, WR claim 21, TE claim 8, D = 9. te_budget = 8 + 0.2*9 = 9.8."""
+    rows = [
+        _board_row('GB', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=40.0),
+        _board_row('GB', 'WR1', 'WR', 10.0), _board_row('GB', 'WR2', 'WR', 7.0),
+        _board_row('GB', 'WR3', 'WR', 4.0),
+        _board_row('GB', 'TE1', 'TE', 6.0), _board_row('GB', 'TE2', 'TE', 2.0),
+    ]
+    out, ledger = pca.apply_pass_capacity_conservation(
+        pd.DataFrame(rows), prior_history=None, wr_te_split=True)
+
+    w_te = pca.TE_MARGINAL_TARGET_WEIGHT
+    te_budget = 8.0 + w_te * 9.0
+    wr_budget = 38.0 - te_budget
+    te_factor, wr_factor = te_budget / 8.0, wr_budget / 21.0
+    assert te_factor < wr_factor  # the tight end takes the smaller move
+    # and a smaller move than the old uniform factor would have given it
+    assert te_factor < 38.0 / 29.0
+    for player, before in (('TE1', 6.0), ('TE2', 2.0)):
+        assert _approx(out[out['Player'].eq(player)].iloc[0]['targets'], before * te_factor, rel=1e-3)
+    for player, before in (('WR1', 10.0), ('WR2', 7.0), ('WR3', 4.0)):
+        assert _approx(out[out['Player'].eq(player)].iloc[0]['targets'], before * wr_factor, rel=1e-3)
+    # team total still fits the pass-attempt budget exactly
+    assert _approx(float(out[out['Pos'].isin(['WR', 'TE'])]['targets'].sum()), 38.0, rel=1e-3)
+    # dependent stats ride the per-slice factor (personal catch rate survives)
+    te1 = out[out['Player'].eq('TE1')].iloc[0]
+    assert _approx(te1['receptions'], te1['targets'] * 0.65, rel=1e-3)
+    # ledger now carries a WR row and a TE row instead of one WR/TE row
+    assert {'WR', 'TE'}.issubset(set(ledger['position_group']))
+    assert 'WR/TE' not in set(ledger['position_group'])
+
+
+def test_wr_te_split_over_budget_only_lightly_docks_the_te():
+    """The IND/Warren case: a high-volume WR is added, room goes well over
+    budget, and with the split the tight end gives back far less, in
+    proportion, than the wideouts. Budget 28.5, WR claim 26, TE claim 11,
+    D = -8.5 -> te_budget = 11 - 1.7 = 9.3, wr_budget = 19.2."""
+    rows = [
+        _board_row('IND', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=30.0),
+        _board_row('IND', 'WR1', 'WR', 11.0), _board_row('IND', 'WR2', 'WR', 9.0),
+        _board_row('IND', 'WR3', 'WR', 6.0),
+        _board_row('IND', 'TE1', 'TE', 8.0), _board_row('IND', 'TE2', 'TE', 3.0),
+    ]
+    out, _ = pca.apply_pass_capacity_conservation(
+        pd.DataFrame(rows), prior_history=None, wr_te_split=True)
+    w_te = pca.TE_MARGINAL_TARGET_WEIGHT
+    te_budget = 11.0 + w_te * (28.5 - 37.0)
+    wr_budget = 28.5 - te_budget
+    te_factor, wr_factor = te_budget / 11.0, wr_budget / 26.0
+    assert wr_factor < te_factor < 1.0          # both docked, TE much less
+    assert te_factor > 28.5 / 37.0              # ... and less than the old uniform dock
+    assert _approx(out[out['Player'].eq('TE1')].iloc[0]['targets'], 8.0 * te_factor, rel=1e-3)
+    assert _approx(out[out['Player'].eq('WR1')].iloc[0]['targets'], 11.0 * wr_factor, rel=1e-3)
+
+
+def test_wr_te_split_falls_back_to_one_slice_when_the_room_has_no_te():
+    """Split on, but a WR-only room (no TE row) must behave exactly like the
+    default uniform fit - one WR/TE ledger row, one factor."""
+    rows = [
+        _board_row('X', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=40.0),
+        _board_row('X', 'WR1', 'WR', 10.0), _board_row('X', 'WR2', 'WR', 7.0),
+    ]
+    out, ledger = pca.apply_pass_capacity_conservation(
+        pd.DataFrame(rows), prior_history=None, wr_te_split=True)
+    factor = (40.0 * pca.FALLBACK_TARGET_PER_ATTEMPT) / 17.0
+    assert _approx(out[out['Player'].eq('WR1')].iloc[0]['targets'], 10.0 * factor, rel=1e-3)
+    assert set(ledger['position_group']) == {'WR/TE'}
+
+
+def test_wr_te_split_within_deadband_changes_nothing():
+    """If the combined WR/TE room is already within the deadband of its
+    budget, the split does not engage and no player moves."""
+    rows = [
+        _board_row('Y', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=20.0),
+        _board_row('Y', 'WR1', 'WR', 10.0), _board_row('Y', 'WR2', 'WR', 6.0),
+        _board_row('Y', 'TE1', 'TE', 3.0),
+    ]  # budget = 20 * 0.95 = 19.0, claim = 19.0 -> dead on
+    out, _ = pca.apply_pass_capacity_conservation(
+        pd.DataFrame(rows), prior_history=None, wr_te_split=True)
+    for player, before in (('WR1', 10.0), ('WR2', 6.0), ('TE1', 3.0)):
+        assert _approx(out[out['Player'].eq(player)].iloc[0]['targets'], before, rel=1e-6)
+
+
 def test_derive_team_rb_catcher_share_reads_real_history_and_falls_back_league_wide():
     history = pd.DataFrame(
         [_prior_position_history_row('BUF', w, 'RB', targets=6.0) for w in range(1, 5)]

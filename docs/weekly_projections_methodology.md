@@ -608,6 +608,133 @@ the swing in his score is pure game-to-game variance in a small number of
 big, discrete plays (a long TD run, a garbage-time INT) that no usage-rate
 model captures.
 
+## 2026-09-07 pass — practice-squad roster fix + cold-start receiver vacancy
+
+Two changes, after a live 2026 Week-1 board review. The roster fix is a
+reasoned correction; the receiver-room change was chosen from a backtest
+(see item 2).
+
+1. **Practice-squad players were entering the Week-1 pool.** A live season
+   reads the nflverse roster feed (`data.loaders._load_feed_roster`), whose
+   status vocabulary spells practice squad `DEV`. `_cold_start_pool`'s hard
+   filter was a private `{'RET','CUT','RES','FA'}` set written against the
+   frozen local snapshot's vocabulary and never updated for the feed, so
+   ~540 practice-squad players/season (Cedric Tillman, Stone Smartt, Trey
+   Palmer on 2026 NO, and the equivalent on every team) landed on the board
+   with real snap shares and target volume. Fixed by pointing that filter at
+   the shared `INELIGIBLE_ROSTER_STATUSES` set (`data.rb_role_allocator`) and
+   adding `DEV`/`EXE` to it. A genuine Week-1 starter stuck on a lagging feed
+   is still re-added by `apply_ourlads_starter_roster_overlay` (starters
+   only) or a `data/availability_overrides.csv` row.
+
+2. **`v2_receiver_cold_start_vacancy`** promoted to `DEFAULT_FEATURES`
+   (cold start only). Symptom on the 2026 Week-1 board: a wideout left a
+   team and his targets were not reclaimed by the remaining WRs, so the
+   pass-capacity allocator's uniform WR/TE fit scaled the *tight end* up
+   with them (LAC Gadsden after Keenan Allen, GB Kraft after Doubs+Wicks,
+   TB Otton after Evans). This flag (`apply_cold_start_receiver_vacancy`)
+   fixes it at the source: any WR/TE who held real role in last season's
+   reference but is absent from this year's pool entirely has
+   `RECEIVER_COLD_START_VACANCY_SURVIVAL` (0.70) of his prior share
+   redistributed to the players who remain, weighted by each recipient's
+   own current share — so the vacated targets flow to the other WRs before
+   the capacity fit ever runs.
+
+   Chosen over **`v2_wr_te_capacity_split`**, a same-goal lever that damped
+   the WR/TE reconciliation instead of fixing the input. Three backtests
+   (`.sweeps/wr_te_capacity_split_2022-2025.txt`,
+   `receiver_cold_start_vacancy_wk1_2022-2025.txt`,
+   `split_vs_vacancy_combo_2022-2025.txt`, all 2022-2025 wk1-2 / wk1, paired
+   vs. the then-shipped stack):
+
+   | config | ALL | WR | START-WR | START-TE |
+   |---|---|---|---|---|
+   | split ON (old default) | wash at every weight | +0.03…+0.13\* worse | +0.06…+0.22\* worse | −0.13…−0.35 better |
+   | **vacancy ON, split OFF** | **−0.019\*** | **−0.098\*** (8-0) | **−0.275\*** | +0.117 (n.s.) |
+   | both ON ("combo") | −0.008 (n.s.) | −0.077\* | −0.237\* | **+0.148\*** worse |
+   | neither | −0.007 (n.s.) | −0.063\* | −0.101\* | +0.245 (n.s.) |
+
+   `*` = bootstrap 95% CI excludes 0. Vacancy-alone is the only arm that
+   moves ALL significantly in the right direction; it costs startable TEs
+   ~+0.12 MAE (not significant, 2-6 by week) to route the vacancy where it
+   belongs, on ~2.8× the startable population. Stacking both was strictly
+   worse — the capacity split piles on after the vacancy layer already
+   moved the volume, and it makes startable TEs significantly worse.
+   `v2_wr_te_capacity_split` is retained as an opt-in flag only.
+
+## 2026-09-07 — cold-start over-projection: deadband + season-phase calibration
+
+A signed-bias check (`mean(pred - actual)`, wk1-2 2022-25) found the model
+projects HIGH at cold start at **every** position — startable QB +1.07,
+RB +1.41, WR +1.59, **TE +2.85** — and 8 of 8 weeks high at TE. This is the
+opposite sign from the wk5-17 hold-out the single `WEEKLY_CALIBRATION` line
+is fitted on, which is why every WR↔TE reallocation lever (`v2_wr_te_capacity_
+split`, cold-start-vacancy cross-position bleed, the TE-2 dock) only ever
+traded the error sideways: there is no under-projected room to move it to.
+
+Two changes:
+
+1. **`PASS_CAPACITY_DEADBAND` 1.0 → 0.5** (`data/pass_capacity_allocator.py`).
+   The ±1 band left a re-shaped cold-start room (prior-year target shares
+   summing past 100%) ~1 target/player over budget uncorrected. The per-stat
+   bias is a volume problem (startable TE targets +0.9, receiving yards +9.7),
+   so tightening the conservation fit is the on-target correction.
+
+2. **Season-phase `WEEKLY_CALIBRATION` (v4)** — the single per-position line
+   is refit on 2021-2025 and, for WR and TE only, split into two season
+   phases: `WEEKLY_CALIBRATION_BY_BUCKET['cold']` for weeks 1-4 (the harder
+   shrink), `['rest']` for weeks 5-18. QB and RB keep one line all year.
+   `_weekly_calibration_for(pos, week)` does the lookup and is called at both
+   calibration sites and the decomposition dialog.
+
+   *How the scheme was chosen* (`scripts/fit_seasonal_calibration.py`:
+   `--mode dump` builds every week 1-18 × 2021-2025 with
+   `CALIBRATION_INPUT_FEATURES`, then `--mode analyze` runs a per-(pos, week)
+   bias/slope grid and a bucketing bake-off, `--mode emit` prints the ship
+   values). The per-week grid, startable pool, showed the cold-start *high*
+   is a receiver-room effect that decays over ~4 weeks:
+
+   | week | 1 | 2 | 3 | 4 | 5–18 mean |
+   |---|---|---|---|---|---|
+   | WR bias | +1.8 | −0.0 | +0.0 | +0.0 | −1.6 |
+   | TE bias | +3.0 | +0.9 | +1.0 | −1.2 | −1.1 |
+   | QB bias | +1.2 | −0.1 | +1.3 | +0.8 | +0.6 (noise, no phase) |
+   | RB bias | +3.0 | +1.5 | +0.6 | −0.7 | −0.5 (wk1-2 only, too thin) |
+
+   Bake-off (fit 2021-2023, scored held-out 2024-2025; re-checked fit
+   2021-2024 / held-out 2025). Only WR and TE clear the bar and a 2-bucket
+   split (`cold4_rest`) captures all of it — a third "late" bucket adds
+   nothing; QB/RB bucketing is a wash-to-worse (d-START-MAE QB +0.010,
+   RB +0.002), so they stay single.
+
+   *A per-STAT calibration was checked and rejected.* The cold-start
+   distortion is concentrated in `receiving_yards` for WR/TE (raw bias
+   +10.6 / +11.6 in weeks 1-2), which the points-level cold bucket already
+   absorbs (startable TE |bias| 1.07 → 1.01). An 11-stat × 2-bucket ×
+   4-position layer bought no measured gain over the points bucket.
+
+   *Held-out and end-to-end results.* Held-out 2025 startable MAE, v3 single
+   line → v4: QB 6.47 → 6.47, RB 6.18 → 6.14, WR 6.10 → 6.03, TE 5.38 →
+   5.25. Full-model A/B through `DEFAULT_FEATURES`, 2024-2025 wk1-17
+   (`scripts/eval_weekly_model.py` logic, v3 globals vs v4 globals):
+
+   | scope | START-MAE v3 → v4 | startable bias v3 → v4 |
+   |---|---|---|
+   | ALL | 4.554 → 4.518 | −0.42 → −0.56 |
+   | START-QB | 6.251 → 6.247 | −0.12 → −0.22 |
+   | START-RB | 6.250 → 6.215 | +0.12 → −0.04 |
+   | START-WR | 6.478 → 6.390 | −0.41 → −0.71 |
+   | START-TE | 5.560 → 5.404 | −0.51 → −0.78 |
+
+   Startable MAE — the ranked metric — improves at all four positions, most
+   where it was aimed (WR −0.088, TE −0.157); rank correlation is flat
+   (±0.01), so lineup ordering is unchanged. **Known cost, accepted:**
+   startable bias drifts ~0.15-0.30 more negative on QB/WR/TE, concentrated
+   in the in-season weeks (not the cold weeks this targets) — the same
+   MAE-for-bias trade the v3 two-sided line already made. Re-fit whenever
+   `DEFAULT_FEATURES` or `PASS_CAPACITY_DEADBAND` changes: `--mode dump` then
+   `--mode emit`.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

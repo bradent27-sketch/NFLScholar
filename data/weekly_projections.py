@@ -483,6 +483,18 @@ RECEIVER_BURIED_VET_BACKUP_SLOT_RANK = 2     # WR: Ourlads slot rank 2 = primary
 # only TE-3 and deeper get the dock.
 RECEIVER_BURIED_VET_BACKUP_SLOT_RANK_TE = 3
 RECEIVER_BURIED_VET_KEEP_FRACTION = 0.5
+# GRADED-DOCK DIALS for the TE buried-vet dock, exercised by
+# scripts/sweep_te_buried_vet_slot_grid.py (2026-09-07). Both default to None,
+# which is the shipped BINARY behaviour: a proven vet charted AT
+# RECEIVER_BURIED_VET_BACKUP_SLOT_RANK_TE keeps RECEIVER_BURIED_VET_KEEP_FRACTION
+# of his role and one charted DEEPER is hard-capped to the deep-bench cutoff.
+# Set to a float in (0, 1] to make the dock graded instead - the "at slot"
+# tier keeps RECEIVER_BURIED_VET_KEEP_FRACTION_TE and the "deeper" tier keeps
+# RECEIVER_BURIED_VET_DEEP_KEEP_FRACTION_TE of its own current share rather
+# than being slammed to ~0. Only ``apply_buried_veteran_dock``'s TE call site
+# reads them; WR is untouched.
+RECEIVER_BURIED_VET_KEEP_FRACTION_TE = None
+RECEIVER_BURIED_VET_DEEP_KEEP_FRACTION_TE = None
 
 # How many weeks into a season the Ourlads role floor above keeps ANY pull,
 # once real snaps exist (cold_start=False). Per the user: "the depth charts
@@ -767,9 +779,31 @@ MODEL_FEATURES = (
                              # remaining WR/TE corps (apply_cold_start_receiver_
                              # vacancy) - distinct from v2_receiver_vacancy_
                              # pecking_order, which only reacts to a player
-                             # still in the pool and marked OUT this week. OFF
-                             # by default; backtest queued 2026-09-04 (GB
-                             # Watson/Golden/Reed after Doubs+Wicks departed).
+                             # still in the pool and marked OUT this week. ON in
+                             # DEFAULT_FEATURES 2026-09-07 - backtest
+                             # (.sweeps/receiver_cold_start_vacancy_wk1_2022-2025
+                             # .txt, and split_vs_vacancy_combo_2022-2025.txt vs
+                             # the shipped stack): ALL -0.019* / WR -0.098* 8-0 /
+                             # START-WR -0.275*, at a NON-significant START-TE
+                             # +0.117 (2-6). It replaced v2_wr_te_capacity_split,
+                             # which it strictly beat - see that name below.
+    'v2_wr_te_capacity_split',  # cold start / weeks 1-2 only: the pass-
+                             # capacity allocator fits the WR and TE sub-rooms
+                             # against separate budgets that split the signed
+                             # off-budget delta by TE_MARGINAL_TARGET_WEIGHT
+                             # (~0.20), instead of one uniform WR/TE factor -
+                             # so a departed/added wideout barely moves the
+                             # tight end (LAC Gadsden, GB Kraft, TB Otton, IND
+                             # Warren). Shipped ON 2026-09-07 by request, then
+                             # PULLED from DEFAULT_FEATURES 2026-09-07 once
+                             # backtested: the full TE_MARGINAL_TARGET_WEIGHT
+                             # sweep (.sweeps/wr_te_capacity_split_2022-2025.txt)
+                             # is a wash on ALL at every weight with a
+                             # significant WR / START-WR cost, and stacking it
+                             # ON TOP of v2_receiver_cold_start_vacancy (the
+                             # "combo" arm) was strictly worse than vacancy
+                             # alone - lost ALL significance and made START-TE
+                             # significantly worse. Kept as an opt-in flag.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -940,6 +974,19 @@ DEFAULT_FEATURES = frozenset({
     # bench-weighted; a WEEKLY_CALIBRATION re-fit is the rigorous follow-up
     # (deferred - the ALL-scope move is -0.001).
     'v2_pff_defense_prior_blend',
+    # Cold-start receiver-room vacancy: when a WR/TE who carried real role
+    # last season is gone from this year's pool entirely, redistribute
+    # RECEIVER_COLD_START_VACANCY_SURVIVAL of his prior share to the players
+    # who remain (apply_cold_start_receiver_vacancy). Added to DEFAULT_FEATURES
+    # 2026-09-07 - it is the fix for the "team capacity Δ" bump on LAC Gadsden
+    # / GB Kraft / TB Otton (a wideout departed, and the vacated targets were
+    # landing on the tight end). Backtested against the shipped stack over
+    # 2022-2025 wk1-2 (.sweeps/split_vs_vacancy_combo_2022-2025.txt): ALL
+    # -0.019* / WR -0.098* 8-0 by week / START-WR -0.275*, at a
+    # non-significant START-TE +0.117. It REPLACED v2_wr_te_capacity_split
+    # (a same-goal lever that only ever tested as a wash-with-WR-cost); the
+    # "combo" of both was strictly worse than this alone.
+    'v2_receiver_cold_start_vacancy',
 })
 
 
@@ -1152,16 +1199,88 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 # +0.354). Half-strength two-sided is one mechanism, one edit, and wins
 # everywhere it is asked to.
 # ===========================================================================
+# ===========================================================================
+# V4 - SEASON-PHASE re-fit 2026-09-07, paired with PASS_CAPACITY_DEADBAND
+# 1.0 -> 0.5 (data/pass_capacity_allocator.py). The deadband change alone
+# forces a re-fit; the season-phase split is the new part.
+#
+# WHY A WEEK DIMENSION. The v3 line is one (slope, intercept) per position
+# fitted on in-season weeks. The cold-start signed-bias check (this session)
+# showed the model runs materially HIGH in week 1 at every position - and the
+# per-week bias grid (scripts/fit_seasonal_calibration.py --mode analyze,
+# startable pool, 2021-2023) shows it is a receiver-room problem that lasts
+# about a month:
+#
+#     week      1     2     3     4  | 5..18 (mean)
+#     WR bias +1.8  -0.0  +0.0  +0.0 |  -1.6   (model HIGH early, LOW later)
+#     TE bias +3.0  +0.9  +1.0  -1.2 |  -1.1
+#     QB bias +1.2  -0.1  +1.3  +0.8 |  +0.6   (no phase structure - noise)
+#     RB bias +3.0  +1.5  +0.6  -0.7 |  -0.5   (week 1-2 only, too thin to fit)
+#
+# BAKE-OFF (fit 2021-2023, scored held-out 2024-2025; re-checked fit
+# 2021-2024 / held-out 2025). Only WR and TE clear the bar, and a 2-bucket
+# split captures all of it - a third "late" bucket adds nothing:
+#
+#     pos   scheme          d-START-MAE vs a refit single line
+#     WR    cold(1-4)/rest   -0.03  to  -0.04
+#     TE    cold(1-4)/rest   -0.09
+#     QB    any split        +0.01   (worse - keeps one line)
+#     RB    any split        +0.00   (wash  - keeps one line)
+#
+# So: WR and TE get WEEKLY_CALIBRATION_BY_BUCKET (weeks <= 4 -> 'cold', the
+# harder shrink; weeks >= 5 -> 'rest', the in-season line). QB and RB fall
+# through to WEEKLY_CALIBRATION unchanged in shape, values refreshed on the
+# full 2021-2025 window. A per-STAT calibration was checked in the same pass
+# (cold weeks, per position) and rejected: the cold-start distortion is
+# concentrated in receiving_yards for WR/TE, which the points-level cold
+# bucket already absorbs (TE startable |bias| 1.07 -> 1.01), and a per-stat
+# layer would be 11 lines x 2 buckets x 4 positions for no measured gain.
+#
+# Held-out 2025 startable MAE, shipped v3 single line -> v4 (WR/TE bucketed):
+#     QB 6.468 -> 6.467   RB 6.177 -> 6.140
+#     WR 6.100 -> 6.025   TE 5.378 -> 5.254
+# Re-fit: scripts/fit_seasonal_calibration.py --mode dump then --mode emit.
+# ===========================================================================
 WEEKLY_CALIBRATION = {
-    'QB': (0.737, 4.263),
-    'RB': (0.921, 1.014),
-    'WR': (0.961, 1.122),
-    'TE': (0.950, 0.921),
+    'QB': (0.738, 4.154),
+    'RB': (0.907, 1.030),
+    'WR': (0.933, 1.105),
+    'TE': (0.927, 0.888),
+}
+# WR/TE only (see V4 block). week <= WEEKLY_CALIBRATION_COLD_MAX_WEEK -> 'cold'.
+# A position/bucket absent here falls back to WEEKLY_CALIBRATION[pos]; that is
+# why QB and RB are deliberately not listed rather than duplicated.
+WEEKLY_CALIBRATION_COLD_MAX_WEEK = 4
+WEEKLY_CALIBRATION_BY_BUCKET = {
+    'cold': {
+        'WR': (0.863, 1.292),
+        'TE': (0.818, 0.987),
+    },
+    'rest': {
+        'WR': (0.969, 0.990),
+        'TE': (0.981, 0.790),
+    },
 }
 # Two-sided since 2026-09-02 (see above). False restores the historical
 # downward-only clamp; kept as a named constant so the change is visible and
 # revertible rather than buried in an expression.
 WEEKLY_CALIBRATION_ONE_SIDED = False
+
+
+def _weekly_calibration_for(pos, week):
+    """(slope, intercept) for ``pos`` in the season phase ``week`` falls in.
+
+    WR and TE carry a 2-bucket season-phase split (see WEEKLY_CALIBRATION's
+    V4 block): weeks 1..WEEKLY_CALIBRATION_COLD_MAX_WEEK use the harder
+    'cold' shrink, later weeks the 'rest' line. QB and RB - and any position
+    not in WEEKLY_CALIBRATION_BY_BUCKET - use the single WEEKLY_CALIBRATION
+    line at every week. ``week`` None also falls through to the single line.
+    """
+    base = WEEKLY_CALIBRATION.get(pos, (1.0, 0.0))
+    if week is None:
+        return base
+    bucket = 'cold' if week <= WEEKLY_CALIBRATION_COLD_MAX_WEEK else 'rest'
+    return WEEKLY_CALIBRATION_BY_BUCKET.get(bucket, {}).get(pos, base)
 
 
 def _played_weeks_before(stats_df, as_of_week):
@@ -3150,7 +3269,8 @@ def apply_ourlads_preseason_role_floor(player_share, player_prior_share, prior_t
 
 
 def apply_buried_veteran_dock(player_share, player_prior_share, chart_rank, depth_chart_decay,
-                              backup_slot_rank=None):
+                              backup_slot_rank=None, keep_fraction=None,
+                              deep_keep_fraction=None):
     """Dock a PROVEN veteran the current depth chart lists as a backup.
 
     The WR/TE role-cap downstream ranks by the model's OWN ``player_share``,
@@ -3177,8 +3297,16 @@ def apply_buried_veteran_dock(player_share, player_prior_share, chart_rank, dept
     Faded by ``depth_chart_decay`` like every other Ourlads pull. Returns
     ``(docked_share, applied_mask)`` - a no-op copy + all-False mask when the
     depth-chart pull is not live or nobody qualifies.
+
+    ``keep_fraction`` overrides RECEIVER_BURIED_VET_KEEP_FRACTION for the
+    "at slot" tier; ``deep_keep_fraction``, when a float, makes the
+    "deeper than slot" tier keep that fraction of its own share instead of
+    being hard-capped to the deep-bench cutoff. Both are the grid-sweep
+    dials (scripts/sweep_te_buried_vet_slot_grid.py); ``None`` = shipped
+    behaviour.
     """
     slot = RECEIVER_BURIED_VET_BACKUP_SLOT_RANK if backup_slot_rank is None else int(backup_slot_rank)
+    kf = RECEIVER_BURIED_VET_KEEP_FRACTION if keep_fraction is None else float(keep_fraction)
     share = np.asarray(player_share, dtype=float)
     prior = np.asarray(player_prior_share, dtype=float)
     rank = pd.to_numeric(pd.Series(chart_rank), errors='coerce').to_numpy(dtype=float)
@@ -3191,9 +3319,10 @@ def apply_buried_veteran_dock(player_share, player_prior_share, chart_rank, dept
     third_string = worth & (rank > slot)
     if not (direct_backup.any() or third_string.any()):
         return share.copy(), applied
-    target = np.where(direct_backup, share * RECEIVER_BURIED_VET_KEEP_FRACTION,
-                      np.where(third_string,
-                               np.full(len(share), RECEIVER_DEPTH_CUTOFF_SHARE_CAP), share))
+    deep_target = (np.full(len(share), RECEIVER_DEPTH_CUTOFF_SHARE_CAP)
+                   if deep_keep_fraction is None else share * float(deep_keep_fraction))
+    target = np.where(direct_backup, share * kf,
+                      np.where(third_string, deep_target, share))
     docked = share + depth_chart_decay * (target - share)
     return docked, (direct_backup | third_string)
 
@@ -3210,6 +3339,10 @@ def apply_buried_veteran_dock(player_share, player_prior_share, chart_rank, dept
 RECEIVER_COLD_START_VACANCY_MIN_SHARE = 0.30   # ignore a departed bit-part player
 RECEIVER_COLD_START_VACANCY_SURVIVAL = 0.70    # not all of a vacated role is real "up for grabs" opportunity
 RECEIVER_COLD_START_VACANCY_MAX_SHARE = 0.92   # never push a recipient past this via vacancy alone
+RECEIVER_COLD_START_VACANCY_CROSS_POS_FRACTION = 0.0  # share of a departed WR's vacated
+#   role that bleeds to the TE room instead of staying 100% within the WR corps.
+#   0.0 = the shipped hard same-position silo; swept by
+#   scripts/sweep_receiver_cold_start_vacancy_crosspos.py.
 
 
 def apply_cold_start_receiver_vacancy(player_share, current_team, vacated_share_by_team):
@@ -4911,8 +5044,17 @@ def _cold_start_pool(stats_df, name_col, team_col, as_of_week):
         # defined categories - found 2026-08-27, broke every true cold start
         # (Week 1) outright. Casting to object first drops the category
         # restriction while still preserving real NaN for fillna to catch.
+        #
+        # Uses the SHARED INELIGIBLE_ROSTER_STATUSES set (data.rb_role_
+        # allocator) rather than a private literal so the two never drift.
+        # That set was a private {'RET','CUT','RES','FA'} here until
+        # 2026-09-07, written against the frozen local snapshot's vocabulary;
+        # it silently missed the live nflverse feed's ``DEV`` (practice
+        # squad) code once a live season started reading that feed, letting
+        # ~540 practice-squad players/season onto the Week-1 board with real
+        # snap shares and targets. See that constant's own comment.
         status = pool['status'].astype(object).fillna('').astype(str).str.strip().str.upper()
-        pool = pool[~status.isin({'RET', 'CUT', 'RES', 'FA'})].copy()
+        pool = pool[~status.isin(INELIGIBLE_ROSTER_STATUSES)].copy()
     return pool
 
 
@@ -5822,6 +5964,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
 
     all_rows, explanations = [], {}
     rb_allocation_ledger = []
+    # v2_receiver_cold_start_vacancy cross-position bleed: each position's
+    # per-team vacated share is stashed here as it is computed so the later
+    # position in DRAFTABLE_POSITIONS ('WR' before 'TE') can send a small
+    # RECEIVER_COLD_START_VACANCY_CROSS_POS_FRACTION of the departed WR pool
+    # to the TE room instead of a hard same-position silo. The reverse
+    # (a departed TE bleeding to WR) is not applied - WR is processed first,
+    # so its dict is not yet available; the feature exists for the WR-exodus
+    # case (LAC/GB/TB) where that direction is what matters.
+    _cs_vacated_by_pos = {}
     for pos in DRAFTABLE_POSITIONS:
         stats = OFFENSE_PROJECTION_STATS[pos]
         if cold_start:
@@ -6702,9 +6853,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                        ourlads_audit['source_rank'])
                 _bv_slot = (RECEIVER_BURIED_VET_BACKUP_SLOT_RANK_TE if pos == 'TE'
                             else RECEIVER_BURIED_VET_BACKUP_SLOT_RANK)
+                # TE-only graded-dock dials (both None by default = shipped
+                # binary behaviour) - see the RECEIVER_BURIED_VET_*_FRACTION_TE
+                # constants and scripts/sweep_te_buried_vet_slot_grid.py.
+                _bv_keep = RECEIVER_BURIED_VET_KEEP_FRACTION_TE if pos == 'TE' else None
+                _bv_deep_keep = RECEIVER_BURIED_VET_DEEP_KEEP_FRACTION_TE if pos == 'TE' else None
                 player_share, _buried_vet_docked = apply_buried_veteran_dock(
                     player_share, player_prior_share, _chart_rank, depth_chart_decay,
-                    backup_slot_rank=_bv_slot)
+                    backup_slot_rank=_bv_slot, keep_fraction=_bv_keep,
+                    deep_keep_fraction=_bv_deep_keep)
                 if _buried_vet_docked.any():
                     preseason_role_source = np.where(
                         _buried_vet_docked,
@@ -6730,6 +6887,21 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                         _s = prior_share_identity.get(_ident)
                         if _s is not None and np.isfinite(_s) and _s >= RECEIVER_COLD_START_VACANCY_MIN_SHARE:
                             _vacated_share_by_team[_team] = _vacated_share_by_team.get(_team, 0.0) + float(_s)
+                    # Stash this position's raw same-team vacancy, then mix in
+                    # a cross-position fraction of the OTHER receiver group's
+                    # already-computed vacancy (WR runs first, so only TE
+                    # actually receives a WR bleed - see _cs_vacated_by_pos).
+                    _cs_vacated_by_pos[pos] = dict(_vacated_share_by_team)
+                    _xf = float(RECEIVER_COLD_START_VACANCY_CROSS_POS_FRACTION)
+                    if _xf > 0.0 and pos in ('WR', 'TE'):
+                        _other_vac = _cs_vacated_by_pos.get('TE' if pos == 'WR' else 'WR') or {}
+                        _mixed = {}
+                        for _t in set(_vacated_share_by_team) | set(_other_vac):
+                            _v = ((1.0 - _xf) * _vacated_share_by_team.get(_t, 0.0)
+                                  + _xf * _other_vac.get(_t, 0.0))
+                            if _v > 0.0:
+                                _mixed[_t] = _v
+                        _vacated_share_by_team = _mixed
                     player_share, _vacancy_applied = apply_cold_start_receiver_vacancy(
                         player_share, team_keys_rv.to_numpy(dtype=object), _vacated_share_by_team)
                     if _vacancy_applied.any():
@@ -7822,7 +7994,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # model's dispersion, not about football, so pushing it back
             # into the yards and carries would corrupt a line that is
             # displayed and read on its own terms.
-            slope, intercept = WEEKLY_CALIBRATION[pos]
+            #
+            # WR/TE carry a weeks 1-4 "cold" line here; QB/RB one line all
+            # year (see _weekly_calibration_for / WEEKLY_CALIBRATION V4).
+            slope, intercept = _weekly_calibration_for(pos, week)
             raw = out['Model Proj Pts'].to_numpy(dtype=float)
             line = intercept + slope * raw
             # Two-sided as of 2026-09-02 - the line is the calibrated value in
@@ -8267,8 +8442,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'stats': stat_detail,
                 'calibration': {
                     'enabled': 'calibration' in feats and pos in WEEKLY_CALIBRATION,
-                    'slope': float(WEEKLY_CALIBRATION.get(pos, (1.0, 0.0))[0]),
-                    'intercept': float(WEEKLY_CALIBRATION.get(pos, (1.0, 0.0))[1]),
+                    # Phase-aware: WR/TE weeks 1-4 report their 'cold' line.
+                    'slope': float(_weekly_calibration_for(pos, week)[0]),
+                    'intercept': float(_weekly_calibration_for(pos, week)[1]),
                     'raw_points': float(row['Raw Model Proj Pts']),
                     'displayed_points': float(row['Calibrated Model Proj Pts']),
                     'delta': float(row['Calibrated Model Proj Pts'] - row['Raw Model Proj Pts']),
@@ -8295,8 +8471,19 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # on top of one that still needs fitting to reality.
     pass_capacity_ledger, pass_capacity_adjusted, pass_capacity_room = [], False, []
     if 'v2_pass_capacity' in feats:
+        # WR/TE split (data.pass_capacity_allocator.TE_MARGINAL_TARGET_WEIGHT)
+        # only for a cold start / weeks 1-2: that is when a team's WR/TE claim
+        # is off its pass-attempt budget almost entirely because of an
+        # offseason WR-room change the model hasn't fully re-primed, and the
+        # tight end should not take a WR-driven swing at full proportion
+        # (LAC Gadsden / GB Kraft / TB Otton scaled up after a WR left; IND
+        # Warren docked after Keenan Allen arrived). In-season, real target
+        # data has re-separated the rooms and the uniform fit is fine.
+        _wr_te_split = ('v2_wr_te_capacity_split' in feats
+                        and (cold_start or int(as_of_week) <= 2))
         result, pass_capacity_ledger_df = apply_pass_capacity_conservation(
-            result, prior_history=prior_stats, team_col=prior_team_col)
+            result, prior_history=prior_stats, team_col=prior_team_col,
+            wr_te_split=_wr_te_split)
         pass_capacity_ledger = pass_capacity_ledger_df.to_dict('records')
         pass_capacity_adjusted = bool(
             not pass_capacity_ledger_df.empty
@@ -8401,8 +8588,11 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 # one-sided/two-sided rule; it was missed when the primary
                 # site went two-sided on 2026-09-02, which silently kept the
                 # old downward-only behaviour for the whole board (caught by
-                # checking a live build: zero projections moved up).
-                slopes = result['Pos'].map(lambda p: WEEKLY_CALIBRATION.get(p, (1.0, 0.0)))
+                # checking a live build: zero projections moved up). It must
+                # also follow the same season-phase rule as the primary site
+                # (WR/TE weeks 1-4 "cold" line) - hence _weekly_calibration_for,
+                # not a bare WEEKLY_CALIBRATION lookup.
+                slopes = result['Pos'].map(lambda p: _weekly_calibration_for(p, week))
                 recomputed = [
                     (min(v, sl * v + ic) if WEEKLY_CALIBRATION_ONE_SIDED else sl * v + ic)
                     for v, (sl, ic) in zip(recomputed, slopes)]

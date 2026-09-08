@@ -92,8 +92,8 @@
     {
       "id": "l-0002", "status": "active", "stat_value": 92.5, "line_type": "balanced",
       "options": [
-        {"choice": "higher", "payout_multiplier": "0.95", "american_price": "-122"},
-        {"choice": "lower", "payout_multiplier": "1.05", "american_price": "+100"}
+        {"choice": "higher", "payout_multiplier": "1.0", "american_price": "-110", "decimal_price": "1.91"},
+        {"choice": "lower", "payout_multiplier": "1.0", "american_price": "-110", "decimal_price": "1.91"}
       ],
       "over_under": {"appearance_stat": {"appearance_id": "a-0001", "stat": "season_receptions", "display_stat": "Season Receptions"}}
     },
@@ -111,6 +111,14 @@
       "id": "l-0005", "status": "active", "stat_value": 30.5, "line_type": "balanced",
       "options": [{"choice": "higher", "payout_multiplier": "1.0"}],
       "over_under": {"appearance_stat": {"appearance_id": "a-0002", "stat": "season_pass_tds", "display_stat": "Season Pass TDs"}}
+    },
+    {
+      "id": "l-0006", "status": "active", "stat_value": 62.5, "line_type": "boosted",
+      "options": [
+        {"choice": "higher", "payout_multiplier": "0.87", "american_price": "-140"},
+        {"choice": "lower", "payout_multiplier": "1.13", "american_price": "+116"}
+      ],
+      "over_under": {"appearance_stat": {"appearance_id": "a-0003", "stat": "season_rush_yards", "display_stat": "Season Rush Yards"}}
     },
     {
       "id": "l-0007", "status": "active", "stat_value": 14.5, "line_type": "balanced",

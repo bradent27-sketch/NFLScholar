@@ -40,7 +40,7 @@ from ui.charts import sparkline_data_uri
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
                         get_diverging_color, get_multiplier_color)
 from ui.components import (position_group_buttons, apply_position_group, skeleton_loader,
-                           import_hint, switch_tab)
+                           import_hint, switch_tab, render_weekly_board_uploads)
 
 _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing_yards',
                     'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds']
@@ -618,16 +618,13 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     scoring_mode = detail.get('scoring_mode') or 'Full PPR'
     has_current_season_data = any(
         (values.get('current_games') or 0.0) > 0 for values in stats.values())
-    # Raw posted-line consensus (plain median of what each book actually
-    # posted) alongside the de-vigged 'Market avg' (market_detail['consensus'],
-    # which market_stat_lines shifts for vig lean / count-line skew). Showing
-    # both is the whole point of the 2026-09-05 devig work - the gap between
-    # them is the implied-odds adjustment.
-    raw_market_consensus = {}
-    _bl = (market_detail or {}).get('book_lines')
-    if _bl is not None and not getattr(_bl, 'empty', True) and 'line' in _bl.columns:
-        _bl_line = pd.to_numeric(_bl['line'], errors='coerce')
-        raw_market_consensus = _bl_line.groupby(_bl['market']).median().to_dict()
+    # One market column: the de-vigged, reliability-weighted multi-book
+    # consensus ('Market avg' = market_detail['consensus'], which
+    # market_stat_lines shifts for vig lean / count-line skew). The raw
+    # posted-line median used to sit beside it; per explicit request
+    # (2026-09-07) only the de-vigged number is shown here - the per-book
+    # posted lines, their O/U odds and each book's own de-vig live on the
+    # "Market lines" tab.
     rows = []
     stage_totals = {stage: {} for stage in (
         'raw_average', 'season_adj', 'player_projection', 'after_defense',
@@ -730,14 +727,9 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             'Team capacity Δ': _fmt_stat(stat, capacity_raw, signed=True),
             'Vacancy Δ': _fmt_stat(stat, vacancy_raw, signed=True),
             'Projected value': _fmt_stat(stat, final_val),
-            # Side-by-side market numbers for the SAME stat. 'Market line' is
-            # the plain median of what the books posted; 'Market avg' is the
-            # weighted multi-book consensus AFTER de-vigging
-            # (data.odds_projections.market_stat_lines) - the gap between the
-            # two is the implied-odds shift. Both dash when no book posted a
-            # line; never the model's own value standing in.
-            'Market line': _fmt_stat(stat, raw_market_consensus.get(
-                _DECOMP_TO_MARKET_STAT.get(stat, stat))),
+            # The de-vigged, reliability-weighted multi-book consensus for the
+            # SAME stat (data.odds_projections.market_stat_lines). Dashes when
+            # no book posted a line; never the model's own value standing in.
             'Market avg': _fmt_stat(stat, (market_detail or {}).get('consensus', {}).get(
                 _DECOMP_TO_MARKET_STAT.get(stat, stat))),
             '_vacancy_raw': vacancy_raw,
@@ -761,8 +753,6 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     show_market = market_detail is not None and (
         market_detail.get('consensus') or market_detail.get('market_points_partial') is not None)
     if show_market:
-        if any(r.get('Market line', '—') != '—' for r in rows):
-            display_cols.append('Market line')
         display_cols.append('Market avg')
 
     # Trailing "Fantasy points at this stage" row, inside this same table
@@ -836,13 +826,13 @@ def _render_decomposition_primary_table(detail, market_detail=None):
 
     if show_market:
         st.caption(
-            "**Market line** is the plain median of what the books posted; **Market avg** is the "
-            "weighted multi-book consensus for that same stat AFTER de-vigging — a book pricing the "
-            "over at −140/+110 is really calling for a number above its posted line, and Market avg "
-            "carries that, Market line does not. Both from the live weekly board (PrizePicks / "
-            "Underdog / DraftKings); a dash where no book posted one. The trailing points figure "
-            "under Market avg counts ONLY the stats the market actually priced; the full, "
-            "model-backfilled market total for lineup comparison is on the ranking table, not here."
+            "**Market avg** is the reliability-weighted multi-book consensus for that stat "
+            "AFTER de-vigging — a book pricing the over at −140 is calling for a number above its "
+            "posted line, and this carries that. From the live weekly board (DraftKings / Pinnacle / "
+            "Underdog / PrizePicks); a dash where no book posted one. Open the **Market lines** tab "
+            "for every book's posted line, its O/U odds and its own de-vigged value. The trailing "
+            "points figure counts ONLY the stats the market priced; the full model-backfilled total "
+            "for lineup comparison is on the ranking table, not here."
         )
 
     note_text = " / ".join(sorted(raw_average_notes)) if raw_average_notes else "prior-season history"
@@ -1908,19 +1898,14 @@ _MARKET_STAT_ORDER = [
 
 
 def _render_market_lines_tab(detail, market_detail):
-    """Every live sportsbook/DFS line pulled for this player, one row per
-    stat and one column per book, with the weighted consensus ('Market proj')
-    beside them - the same board the Weekly Rankings 'Market Proj Pts'
-    column is scored from, laid open so a single book's outlier is visible.
-
-    Each book cell shows the RAW posted line, and where that book's
-    over/under prices imply a different mean (vig lean, or a skewed count
-    line) an arrow to the de-vigged number. 'Market proj' is the
-    reliability-weighted multi-book consensus of those de-vigged numbers
-    (data.odds_projections.market_stat_lines - real books weighted over the
-    pick'em products), identical to the number the ranking table and the
-    Overview tab's 'Market avg' column use, not a plain mean of the cells
-    in its row.
+    """Every live sportsbook/DFS line pulled for this player, ONE ROW PER
+    STAT: each book's posted line and its published O/U odds together in
+    that book's own column, then a final **De-vig** column with the
+    reliability-weighted multi-book consensus of the vig-stripped fair
+    values (real sportsbooks over the pick'em products) - the exact number
+    behind the ranking table's 'Market Proj Pts' and the Overview tab's
+    'Market avg'. Underdog's shaded lines and PrizePicks demon/goblin picks
+    are excluded from scoring and omitted here.
     """
     if not market_detail:
         st.caption(
@@ -1959,57 +1944,66 @@ def _render_market_lines_tab(detail, market_detail):
 
     bl = book_lines.copy()
     bl['book'] = bl['provider'].astype(str).str.split(' (', regex=False).str[0]
-    bl['line'] = pd.to_numeric(bl['line'], errors='coerce')
-    has_implied = 'implied_mean' in bl.columns
-    if has_implied:
-        bl['implied_mean'] = pd.to_numeric(bl['implied_mean'], errors='coerce').fillna(bl['line'])
-    raw_wide = bl.pivot_table(index='market', columns='book', values='line', aggfunc='mean')
-    imp_wide = (bl.pivot_table(index='market', columns='book', values='implied_mean', aggfunc='mean')
-                if has_implied else raw_wide)
-    book_cols = sorted(raw_wide.columns)
-    raw_wide = raw_wide[book_cols]
-    imp_wide = imp_wide.reindex(index=raw_wide.index, columns=book_cols)
+    for _c in ('line', 'over_payout', 'under_payout'):
+        bl[_c] = pd.to_numeric(bl.get(_c), errors='coerce')
 
-    ordered = [s for s in _MARKET_STAT_ORDER if s in raw_wide.index]
-    ordered += [s for s in raw_wide.index if s not in ordered]
-    raw_wide = raw_wide.reindex(ordered)
-    imp_wide = imp_wide.reindex(ordered)
-    stat_labels = [_MARKET_STAT_LABEL.get(s, s.replace('_', ' ').capitalize()) for s in ordered]
+    def _dec_to_american(d):
+        """Decimal odds -> a readable American string; None for a pick'em
+        (no real price) or a bare payout multiplier of ~1.0."""
+        if d is None or not np.isfinite(d) or d <= 1.01:
+            return None
+        return f"+{round((d - 1) * 100)}" if d >= 2.0 else f"−{round(100 / (d - 1))}"
 
-    # Each book cell: raw posted line, and — when the book's prices imply a
-    # different mean (vig lean, or a skewed count line) — an arrow to the
-    # de-vigged number the consensus is actually built from. 'Market proj' is
-    # the reliability-weighted consensus of those de-vigged numbers.
-    def _cell(raw, imp):
-        if pd.isna(raw):
+    def _fmt_num(stat, v):
+        if v is None or not np.isfinite(v):
             return '—'
-        if has_implied and pd.notna(imp) and abs(float(imp) - float(raw)) >= 0.05:
-            return f"{float(raw):.2f} → {float(imp):.2f}"
-        return f"{float(raw):.2f}"
+        return f"{v:.0f}" if stat in ('passing_tds', 'rushing_tds', 'receiving_tds',
+                                      'passing_interceptions') and abs(v - round(v)) < 1e-6 \
+            else f"{v:.2f}"
 
+    def _cell(stat, r):
+        """One book's line and its O/U odds in a single cell -
+        '81.5 (−108/−118)', or just '81.5' when the book posts no per-side
+        price (PrizePicks; an even-both-ways Underdog line)."""
+        ln = _fmt_num(stat, r['line'])
+        o_am = _dec_to_american(r['over_payout'])
+        u_am = _dec_to_american(r['under_payout'])
+        return f"{ln} ({o_am}/{u_am})" if (o_am and u_am) else ln
+
+    # Book columns, real sportsbooks first, limited to the books that
+    # actually posted a line for this player.
+    _BOOK_ORDER = ['DraftKings', 'Pinnacle', 'Underdog', 'PrizePicks']
+    present = [b for b in _BOOK_ORDER if b in set(bl['book'])]
+    present += [b for b in bl['book'].unique() if b not in present]
+
+    ordered = [s for s in _MARKET_STAT_ORDER if s in set(bl['market'])]
+    ordered += [s for s in bl['market'].unique() if s not in ordered]
+
+    # ONE ROW PER STAT: each book's line+odds in its column, the vig-stripped
+    # multi-book consensus mean in the final De-vig column.
     rows = []
-    for stat, label in zip(ordered, stat_labels):
+    for stat in ordered:
+        label = _MARKET_STAT_LABEL.get(stat, stat.replace('_', ' ').capitalize())
+        sub = bl[bl['market'] == stat]
         row = {'Stat': label}
-        for book in book_cols:
-            row[book] = _cell(raw_wide.at[stat, book], imp_wide.at[stat, book])
+        for book in present:
+            br = sub[sub['book'] == book]
+            row[book] = _cell(stat, br.iloc[0]) if not br.empty else '—'
         avg = consensus.get(stat, np.nan)
-        row['Market proj'] = f"{float(avg):.2f}" if pd.notna(avg) else '—'
+        row['De-vig'] = _fmt_num(stat, float(avg)) if pd.notna(avg) else '—'
         rows.append(row)
-    wide = pd.DataFrame(rows, columns=['Stat'] + book_cols + ['Market proj'])
-    st.dataframe(
-        style_plain_dataframe(wide),
-        hide_index=True, width="stretch", height=df_auto_height(len(wide)))
-    any_shift = any(' → ' in str(v) for r in rows for v in r.values())
+
+    tbl = pd.DataFrame(rows, columns=['Stat'] + present + ['De-vig'])
+    st.dataframe(style_plain_dataframe(tbl), hide_index=True, width="stretch",
+                 height=df_auto_height(len(tbl)))
     st.caption(
-        f"Lines re-scored under {scoring_mode}. Each book cell is its **raw posted line**"
-        + (", with an arrow to the **de-vigged mean** where the book's over/under prices lean one "
-           "way (an even-priced line shows no arrow). " if any_shift else " — no book's prices "
-           "shifted a line this time. ")
-        + "**Market proj** is the reliability-weighted consensus of the de-vigged numbers (real "
-        "sportsbooks weighted above the pick'em products), the exact figure behind **Market Proj "
-        "Pts** on the board. A blank cell means that book didn't post that stat. 'Model-backfilled' "
-        "fills any stat the market skipped with this app's own projection so the board's market "
-        "total is never a partial sum — that fill never appears here, only in the ranking-table number."
+        f"One row per stat, re-scored under {scoring_mode}. Each book cell is its posted "
+        "**line**, then its **over/under odds** in parentheses (American — no odds shown means "
+        "a pick'em with no per-side price). **De-vig** is the reliability-weighted multi-book "
+        "consensus of the vig-stripped fair values (real sportsbooks weighted over the pick'em "
+        "products) — the exact figure behind **Market Proj Pts** and the Overview tab's "
+        "**Market avg**. Underdog's shaded lines and PrizePicks demon/goblin picks are excluded "
+        "from scoring and do not appear here."
     )
 
 
@@ -2504,15 +2498,52 @@ def _render_weekly_market_pull(wk_scoring, name_pool):
         "projected-points column here instead of a raw line list. This is always the CURRENT "
         "posted slate, not necessarily the season/week picked above."
     )
-    force = st.button("🔄 Refresh player props", key="wr_market_refresh")
+    # PrizePicks refuses this app (Cloudflare, scripts and browsers alike), so
+    # its weekly board only ever arrives as a hand-saved file. Same panel the
+    # Live Odds tab carries - offered here too so it can be staged BEFORE the
+    # board build, alongside the FantasyPros / injury / PFF uploads.
+    uploaded = render_weekly_board_uploads(key_prefix='wr', wrap_in_expander=False)
+    force = st.button("🔄 Refresh player props", key="wr_market_refresh") or uploaded
     with skeleton_loader("table", n_rows=5, n_cols=4):
         props, meta = weekly_props(force=force)
     stamp = meta.get('fetched_at')
     if stamp:
-        age_bits = [f"Pulled {stamp:%b %d, %Y at %I:%M %p}"]
+        age_bits = [f"Pulled {stamp:%b %d, %Y at %I:%M %p}",
+                    "fresh from the books" if meta.get('from_network') else "from the saved snapshot"]
         if meta.get('stale'):
             age_bits.append("stale — a fresh pull didn't return anything")
         st.caption(" · ".join(age_bits))
+
+    # PER-BOOK STATUS, before the board is built. This tab runs weekly_props()
+    # on open, so what shows here is exactly what a "Build board" will use.
+    # "live" = the app fetched it itself (no key, no quota); "your file" = a
+    # saved upload above; an error = it isn't in this build, do something.
+    _status = meta.get('status') or {}
+    if not props.empty:
+        _g = (props.assign(_b=props['provider'].astype(str).str.split(' (', regex=False).str[0],
+                           _sc=props['scorable'].fillna(False).astype(bool))
+              .groupby('_b').agg(lines=('player', 'size'), players=('player', 'nunique'),
+                                 scored=('_sc', 'sum')))
+    else:
+        _g = pd.DataFrame()
+    _idx = list(_g.index)
+    _rows = []
+    for _bk in ('DraftKings', 'Pinnacle', 'Underdog', 'PrizePicks'):
+        _s = _status.get(_bk, {})
+        _src = _s.get('source') or ''
+        if _bk in _idx:
+            _n, _p, _sc = (int(_g.loc[_bk, 'lines']), int(_g.loc[_bk, 'players']),
+                           int(_g.loc[_bk, 'scored']))
+            _tag = {'live': 'live — the app pulled it', 'your saved payload': 'your uploaded file'}.get(
+                _src, _src or 'loaded')
+            _extra = f" ({_sc} scored)" if _sc != _n else ""
+            _rows.append(f"✅ **{_bk}** — {_n} lines{_extra} · {_p} players · {_tag}")
+        elif _s.get('error'):
+            _rows.append(f"⚠️ **{_bk}** — not in this build. {str(_s['error'])[:150]}")
+        else:
+            _rows.append(f"⚪ **{_bk}** — no lines yet (board usually posts Tue/Wed)")
+    st.markdown("\n\n".join(_rows))
+
     if props.empty:
         st.caption("No live player props available right now.")
         return pd.DataFrame()
@@ -2520,7 +2551,7 @@ def _render_weekly_market_pull(wk_scoring, name_pool):
     if scored.empty:
         st.caption("Lines came back but none mapped to a stat this app scores.")
         return pd.DataFrame()
-    st.success(f"{mmeta['players']} players priced from the live board.")
+    st.success(f"{mmeta['players']} players priced from the live board (consensus across the books above).")
     out = scored.rename(columns={'player': 'Player'})
     # Two companion frames the projection decomposition dialog needs, carried
     # on .attrs rather than by widening this hub's return signature: the
@@ -2842,7 +2873,13 @@ def render():
                 if _bl_all is not None and not _bl_all.empty and pd.notna(pk):
                     sub = _bl_all[_bl_all['player_key'] == pk]
                     if not sub.empty:
-                        bl = sub[['market', 'provider', 'line']].copy()
+                        # Keep the per-side prices and the devig - the Market
+                        # lines tab shows each book's O/U odds and the
+                        # consensus fair value, not just the bare number.
+                        _keep = [c for c in ('market', 'provider', 'line', 'over_payout',
+                                             'under_payout', 'p_over', 'implied_mean')
+                                 if c in sub.columns]
+                        bl = sub[_keep].copy()
                 market_by_key[(r['Player'], r['Pos'], r['Team'])] = {
                     'consensus': cons, 'book_lines': bl,
                     'market_points_partial': partial_v, 'market_points_full': full_v,

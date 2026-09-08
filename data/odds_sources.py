@@ -50,6 +50,7 @@ pointless.
 """
 import contextlib
 import json
+import math
 import os
 import re
 
@@ -218,14 +219,26 @@ STAT_ALIASES = {
 
     'passingyards': 'passing_yards', 'passyds': 'passing_yards', 'passyards': 'passing_yards',
     'passingtds': 'passing_tds', 'passingtouchdowns': 'passing_tds', 'passtds': 'passing_tds',
+    # Pinnacle's own label for a QB's passing touchdowns is "Touchdown Passes"
+    # (season AND per-game). Read off a real 2026 snapshot - 22 lines were
+    # arriving unscorable purely for want of this alias.
+    'touchdownpasses': 'passing_tds', 'touchdownpass': 'passing_tds',
     'passingattempts': 'attempts', 'passattempts': 'attempts',
+    # Underdog's WEEKLY (per-game) label spelling - distinct from its
+    # `season_pass_yards` season form and from PrizePicks' "Pass Yards".
+    # Read off a real 2026 weekly snapshot; 32 lines were unscorable for
+    # want of this one key while `rushing_yds` / `receiving_yds` already
+    # resolved.
+    'passingyds': 'passing_yards',
     'interceptions': 'passing_interceptions', 'passinginterceptions': 'passing_interceptions',
     'intsthrown': 'passing_interceptions', 'passingints': 'passing_interceptions',
+    'interceptionsthrown': 'passing_interceptions',  # DraftKings weekly label
 
     'rushingyards': 'rushing_yards', 'rushyds': 'rushing_yards', 'rushyards': 'rushing_yards',
     'rushingyds': 'rushing_yards',
     'rushingtds': 'rushing_tds', 'rushingtouchdowns': 'rushing_tds', 'rushtds': 'rushing_tds',
     'rushingattempts': 'carries', 'carries': 'carries', 'rushattempts': 'carries',
+    'rushingatt': 'carries',  # Underdog weekly spelling (73 lines on a real snapshot)
 
     # PrizePicks' NFL spellings, read off a real payload: "Rush Yards",
     # "Pass Yards", "Rec Yards", "INT", "Pass TDs".
@@ -236,7 +249,9 @@ STAT_ALIASES = {
     'receivingyds': 'receiving_yards',
     'receivingtds': 'receiving_tds', 'receivingtouchdowns': 'receiving_tds', 'rectds': 'receiving_tds',
     'receptions': 'receptions', 'recs': 'receptions', 'catches': 'receptions',
+    'receivingrec': 'receptions',  # Underdog weekly spelling (172 lines on a real snapshot)
     'targets': 'targets',
+    'receivingtgts': 'targets',  # Underdog weekly spelling for targets
 
     # The Odds API player-prop market keys (config.ODDS_API_PLAYER_PROP_MARKETS),
     # with the 'player_' prefix stripped by parse_odds_api_props. Most collapse
@@ -252,6 +267,22 @@ STAT_ALIASES = {
 # approximated: "rush+rec yards" is a real market and a useful thing to show,
 # but silently mapping it onto rushing_yards would corrupt the projection it
 # feeds. Recognized so they can be labelled and displayed, never scored.
+# "Scores a touchdown" markets. Every book prices "does this player reach the
+# end zone" at a 0.5 line and names it differently. normalize_stat maps them
+# all to the 'anytime_td' SENTINEL (never scored on its own): the rush-vs-rec
+# routing and a one-way line's de-vig both need context - a position Pinnacle
+# and DraftKings don't publish, the whole board's two-way TD prices - that
+# only exists after every book is combined, so
+# data.odds_projections.resolve_anytime_td_markets finishes the job there.
+# QB passing TDs are a different market ('passing_tds') and unaffected.
+_ANYTIME_TD_KEYS = frozenset({
+    'rushrectds', 'seasonrushrectds', 'rushingreceivingtds', 'rushrectouchdowns',
+    'rushandrectds', 'playertouchdowns', 'playertds', 'anytimetd', 'anytimetds',
+    'anytimetdscorer', 'anytimetouchdown', 'anytimetouchdownscorer',
+    'toscoreatouchdown', 'toscoreatd', 'toscoretd', 'scoresatouchdown',
+    'touchdownscorer', 'playertoscoreatd', 'playeranytimetd',
+})
+
 COMBO_STATS = {
     'rushingreceivingyards': 'rush_rec_yards',
     'rushrecyds': 'rush_rec_yards',
@@ -261,8 +292,9 @@ COMBO_STATS = {
     'pointsplusreboundsplusassists': None,
     # Real Underdog NFL markets that must never reach the scoring path.
     # "Rush + Rec TDs" is their single most common NFL market by volume (349
-    # lines in the payload this was built from) and it is a SUM - mapping it
-    # onto rushing_tds would inflate every back on the board.
+    # lines in the payload this was built from) and it is a SUM - scored only
+    # when a position is available to route it (normalize_stat_for), unscored
+    # here when it is not.
     'rushrectds': 'rush_rec_tds',
     'seasonrushrectds': 'rush_rec_tds',
     'rushrecyds': 'rush_rec_yards',
@@ -340,6 +372,12 @@ def normalize_stat(label):
     key = _stat_key(label)
     if key in STAT_ALIASES:
         return STAT_ALIASES[key], True
+    if key in _ANYTIME_TD_KEYS:
+        # The cross-book "scores a TD" sentinel - finished (routed to
+        # rushing_tds / receiving_tds, one-way lines de-vigged) by
+        # data.odds_projections.resolve_anytime_td_markets once the board is
+        # assembled. Never scored straight off this call.
+        return 'anytime_td', False
     if key in COMBO_STATS:
         return COMBO_STATS[key], False
     return None, False
@@ -555,6 +593,77 @@ def _get_json(url, params=None, headers=None):
 # Underdog
 # ---------------------------------------------------------------------------
 
+# Anytime-TD ("scores a TD: yes/no") de-vig. Some books price both sides
+# (Pinnacle, Underdog's shaded picks) and their p_over is de-vigged straight
+# off. Others give only the 'over' - a lone American price (DraftKings) or a
+# lone profit multiplier (an Underdog boost) - and a single price cannot be
+# de-vigged on its own. Those are calibrated against the SAME board's two-way
+# TD lines via a logit-logit fit on (raw implied, de-vigged) pairs; the fitted
+# slope b > 1 captures the favourite-longshot bias (a +1200 longshot's raw
+# implied prob is inflated more than a -160 favourite's).
+#
+# All inputs here are DECIMAL ODDS for the over. resolve_anytime_td_markets
+# normalizes each book's stored `over_payout` to decimal first (Underdog holds
+# a profit multiplier, so 1 + that; the sportsbooks hold decimal already).
+_ANYTIME_TD_FLAT_OVERROUND = 1.12   # fallback shrink when the two-way sample is thin
+
+
+def _fit_anytime_td_devig(two_way_pairs):
+    """[(over_decimal_odds, p_over_devigged), ...] -> (a, b) for
+    ``p_fair = sigmoid(a + b * logit(1 / over_decimal))``.
+
+    None when the sample is too thin (<15) or the fitted slope is degenerate -
+    the caller then falls back to a flat overround shrink.
+    """
+    xs, ys = [], []
+    for over_dec, p_dev in two_way_pairs:
+        try:
+            x = 1.0 / float(over_dec)
+            p = float(p_dev)
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if 0.03 < x < 0.97 and 0.03 < p < 0.97:
+            xs.append(math.log(x / (1.0 - x)))
+            ys.append(math.log(p / (1.0 - p)))
+    n = len(xs)
+    if n < 15:
+        return None
+    sx, sy = sum(xs), sum(ys)
+    sxx = sum(v * v for v in xs)
+    sxy = sum(u * v for u, v in zip(xs, ys))
+    denom = n * sxx - sx * sx
+    if abs(denom) < 1e-9:
+        return None
+    b = (n * sxy - sx * sy) / denom
+    a = (sy - b * sx) / n
+    if not (0.4 < b < 2.5):          # a sane favourite-longshot slope
+        return None
+    return (float(a), float(b))
+
+
+def anytime_td_p_over(over_decimal, curve):
+    """A lone 'scores a TD' over price (DECIMAL odds) -> fair P(scores), using
+    the fitted `curve` from _fit_anytime_td_devig, or a flat shrink when
+    `curve` is None. Clamped to a sane [0.01, 0.90]."""
+    try:
+        od = float(over_decimal)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(od) or od <= 1.0:
+        return None
+    x = 1.0 / od
+    if curve is not None:
+        a, b = curve
+        try:
+            z = a + b * math.log(x / (1.0 - x))
+            p = 1.0 / (1.0 + math.exp(-z))
+        except (ValueError, OverflowError):
+            return None
+    else:
+        p = x / _ANYTIME_TD_FLAT_OVERROUND
+    return min(0.90, max(0.01, p))
+
+
 def parse_underdog_payload(payload, sport='NFL'):
     """
     Underdog's over/under payload -> normalized props.
@@ -612,31 +721,66 @@ def parse_underdog_payload(payload, sport='NFL'):
             position = UNDERDOG_POSITIONS.get(
                 str(player.get('position_display_name') or '').lower(), '')
         market, scorable = normalize_stat_for(stat_ref.get('stat'), position)
-        payouts = {}
+        # Underdog "Pick'em" now shades a line instead of always moving the
+        # number: each option carries a per-side `payout_multiplier` (a PROFIT
+        # multiplier - 0.90 means "win 0.90x your stake", i.e. the favoured
+        # side; >1.0 is the dog side), and the juiced lines also carry the
+        # real `american_price` / `decimal_price` the multiplier was derived
+        # from. The old code read only `payout_multiplier` and then required
+        # BOTH sides to be > 1.0 - which is exactly false for a shaded line
+        # (one side is always < 1.0) and for a plain even line (both are
+        # exactly 1.0), so p_over came back null for every Underdog row.
+        # Prefer the unambiguous American price; fall back to decimal_price;
+        # fall back to (1 + payout_multiplier) as decimal odds.
+        payouts, americans, decimals = {}, {}, {}
         for option in line.get('options') or []:
             choice = str(option.get('choice', '')).lower()
             side = {'higher': 'over', 'lower': 'under'}.get(choice, choice)
             payouts[side] = pd.to_numeric(option.get('payout_multiplier'), errors='coerce')
+            americans[side] = _american(option.get('american_price'))
+            decimals[side] = pd.to_numeric(option.get('decimal_price'), errors='coerce')
 
-        # Underdog publishes a per-side payout multiplier (decimal-odds shaped).
-        # A standard pick has both sides equal -> devigs to 0.5 (no lean, the
-        # line is the number). A discount/boost pick shades one side and that
-        # shows up as p_over != 0.5. Only trust a clean two-way (both sides a
-        # real >1 multiplier); a lopsided special pick is left unpriced.
         over_pay, under_pay = payouts.get('over'), payouts.get('under')
-        p_over = None
-        if (pd.notna(over_pay) and pd.notna(under_pay)
-                and 1.0 < float(over_pay) < 10.0 and 1.0 < float(under_pay) < 10.0):
-            devigged = devig_two_way_decimal(over_pay, under_pay)
-            if devigged is not None and 0.05 <= devigged <= 0.95:
-                p_over = devigged
+        # A SHADED Underdog line - unequal prices / unequal payout multipliers
+        # both sides - is their "easy over" / "hard over" promo pricing, not a
+        # clean read of the middle. Per explicit request (2026-09-07) those are
+        # dropped from SCORING the same way PrizePicks demon/goblin picks
+        # already are: scorable=False and a ' (shaded)' provider suffix so they
+        # stay visible but never enter the consensus. A symmetric pick (equal
+        # both sides) is the standard even-money pick'em line - "the posted
+        # number IS the median" - and is scored as before. p_over is still
+        # computed for a shaded line, for the per-book breakdown display only.
+        o_am, u_am = americans.get('over'), americans.get('under')
+        o_dec, u_dec = decimals.get('over'), decimals.get('under')
+        is_shaded, p_over = False, None
+        if o_am is not None and u_am is not None:
+            is_shaded = (o_am != u_am)
+            if is_shaded:
+                p_over = devig_two_way(o_am, u_am)
+        elif (pd.notna(o_dec) and pd.notna(u_dec)
+              and float(o_dec) > 1.0 and float(u_dec) > 1.0):
+            is_shaded = (float(o_dec) != float(u_dec))
+            if is_shaded:
+                p_over = devig_two_way_decimal(o_dec, u_dec)
+        elif (pd.notna(over_pay) and pd.notna(under_pay)
+              and 0.4 <= float(over_pay) <= 2.5 and 0.4 <= float(under_pay) <= 2.5):
+            is_shaded = (float(over_pay) != float(under_pay))
+            if is_shaded:
+                # Profit multiplier -> decimal odds of (1 + m). The favoured
+                # side carries the smaller multiplier (< 1.0), so this resolves
+                # to p_over > 0.5 when the "higher" side is the shaded one.
+                p_over = devig_two_way_decimal(1.0 + float(over_pay), 1.0 + float(under_pay))
+        if p_over is not None and not (0.05 <= p_over <= 0.95):
+            p_over = None
+        if is_shaded:
+            scorable = False
 
         team_uuid = str(player.get('team_id') or appearance.get('team_id') or '')
 
         name = ' '.join(str(player.get(k) or '').strip()
                         for k in ('first_name', 'last_name')).strip()
         rows.append({
-            'provider': 'Underdog',
+            'provider': 'Underdog (shaded)' if is_shaded else 'Underdog',
             'player': name,
             'team': standardize_team(teams.get(team_uuid, '')),
             'position': position,
@@ -650,6 +794,29 @@ def parse_underdog_payload(payload, sport='NFL'):
             'period': _underdog_period(appearance),
             'source_id': str(line.get('id') or ''),
         })
+
+    # ANYTIME-TD SENTINEL. "Scores a rush/rec TD" (line <= 1.5) is emitted as
+    # the cross-book 'anytime_td' marker, not scored here: routing it to
+    # rushing_tds vs receiving_tds needs a position Underdog gives but
+    # Pinnacle / DraftKings don't, and a one-way line's p_over is best de-vigged
+    # against the WHOLE board's two-way TD prices - both of which happen in
+    # data.odds_projections.resolve_anytime_td_markets after every book is
+    # combined and names are canonicalized. A two-way line keeps its de-vigged
+    # p_over and drops the ' (shaded)' tag (a TD favourite priced under even is
+    # a normal line, not promo shading). A SEASON rush+rec TD TOTAL (line >1.5)
+    # stays the recognized-but-unscored 'rush_rec_tds' combo.
+    for r in rows:
+        if _stat_key(r['market_raw']) not in _ANYTIME_TD_KEYS:
+            continue
+        ln = pd.to_numeric(r.get('line'), errors='coerce')
+        if pd.notna(ln) and float(ln) <= 1.5:
+            r['provider'] = 'Underdog'
+            r['market'] = 'anytime_td'
+            r['scorable'] = False
+        else:
+            r['market'] = 'rush_rec_tds'
+            r['scorable'] = False
+
     props = _finalize(rows)
     if props.empty:
         return props, (f"Underdog returned lines but none were {wanted}."
@@ -1269,6 +1436,187 @@ def _dk_player_team_period(event, market, pair):
     return '', '', 'game'
 
 
+# DraftKings' WEEKLY player O/U board is a different shape from the season
+# player-futures board parse_draftkings_payload was built for, confirmed
+# against the live Week-1 2026 feed (2026-09-07):
+#   * marketType.name ends " O/U" (with the slash), not " OU"
+#   * the line is a real numeric `points` field on the selection, not text
+#     inside its label ("Over 62.5") - the label is just "Over" / "Under"
+#   * the side is `outcomeType`
+#   * THE PLAYER IS ON THE SELECTION - selection.participants[0] with
+#     type=="Player" - not on the event, whose two participants are both the
+#     clubs. `venueRole` on that participant ("HomePlayer"/"AwayPlayer")
+#     picks which club is his.
+# Season markets are left entirely to the existing path.
+_DK_WEEKLY_OU_SUFFIX = ' O/U'
+# Scope / combo / leader tokens that disqualify a weekly market even though
+# its name still ends " O/U" - a 1Q split, a two-player combined line, a
+# "most yards" leader market, a longest-play line. Matched case-insensitively
+# against the stat portion of marketType.name.
+_DK_WEEKLY_REJECT_TOKENS = (
+    ' - 1q', ' - 1h', ' 1q ', ' 1h ', 'combined', 'either player',
+    'race to', 'most ', 'longest', 'milestone', 'h2h', ' + ', 'each half',
+    'each quarter', 'in each',
+)
+
+
+def _dk_weekly_rows(payload):
+    """DraftKings weekly per-player O/U markets -> normalized rows (period
+    'game'). Returns [] for a season board, which the caller then parses its
+    own way."""
+    markets = payload.get('markets') or []
+    selections = payload.get('selections') or []
+    events = payload.get('events') or []
+    by_event = {}
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        clubs = {}
+        for part in ev.get('participants') or []:
+            role = str(part.get('venueRole') or '').lower()  # 'home' / 'away'
+            meta = part.get('metadata') or {}
+            if role in ('home', 'away') and meta.get('rosettaTeamName'):
+                clubs[role] = standardize_team(meta.get('shortName') or part.get('name'))
+        by_event[str(ev.get('id'))] = clubs
+
+    sels_by_market = {}
+    for sel in selections:
+        if isinstance(sel, dict):
+            sels_by_market.setdefault(str(sel.get('marketId')), []).append(sel)
+
+    rows = []
+    for market in markets:
+        if not isinstance(market, dict):
+            continue
+        label = str(((market.get('marketType') or {}).get('name')) or '')
+        if not label.endswith(_DK_WEEKLY_OU_SUFFIX):
+            continue
+        stat = label[:-len(_DK_WEEKLY_OU_SUFFIX)].strip()
+        low = f' {stat.lower()} '
+        if any(tok in low for tok in _DK_WEEKLY_REJECT_TOKENS):
+            continue
+
+        pair = {}
+        player = ''
+        player_role = ''
+        for sel in sels_by_market.get(str(market.get('id')), []):
+            side = str(sel.get('outcomeType') or sel.get('label') or '').lower()
+            if side not in ('over', 'under'):
+                continue
+            for part in sel.get('participants') or []:
+                if str(part.get('type') or '').lower() == 'player' and part.get('name'):
+                    player = str(part.get('name')).strip()
+                    player_role = str(part.get('venueRole') or '').lower()
+            pair[side] = {'point': sel.get('points'), 'decimal': sel.get('trueOdds')}
+        if 'over' not in pair or 'under' not in pair or pair['over'].get('point') is None:
+            continue
+        if not player:
+            # market name is "<Player> <Stat> O/U" as a fallback
+            mname = str(market.get('name') or '')
+            if mname.endswith(label):
+                player = mname[:-len(label)].strip(' -–—')
+        if not player:
+            continue
+
+        clubs = by_event.get(str(market.get('eventId')), {})
+        team = clubs.get('home' if player_role == 'homeplayer' else
+                         'away' if player_role == 'awayplayer' else '', '')
+
+        market_name, scorable = normalize_stat(stat)
+        rows.append({
+            'provider': 'DraftKings',
+            'player': player, 'team': team, 'position': '',
+            'market': market_name or stat, 'market_raw': stat,
+            'scorable': bool(scorable),
+            'line': pair['over']['point'],
+            'over_payout': pair['over']['decimal'],
+            'under_payout': pair['under']['decimal'],
+            'p_over': devig_two_way_decimal(pair['over']['decimal'], pair['under']['decimal']),
+            'period': 'game',
+            'source_id': str(market.get('id') or ''),
+        })
+    return rows
+
+
+# DK names its one-way "scores a TD" board exactly "Anytime Touchdown
+# Scorer". Match only that - "First / Last / 2+ Touchdown Scorer" are
+# different markets with different probabilities and must not be pooled in.
+_DK_ANYTIME_TD_TOKENS = ('anytime touchdown', 'anytime td')
+
+
+def _dk_anytime_td_rows(payload):
+    """DraftKings' ONE-WAY "Anytime Touchdown Scorer" board -> 'anytime_td'
+    sentinel rows (period 'game'). One selection per player, a lone American
+    or decimal price, no 'under' - so p_over is left None for
+    resolve_anytime_td_markets to fill against the board's two-way TD prices.
+
+    NOT LIVE-VERIFIED - DK weekly boards aren't posted in the preseason this
+    was written in. Returns [] cleanly on any shape it doesn't recognise.
+    """
+    markets = payload.get('markets') or []
+    selections = payload.get('selections') or []
+    events = payload.get('events') or []
+    if not markets or not selections:
+        return []
+    by_event = {}
+    for ev in events:
+        if not isinstance(ev, dict):
+            continue
+        clubs = {}
+        for part in ev.get('participants') or []:
+            role = str(part.get('venueRole') or '').lower()
+            meta = part.get('metadata') or {}
+            if role in ('home', 'away') and meta.get('rosettaTeamName'):
+                clubs[role] = standardize_team(meta.get('shortName') or part.get('name'))
+        by_event[str(ev.get('id'))] = clubs
+
+    sels_by_market = {}
+    for sel in selections:
+        if isinstance(sel, dict):
+            sels_by_market.setdefault(str(sel.get('marketId')), []).append(sel)
+
+    rows = []
+    for market in markets:
+        if not isinstance(market, dict):
+            continue
+        label = str(((market.get('marketType') or {}).get('name'))
+                    or market.get('name') or '').lower()
+        if not any(tok in label for tok in _DK_ANYTIME_TD_TOKENS):
+            continue
+        if any(tok in f' {label} ' for tok in _DK_WEEKLY_REJECT_TOKENS):
+            continue  # a scoped "1st half TD scorer" etc.
+        clubs = by_event.get(str(market.get('eventId')), {})
+        for sel in sels_by_market.get(str(market.get('id')), []):
+            player, player_role = '', ''
+            for part in sel.get('participants') or []:
+                if str(part.get('type') or '').lower() == 'player' and part.get('name'):
+                    player = str(part.get('name')).strip()
+                    player_role = str(part.get('venueRole') or '').lower()
+            if not player:
+                continue
+            dec = sel.get('trueOdds') or sel.get('decimalOdds')
+            if dec is None:
+                dec = american_to_decimal(sel.get('oddsAmerican') or sel.get('americanOdds'))
+            dec = pd.to_numeric(dec, errors='coerce')
+            if not (pd.notna(dec) and float(dec) > 1.0):
+                continue
+            team = clubs.get('home' if player_role == 'homeplayer' else
+                             'away' if player_role == 'awayplayer' else '', '')
+            rows.append({
+                'provider': 'DraftKings',
+                'player': player, 'team': team, 'position': '',
+                'market': 'anytime_td', 'market_raw': 'Anytime TD Scorer',
+                'scorable': False,
+                'line': 0.5,
+                'over_payout': float(dec),      # decimal odds
+                'under_payout': None,
+                'p_over': None,                 # one-way -> filled downstream
+                'period': 'game',
+                'source_id': str(sel.get('id') or market.get('id') or ''),
+            })
+    return rows
+
+
 def parse_draftkings_payload(payload):
     """
     One DraftKings season-long subcategory -> normalized props.
@@ -1302,6 +1650,18 @@ def parse_draftkings_payload(payload):
     if not markets or not selections:
         return _empty_props(), ("DraftKings returned no markets - check the category and "
                                 "subcategory ids in the URL.")
+
+    # WEEKLY player O/U board first - a different market/selection shape (see
+    # _dk_weekly_rows). It returns [] for a season board, which then falls
+    # through to the season logic below unchanged. The one-way anytime-TD
+    # board only rides along once a real weekly O/U board has been confirmed,
+    # so a season payload's TD-scorer futures can't hijack this branch.
+    weekly_rows = _dk_weekly_rows(payload)
+    if weekly_rows:
+        weekly_rows = weekly_rows + _dk_anytime_td_rows(payload)
+        props = _finalize(weekly_rows)
+        return (props, None) if not props.empty else (
+            props, "DraftKings weekly board had O/U markets but none resolved to a player.")
 
     by_event = {str(e.get('id')): e for e in events if isinstance(e, dict)}
     sides = {}
@@ -1400,31 +1760,34 @@ def parse_draftkings_payloads(payloads):
     return combined, None
 
 
-# Subcategory names on DraftKings' weekly board that are per-player counting
-# stats. Matched case-insensitively against whatever the league feed reports,
-# so the ids never have to be hardcoded - which matters because the weekly
-# ids are not knowable in the preseason, when no weekly board is posted.
-DK_WEEKLY_STAT_NAMES = (
-    'pass yards', 'passing yards', 'pass tds', 'passing tds',
-    'pass completions', 'pass attempts', 'interceptions',
-    'rush yards', 'rushing yards', 'rush tds', 'rushing tds', 'rush attempts',
-    'rec yards', 'receiving yards', 'rec tds', 'receiving tds', 'receptions',
-)
+# The per-player counting stats DraftKings' weekly board carries as a
+# full-game OVER/UNDER. Matched (case-insensitively) against the stat core
+# of a subcategory name after its trailing " O/U" is stripped, so the ids
+# never have to be hardcoded - the weekly ids are not knowable in the
+# preseason. Confirmed against the live Week-1 2026 board (2026-09-07): the
+# real weekly O/U subcategories are "Pass Yards O/U", "Rec Yards O/U",
+# "Receptions O/U", ... - the PLAIN-named "Pass Yards" / "Receptions"
+# subcategories under the same categories are "Milestones" markets
+# ("160+", "180+"), not totals, so a bare-name match pulled the wrong board.
+DK_WEEKLY_STAT_CORES = frozenset({
+    'pass yards', 'passing yards', 'pass tds', 'passing tds', 'passing touchdowns',
+    'pass attempts', 'passing attempts', 'completions', 'pass completions',
+    'interceptions',
+    'rush yards', 'rushing yards', 'rush attempts', 'rushing attempts',
+    'rec yards', 'receiving yards', 'receptions',
+})
 
-# Categories whose contents are season-long or otherwise not a weekly player
-# total, matched by name so a renamed id does not break the exclusion.
-#
-# "Player Matchups" is the one that has to be here and looks like it doesn't.
-# It carries subcategories named exactly "Receiving Yards" and "Receiving
-# TDs", so a name filter picks it up - but those are head-to-head markets
-# ("does X out-gain Y"), not over/unders. Discovery matched them, fetched
-# them, found no OU markets, and reported two confusing per-stat errors on a
-# board that simply had no weekly props yet.
+# Categories whose contents are season-long, leader/H2H, or otherwise not a
+# weekly player total, matched by name so a renamed id does not break the
+# exclusion. "Player Matchups" / "H2H Player Props" / "Playoff Leaders" carry
+# subcategories named like real stats but are head-to-head or leader markets,
+# not over/unders.
 DK_NON_WEEKLY_CATEGORIES = (
     'player futures', 'stat leaders', 'milestones', 'season high totals',
     'rookie watch', 'awards', 'futures', 'fast futures', 'wins',
-    'division specials', 'season specials', 'playoffs', 'team specials',
-    'next player to record', 'player matchups',
+    'division specials', 'season specials', 'playoffs', 'playoff leaders',
+    'team specials', 'next player to record', 'player matchups',
+    'h2h player props',
 )
 
 
@@ -1456,10 +1819,21 @@ def dk_weekly_subcategories():
         if not isinstance(sub, dict):
             continue
         cat_name = categories.get(sub.get('categoryId'), '')
-        if cat_name.lower() in DK_NON_WEEKLY_CATEGORIES:
+        if cat_name.strip().lower() in DK_NON_WEEKLY_CATEGORIES:
             continue
         name = str(sub.get('name') or '')
-        if name.lower() in DK_WEEKLY_STAT_NAMES:
+        low = name.strip().lower()
+        if any(tok in f' {low} ' for tok in _DK_WEEKLY_REJECT_TOKENS):
+            continue
+        # The one-way "Anytime TD Scorer" board - no " O/U" suffix, parsed by
+        # _dk_anytime_td_rows.
+        if any(tok in low for tok in _DK_ANYTIME_TD_TOKENS):
+            found.append((cat_name, name, sub.get('categoryId'), sub.get('id')))
+            continue
+        if not low.endswith(' o/u'):
+            continue
+        core = low[:-len(' o/u')].strip()
+        if core in DK_WEEKLY_STAT_CORES:
             found.append((cat_name, name, sub.get('categoryId'), sub.get('id')))
     if not found:
         return [], ("DraftKings is not posting weekly player props right now - no "

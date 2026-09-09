@@ -950,7 +950,8 @@ MODEL_FEATURES = (
                              # rank-2 rookie WRs are a real boom/modest-role
                              # pool (2023 Puka Nacua was one). See
                              # docs/weekly_projections_methodology.md.
-    'v2_rookie_backup_wr_dampen_narrow',  # the same rank-2 no-prior-WR share
+    'v2_rookie_backup_wr_dampen_narrow',  # SHIPPED in DEFAULT_FEATURES
+                             # 2026-09-09 - the same rank-2 no-prior-WR share
                              # dock, but ONLY when the team already has >= 3
                              # ESTABLISHED WRs (real prior role) charted ahead -
                              # so it structurally cannot catch a WR1-injury
@@ -958,11 +959,14 @@ MODEL_FEATURES = (
                              # camp role. Share dock only. Reuses ROOKIE_BACKUP_
                              # WR_SHARE + _DAMPEN_STRENGTH. Fires on the 2026
                              # board (Sturdivant 1.9 -> 0.07 tgt) but caught
-                             # NOBODY in wk1 2022-2025 (the whole historical
-                             # cold-start window) - UNTESTABLE, not rejected.
-                             # See ROOKIE_BACKUP_WR_NARROW_*, scripts/sweep_
-                             # rookie_backup_wr_dampen_narrow.py and the dated
-                             # section in docs/weekly_projections_methodology.md.
+                             # NOBODY in wk1 2019-2025 (the whole historical
+                             # cold-start window) - UNTESTABLE, shipped on
+                             # eyeball judgement at the user's explicit request.
+                             # See the DEFAULT_FEATURES entry for the full
+                             # rationale, ROOKIE_BACKUP_WR_NARROW_*, scripts/
+                             # sweep_rookie_backup_wr_dampen_narrow.py and the
+                             # dated section in docs/weekly_projections_
+                             # methodology.md.
     'v2_vacancy_growth_cap',  # post-vacancy share <= pre-vacancy share x
                              # RECEIVER_COLD_START_VACANCY_GROWTH_CAP (1.35),
                              # MIN_ABS_GAIN floor - the cold-start analogue of
@@ -1204,6 +1208,30 @@ DEFAULT_FEATURES = frozenset({
     # is a first-pass value, not swept. WEEKLY_CALIBRATION re-fit deferred (ALL
     # move small) - see docs/weekly_projections_methodology.md.
     'v2_vacancy_bump_cap',
+    # Cold start: dock a charted rank-2, NO-PRIOR-ROLE WR to ROOKIE_BACKUP_WR_
+    # SHARE (~0.06 x _DAMPEN_STRENGTH) - but ONLY when the team already has
+    # >= ROOKIE_BACKUP_WR_NARROW_MIN_AHEAD (3) ESTABLISHED WRs charted ahead of
+    # him (count_established_receivers_ahead). Share dock only, no vacancy-weight
+    # change. The >=3-established-ahead rule structurally excludes the cases the
+    # broad v2_rookie_backup_wr_dampen got wrong - a WR1-injury inheritor (2023
+    # Puka Nacua, behind an injured Kupp so the rank-1 slots were not all proven)
+    # or a rookie who won a real camp role - which is why that flag lost the
+    # backtest at every strength and this one does not touch them.
+    #
+    # SHIPPED to DEFAULT_FEATURES 2026-09-09 at the user's explicit request, on
+    # eyeball judgement of the live board rather than a backtest. It is
+    # UNTESTABLE historically: the Ourlads preseason role-floor block at
+    # ~weekly_projections.py:7392 is gated `not historical_target`, so
+    # ourlads_role_rank is all-NaN in every backtest and the gate caught NOBODY
+    # in wk1 2019-2025 (the whole cold-start window the archive covers). On the
+    # 2026 Week-1 board it fires on 8 rank-2 no-prior WRs, all deep reserves,
+    # none startable (J.Michael Sturdivant GB 1.9 -> 0.07 tgt the archetype).
+    # Low stakes both directions - it removes ~8 phantom 3-4-target rotation
+    # projections; the residual risk is a post-snapshot injury to a WR charted
+    # ahead turning one docked reserve into a real role. One-line reversible.
+    # See ROOKIE_BACKUP_WR_NARROW_*, scripts/sweep_rookie_backup_wr_dampen_
+    # narrow.py, and the dated section in docs/weekly_projections_methodology.md.
+    'v2_rookie_backup_wr_dampen_narrow',
 })
 
 

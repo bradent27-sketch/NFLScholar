@@ -1054,7 +1054,7 @@ charted rank-2 rookie WR who ends up with a real 3-5 target role is common,
 not rare - so docking the whole population trades "too low on the zeros" for
 "too low on the many who play". Kept as a switchable flag, OFF.
 
-## 2026-09-08 — `v2_rookie_backup_wr_dampen_narrow` (the same dock, gated on a proven trio) — BUILT, UNTESTABLE ON AVAILABLE DATA
+## 2026-09-08 — `v2_rookie_backup_wr_dampen_narrow` (the same dock, gated on a proven trio) — SHIPPED 2026-09-09 (untestable; eyeball judgement)
 
 The narrower gate the section above flagged as "the shape that might survive":
 fire the same 0.16 -> `ROOKIE_BACKUP_WR_SHARE` (0.06) share dock **only** when
@@ -1075,14 +1075,24 @@ every scope, every strength:  dMAE = +0.000   (narrow gate caught NOBODY)
 ```
 
 Not rejected - **untestable**. The `v2_historical_ourlads` archive is exactly
-2022-2025 and weeks 2+ are not cold starts, so this is the entire available
-cold-start backtest, and zero historical Week-1 cases match "rank-2 no-prior WR
-behind a fully-established trio". Every rank-2 rookie the broad flag docked in
-that window was behind an *incomplete* room - precisely the case this gate is
-built to skip. So it demonstrably works on the 2026 board and provably never
-fired on four years of historical openers; shipping it is low-risk but
-formally unvalidated. Kept as a switchable flag, OFF, pending a decision to
-override the backtest-gated convention for the 2026 opener.
+2019-2025 (extended back from 2022 in `115651f`) and weeks 2+ are not cold
+starts, so this is the entire available cold-start backtest, and zero historical
+Week-1 cases match "rank-2 no-prior WR behind a fully-established trio". Every
+rank-2 rookie the broad flag docked in that window was behind an *incomplete*
+room - precisely the case this gate is built to skip. So it demonstrably works
+on the 2026 board and provably never fired on seven years of historical openers;
+shipping it is low-risk but formally unvalidated.
+
+**Shipped to `DEFAULT_FEATURES` 2026-09-09** at the user's explicit request,
+overriding the backtest-gated convention for this one flag because no backtest
+can ever bind on it (0 historical hits, root-caused to the `not
+historical_target` gate on the Ourlads preseason role-floor block at
+`weekly_projections.py:7392` - `ourlads_role_rank` is all-NaN in every
+backtest). Validated by eye on the live 2026 Week-1 board: 8 rank-2 no-prior
+WRs, all deep reserves, none startable. One-line reversible. The residual risk
+is a post-snapshot injury to a WR charted ahead of one docked reserve turning
+him into a real role mid-week; magnitude is small (~0.06 share on players
+otherwise projected 3-4 targets).
 
 ## 2026-09-08 — `v2_td_career_regress` (regress a TD-light season to the player's OWN career rate) — BUILT, BACKTESTED (gated + ungated), REJECTED
 

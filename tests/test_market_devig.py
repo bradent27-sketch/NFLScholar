@@ -75,6 +75,22 @@ def test_even_yardage_line_is_unchanged():
     assert 74.5 + 8 < hi < 74.5 + 11        # 0.253 * 36 ~ 9.1
 
 
+def test_tiny_yardage_line_with_heavy_under_never_goes_negative():
+    # Matthew Stafford, 0.5 rushing yards, Over deep plus-money -> de-vigged
+    # P(over) well under 0.5. The raw Normal(0.5, 18) vig-lean term is about
+    # -6; the result must not be negative - a yardage mean is physical.
+    mu = implied_mean_from_line(0.5, 0.33, 'rushing_yards', 'QB')
+    assert mu >= 0.0
+    assert mu == 0.5                                  # falls back to the posted line
+    # A normal-sized line with the same lean still gets the ordinary shift.
+    big = implied_mean_from_line(245.5, 0.33, 'passing_yards', 'QB')
+    assert big < 245.5                                # under-lean pulls it down
+    assert big > 200.0                                # ...but nowhere near zero
+    # A small line whose lean leaves it barely positive is left alone.
+    small_ok = implied_mean_from_line(8.5, 0.45, 'receiving_yards', 'RB')
+    assert 0.0 < small_ok < 8.5
+
+
 def test_no_p_over_falls_back_to_multiplier():
     # Counts: the old MEDIAN_TO_MEAN multiplier, exactly.
     assert implied_mean_from_line(1.5, None, 'passing_tds') == 1.5 * 1.02

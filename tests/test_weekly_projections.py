@@ -961,6 +961,120 @@ def test_cold_start_receiver_vacancy_caps_at_the_safety_ceiling():
     assert out[0] == wp.RECEIVER_COLD_START_VACANCY_MAX_SHARE
 
 
+def test_vacancy_bump_cap_limits_a_prior_role_recipient_but_spares_a_no_prior_inheritor():
+    # Two LAC-shaped recipients on one team: a returning moderate-role TE-2
+    # (has a prior) and a no-prior rookie who is inheriting the whole job.
+    share = np.array([0.60, 0.15])
+    teams = np.array(['LAC', 'LAC'])
+    has_prior = np.array([True, False])
+    out, _ = wp.apply_cold_start_receiver_vacancy(
+        share, teams, {'LAC': 1.2}, max_bump=0.15, has_prior=has_prior)
+    assert out[0] == pytest.approx(0.60 + 0.15)          # prior-role recipient: bump capped
+    assert out[1] > 0.15 + 0.15                          # rookie inheritor: uncapped
+    # ...and with no has_prior mask the cap applies to everyone
+    out2, _ = wp.apply_cold_start_receiver_vacancy(
+        share, teams, {'LAC': 1.2}, max_bump=0.15)
+    assert out2[1] == pytest.approx(0.15 + 0.15)
+
+
+def test_vacancy_growth_cap_is_the_cold_start_analogue_of_vacancy_max_growth():
+    share = np.array([0.60])
+    out, _ = wp.apply_cold_start_receiver_vacancy(
+        share, np.array(['X']), {'X': 1.2}, growth_cap=1.35, has_prior=np.array([True]))
+    assert out[0] == pytest.approx(0.60 * 1.35)
+    # a genuine small role still gets the absolute-gain floor, not 0.05 * 1.35
+    small, _ = wp.apply_cold_start_receiver_vacancy(
+        np.array([0.05]), np.array(['X']), {'X': 1.2}, growth_cap=1.35, has_prior=np.array([True]))
+    assert small[0] == pytest.approx(0.05 + wp.RECEIVER_COLD_START_VACANCY_MIN_ABS_GAIN)
+
+
+def test_vacancy_chart_split_sends_more_of_the_pool_to_the_charted_starter():
+    share = np.array([0.55, 0.55])       # identical current share
+    teams = np.array(['X', 'X'])
+    chart_rank = np.array([1.0, 2.0])    # first is the charted starter
+    out, _ = wp.apply_cold_start_receiver_vacancy(
+        share, teams, {'X': 0.8}, chart_rank=chart_rank, chart_split=True)
+    assert out[0] > out[1]               # rank-1 absorbed more of the vacated role
+    # pool total is unchanged by the split
+    flat, _ = wp.apply_cold_start_receiver_vacancy(share, teams, {'X': 0.8})
+    assert (out.sum()) == pytest.approx(flat.sum())
+    # ...and chart_rank passed WITHOUT chart_split does not reweight
+    noop, _ = wp.apply_cold_start_receiver_vacancy(
+        share, teams, {'X': 0.8}, chart_rank=chart_rank)
+    assert noop[0] == pytest.approx(noop[1])
+
+
+def test_vacancy_zero_no_role_backup_blocks_a_rookie_backup_but_not_a_rookie_starter():
+    share = np.array([0.50, 0.16, 0.16])
+    teams = np.array(['GB', 'GB', 'GB'])
+    has_prior = np.array([True, False, False])
+    chart_rank = np.array([1.0, 1.0, 2.0])   # idx1 = charted rookie starter, idx2 = rookie backup
+    out, applied = wp.apply_cold_start_receiver_vacancy(
+        share, teams, {'GB': 1.5}, chart_rank=chart_rank, has_prior=has_prior,
+        zero_no_role_backup=True)
+    assert out[2] == pytest.approx(0.16)     # rookie slot-2 backup: no vacancy
+    assert not applied[2]
+    assert out[1] > 0.16                     # rookie slot-1 starter: still inherits
+    assert out[0] > 0.50
+
+
+def test_cold_start_room_budget_clamps_the_room_sum_and_spares_the_top_tier():
+    # LAC-shaped TE room after the vacancy step over-inflated it: a returning
+    # TE-2 (chart rank 2) pinned near the vacancy cap, a charted TE-3 still
+    # carrying a stale rotation share, room summing past 2.0.
+    share = np.array([0.92, 0.82, 0.34, 0.15])
+    teams = np.array(['LAC', 'LAC', 'LAC', 'LAC'])
+    within_rank = np.array([1.0, 2.0, 3.0, 4.0])   # model's own share order
+    chart_rank = np.array([2.0, 1.0, 3.0, np.nan])  # Ourlads slot rank
+    out, applied = wp.apply_cold_start_room_snap_budget(
+        share, teams, within_rank, chart_rank, {'LAC': 0.89}, 'TE', league_fallback=1.3)
+    budget = max(0.89, wp.COLD_START_ROOM_BUDGET_MIN['TE']) * (1 + wp.COLD_START_ROOM_BUDGET_TOLERANCE)
+    assert out.sum() <= budget + 1e-6
+    assert out.sum() < share.sum()                       # reduce-only bit
+    assert (out <= share + 1e-9).all()
+    # the charted TE-3 and the unranked body eat the cut first, down to the floor
+    assert out[2] == pytest.approx(wp.COLD_START_ROOM_BUDGET_DEEP_FLOOR)
+    assert out[3] == pytest.approx(wp.COLD_START_ROOM_BUDGET_DEEP_FLOOR)
+    # TE-1 stays ahead of TE-2 and neither is dropped to a backup share
+    assert out[0] > out[1] > 0.35
+
+
+def test_cold_start_room_budget_is_a_noop_when_the_room_fits_its_prior_year_usage():
+    share = np.array([0.62, 0.40, 0.10])
+    teams = np.array(['KC', 'KC', 'KC'])
+    out, applied = wp.apply_cold_start_room_snap_budget(
+        share, teams, np.array([1.0, 2.0, 3.0]), np.array([1.0, 2.0, 3.0]),
+        {'KC': 1.30}, 'TE', league_fallback=1.3)
+    assert not applied.any()
+    assert np.allclose(out, share)
+
+
+def test_cold_start_room_budget_protects_a_charted_starter_the_model_ranks_low():
+    # A real WR1 the model happens to rank 4th within the team (thin prior
+    # sample) must not be the one water-filled away; the unranked deep body is.
+    share = np.array([0.70, 0.66, 0.60, 0.58, 0.30])
+    teams = np.array(['X', 'X', 'X', 'X', 'X'])
+    within_rank = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+    chart_rank = np.array([1.0, 1.0, 1.0, 1.0, np.nan])   # four charted slot-1 WRs
+    out, _ = wp.apply_cold_start_room_snap_budget(
+        share, teams, within_rank, chart_rank, {'X': 2.1}, 'WR', league_fallback=2.2)
+    assert out[4] == pytest.approx(wp.COLD_START_ROOM_BUDGET_DEEP_FLOOR)   # deep body cut first
+    assert out[3] > 0.4                                                    # charted starter spared
+
+
+def test_prior_room_snap_budget_sums_whole_season_participation_by_team():
+    frame = pd.DataFrame({
+        'player_display_name': ['A', 'A', 'B', 'B', 'C', 'C'],
+        'position': ['TE'] * 6,
+        'recent_team': ['NE'] * 6,
+        'week': [1, 2, 1, 2, 1, 2],
+        'weekly_snap_pct': [90.0, 90.0, 40.0, 40.0, 20.0, 0.0],
+    })
+    budget = wp.prior_room_snap_budget(frame, 'player_display_name', 'recent_team', 'TE')
+    # A ~0.90 + B ~0.40 + C ~0.10 over a two-week season
+    assert budget['NE'] == pytest.approx(0.90 + 0.40 + 0.10, abs=0.02)
+
+
 def test_returning_role_recovery_has_no_more_evidence_lower_projection_cliff():
     # A rank-1 charted returning starter one game either side of the
     # minimum-games threshold must not see his projection DROP as he crosses
@@ -1462,6 +1576,76 @@ def test_td_prior_credibility_regresses_a_thin_one_season_rate_but_spares_a_vete
     nan_out, nan_cred, _ = wp.credibility_shrunk_td_prior(
         np.array([np.nan]), np.array([0.0]), np.array([0.0]), pos_rate, 'rushing_attempts')
     assert np.isnan(nan_out[0]) and np.isnan(nan_cred[0])
+
+
+def test_career_regressed_td_prior_pull_scales_with_career_and_is_two_sided():
+    # last, career, role_seasons, career_opp
+    last = np.array([0.10, 0.10, 0.10, 0.50, 0.10])
+    career = np.array([0.30, 0.30, 0.30, 0.30, 0.30])
+    seasons = np.array([1.0, 2.0, 4.0, 4.0, 4.0])
+    opp = np.array([600.0, 600.0, 600.0, 600.0, 40.0])
+    out, pull = wp.career_regressed_td_prior(last, career, seasons, opp, strength=1.0)
+
+    # One role season -> below TD_CAREER_REGRESS_MIN_ROLE_SEASONS -> untouched.
+    assert pull[0] == 0.0 and out[0] == last[0]
+    # Two seasons -> a real but partial pull; four seasons -> a stronger pull.
+    assert 0.0 < pull[1] < pull[2]
+    assert last[1] < out[1] < out[2] < career[2]
+    # Two-sided: a flukey-HIGH last season is pulled DOWN toward the career line.
+    assert career[3] < out[3] < last[3]
+    assert abs(pull[3] - pull[2]) < 1e-9  # same career profile -> same pull, either direction
+    # Thin career opportunity volume shrinks the pull even with the seasons.
+    assert pull[4] < pull[2]
+
+    # The strength dial linearly scales the pull off the player's own rate.
+    half, half_pull = wp.career_regressed_td_prior(last, career, seasons, opp, strength=0.5)
+    assert abs(half_pull[2] - 0.5 * pull[2]) < 1e-9
+    # NaN career rate passes straight through.
+    nan_out, nan_pull = wp.career_regressed_td_prior(
+        np.array([0.2]), np.array([np.nan]), np.array([4.0]), np.array([600.0]), strength=1.0)
+    assert nan_pull[0] == 0.0 and nan_out[0] == 0.2
+
+
+def test_career_regressed_td_prior_comparability_gate_spares_a_role_that_changed_size():
+    last = np.array([0.10, 0.10, 0.10])
+    career = np.array([0.30, 0.30, 0.30])
+    seasons = np.array([4.0, 4.0, 4.0])
+    opp = np.array([600.0, 600.0, 600.0])
+    # recent vs career opportunity/game: same size, doubled (ascended), halved (faded)
+    recent_pg = np.array([6.0, 12.0, 2.5])
+    career_pg = np.array([6.0, 6.0, 6.0])
+    out, pull = wp.career_regressed_td_prior(
+        last, career, seasons, opp, recent_opp_pg=recent_pg, career_opp_pg=career_pg, strength=1.0)
+    # Same-size role: regression fires.
+    assert pull[0] > 0.0 and out[0] > last[0]
+    # Role doubled (ascending WR) or halved (faded/hurt): left untouched.
+    assert pull[1] == 0.0 and out[1] == last[1]
+    assert pull[2] == 0.0 and out[2] == last[2]
+    # Without the gate args the same ascending row WOULD have been regressed.
+    out_nogate, pull_nogate = wp.career_regressed_td_prior(last, career, seasons, opp, strength=1.0)
+    assert pull_nogate[1] > 0.0
+
+
+def test_count_established_receivers_ahead_only_counts_proven_same_team_higher_rank():
+    team = np.array(['GB', 'GB', 'GB', 'GB', 'CHI', 'CHI'], dtype=object)
+    rank = np.array([1.0, 1.0, 1.0, 2.0, 1.0, 2.0])
+    prior_share = np.array([0.70, 0.55, 0.40, np.nan, 0.10, np.nan])  # last GB + last CHI are rookies
+
+    n = wp.count_established_receivers_ahead(
+        team, rank, None, min_prior_share=0.10, player_prior_share=prior_share)
+    # GB rookie (row 3) has three proven WRs charted ahead.
+    assert n[3] == 3.0
+    # CHI rookie (row 5) has only one proven WR ahead -> narrow gate would NOT fire.
+    assert n[5] == 1.0
+    # The proven starters themselves have nobody of a better rank.
+    assert list(n[:3]) == [0.0, 0.0, 0.0]
+
+    # A team that lost a starter (a rank-1 slot now a no-prior rookie) drops
+    # below the threshold - the 2023-Puka-Nacua exclusion.
+    prior_share_injured = np.array([0.70, 0.55, np.nan, np.nan, 0.10, np.nan])
+    n2 = wp.count_established_receivers_ahead(
+        team, rank, None, min_prior_share=0.10, player_prior_share=prior_share_injured)
+    assert n2[3] == 2.0
 
 
 def test_prior2_blend_weight_full_when_2024_raises_the_value():

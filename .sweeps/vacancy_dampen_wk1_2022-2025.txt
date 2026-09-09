@@ -1,0 +1,413 @@
+2026-09-08 04:35:12.979 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.980 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.980 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.980 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.983 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.984 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.984 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.984 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.985 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.985 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.986 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.986 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.986 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.986 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.986 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.987 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.987 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.987 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.988 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.988 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.988 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.989 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.989 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.989 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.990 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.990 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.991 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.991 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.992 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:12.994 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.010 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.011 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.011 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.012 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.012 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.013 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.014 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.014 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.014 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.018 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.045 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.045 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 04:35:13.045 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:13.574 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:14.113 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:14.113 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 04:35:14.447 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:18.126 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:18.211 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 04:35:18.244 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2022 w1: pool 311  snap-shifted WR/TE 75
+2026-09-08 04:37:57.078 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 04:37:58.540 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2023 w1: pool 320  snap-shifted WR/TE 81
+2026-09-08 04:40:27.139 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 04:40:28.535 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2024 w1: pool 321  snap-shifted WR/TE 74
+2026-09-08 04:42:59.254 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 04:43:00.657 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w1: pool 289  snap-shifted WR/TE 75
+
+================================================================================================
+GUARDED-vs-NONE   years=[2022, 2023, 2024, 2025] weeks=[1]
+================================================================================================
+dMAE = second - first.  NEGATIVE = the second arm is MORE accurate.
+
+scope              n      MAE a      MAE b      dMAE                95% CI    wk W-L   sign p
+ALL             1208      4.869      4.866    -0.003  [-0.025,+0.024]         3-1    0.625
+WR               514      5.423      5.349    -0.074  [-0.124,-0.036] *       4-0    0.125
+TE               245      3.555      3.695    +0.140  [+0.080,+0.201] *       0-4    0.125
+START-WR         210      7.170      6.896    -0.275  [-0.415,-0.141] *       4-0    0.125
+START-TE          76      4.618      4.563    -0.055  [-0.677,+0.542]         2-2    1.000
+START-QB          95      5.878      5.840    -0.038  [-0.113,+0.000]         1-0    1.000
+START-RB         158      5.764      5.764    +0.000  [-0.000,+0.000]         1-0    1.000
+
+================================================================================================
+RAW-vs-NONE   years=[2022, 2023, 2024, 2025] weeks=[1]
+================================================================================================
+dMAE = second - first.  NEGATIVE = the second arm is MORE accurate.
+
+scope              n      MAE a      MAE b      dMAE                95% CI    wk W-L   sign p
+ALL             1208      4.869      4.853    -0.016  [-0.050,+0.023]         3-1    0.625
+WR               514      5.423      5.370    -0.052  [-0.138,+0.012]         3-1    0.625
+TE               245      3.555      3.586    +0.031  [-0.045,+0.108]         2-2    1.000
+START-WR         210      7.170      6.831    -0.339  [-0.581,-0.214] *       4-0    0.125
+START-TE          76      4.618      4.253    -0.366  [-1.010,+0.269]         3-1    0.625
+START-QB          95      5.878      5.953    +0.075  [-0.000,+0.223]         1-1    1.000
+START-RB         158      5.764      5.768    +0.003  [+0.000,+0.010]         0-2    0.500
+
+================================================================================================
+GUARDED-vs-RAW   years=[2022, 2023, 2024, 2025] weeks=[1]
+================================================================================================
+dMAE = second - first.  NEGATIVE = the second arm is MORE accurate.
+
+scope              n      MAE a      MAE b      dMAE                95% CI    wk W-L   sign p
+ALL             1208      4.853      4.866    +0.013  [+0.002,+0.024] *       1-3    0.625
+WR               514      5.370      5.349    -0.022  [-0.062,+0.017]         2-2    1.000
+TE               245      3.586      3.695    +0.109  [+0.082,+0.150] *       0-4    0.125
+START-WR         209      6.831      6.896    +0.065  [-0.075,+0.178]         1-3    0.625
+START-TE          77      4.253      4.563    +0.311  [+0.136,+0.563] *       0-4    0.125
+START-QB          95      5.953      5.840    -0.113  [-0.336,+0.000]         1-1    1.000
+START-RB         158      5.768      5.764    -0.003  [-0.010,-0.000] *       3-0    0.250
+
+================================================================================================
+WR/TE whose snap share moved RAW -> GUARDED (305)
+================================================================================================
+  2022 w1  ARI  WR  Rondale Moore            snap 0.74->0.53  proj   9.40->  8.02  actual=None  err None->None
+  2022 w1  ARI  WR  A.J. Green               snap 0.26->0.18  proj   3.97->  3.36  actual=3.3  err 0.67->0.06
+  2022 w1  ATL  WR  KhaDarel Hodge           snap 0.31->0.21  proj   3.97->  3.36  actual=6.8  err 2.83->3.44
+  2022 w1  ATL  WR  Drake London             snap 0.28->0.20  proj   3.10->  2.67  actual=12.4  err 9.3->9.73
+  2022 w1  ATL  TE  Anthony Firkser          snap 0.52->0.47  proj   3.85->  3.85  actual=1.6  err 2.25->2.25
+  2022 w1  BAL  WR  Sammy Watkins            snap 0.71->0.65  proj   8.45->  8.20  actual=4.8  err 3.65->3.4
+  2022 w1  BAL  WR  Devin Duvernay           snap 0.64->0.59  proj   5.95->  5.78  actual=21.4  err 15.45->15.62
+  2022 w1  BUF  WR  Isaiah McKenzie          snap 0.51->0.43  proj   7.51->  7.51  actual=9.9  err 2.39->2.39
+  2022 w1  CAR  WR  Terrace Marshall Jr.     snap 0.74->0.56  proj   6.56->  5.52  actual=None  err None->None
+  2022 w1  CHI  WR  Byron Pringle            snap 0.77->0.55  proj   7.59->  6.47  actual=3.2  err 4.39->3.27
+  2022 w1  CHI  WR  Equanimeous St. Brown    snap 0.35->0.25  proj   2.67->  2.33  actual=8.8  err 6.13->6.47
+  2022 w1  CHI  WR  Chase Claypool           snap 0.92->0.86  proj   8.45->  8.54  actual=9.4  err 0.95->0.86
+  2022 w1  CLE  WR  Jaelon Darden            snap 0.10->0.06  proj   3.36->  2.50  actual=0.2  err 3.16->2.3
+  2022 w1  DAL  WR  Noah Brown               snap 0.25->0.21  proj   4.23->  3.88  actual=11.8  err 7.57->7.92
+  2022 w1  DAL  WR  KaVontae Turpin          snap 0.23->0.20  proj   4.40->  4.05  actual=0.0  err 4.4->4.05
+  2022 w1  DEN  WR  Jerry Jeudy              snap 0.92->0.77  proj  11.99-> 11.22  actual=20.2  err 8.21->8.98
+  2022 w1  DEN  WR  KJ Hamler                snap 0.42->0.31  proj   5.09->  4.49  actual=0.0  err 5.09->4.49
+  2022 w1  DEN  WR  Montrell Washington      snap 0.26->0.19  proj   4.40->  3.88  actual=0.0  err 4.4->3.88
+  2022 w1  DET  WR  DJ Chark                 snap 0.60->0.47  proj   9.23->  8.28  actual=15.2  err 5.97->6.92
+  2022 w1  DET  WR  Josh Reynolds            snap 0.92->0.79  proj  11.39-> 11.04  actual=3.8  err 7.59->7.24
+  2022 w1  DET  WR  Kalif Raymond            snap 0.52->0.41  proj   6.73->  6.12  actual=0.0  err 6.73->6.12
+  2022 w1  GB   WR  Randall Cobb             snap 0.92->0.67  proj  14.84-> 14.24  actual=3.4  err 11.44->10.84
+  2022 w1  GB   WR  Romeo Doubs              snap 0.30->0.20  proj   6.47->  5.26  actual=8.8  err 2.33->3.54
+  2022 w1  GB   WR  Christian Watson         snap 0.30->0.20  proj   6.47->  5.26  actual=6.1  err 0.37->0.84
+  2022 w1  HOU  TE  Brevin Jordan            snap 0.92->0.69  proj   8.76->  9.66  actual=1.5  err 7.26->8.16
+  2022 w1  HOU  WR  Nico Collins             snap 0.92->0.75  proj   8.45->  8.11  actual=4.6  err 3.85->3.51
+  2022 w1  HOU  TE  O.J. Howard              snap 0.41->0.28  proj   4.26->  3.52  actual=17.8  err 13.54->14.28
+  2022 w1  HOU  WR  Chris Moore              snap 0.28->0.20  proj   4.74->  4.05  actual=6.1  err 1.36->2.05
+  2022 w1  HOU  WR  Phillip Dorsett          snap 0.14->0.10  proj   2.93->  2.67  actual=0.0  err 2.93->2.67
+  2022 w1  IND  WR  Parris Campbell          snap 0.46->0.35  proj   8.45->  7.25  actual=6.7  err 1.75->0.55
+  2022 w1  IND  WR  Ashton Dulin             snap 0.33->0.25  proj   5.09->  4.49  actual=7.6  err 2.51->3.11
+  2022 w1  IND  WR  Alec Pierce              snap 0.27->0.20  proj   5.35->  4.74  actual=0.0  err 5.35->4.74
+  2022 w1  JAX  WR  Zay Jones                snap 0.92->0.64  proj   9.75->  8.11  actual=12.5  err 2.75->4.39
+  2022 w1  JAX  WR  Jamal Agnew              snap 0.38->0.25  proj   5.61->  4.49  actual=2.2  err 3.41->2.29
+  2022 w1  KC   WR  Mecole Hardman           snap 0.87->0.66  proj  10.70-> 10.70  actual=10.6  err 0.1->0.1
+  2022 w1  KC   WR  JuJu Smith-Schuster      snap 0.77->0.58  proj   7.42->  6.73  actual=11.9  err 4.48->5.17
+  2022 w1  KC   WR  Marquez Valdes-Scantling snap 0.76->0.58  proj   9.40->  8.54  actual=8.1  err 1.3->0.44
+  2022 w1  KC   WR  Kadarius Toney           snap 0.36->0.28  proj   6.73->  6.12  actual=2.3  err 4.43->3.82
+  2022 w1  LA   WR  Allen Robinson           snap 0.91->0.76  proj   8.45->  7.68  actual=2.2  err 6.25->5.48
+  2022 w1  LA   WR  Ben Skowronek            snap 0.25->0.21  proj   3.45->  3.19  actual=6.5  err 3.05->3.31
+  2022 w1  LAC  WR  Josh Palmer              snap 0.75->0.67  proj   9.40->  9.49  actual=3.9  err 5.5->5.59
+  2022 w1  LAC  WR  DeAndre Carter           snap 0.28->0.25  proj   3.71->  3.54  actual=15.4  err 11.69->11.86
+  2022 w1  LV   WR  Mack Hollins             snap 0.51->0.34  proj   4.92->  4.05  actual=2.6  err 2.32->1.45
+  2022 w1  LV   WR  Hunter Renfrow           snap 0.92->0.88  proj  15.19-> 15.01  actual=5.1  err 10.09->9.91
+  2022 w1  MIA  WR  Cedrick Wilson Jr.       snap 0.81->0.54  proj   8.89->  6.64  actual=4.8  err 4.09->1.84
+  2022 w1  MIA  WR  Trent Sherfield          snap 0.19->0.13  proj   2.16->  1.98  actual=1.8  err 0.36->0.18
+  2022 w1  MIN  TE  Irv Smith                snap 0.30->0.23  proj   3.20->  2.62  actual=0.0  err 3.2->2.62
+  2022 w1  MIN  TE  Johnny Mundt             snap 0.15->0.11  proj   1.64->  1.48  actual=4.7  err 3.06->3.22
+  2022 w1  NO   WR  Chris Olave              snap 0.66->0.27  proj   7.51->  4.31  actual=9.1  err 1.59->4.79
+  2022 w1  NO   TE  Adam Trautman            snap 0.86->0.82  proj   4.91->  5.49  actual=None  err None->None
+  2022 w1  NYG  WR  Sterling Shepard         snap 0.76->0.52  proj  15.01-> 13.12  actual=15.1  err 0.09->1.98
+  2022 w1  NYG  TE  Lawrence Cager           snap 0.92->0.69  proj   8.84->  8.43  actual=0.0  err 8.84->8.43
+  2022 w1  NYG  WR  Richie James             snap 0.32->0.22  proj   6.04->  5.35  actual=11.1  err 5.06->5.75
+  2022 w1  NYJ  WR  Braxton Berrios          snap 0.53->0.33  proj   6.21->  4.83  actual=8.7  err 2.49->3.87
+  2022 w1  NYJ  WR  Elijah Moore             snap 0.92->0.76  proj  10.61-> 10.09  actual=9.9  err 0.71->0.19
+  2022 w1  NYJ  WR  Garrett Wilson           snap 0.32->0.20  proj   3.62->  2.93  actual=9.2  err 5.58->6.27
+  2022 w1  PHI  WR  Quez Watkins             snap 0.84->0.79  proj   7.25->  7.07  actual=0.0  err 7.25->7.07
+  2022 w1  PHI  WR  A.J. Brown               snap 0.72->0.67  proj  11.13-> 10.78  actual=25.5  err 14.37->14.72
+  2022 w1  PHI  WR  Zach Pascal              snap 0.50->0.46  proj   4.31->  4.23  actual=1.7  err 2.61->2.53
+  2022 w1  PIT  WR  George Pickens           snap 0.37->0.21  proj   6.90->  4.92  actual=1.3  err 5.6->3.62
+  2022 w1  PIT  WR  Miles Boykin             snap 0.32->0.19  proj   5.00->  3.71  actual=0.0  err 5.0->3.71
+  2022 w1  PIT  WR  Gunner Olszewski         snap 0.16->0.09  proj   3.88->  3.79  actual=0.0  err 3.88->3.79
+  2022 w1  SEA  TE  Colby Parkinson          snap 0.21->0.17  proj   2.05->  1.80  actual=12.3  err 10.25->10.5
+  2022 w1  TB   WR  Russell Gage             snap 0.90->0.72  proj  14.06-> 12.34  actual=3.3  err 10.76->9.04
+  2022 w1  TB   TE  Cameron Brate            snap 0.92->0.79  proj   6.63->  7.04  actual=1.7  err 4.93->5.34
+  2022 w1  TB   TE  Cade Otton               snap 0.36->0.28  proj   3.77->  3.28  actual=0.0  err 3.77->3.28
+  2022 w1  TB   WR  Julio Jones              snap 0.27->0.21  proj   4.40->  3.97  actual=11.6  err 7.2->7.63
+  2022 w1  TEN  WR  Chris Conley             snap 0.92->0.62  proj   7.25->  6.21  actual=0.0  err 7.25->6.21
+  2022 w1  TEN  WR  Robert Woods             snap 0.92->0.74  proj  12.17-> 12.08  actual=2.3  err 9.87->9.78
+  2022 w1  TEN  WR  Treylon Burks            snap 0.33->0.19  proj   4.74->  3.71  actual=8.5  err 3.76->4.79
+  2022 w1  TEN  WR  Nick Westbrook-Ikhine    snap 0.92->0.82  proj   8.80->  9.75  actual=2.3  err 6.5->7.45
+  2022 w1  TEN  TE  Austin Hooper            snap 0.84->0.78  proj   6.22->  6.96  actual=1.6  err 4.62->5.36
+  2022 w1  WAS  WR  Curtis Samuel            snap 0.46->0.38  proj   6.30->  5.69  actual=19.2  err 12.9->13.51
+  2022 w1  WAS  WR  Cam Sims                 snap 0.36->0.30  proj   4.14->  3.71  actual=0.0  err 4.14->3.71
+  2022 w1  WAS  WR  Jahan Dotson             snap 0.23->0.20  proj   3.88->  3.62  actual=18.0  err 14.12->14.38
+  2023 w1  ARI  TE  Zach Ertz                snap 0.91->0.76  proj   8.68->  8.19  actual=8.1  err 0.58->0.09
+  2023 w1  ARI  TE  Trey McBride             snap 0.87->0.72  proj   5.24->  5.00  actual=4.3  err 0.94->0.7
+  2023 w1  ARI  WR  Rondale Moore            snap 0.92->0.80  proj  10.78-> 10.53  actual=7.5  err 3.28->3.03
+  2023 w1  ARI  WR  Zach Pascal              snap 0.55->0.46  proj   4.40->  4.23  actual=0.0  err 4.4->4.23
+  2023 w1  ARI  WR  Greg Dortch              snap 0.35->0.30  proj   5.87->  5.52  actual=0.0  err 5.87->5.52
+  2023 w1  ATL  WR  Van Jefferson            snap 0.82->0.66  proj   7.07->  6.21  actual=6.4  err 0.67->0.19
+  2023 w1  ATL  TE  Jonnu Smith              snap 0.66->0.59  proj   4.18->  4.01  actual=0.0  err 4.18->4.01
+  2023 w1  ATL  WR  KhaDarel Hodge           snap 0.27->0.21  proj   4.66->  4.14  actual=None  err None->None
+  2023 w1  BAL  WR  Rashod Bateman           snap 0.66->0.56  proj   9.40->  8.80  actual=6.5  err 2.9->2.3
+  2023 w1  BAL  WR  Devin Duvernay           snap 0.59->0.50  proj   5.18->  4.83  actual=0.0  err 5.18->4.83
+  2023 w1  BAL  WR  Odell Beckham Jr.        snap 0.37->0.31  proj   4.83->  4.49  actual=11.4  err 6.57->6.91
+  2023 w1  BAL  WR  Zay Flowers              snap 0.37->0.31  proj   4.83->  4.49  actual=17.7  err 12.87->13.21
+  2023 w1  BUF  WR  Trent Sherfield          snap 0.77->0.64  proj   6.30->  5.61  actual=None  err None->None
+  2023 w1  BUF  TE  Dalton Kincaid           snap 0.26->0.22  proj   3.20->  2.95  actual=6.6  err 3.4->3.65
+  2023 w1  CAR  WR  DJ Chark                 snap 0.72->0.56  proj  10.01->  8.63  actual=None  err None->None
+  2023 w1  CAR  WR  Terrace Marshall Jr.     snap 0.68->0.53  proj   6.38->  5.61  actual=4.3  err 2.08->1.31
+  2023 w1  CHI  WR  Tyler Scott              snap 0.37->0.27  proj   3.71->  3.19  actual=3.4  err 0.31->0.21
+  2023 w1  CHI  TE  Robert Tonyan            snap 0.70->0.62  proj   5.00->  4.75  actual=0.0  err 5.0->4.75
+  2023 w1  CHI  WR  Trent Taylor             snap 0.18->0.13  proj   2.24->  2.16  actual=0.0  err 2.24->2.16
+  2023 w1  CIN  WR  Tyler Boyd               snap 0.92->0.88  proj  10.01->  9.75  actual=3.0  err 7.01->6.75
+  2023 w1  CLE  WR  Elijah Moore             snap 0.83->0.72  proj   7.51->  6.90  actual=9.2  err 1.69->2.3
+  2023 w1  CLE  WR  David Bell               snap 0.35->0.30  proj   3.28->  3.10  actual=0.0  err 3.28->3.1
+  2023 w1  CLE  WR  Marquise Goodwin         snap 0.30->0.26  proj   3.88->  3.71  actual=0.0  err 3.88->3.71
+  2023 w1  DAL  WR  Brandin Cooks            snap 0.92->0.80  proj  11.82-> 10.87  actual=4.2  err 7.62->6.67
+  2023 w1  DEN  TE  Adam Trautman            snap 0.72->0.62  proj   4.42->  4.10  actual=8.4  err 3.98->4.3
+  2023 w1  DEN  WR  Marvin Mims Jr.          snap 0.33->0.26  proj   4.49->  4.05  actual=2.9  err 1.59->1.15
+  2023 w1  DEN  TE  Greg Dulcich             snap 0.92->0.87  proj   7.61->  7.61  actual=4.2  err 3.41->3.41
+  2023 w1  DEN  WR  Lil'Jordan Humphrey      snap 0.23->0.18  proj   2.33->  2.16  actual=9.1  err 6.77->6.94
+  2023 w1  DEN  TE  Chris Manhertz           snap 0.29->0.25  proj   2.13->  2.05  actual=0.0  err 2.13->2.05
+  2023 w1  DET  WR  Josh Reynolds            snap 0.89->0.72  proj   8.63->  7.76  actual=12.0  err 3.37->4.24
+  2023 w1  DET  TE  Sam LaPorta              snap 0.81->0.68  proj   6.55->  6.06  actual=8.9  err 2.35->2.84
+  2023 w1  DET  WR  Marvin Jones             snap 0.92->0.80  proj   8.45->  8.02  actual=0.8  err 7.65->7.22
+  2023 w1  GB   WR  Romeo Doubs              snap 0.89->0.77  proj   8.54->  8.28  actual=18.6  err 10.06->10.32
+  2023 w1  GB   TE  Luke Musgrave            snap 0.54->0.45  proj   4.67->  4.42  actual=8.0  err 3.33->3.58
+  2023 w1  GB   TE  Josiah Deguara           snap 0.52->0.43  proj   4.67->  5.16  actual=0.0  err 4.67->5.16
+  2023 w1  GB   WR  Christian Watson         snap 0.92->0.85  proj  12.42-> 12.77  actual=None  err None->None
+  2023 w1  GB   WR  Malik Heath              snap 0.31->0.27  proj   4.40->  4.31  actual=0.0  err 4.4->4.31
+  2023 w1  GB   WR  Dontayvion Wicks         snap 0.31->0.27  proj   4.40->  4.31  actual=0.0  err 4.4->4.31
+  2023 w1  HOU  WR  Nico Collins             snap 0.92->0.72  proj   9.84->  8.71  actual=14.0  err 4.16->5.29
+  2023 w1  HOU  WR  Noah Brown               snap 0.92->0.81  proj   6.99->  6.90  actual=4.9  err 2.09->2.0
+  2023 w1  HOU  WR  Xavier Hutchinson        snap 0.34->0.26  proj   4.31->  3.88  actual=1.9  err 2.41->1.98
+  2023 w1  IND  WR  Isaiah McKenzie          snap 0.67->0.60  proj   6.90->  6.56  actual=0.0  err 6.9->6.56
+  2023 w1  IND  WR  Alec Pierce              snap 0.92->0.86  proj   7.42->  7.25  actual=1.5  err 5.92->5.75
+  2023 w1  KC   WR  Marquez Valdes-Scantling snap 0.92->0.85  proj  12.60-> 12.34  actual=6.8  err 5.8->5.54
+  2023 w1  KC   WR  Skyy Moore               snap 0.37->0.33  proj   6.82->  6.38  actual=0.4  err 6.42->5.98
+  2023 w1  KC   WR  Justin Watson            snap 0.36->0.32  proj   4.74->  4.49  actual=6.5  err 1.76->2.01
+  2023 w1  KC   WR  Richie James             snap 0.31->0.27  proj   7.59->  7.16  actual=1.6  err 5.99->5.56
+  2023 w1  LA   WR  Tutu Atwell              snap 0.48->0.38  proj   5.95->  5.26  actual=17.9  err 11.95->12.64
+  2023 w1  LA   WR  Puka Nacua               snap 0.33->0.27  proj   4.83->  4.31  actual=21.9  err 17.07->17.59
+  2023 w1  LAC  WR  Josh Palmer              snap 0.60->0.47  proj   6.64->  5.95  actual=1.4  err 5.24->4.55
+  2023 w1  LAC  TE  Gerald Everett           snap 0.92->0.82  proj  10.80-> 10.56  actual=4.3  err 6.5->6.26
+  2023 w1  LAC  WR  Quentin Johnston         snap 0.33->0.26  proj   4.31->  3.97  actual=2.9  err 1.41->1.07
+  2023 w1  LAC  TE  Donald Parham            snap 0.41->0.35  proj   5.16->  4.91  actual=11.2  err 6.04->6.29
+  2023 w1  LAC  WR  Keenan Allen             snap 0.92->0.87  proj  14.84-> 15.45  actual=14.2  err 0.64->1.25
+  2023 w1  LV   WR  Jakobi Meyers            snap 0.92->0.83  proj   9.84->  9.40  actual=29.1  err 19.26->19.7
+  2023 w1  LV   WR  Hunter Renfrow           snap 0.71->0.63  proj   8.20->  7.76  actual=None  err None->None
+  2023 w1  LV   WR  DeAndre Carter           snap 0.38->0.33  proj   3.97->  3.79  actual=1.5  err 2.47->2.29
+  2023 w1  MIA  WR  Chase Claypool           snap 0.75->0.70  proj   6.56->  6.38  actual=0.0  err 6.56->6.38
+  2023 w1  MIA  WR  Jaylen Waddle            snap 0.92->0.87  proj  13.03-> 13.03  actual=11.8  err 1.23->1.23
+  2023 w1  MIA  TE  Durham Smythe            snap 0.92->0.88  proj   3.60->  3.69  actual=7.4  err 3.8->3.71
+  2023 w1  MIA  WR  Tyreek Hill              snap 0.92->0.88  proj  16.39-> 16.57  actual=44.5  err 28.11->27.93
+  2023 w1  MIN  TE  Josh Oliver              snap 0.52->0.47  proj   4.18->  3.93  actual=6.2  err 2.02->2.27
+  2023 w1  NE   WR  Kendrick Bourne          snap 0.90->0.61  proj   8.02->  7.59  actual=24.4  err 16.38->16.81
+  2023 w1  NE   WR  JuJu Smith-Schuster      snap 0.92->0.75  proj  10.01->  9.23  actual=7.3  err 2.71->1.93
+  2023 w1  NE   WR  Kayshon Boutte           snap 0.38->0.26  proj   4.40->  3.71  actual=0.0  err 4.4->3.71
+  2023 w1  NE   WR  DeVante Parker           snap 0.92->0.88  proj   8.28->  8.80  actual=None  err None->None
+  2023 w1  NO   WR  Rashid Shaheed           snap 0.92->0.71  proj  13.72-> 13.89  actual=21.0  err 7.28->7.11
+  2023 w1  NO   WR  Keith Kirkwood           snap 0.14->0.09  proj   2.07->  1.81  actual=0.0  err 2.07->1.81
+  2023 w1  NYG  TE  Darren Waller            snap 0.72->0.52  proj   6.88->  5.73  actual=6.6  err 0.28->0.87
+  2023 w1  NYG  WR  Isaiah Hodgins           snap 0.92->0.78  proj   9.15->  8.80  actual=1.4  err 7.75->7.4
+  2023 w1  NYG  WR  Jalin Hyatt              snap 0.37->0.25  proj   4.23->  3.62  actual=0.0  err 4.23->3.62
+  2023 w1  NYJ  WR  Mecole Hardman           snap 0.49->0.38  proj   8.02->  6.73  actual=None  err None->None
+  2023 w1  NYJ  WR  Xavier Gipson            snap 0.34->0.26  proj   4.66->  4.05  actual=6.0  err 1.34->1.95
+  2023 w1  SEA  WR  Jaxon Smith-Njigba       snap 0.33->0.27  proj   5.00->  4.49  actual=4.3  err 0.7->0.19
+  2023 w1  TB   WR  Rakim Jarrett            snap 0.32->0.26  proj   4.23->  3.88  actual=0.0  err 4.23->3.88
+  2023 w1  TB   WR  Trey Palmer              snap 0.32->0.26  proj   4.23->  3.88  actual=8.8  err 4.57->4.92
+  2023 w1  TEN  WR  Treylon Burks            snap 0.86->0.65  proj   8.37->  7.76  actual=4.7  err 3.67->3.06
+  2023 w1  TEN  WR  DeAndre Hopkins          snap 0.80->0.60  proj  10.96-> 10.18  actual=13.5  err 2.54->3.32
+  2023 w1  TEN  WR  Chris Moore              snap 0.48->0.36  proj   4.66->  4.40  actual=0.0  err 4.66->4.4
+  2023 w1  TEN  TE  Chig Okonkwo             snap 0.92->0.84  proj   5.24->  6.14  actual=0.0  err 5.24->6.14
+  2023 w1  TEN  TE  Trevon Wesco             snap 0.25->0.21  proj   1.72->  1.80  actual=0.0  err 1.72->1.8
+  2024 w1  ARI  WR  Greg Dortch              snap 0.92->0.77  proj   7.85->  8.11  actual=11.1  err 3.25->2.99
+  2024 w1  ARI  WR  Marvin Harrison Jr.      snap 0.37->0.29  proj   5.43->  4.66  actual=1.4  err 4.03->3.26
+  2024 w1  ARI  TE  Elijah Higgins           snap 0.30->0.26  proj   4.18->  3.93  actual=3.2  err 0.98->0.73
+  2024 w1  ATL  TE  Charlie Woerner          snap 0.37->0.29  proj   2.70->  2.30  actual=1.4  err 1.3->0.9
+  2024 w1  ATL  WR  Darnell Mooney           snap 0.92->0.85  proj   9.06->  8.80  actual=2.5  err 6.56->6.3
+  2024 w1  ATL  WR  Ray-Ray McCloud          snap 0.23->0.19  proj   4.14->  3.71  actual=9.2  err 5.06->5.49
+  2024 w1  ATL  WR  KhaDarel Hodge           snap 0.19->0.15  proj   3.19->  2.93  actual=0.0  err 3.19->2.93
+  2024 w1  BAL  WR  Rashod Bateman           snap 0.74->0.69  proj   5.78->  5.61  actual=7.3  err 1.52->1.69
+  2024 w1  BAL  WR  Nelson Agholor           snap 0.73->0.68  proj   6.21->  6.04  actual=1.6  err 4.61->4.44
+  2024 w1  BUF  WR  Curtis Samuel            snap 0.90->0.70  proj  10.18->  9.06  actual=3.5  err 6.68->5.56
+  2024 w1  BUF  WR  Khalil Shakir            snap 0.92->0.72  proj   7.94->  8.11  actual=13.2  err 5.26->5.09
+  2024 w1  BUF  WR  Mack Hollins             snap 0.61->0.47  proj   4.40->  3.88  actual=10.5  err 6.1->6.62
+  2024 w1  BUF  WR  Amari Cooper             snap 0.92->0.86  proj  12.17-> 12.60  actual=3.6  err 8.57->9.0
+  2024 w1  CAR  WR  Diontae Johnson          snap 0.92->0.76  proj  11.13-> 10.53  actual=3.9  err 7.23->6.63
+  2024 w1  CAR  WR  Xavier Legette           snap 0.40->0.27  proj   5.35->  4.49  actual=7.5  err 2.15->3.01
+  2024 w1  CAR  TE  Ian Thomas               snap 0.57->0.49  proj   3.11->  3.28  actual=None  err None->None
+  2024 w1  CAR  TE  Feleipe Franks           snap 0.42->0.36  proj   4.42->  4.42  actual=0.0  err 4.42->4.42
+  2024 w1  CAR  TE  Ja'Tavion Sanders        snap 0.42->0.36  proj   4.42->  4.42  actual=1.4  err 3.02->3.02
+  2024 w1  CAR  WR  Velus Jones Jr.          snap 0.18->0.12  proj   3.02->  2.67  actual=2.9  err 0.12->0.23
+  2024 w1  CHI  TE  Gerald Everett           snap 0.69->0.58  proj   6.30->  5.73  actual=0.9  err 5.4->4.83
+  2024 w1  CHI  WR  Rome Odunze              snap 0.35->0.28  proj   4.49->  3.97  actual=2.1  err 2.39->1.87
+  2024 w1  CHI  WR  Keenan Allen             snap 0.92->0.87  proj  15.62-> 15.79  actual=6.9  err 8.72->8.89
+  2024 w1  CIN  TE  Mike Gesicki             snap 0.92->0.79  proj   6.96->  6.96  actual=4.8  err 2.16->2.16
+  2024 w1  CIN  TE  Tanner Hudson            snap 0.43->0.33  proj   7.12->  5.90  actual=1.8  err 5.32->4.1
+  2024 w1  CIN  WR  Andrei Iosivas           snap 0.42->0.37  proj   5.78->  5.43  actual=5.6  err 0.18->0.17
+  2024 w1  CLE  WR  Jerry Jeudy              snap 0.92->0.88  proj  12.60-> 12.17  actual=11.5  err 1.1->0.67
+  2024 w1  DAL  WR  Jalen Tolbert            snap 0.53->0.45  proj   5.52->  5.09  actual=2.2  err 3.32->2.89
+  2024 w1  DAL  WR  KaVontae Turpin          snap 0.32->0.28  proj   6.73->  6.99  actual=6.0  err 0.73->0.99
+  2024 w1  DEN  WR  Lil'Jordan Humphrey      snap 0.71->0.58  proj   7.94->  7.42  actual=0.0  err 7.94->7.42
+  2024 w1  DEN  WR  Marvin Mims Jr.          snap 0.62->0.51  proj   9.15->  8.80  actual=0.0  err 9.15->8.8
+  2024 w1  DEN  WR  Devaughn Vele            snap 0.34->0.28  proj   6.38->  5.69  actual=11.9  err 5.52->6.21
+  2024 w1  DET  WR  Jameson Williams         snap 0.88->0.67  proj   9.23->  8.63  actual=24.4  err 15.17->15.77
+  2024 w1  DET  WR  Kalif Raymond            snap 0.56->0.43  proj   8.89->  7.76  actual=1.2  err 7.69->6.56
+  2024 w1  HOU  WR  Nico Collins             snap 0.92->0.82  proj  13.81-> 12.77  actual=17.7  err 3.89->4.93
+  2024 w1  JAX  WR  Josh Reynolds            snap 0.92->0.78  proj   9.92->  9.06  actual=9.5  err 0.42->0.44
+  2024 w1  JAX  WR  Christian Kirk           snap 0.92->0.84  proj  14.41-> 13.98  actual=4.0  err 10.41->9.98
+  2024 w1  JAX  WR  Brian Thomas Jr.         snap 0.30->0.25  proj   4.40->  4.05  actual=14.7  err 10.3->10.65
+  2024 w1  KC   WR  Marquise Brown           snap 0.92->0.82  proj   7.85->  7.42  actual=None  err None->None
+  2024 w1  KC   WR  DeAndre Hopkins          snap 0.92->0.85  proj  11.30-> 11.04  actual=1.8  err 9.5->9.24
+  2024 w1  KC   WR  Rashee Rice              snap 0.92->0.85  proj  12.60-> 13.03  actual=17.3  err 4.7->4.27
+  2024 w1  KC   WR  Justin Watson            snap 0.33->0.29  proj   3.71->  3.54  actual=3.5  err 0.21->0.04
+  2024 w1  LA   TE  Colby Parkinson          snap 0.92->0.85  proj   5.65->  5.73  actual=8.7  err 3.05->2.97
+  2024 w1  LA   TE  Davis Allen              snap 0.34->0.28  proj   3.69->  3.20  actual=0.0  err 3.69->3.2
+  2024 w1  LAC  WR  Quentin Johnston         snap 0.86->0.50  proj   7.94->  6.30  actual=6.8  err 1.14->0.5
+  2024 w1  LAC  TE  Will Dissly              snap 0.81->0.60  proj   5.32->  6.39  actual=2.3  err 3.02->4.09
+  2024 w1  LAC  TE  Hayden Hurst             snap 0.79->0.59  proj   7.45->  7.12  actual=5.3  err 2.15->1.82
+  2024 w1  LAC  WR  Ladd McConkey            snap 0.46->0.27  proj   6.47->  5.18  actual=14.9  err 8.43->9.72
+  2024 w1  LAC  WR  DJ Chark                 snap 0.92->0.76  proj  10.01-> 10.53  actual=None  err None->None
+  2024 w1  LAC  WR  Josh Palmer              snap 0.92->0.84  proj  12.51-> 14.32  actual=3.5  err 9.01->10.82
+  2024 w1  LV   WR  Tre Tucker               snap 0.85->0.62  proj  12.17-> 12.25  actual=4.2  err 7.97->8.05
+  2024 w1  MIA  WR  Braxton Berrios          snap 0.62->0.53  proj   4.74->  4.31  actual=0.0  err 4.74->4.31
+  2024 w1  MIA  WR  Jaylen Waddle            snap 0.92->0.85  proj  14.24-> 13.89  actual=16.2  err 1.96->2.31
+  2024 w1  NE   WR  Tyquan Thornton          snap 0.92->0.66  proj   6.30->  5.43  actual=4.7  err 1.6->0.73
+  2024 w1  NE   TE  Austin Hooper            snap 0.78->0.71  proj   5.81->  5.81  actual=5.1  err 0.71->0.71
+  2024 w1  NO   WR  Rashid Shaheed           snap 0.81->0.69  proj   8.37->  8.02  actual=16.3  err 7.93->8.28
+  2024 w1  NO   WR  Marquez Valdes-Scantling snap 0.76->0.65  proj   4.66->  4.49  actual=2.9  err 1.76->1.59
+  2024 w1  NO   WR  Chris Olave              snap 0.92->0.82  proj  11.99-> 11.82  actual=3.1  err 8.89->8.72
+  2024 w1  NO   WR  A.T. Perry               snap 0.59->0.51  proj   4.83->  4.66  actual=None  err None->None
+  2024 w1  NYG  WR  Jalin Hyatt              snap 0.76->0.60  proj   7.94->  7.42  actual=0.0  err 7.94->7.42
+  2024 w1  NYG  WR  Wan'Dale Robinson        snap 0.92->0.79  proj  10.96-> 10.78  actual=11.8  err 0.84->1.02
+  2024 w1  NYG  WR  Darius Slayton           snap 0.63->0.50  proj   7.07->  6.64  actual=5.6  err 1.47->1.04
+  2024 w1  NYG  WR  Malik Nabers             snap 0.32->0.25  proj   4.66->  4.40  actual=11.6  err 6.94->7.2
+  2024 w1  NYG  TE  Greg Dulcich             snap 0.42->0.36  proj   4.34->  4.34  actual=3.2  err 1.14->1.14
+  2024 w1  NYJ  WR  Xavier Gipson            snap 0.72->0.66  proj   4.66->  4.66  actual=0.0  err 4.66->4.66
+  2024 w1  NYJ  WR  Allen Lazard             snap 0.49->0.45  proj   3.45->  3.19  actual=26.9  err 23.45->23.71
+  2024 w1  PHI  WR  Johnny Wilson            snap 0.30->0.25  proj   4.14->  3.71  actual=0.0  err 4.14->3.71
+  2024 w1  PIT  WR  Van Jefferson            snap 0.69->0.57  proj   5.43->  5.00  actual=1.1  err 4.33->3.9
+  2024 w1  PIT  WR  Calvin Austin III        snap 0.54->0.45  proj   5.35->  4.83  actual=1.7  err 3.65->3.13
+  2024 w1  PIT  WR  Scott Miller             snap 0.20->0.17  proj   3.97->  3.71  actual=0.0  err 3.97->3.71
+  2024 w1  TEN  WR  Nick Westbrook-Ikhine    snap 0.55->0.42  proj   4.40->  3.79  actual=0.0  err 4.4->3.79
+  2024 w1  TEN  WR  Jha'Quan Jackson         snap 0.35->0.27  proj   4.31->  3.71  actual=0.0  err 4.31->3.71
+  2024 w1  WAS  WR  Olamide Zaccheaus        snap 0.53->0.46  proj   4.83->  4.49  actual=2.5  err 2.33->1.99
+  2024 w1  WAS  WR  K.J. Osborn              snap 0.92->0.86  proj   9.32->  9.15  actual=5.1  err 4.22->4.05
+  2024 w1  WAS  WR  Luke McCaffrey           snap 0.30->0.26  proj   4.74->  4.49  actual=4.8  err 0.06->0.31
+  2025 w1  BAL  WR  Rashod Bateman           snap 0.91->0.83  proj  10.09->  9.75  actual=3.0  err 7.09->6.75
+  2025 w1  BAL  WR  DeAndre Hopkins          snap 0.69->0.63  proj   9.84->  9.40  actual=11.5  err 1.66->2.1
+  2025 w1  BAL  WR  Tylan Wallace            snap 0.39->0.36  proj   4.74->  4.57  actual=0.0  err 4.74->4.57
+  2025 w1  BUF  WR  Brandin Cooks            snap 0.76->0.58  proj   6.64->  5.78  actual=5.6  err 1.04->0.18
+  2025 w1  BUF  WR  Khalil Shakir            snap 0.92->0.82  proj  15.10-> 14.84  actual=12.4  err 2.7->2.44
+  2025 w1  CAR  WR  David Moore              snap 0.92->0.85  proj  11.39-> 11.48  actual=0.0  err 11.39->11.48
+  2025 w1  CAR  WR  Tetairoa McMillan        snap 0.34->0.28  proj   6.47->  5.69  actual=11.8  err 5.33->6.11
+  2025 w1  CHI  TE  Colston Loveland         snap 0.24->0.20  proj   3.03->  2.70  actual=3.2  err 0.17->0.5
+  2025 w1  CLE  TE  Harold Fannin Jr.        snap 0.31->0.26  proj   3.85->  3.52  actual=13.6  err 9.75->10.08
+  2025 w1  DAL  WR  KaVontae Turpin          snap 0.51->0.42  proj   8.02->  8.02  actual=4.7  err 3.32->3.32
+  2025 w1  DAL  WR  George Pickens           snap 0.92->0.86  proj  11.22-> 10.53  actual=6.0  err 5.22->4.53
+  2025 w1  DAL  WR  Jalen Tolbert            snap 0.92->0.89  proj   9.06->  8.71  actual=1.0  err 8.06->7.71
+  2025 w1  DEN  TE  Adam Trautman            snap 0.81->0.75  proj   4.42->  4.26  actual=1.5  err 2.92->2.76
+  2025 w1  DEN  TE  Evan Engram              snap 0.67->0.62  proj   6.71->  6.39  actual=5.1  err 1.61->1.29
+  2025 w1  GB   WR  Jayden Reed              snap 0.83->0.79  proj  14.93-> 14.67  actual=13.5  err 1.43->1.17
+  2025 w1  GB   TE  Luke Musgrave            snap 0.92->0.88  proj   4.34->  4.50  actual=1.4  err 2.94->3.1
+  2025 w1  GB   WR  Dontayvion Wicks         snap 0.77->0.74  proj   8.71->  8.63  actual=5.0  err 3.71->3.63
+  2025 w1  HOU  WR  Justin Watson            snap 0.92->0.66  proj   6.99->  6.12  actual=4.7  err 2.29->1.42
+  2025 w1  HOU  WR  Xavier Hutchinson        snap 0.92->0.69  proj   4.05->  4.05  actual=5.5  err 1.45->1.45
+  2025 w1  HOU  WR  Jayden Higgins           snap 0.37->0.26  proj   5.09->  4.31  actual=5.2  err 0.11->0.89
+  2025 w1  HOU  WR  Nico Collins             snap 0.92->0.82  proj  18.29-> 18.47  actual=5.5  err 12.79->12.97
+  2025 w1  IND  TE  Mo Alie-Cox              snap 0.79->0.69  proj   5.00->  5.08  actual=3.0  err 2.0->2.08
+  2025 w1  IND  TE  Tyler Warren             snap 0.39->0.34  proj   4.67->  4.26  actual=14.9  err 10.23->10.64
+  2025 w1  JAX  WR  Dyami Brown              snap 0.60->0.44  proj   5.52->  4.49  actual=8.8  err 3.28->4.31
+  2025 w1  JAX  TE  Johnny Mundt             snap 0.61->0.54  proj   3.93->  3.69  actual=0.0  err 3.93->3.69
+  2025 w1  JAX  TE  Brenton Strange          snap 0.92->0.86  proj   6.96->  7.04  actual=9.9  err 2.94->2.86
+  2025 w1  JAX  WR  Parker Washington        snap 0.92->0.87  proj   7.42->  7.59  actual=0.0  err 7.42->7.59
+  2025 w1  JAX  TE  Hunter Long              snap 0.32->0.28  proj   2.21->  2.13  actual=7.6  err 5.39->5.47
+  2025 w1  KC   WR  JuJu Smith-Schuster      snap 0.90->0.62  proj   7.25->  6.56  actual=10.5  err 3.25->3.94
+  2025 w1  KC   WR  Marquise Brown           snap 0.64->0.44  proj   9.23->  7.59  actual=19.9  err 10.67->12.31
+  2025 w1  KC   WR  Jason Brownlee           snap 0.39->0.27  proj   5.26->  4.49  actual=0.0  err 5.26->4.49
+  2025 w1  LA   WR  Tutu Atwell              snap 0.78->0.58  proj   7.94->  6.73  actual=1.4  err 6.54->5.33
+  2025 w1  LA   WR  Jordan Whittington       snap 0.40->0.30  proj   4.92->  4.23  actual=0.5  err 4.42->3.73
+  2025 w1  LA   WR  Puka Nacua               snap 0.92->0.87  proj  13.89-> 14.32  actual=23.1  err 9.21->8.78
+  2025 w1  LAC  WR  Quentin Johnston         snap 0.92->0.82  proj   8.20->  7.76  actual=24.9  err 16.7->17.14
+  2025 w1  LAC  WR  Tre Harris               snap 0.33->0.25  proj   3.79->  3.28  actual=2.1  err 1.69->1.18
+  2025 w1  LAC  TE  Will Dissly              snap 0.75->0.69  proj   6.63->  6.47  actual=2.8  err 3.83->3.67
+  2025 w1  LV   WR  Jack Bech                snap 0.37->0.26  proj   6.47->  5.26  actual=3.3  err 3.17->1.96
+  2025 w1  LV   WR  Dont'e Thornton Jr.      snap 0.37->0.26  proj   6.47->  5.26  actual=6.5  err 0.03->1.24
+  2025 w1  MIA  WR  Malik Washington         snap 0.87->0.74  proj  10.35-> 10.61  actual=4.9  err 5.45->5.71
+  2025 w1  MIA  WR  Nick Westbrook-Ikhine    snap 0.92->0.83  proj  16.22-> 15.19  actual=1.7  err 14.52->13.49
+  2025 w1  NE   WR  DeMario Douglas          snap 0.92->0.80  proj   9.49->  8.97  actual=8.2  err 1.29->0.77
+  2025 w1  NE   WR  Mack Hollins             snap 0.89->0.77  proj   5.87->  5.52  actual=1.3  err 4.57->4.22
+  2025 w1  NE   WR  Stefon Diggs             snap 0.63->0.55  proj   8.28->  7.85  actual=11.7  err 3.42->3.85
+  2025 w1  NYG  WR  Xavier Gipson            snap 0.50->0.32  proj   4.57->  4.74  actual=0.0  err 4.57->4.74
+  2025 w1  NYG  WR  Gunner Olszewski         snap 0.45->0.29  proj   8.80->  6.82  actual=0.0  err 8.8->6.82
+  2025 w1  NYG  WR  Ryan Miller              snap 0.43->0.28  proj   6.04->  4.74  actual=0.0  err 6.04->4.74
+  2025 w1  NYG  TE  Daniel Bellinger         snap 0.78->0.73  proj   5.90->  6.63  actual=2.4  err 3.5->4.23
+  2025 w1  NYJ  WR  Adonai Mitchell          snap 0.92->0.53  proj   6.56->  8.28  actual=4.1  err 2.46->4.18
+  2025 w1  NYJ  WR  John Metchie III         snap 0.84->0.47  proj   9.75->  8.45  actual=0.0  err 9.75->8.45
+  2025 w1  NYJ  WR  Tyler Johnson            snap 0.78->0.44  proj   9.92->  8.71  actual=5.1  err 4.82->3.61
+  2025 w1  NYJ  WR  Arian Smith              snap 0.54->0.30  proj   8.20->  6.56  actual=0.0  err 8.2->6.56
+  2025 w1  PHI  TE  Kylen Granson            snap 0.78->0.61  proj   3.28->  3.20  actual=1.1  err 2.18->2.1
+  2025 w1  PHI  WR  Jahan Dotson             snap 0.86->0.76  proj   4.66->  4.31  actual=8.9  err 4.24->4.59
+  2025 w1  PIT  WR  Adam Thielen             snap 0.91->0.64  proj  10.87->  8.63  actual=2.0  err 8.87->6.63
+  2025 w1  PIT  WR  Calvin Austin III        snap 0.92->0.84  proj   7.33->  7.85  actual=17.0  err 9.67->9.15
+  2025 w1  PIT  TE  Jonnu Smith              snap 0.84->0.78  proj  11.78-> 12.03  actual=12.5  err 0.72->0.47
+  2025 w1  PIT  WR  Ben Skowronek            snap 0.17->0.12  proj   2.33->  2.07  actual=9.2  err 6.87->7.13
+  2025 w1  SEA  WR  Rashid Shaheed           snap 0.61->0.43  proj   6.99->  5.87  actual=9.3  err 2.31->3.43
+  2025 w1  SEA  WR  Cooper Kupp              snap 0.92->0.76  proj  10.96-> 10.35  actual=3.5  err 7.46->6.85
+  2025 w1  SEA  TE  AJ Barner                snap 0.78->0.71  proj   4.91->  5.40  actual=1.2  err 3.71->4.2
+  2025 w1  SEA  TE  Eric Saubert             snap 0.41->0.38  proj   2.46->  2.46  actual=0.0  err 2.46->2.46
+  2025 w1  SEA  TE  Elijah Arroyo            snap 0.36->0.33  proj   3.11->  3.20  actual=1.7  err 1.41->1.5
+  2025 w1  SF   WR  Ricky Pearsall           snap 0.92->0.80  proj  14.75-> 13.63  actual=14.8  err 0.05->1.17
+  2025 w1  SF   TE  Luke Farrell             snap 0.92->0.81  proj   5.00->  5.24  actual=1.4  err 3.6->3.84
+  2025 w1  SF   WR  Skyy Moore               snap 0.36->0.28  proj   3.79->  3.45  actual=0.0  err 3.79->3.45
+  2025 w1  TB   WR  Sterling Shepard         snap 0.92->0.65  proj   7.85->  7.33  actual=6.9  err 0.95->0.43
+  2025 w1  TB   WR  Emeka Egbuka             snap 0.45->0.28  proj   6.04->  4.66  actual=23.6  err 17.56->18.94
+  2025 w1  TB   WR  Tez Johnson              snap 0.45->0.28  proj   6.04->  4.66  actual=0.0  err 6.04->4.66
+  2025 w1  TEN  WR  Elic Ayomanor            snap 0.92->0.45  proj  11.04->  8.45  actual=3.3  err 7.74->5.15
+  2025 w1  TEN  WR  Chimere Dike             snap 0.92->0.45  proj  11.04->  8.45  actual=0.9  err 10.14->7.55
+  2025 w1  TEN  WR  Bryce Oliver             snap 0.28->0.12  proj   4.92->  5.00  actual=1.8  err 3.12->3.2
+  2025 w1  WAS  TE  Colson Yankoff           snap 0.92->0.56  proj   0.99->  0.99  actual=0.0  err 0.99->0.99
+  2025 w1  WAS  WR  Chris Moore              snap 0.42->0.27  proj   8.11->  6.12  actual=4.4  err 3.71->1.72
+  2025 w1  WAS  WR  Deebo Samuel Sr.         snap 0.92->0.85  proj  15.45-> 15.70  actual=22.6  err 7.15->6.9
+
+* = bootstrap 95% CI on the pooled weekly dMAE excludes zero.

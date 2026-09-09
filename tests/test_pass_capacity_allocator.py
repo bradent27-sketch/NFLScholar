@@ -437,6 +437,69 @@ def test_team_volume_conservation_holds_across_pass_volume_levels():
         assert float(catchers['receptions'].sum()) <= total_after + 1e-6
 
 
+def test_matchup_flex_rb_share_band_lets_a_matchup_tilt_toward_rbs_survive():
+    """v2_pass_capacity_matchup_flex (1): a checkdown-friendly matchup has
+    already boosted the RB targets upstream. With the hard prior split the RB
+    slice budget is capacity*0.14 and the boost is reconciled straight back
+    out; with the band the split follows this week's mix, clamped to +-band,
+    so the RB keeps most of the boost. Budget = 32 att * 0.95 = 30.4; RB
+    claim 9, WR/TE claim 21 -> model RB share 0.30, clamped to 0.14 + band."""
+    rows = [
+        _board_row('BUF', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=32.0),
+        _board_row('BUF', 'RB1', 'RB', 8.0), _board_row('BUF', 'RB2', 'RB', 1.0),
+        _board_row('BUF', 'WR1', 'WR', 9.0), _board_row('BUF', 'WR2', 'WR', 7.0),
+        _board_row('BUF', 'TE1', 'TE', 5.0),
+    ]
+    board = pd.DataFrame(rows)
+    hard, _ = pca.apply_pass_capacity_conservation(board, prior_history=None)
+    flexed, ledger = pca.apply_pass_capacity_conservation(
+        board, prior_history=None, matchup_flex=True,
+        rb_share_band=0.06, factor_deadband=0.0)
+
+    rb_hard = float(hard[hard['Pos'].eq('RB')]['targets'].sum())
+    rb_flex = float(flexed[flexed['Pos'].eq('RB')]['targets'].sum())
+    capacity = 32.0 * pca.FALLBACK_TARGET_PER_ATTEMPT
+    # hard split pins RB to ~14% of capacity; the band lifts it to ~20%.
+    assert _approx(rb_hard, capacity * pca.FALLBACK_RB_CATCHER_SHARE, rel=1e-2)
+    assert _approx(rb_flex, capacity * (pca.FALLBACK_RB_CATCHER_SHARE + 0.06), rel=1e-2)
+    assert rb_flex > rb_hard + 1.0
+    # team still conserved: RB + WR/TE == capacity either way
+    assert _approx(float(flexed[flexed['Pos'].isin(['RB', 'WR', 'TE'])]['targets'].sum()), capacity, rel=1e-3)
+    # band=0 is an exact no-op vs the hard split
+    noop, _ = pca.apply_pass_capacity_conservation(
+        board, prior_history=None, matchup_flex=True, rb_share_band=0.0, factor_deadband=0.0)
+    assert _approx(float(noop[noop['Pos'].eq('RB')]['targets'].sum()), rb_hard, rel=1e-6)
+
+
+def test_matchup_flex_factor_deadband_leaves_a_mildly_over_claiming_room_alone():
+    """v2_pass_capacity_matchup_flex (2): a WR room whose whole claim is only
+    ~8% over budget (every catcher nudged by a soft matchup) is left exactly
+    as projected under a +-10% factor band, where the default would dock it.
+    Budget 38*0.95 = 36.1; claim 39 -> factor 0.926, inside 1/1.1..1.1."""
+    rows = [
+        _board_row('MIN', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=38.0),
+        _board_row('MIN', 'WR1', 'WR', 18.0), _board_row('MIN', 'WR2', 'WR', 12.0),
+        _board_row('MIN', 'TE1', 'TE', 9.0),
+    ]
+    board = pd.DataFrame(rows)
+    default_out, _ = pca.apply_pass_capacity_conservation(board, prior_history=None)
+    flex_out, ledger = pca.apply_pass_capacity_conservation(
+        board, prior_history=None, matchup_flex=True, rb_share_band=0.0, factor_deadband=0.10)
+
+    # default docks every WR/TE toward 36.1
+    assert float(default_out[default_out['Pos'].isin(['WR', 'TE'])]['targets'].sum()) < 37.0
+    # flex leaves them exactly as projected
+    for player, before in (('WR1', 18.0), ('WR2', 12.0), ('TE1', 9.0)):
+        assert _approx(flex_out[flex_out['Player'].eq(player)].iloc[0]['targets'], before, rel=1e-9)
+    assert 'factor band' in ledger[ledger['position_group'].eq('WR/TE')].iloc[0]['reason']
+    # a room WELL over budget (factor outside the band) is still fit
+    big = board.copy()
+    big.loc[big['Player'].eq('WR1'), 'targets'] = 40.0
+    big_out, _ = pca.apply_pass_capacity_conservation(
+        big, prior_history=None, matchup_flex=True, rb_share_band=0.0, factor_deadband=0.10)
+    assert float(big_out[big_out['Pos'].isin(['WR', 'TE'])]['targets'].sum()) < 55.0
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith('test_') and callable(fn)]

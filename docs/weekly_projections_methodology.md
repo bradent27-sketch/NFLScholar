@@ -735,6 +735,494 @@ Two changes:
    `DEFAULT_FEATURES` or `PASS_CAPACITY_DEADBAND` changes: `--mode dump` then
    `--mode emit`.
 
+## 2026-09-07 — implied-total elasticity moved to per-stat
+
+`v2_game_total_elasticity` (one flat per-position exponent — QB 0.42 — applied
+to *every* projected stat alike) was replaced in `DEFAULT_FEATURES` by
+`v2_game_total_elasticity_perstat`, which carries a separately fitted exponent
+per `(position, stat)`. Motivation, from a live 2026 Week-1 board review: an
+underdog QB (ARI's Brissett, implied team total 18.75 vs a 22.7 league mean)
+was getting his pass **attempts** scaled by `(18.75/22.72)^0.42 = 0.92`, on top
+of an independent opponent-pace multiplier (0.93) that largely encodes the same
+"this team will be behind" fact. A trailing team does not throw the ball 8%
+less — pass volume is game-script and pace, not scoring environment.
+
+The fitted QB exponents (`_GTE_PERSTAT_FITTED`, from
+`scripts/fit_game_total_elasticity_perstat.py` on 2016-2023) bear that out:
+`passing_attempts` **0.030**, `passing_completions` 0.083, `passing_yards`
+0.138, `passing_tds` 0.266. The scoring-environment signal lands on TDs and,
+softly, yardage — and barely touches attempts.
+
+Held-out confirm, 2021-2023 **and** 2024-2025, weeks 3-18
+(`scripts/gte_perstat_confirm.py`, `.sweeps/gte_perstat_confirm_*.txt`):
+
+```
+                              dMAE 2021-23    dMAE 2024-25 (held out)   CI excl 0
+ALL (points)                    -0.001          -0.000
+START-QB (points)               +0.040          +0.023                   no
+START-TE (points)               -0.041          -0.059                   no
+passing_attempts (startable)    -0.136          -0.196                   yes (2024-25)
+passing_completions (startable) -0.066          -0.110                   yes (2024-25)
+passing_yards (startable)       -0.580          -0.606                   no (close)
+```
+
+Points-level it is a wash (ALL ≈ 0.000), with a small, non-significant
+startable-QB points cost and small WR/TE gains. The decisive line is the
+volume breakdown: pass attempts and completions get materially and
+significantly more accurate — which is what a Week-1 QB board, dominated by
+pass-volume-driven projections, is actually read for. End-to-end on 2026
+Week 1: Brissett 31.8→34.2 att / 214→226 yд; Herbert (−10 favourite)
+37.6→34.3 att / 277→259 yд — the flat 0.42 had been symmetrically inflating
+the favourite and deflating the underdog.
+
+The two flags are mutually exclusive on the implied-total channel
+(`_game_total_stat_multipliers`); venue is unaffected (its own flag).
+`GAME_TOTAL_ELASTICITY_BY_STAT` values are now inlined; the fit script's JSON
+override still layers on top if a re-fit writes one.
+
+**Deferred:** `WEEKLY_CALIBRATION` was fitted against the old
+`CALIBRATION_INPUT_FEATURES` (flat flag in the set). The ALL-scope move is
+~0.000, so a re-fit is a queued follow-up, not a blocker — same call the
+`v2_pff_defense_prior_blend` ship made. Re-fit: `fit_seasonal_calibration.py
+--mode dump` then `--mode emit`.
+
+## 2026-09-07 — cold-start receiver-room over-projection: two fixes tried, both rejected
+
+Live 2026 Week-1 case: LAC's Oronde Gadsden II (a returning TE-2 who played
+~62% of snaps in 2025, charted TE-2 again in 2026) projected for a **0.92**
+expected snap share — the exact value of `RECEIVER_COLD_START_VACANCY_MAX_SHARE`.
+Cause: three LAC tight ends who time-shared the *other* TE role in 2025 (Fisk
+0.35, Dissly 0.32, Conklin 0.30) all left, `v2_receiver_cold_start_vacancy`
+**summed** their shares (further inflated by the `_blend_with_prior2` step,
+which pulls Conklin toward his 2024 NYJ starter role and Dissly toward his
+2024 SEA role), and redistributed 70% of that ~1.2 pool onto the remaining
+TEs weighted by current share — pinning the biggest incumbent at the cap.
+The LAC TE room summed past 2.0; David Njoku (charted **TE-3**) sat at 0.34
+while Gadsden sat at 0.92.
+
+Snap share is genuinely not conserved to 100% — a team runs one, two, or
+three TEs per play, so a room legitimately sums to ~1.2–1.5 for TE and
+~2.1–2.4 for WR (measured 2025: LAC TE 0.89, ARI TE 1.52, PHI TE 1.21, league
+WR ~2.2) — but it *is* bounded, and by a real team signal.
+
+### `v2_cold_start_room_budget` — BUILT, BACKTESTED, REJECTED
+
+Clamp the sum of a team's WR (or TE) room shares to `prior_room_snap_budget`
+(that team's own prior-season Σ of whole-season participation shares) ×
+`(1 + COLD_START_ROOM_BUDGET_TOLERANCE)`, water-filling the excess out of the
+players the Ourlads chart lists as deep reserves first
+(`apply_cold_start_room_snap_budget`), only scaling the protected top tier
+if zeroing the whole unprotected tail is not enough. On the live board it did
+exactly what was wanted: LAC TE room 2.07 → 1.15, Gadsden 0.92 → 0.59,
+Njoku 0.34 → 0.03, Kolar 0.82 → 0.53.
+
+```
+scripts/sweep_cold_start_room_budget.py, wk1-2 2022-2025, paired vs the shipped stack
+                     n   MAE base   MAE var     dMAE            95% CI     wk W-L
+ALL               2358      4.882     4.902    +0.019  [+0.005,+0.034] *     0-4
+WR                1016      5.306     5.353    +0.047  [+0.012,+0.086] *     0-4
+START-WR           417      6.964     7.041    +0.077  [+0.013,+0.153] *     1-3
+TE                 459      3.566     3.562    -0.005  [-0.040,+0.037]       3-1
+START-TE           151      4.512     4.471    -0.042  [-0.128,+0.035]       2-2
+startable recv-yд  568     30.416    30.725    +0.308  [+0.066,+0.583] *     0-4
+```
+
+Rejected. It reshapes ~115 rooms per Week 1, not the ~5 pathological ones,
+and the depth-chart protection is not robust on the frozen historical
+Ourlads charts — it water-filled genuine WR1s to the floor (2025 NE Stefon
+Diggs 0.63 → 0.03, projected 8.3 → 1.7, actual 11.7). Every significant
+move is a *regression*; the only improvements (whole-pool TE, startable TE)
+are not significant. Kept as an opt-in `MODEL_FEATURES` flag, OFF.
+
+### Dampening the vacancy pool itself — BUILT, BACKTESTED, REJECTED (not kept)
+
+The narrower alternative: leave rooms alone, just stop the *vacancy* step
+over-counting. Read each departed player's **unblended** prior-season share
+(so `RECEIVER_COLD_START_VACANCY_MIN_SHARE` can drop a real 2025 bit-part),
+then fold a room's departures instead of summing them — largest in full,
+each additional at half, a hard `0.80` ceiling (`_effective_vacated_pool`).
+On the board this took Gadsden 0.92 → 0.81.
+
+```
+scripts/sweep_vacancy_dampen.py, wk1 2022-2025, 3-arm (none / raw vacancy / guarded vacancy)
+GUARDED vs RAW        n   MAE raw   MAE grd    dMAE            95% CI     wk W-L
+ALL               1208     4.853     4.866    +0.013  [+0.002,+0.024] *    1-3
+TE                 245     3.586     3.695    +0.109  [+0.082,+0.150] *    0-4
+START-TE           77      4.253     4.563    +0.311  [+0.136,+0.563] *    0-4
+START-WR          209      6.831     6.896    +0.065  [-0.075,+0.178]      1-3
+```
+
+Rejected and **not** kept in the tree. Same failure shape as the room
+budget: the pool cap trims ~300 legitimate redistributions across the slate
+to correct ~5 pathological ones, and it makes startable TE significantly
+worse than the shipped raw vacancy. The `GUARDED-vs-NONE` and `RAW-vs-NONE`
+arms both still show the original startable-WR win (−0.275 / −0.339), so the
+vacancy feature itself stays exactly as it was.
+
+**Net: the shipped `v2_receiver_cold_start_vacancy` is unchanged** by the two
+room/pool-sizing attempts above. Both cost more accuracy across the slate
+than they save on the handful of inflated rooms.
+
+## 2026-09-08 — surgical vacancy-recipient guards (`v2_vacancy_bump_cap` SHIPPED)
+
+Third pass, after the two failures above. Insight: don't touch the pool size
+or any non-recipient — the thing to shape is *how far one recipient can be
+moved*. Three opt-in flags, each guarding only the redistribution
+(`apply_cold_start_receiver_vacancy`), each gated to recipients **with a real
+prior role** so a no-prior rookie inheriting a departed starter's whole job
+(Sam LaPorta, DET 2023, sole rostered TE after the Hockenson trade) keeps the
+full inheritance — the earlier ungated version stranded him at 0.32:
+
+- **`v2_vacancy_bump_cap`** — no one prior-role recipient gains more than
+  `RECEIVER_COLD_START_VACANCY_MAX_BUMP` (0.15) from a team's vacancy;
+  leftover pool dropped.
+- **`v2_vacancy_growth_cap`** — post-vacancy ≤ pre-vacancy ×
+  `RECEIVER_COLD_START_VACANCY_GROWTH_CAP` (1.35), with a `MIN_ABS_GAIN`
+  (0.12) absolute floor. The cold-start analogue of the in-season
+  `VACANCY_MAX_GROWTH`, which the cold-start path never had.
+- **`v2_vacancy_chart_split`** — split the pool by Ourlads chart rank so a
+  vacated role flows to the charted starter, not to a returning backup the
+  chart still lists behind him. Pool total unchanged.
+
+`scripts/sweep_vacancy_recipient_guards.py`, wk1 2022-2025, vs the shipped
+stack:
+
+```
+arm            ALL       WR        TE        START-WR      START-TE      START-QB
+bump_cap     -0.010    -0.002   -0.045*    +0.098 n.s.   +0.350 n.s.   -0.052
+growth_cap   -0.007    +0.004   -0.042*    +0.084 n.s.   +0.333 n.s.   -0.125
+bump+growth  -0.012*   -0.001   -0.055*    +0.147*       +0.353 n.s.   -0.109
+all3         -0.015*   -0.008   -0.059     +0.128 n.s.   +0.206*       -0.109
+```
+
+(`*` = bootstrap 95% CI on the pooled weekly dMAE excludes zero. START-TE
+n=77 — the small, noisy cold-start pool the calibration section already
+flags; its CI spans zero and the by-week record is 1-3, not a rout.)
+
+**`v2_vacancy_bump_cap` shipped** (`DEFAULT_FEATURES`, 2026-09-08). It is the
+only arm with **no CI-excludes-0 regression on any pool**: `bump+growth`
+makes START-WR significantly worse, `all3` (the chart-split stack) makes
+START-TE significantly worse, and chart-split alone barely moves the target
+case (it hands the charted TE-1 the pool instead). `bump_cap` improves
+whole-pool TE significantly (−0.045) and ALL slightly (−0.010), for a
+START-TE cost that stays inside noise. On the live 2026 board it takes **LAC
+Gadsden 0.92 → 0.75** (and MHJ 0.92 → 0.84, Kolar 0.82 → 0.65 — both also
+vacancy-inflated).
+
+Known residuals, accepted at ship: it does not reach the ~0.62 a clean fix
+would give — 0.75 is a returning TE-2 who genuinely absorbs *some* of a
+departed rotation — and it clips a real incoming TE-1 whose own prior role
+was also starter-level (Darren Waller, NYG 2023) by more than it should. A
+second gate on the recipient's *own* prior ceiling would tighten that; not
+built. `MAX_BUMP = 0.15` is a first-pass value, not swept. A
+`WEEKLY_CALIBRATION` re-fit is the deferred follow-up (the ALL move is small,
+same grounds as the per-stat-elasticity ship — re-fit both together:
+`fit_seasonal_calibration.py --mode dump` then `--mode emit`).
+
+`v2_vacancy_growth_cap` and `v2_vacancy_chart_split` stay switchable and OFF.
+
+## 2026-09-08 — `v2_td_volume_shrink` (regress cold-start WR/TE TD rate to league) — BUILT, BACKTESTED, REJECTED
+
+Observation: a projected WR1 off a TD-unlucky season (Justin Jefferson, 2
+receiving TDs in 17 games on a bottom-tier 2025 offence) stays anchored near
+that rate. `credibility_shrunk_td_prior` weights the player's own rate by his
+OPPORTUNITY count - a ~550-target WR keeps ~91% of his rate though only
+~15 TD *events* stand behind it - and it regresses toward a per-game position
+mean diluted by every low-snap WR, which for a WR1 barely moves and can pull
+down.
+
+`v2_td_volume_shrink` re-does the shrink for WR/TE `receiving_tds` at cold
+start: credibility from the 2-year TD COUNT (`n / (n + 12)`), regressed toward
+`LEAGUE_TD_PER_TARGET[pos]` × the player's own projected target rate
+(`td_volume_shrunk_prior`). On the live 2026 board it does the right thing
+two-sided: Jefferson 0.25 → 0.32, Lamb 0.36 → 0.52, Burden 0.20 → 0.36 up;
+St. Brown 0.62 → 0.58, Kittle 0.39 → 0.33, G. Wilson 0.54 → 0.48 down.
+
+```
+scripts/sweep_td_volume_shrink.py, wk1 2022-2025, vs the shipped stack
+scope        n      MAE base   MAE var    dMAE             95% CI      wk W-L
+ALL        1208      4.843     4.868    +0.024  [+0.006,+0.042] *      0-4
+TE          245      3.541     3.639    +0.099  [+0.068,+0.134] *      0-4
+START-WR    208      6.929     6.950    +0.020  [-0.064,+0.124]        2-2
+START-TE     77      4.603     4.558    -0.044  [-0.272,+0.164]        2-2
+receiving_tds MAE, startable WR/TE:  0.445 -> 0.475  +0.030 [+0.020,+0.043] *  0-4
+```
+
+Rejected. Every significant move is a regression, **including the target
+stat** (startable WR/TE `receiving_tds` MAE +0.030, CI excludes 0). The
+`LEAGUE_TD_PER_TARGET` anchors (WR 0.052, TE 0.058) applied to every player's
+projected volume systematically lift the position - the TE ledger is ~all `+`
+shifts toward a per-game rate a tight end does not hit in a single game -
+because selection means the low-observed-rate players get pulled up while
+credibility protects the high ones from coming down. Regressing an unlucky
+rate UP adds more error than it removes on this window.
+
+**Strength sweep** (`TD_VOLUME_SHRINK_STRENGTH` 0..1, two passes: `--strengths
+0.25,0.4,0.55,0.7,1.0` then a softer `--strengths 0.1,0.175,0.25`, same
+window): no dilution passes.
+
+```
+strength    ALL       WR       TE      recv_tds MAE   recv_tds MEDIAN
+0.10      -0.010*  -0.021*   -0.007      +0.012*         +0.025
+0.175     -0.007   -0.017    +0.003      +0.013*         +0.028
+0.25      -0.004   -0.015*   +0.011      +0.015*         +0.030
+0.40      +0.000   -0.013    +0.030*     +0.017*         +0.033
+0.55      +0.005   -0.010    +0.047*     +0.021*         +0.039
+1.00      +0.024*  +0.010    +0.099*     +0.029*         +0.049
+```
+
+`receiving_tds` MAE is significantly worse at **every** strength down to 0.10,
+and its MEDIAN error never improves - so the TD projections themselves get
+less accurate however lightly the shrink is applied. `START-TE` (a ship-gate
+pool) is +0.129\*/+0.119\*/+0.127\* at strengths 0.10/0.175/0.25 - a
+consistent, significant startable-TE regression at every soft strength,
+because the shrink pulls elite TEs' durable red-zone TD rate (real role, not
+luck) down toward a league mean. The whole-pool WR points improvement at
+0.10-0.25 (-0.015\* to -0.021\*) is *not* coming from the TDs (which got
+worse): it is measured on the full ~180-WR pool - mostly deep guys whose own
+TD rate is noise - is non-monotonic across strength, and does not touch
+targets/QB/RB (the shrink only edits the WR/TE `receiving_tds` line, verified
+- no cross-position path). Kept as a switchable flag, OFF.
+
+## 2026-09-08 — `v2_rookie_backup_wr_dampen` (dock a charted rookie backup WR) — BUILT, BACKTESTED, REJECTED
+
+Live 2026 case: J. Michael Sturdivant (GB rookie, no NFL history) charted
+`RWR-2` on Ourlads, projected **0.32 expected snaps / ~1.9 targets** behind a
+GB WR room that lost Doubs. He gets the 0.16 rank-2 role floor AND a slice of
+the cold-start vacancy pool. ~12 other rookie deep-WRs (Antonio Williams,
+Caleb Douglas, Bryce Lance, ...) show the same shape.
+
+`v2_rookie_backup_wr_dampen`: a no-prior WR the chart lists at slot rank >= 2
+is pulled to `ROOKIE_BACKUP_WR_SHARE` (0.06) instead of the 0.16 floor, and
+`apply_cold_start_receiver_vacancy` gives him zero weight (a departed WR1's
+snaps flow to the proven WRs and the charted WR1, not a rookie 4th). Rank-1
+no-prior WRs - a charted rookie *starter* - are untouched. On the board it
+takes Sturdivant to ~0.05 snaps and correctly nukes Zavion Thomas, Chris
+Bell, Barion Brown, Josh Cameron; the GB vacancy it removed from Sturdivant
+lands on Bo Melton (a 3rd-year vet) instead.
+
+```
+scripts/sweep_rookie_backup_wr_dampen.py, wk1 2022-2025, vs the shipped stack
+scope       n      MAE base   MAE var    dMAE             95% CI     wk W-L
+ALL       1208      4.843     4.853    +0.009  [-0.006,+0.024]       1-2
+WR         514      5.369     5.382    +0.013  [-0.018,+0.044]       1-2
+TE         245      3.541     3.559    +0.018  [+0.002,+0.040] *     0-3
+START-WR   208      6.929     6.952    +0.022  [-0.008,+0.058]       1-2
+```
+
+Rejected. Nothing improves; whole-pool TE is significantly worse (allocator
+knock-on - cutting rookie WR targets re-spreads the team budget onto the TE
+room against a noisy Week-1 actual). The deeper reason is in the ledger: a
+charted rank-2 rookie WR is a genuine **boom/bust** population. The flag
+correctly zeroes the camp bodies (Malik Heath, Jalin Hyatt, Xavier Gipson,
+all 0 pts) but also docked **2023 Puka Nacua** (5th-round rookie, charted a
+backup, behind injured Kupp Week 1 -> 21.9 pts) and 2022 Christian Watson /
+Romeo Doubs.
+
+**Strength sweep** (`ROOKIE_BACKUP_WR_DAMPEN_STRENGTH` 0..1, two passes:
+`--strengths 0.3,0.5,0.7,1.0` then a softer `--strengths 0.1,0.2,0.3`), with a
+direct test of the "the docked guys mostly produce nothing" hypothesis:
+
+```
+strength   ALL      WR       TE     START-WR   START-TE   START-WR MEDIAN-AE
+0.10     -0.002   -0.005   +0.002     -0.004     +0.003        +0.000
+0.20     -0.002   -0.005   +0.002     +0.014     +0.005        +0.000
+0.30     -0.001   -0.005   +0.005*    +0.014     +0.009        +0.000
+0.50     +0.004   +0.007   +0.007*    +0.016      --           +0.000
+1.00     +0.009   +0.013   +0.018*    +0.022      --           +0.000
+
+what the dock hits:   n   mean act  median act  % under 5   Σ|err| base->var
+strength 0.10         3     5.30       4.80        67%         9.1 -> 9.3
+strength 0.20        11     6.05       4.80        55%        50.9 -> 48.3
+strength 0.30        17     4.46       1.90        65%        70.6 -> 66.9
+strength 0.50        20     4.09       0.95        65%        80.9 -> 79.5
+strength 1.00        25     5.27       4.80        52%       114.7 -> 114.6
+```
+
+No strength passes, including the ultra-soft 0.10-0.20. Nothing improves
+significantly in the right direction at any strength (WR is a flat -0.005,
+never starred). TE turns significantly worse by strength 0.30 and stays there
+(allocator knock-on - cutting rookie WR targets re-spreads the team budget
+onto the TE room against a noisy Week-1 actual). The startable-WR **median**
+error is +0.000 at every strength (no improvement even on the outlier-robust
+metric the eye-test appeals to). And - the point of the "what the dock hits"
+table - the population is **not** the near-zero group that premise assumes: at
+strengths 0.2-0.5 the *median* docked WR scored ~1-5 pts and only 52-65%
+landed under 5; at 0.10 the dock fires on only 3 player-games in four seasons
+(median actual 4.8) and total abs error goes the wrong way (9.1 -> 9.3). A
+charted rank-2 rookie WR who ends up with a real 3-5 target role is common,
+not rare - so docking the whole population trades "too low on the zeros" for
+"too low on the many who play". Kept as a switchable flag, OFF.
+
+## 2026-09-08 — `v2_rookie_backup_wr_dampen_narrow` (the same dock, gated on a proven trio) — BUILT, UNTESTABLE ON AVAILABLE DATA
+
+The narrower gate the section above flagged as "the shape that might survive":
+fire the same 0.16 -> `ROOKIE_BACKUP_WR_SHARE` (0.06) share dock **only** when
+the rookie's team already has >= `ROOKIE_BACKUP_WR_NARROW_MIN_AHEAD` (3)
+*established* WRs (finite prior-season role share >=
+`ROOKIE_BACKUP_WR_NARROW_ESTAB_SHARE` = 0.10) charted AHEAD of him. A team that
+lost a starter no longer has three proven rank-1 WRs, so the gate structurally
+cannot catch a WR1-injury inheritor (2023 Puka Nacua) or a rookie who won a
+real camp role. Share dock only - no vacancy-weight zeroing
+(`count_established_receivers_ahead` + a `& (_estab_ahead >= 3)` on the
+`rookie_charted_backup` mask). On the live 2026 board it fires correctly:
+Sturdivant 1.91 -> 0.07 targets (his freed share -> Bo Melton, a GB vet), plus
+Zavion Thomas (CHI), Josh Cameron (JAX) and ~5 small rookies.
+
+```
+scripts/sweep_rookie_backup_wr_dampen_narrow.py, wk1 2022-2025, strengths 0.2/0.35/0.5
+every scope, every strength:  dMAE = +0.000   (narrow gate caught NOBODY)
+```
+
+Not rejected - **untestable**. The `v2_historical_ourlads` archive is exactly
+2022-2025 and weeks 2+ are not cold starts, so this is the entire available
+cold-start backtest, and zero historical Week-1 cases match "rank-2 no-prior WR
+behind a fully-established trio". Every rank-2 rookie the broad flag docked in
+that window was behind an *incomplete* room - precisely the case this gate is
+built to skip. So it demonstrably works on the 2026 board and provably never
+fired on four years of historical openers; shipping it is low-risk but
+formally unvalidated. Kept as a switchable flag, OFF, pending a decision to
+override the backtest-gated convention for the 2026 opener.
+
+## 2026-09-08 — `v2_td_career_regress` (regress a TD-light season to the player's OWN career rate) — BUILT, BACKTESTED (gated + ungated), REJECTED
+
+The successor idea to `v2_td_volume_shrink`: instead of a league/position
+anchor, regress cold-start WR/TE `receiving_tds` toward the player's OWN
+opportunity-weighted CAREER TD-per-game rate (sum tds / sum games across up to
+`TD_PRIOR_CREDIBILITY_SEASONS` = 4 looked-back years), with a pull that GROWS
+with how much career he has:
+
+```
+season_factor = clip((role_seasons - 1) / (TD_CAREER_REGRESS_SEASONS_FULL - 1), 0, 1)
+vol_factor    = career_targets / (career_targets + TD_CAREER_REGRESS_OPP_K)   # K = 200
+pull          = TD_CAREER_REGRESS_STRENGTH * season_factor * vol_factor
+out           = last_rate + pull * (career_rate - last_rate)
+```
+
+Two-sided; never fires under `TD_CAREER_REGRESS_MIN_ROLE_SEASONS` (2) role
+seasons or a non-finite career rate; alternative to `v2_td_volume_shrink` on
+this channel (`career_regressed_td_prior`, wired off `_prior_rate_pre_cred`).
+Eye-test on the live 2026 board (strength 1.0) is exactly the ask - UP: Lamb
++0.157, Kupp +0.105, Kelce +0.102, Jefferson +0.100, Diggs +0.087, Andrews
++0.060; DOWN: G.Wilson -0.172, D.London -0.127, Adams -0.073, Pickens -0.079;
+untouched where career == recent: Kittle 0.389->0.389, A.J. Brown ~flat.
+
+```
+scripts/sweep_td_career_regress.py, wk1 2022-2025, strengths 0.3/0.6/1.0
+strength      ALL       WR       TE      START-WR   START-TE   recv_tds  recvTD-medn
+0.30       -0.003*   +0.003   -0.023     +0.036*     -0.015     +0.004*     +0.019
+0.60       -0.004    +0.001   -0.024     +0.034      +0.019     +0.004*     +0.017
+1.00       -0.004    +0.002   -0.025     +0.035      -0.064     +0.002      +0.017
+
+what it moves:  n    n up   n down   mean|d|   Sum base|err| -> var|err| (recv_tds, touched set)
+0.30           151    75      76      0.052     55.5 -> 52.6
+0.60           198    99      99      0.051     76.9 -> 74.2
+1.00           242   119     123     0.058     91.6 -> 89.4
+```
+
+Fails the bar: **START-WR +0.034..+0.036, CI-excludes-0 at strength 0.30** - a
+real regression on a decision pool. `receiving_tds` MAE on the startable pool
+is also marginally worse (+0.004\*, and its MEDIAN +0.017..+0.019). The
+favourable side is genuine but sub-significant: whole-pool TE -0.023..-0.025
+at every strength (never starred, n too small on 4 slates), ALL -0.003\*/-0.004,
+and the touched set's own recv_td error always drops (Sum|err| 55.5->52.6 etc).
+Direction is honestly two-sided (75 up / 76 down at 0.30).
+
+First hypothesis for the START-WR cost was the DOWN arm on ascending WRs
+(G.Wilson 0.53->0.36, D.London 0.48->0.36) being dragged toward a career
+average still weighted by their weaker early seasons.
+
+**v2 - role-comparability gate added and RE-SWEPT (2026-09-08): did not help,
+made it worse.** The gate (recent opp/g within [0.60, 1.67] x career opp/g,
+mirroring `blend_comparable_td_priors`) removed ~1/4 of the moved set, mostly
+DOWN moves (n_down 76 -> 63 at strength 0.30):
+
+```
+scripts/sweep_td_career_regress.py (gated), wk1 2022-2025
+strength      ALL       WR       TE      START-WR   recv_tds
+0.30       -0.001    +0.010*  -0.024     +0.036*     +0.004*
+0.60       -0.001    +0.009*  -0.024     +0.034      +0.004*
+1.00       -0.001    +0.011   -0.026*    +0.035      +0.002
+```
+
+START-WR is still +0.036\* at strength 0.30 (unchanged), and whole-pool WR
+went from flat (+0.003, v1) to a SIGNIFICANT regression (+0.009\*..+0.011\*),
+while ALL lost its small v1 improvement. So the START-WR cost is NOT the
+down-regression of ascending WRs - it is the UP arm: rescuing a TD-light
+startable star (Jefferson 0.25 -> 0.35) adds projected TDs that mostly meet a
+Week-1 zero, the exact mechanism that killed `v2_td_volume_shrink`. The anchor
+(league mean vs own career mean) does not matter; regressing startable pass-
+catcher TD rates UPward loses MAE against a mostly-zero Week-1 actual every
+time.
+
+**Direction closed.** Four sweeps now - `v2_td_volume_shrink` (league anchor,
+soft + full) and `v2_td_career_regress` (career anchor, gated + ungated), every
+strength from 0.10 to 1.0 - and each one trips a CI-excludes-0 regression in a
+decision pool (START-WR or START-TE or whole-WR). The only recurring favourable
+signal is whole-pool TE ~-0.02..-0.10, which never once clears significance on
+the 4-slate cold-start window. Both flags kept OFF and switchable; the machinery
+(`career_regressed_td_prior`, `td_volume_shrunk_prior`, the per-season TD-count
+context) stays in place for a future idea with a different mechanism.
+
+## 2026-09-09 — `v2_pass_capacity_matchup_flex` (let a matchup tilt survive the pass-capacity reconciliation) — SHIPPED
+
+`apply_pass_capacity_conservation` is the LAST step on the target channel. It
+fits each team's RB and WR/TE targets to a real budget (`QB projected attempts
+x league target/attempt`), and that budget is split into an RB slice
+(`capacity x prior-season RB catcher share`, ~14%) and a WR/TE slice. Each
+player's own +-22% forward matchup multiplier is already baked into `targets`
+one step earlier - so when a matchup should tilt volume *toward* the RBs (a
+checkdown-friendly coverage look), the model applies it, then this pass, whose
+RB sub-budget never moved, reconciles it straight back out with a uniform
+`budget/claim < 1` factor. The raw board over-claims team targets league-wide,
+so that factor is nearly always < 1: matchup UP-tilts on RBs get shaved
+systematically.
+
+Two bounded relaxations were built behind the flag (both dials env-overridable,
+`data/pass_capacity_allocator.py`):
+
+- **(1) RB share band.** `rb_capacity = capacity x clip(model_rb_share, prior
+  +- BAND)` where `model_rb_share = rb_claim / (rb_claim + wr_te_claim)`. The
+  split follows this week's projected mix, clamped to `+-BAND` of the prior.
+- **(2) Multiplicative factor deadband.** A group is also left unadjusted when
+  its fit factor is within `[1/(1+M), 1+M]` - the whole room only ~M off
+  budget.
+
+```
+scripts/sweep_pass_capacity_matchup_flex.py, in-season 2022-2024 wk4-14 (33 slates)
+band  dead   ALL    START-RB   WR      RB tgt MAE  RB rec MAE  RB recYd MAE  Sigma tgt/att
+0.03  0.00  -0.004  -0.062*   -0.001    -0.060*     -0.046*     -0.334*       .962->.962
+0.05  0.00  -0.004  -0.071*   -0.001    -0.081*     -0.068*     -0.471*       .962->.962
+0.08  0.00  -0.005  -0.060    +0.001    -0.108*     -0.091*     -0.609*       .962->.963
+0.00  0.10  +0.003  +0.004    +0.002    +0.007      +0.003      +0.045        .962->.965
+0.00  0.15  +0.016* +0.022*   +0.019*   +0.013      +0.007      +0.125*       .962->.979
+```
+
+(`*` = bootstrap 95% CI excludes 0. RB *MAE on the startable/pass-catching RB
+pool. Sigma tgt/att = mean team catcher-targets / QB attempts - the
+conservation guarantee.)
+
+**Arm (2) REJECTED.** `M=0.10` is neutral-to-slightly-worse; `M=0.15` is a
+significant regression across ALL / START-RB / WR / TE and pushes the
+catcher-target ratio to 0.979 - it just reopens the team-target over-claim this
+pass exists to close. Shipped default `M = 0.0`.
+
+**Arm (1) SHIPPED at band 0.08.** RB startable targets / receptions /
+receiving_yards MAE all significantly better at every band; START-RB fantasy
+points significantly better at 0.03 and 0.05 (`-0.062*`, `-0.071*`), directionally
+better at 0.08 (`-0.060`, CI just spans 0 - a mild overcorrection). No
+significant regression on any decision pool at any band; `START-WR +0.019` at
+0.08 is the only negative and is not significant. Conservation is untouched
+(0.962 -> 0.963). The "RBs the flag lifted" table settles the mechanism: ~860
+RB-slates carried a **-0.65-point SIGNED under-projection** at base, moving to
+`-0.04` at band 0.08 - the allocator *was* washing out a real RB receiving
+matchup edge. Shipped at 0.08 per user (the non-significant WR / START-WR
+downtick is worth the larger, significant RB receiving-line accuracy;
+`-0.108*/-0.091*/-0.609*` vs `-0.081*/-0.068*/-0.471*` at 0.05).
+
+ALL-scope move is `-0.005`; `WEEKLY_CALIBRATION` re-fit deferred per the
+established small-move precedent.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

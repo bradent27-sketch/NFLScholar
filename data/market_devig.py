@@ -194,5 +194,13 @@ def implied_mean_from_line(line, p_over, market, position=None, period='game'):
             return min(mean, _ANYTIME_TD_MEAN_CAP)
         return mean
     if market in _YARD_STATS:
-        return value + norm_ppf(p) * _yard_sigma(position, market, period)
+        mean = value + norm_ppf(p) * _yard_sigma(position, market, period)
+        # The Normal vig-lean model assumes the line is large relative to
+        # sigma. On a TINY line with a heavy one-sided price it returns a
+        # NEGATIVE mean - Matthew Stafford, 0.5 rushing yards, Over ~+180
+        # de-vigs to P(over) ~= 0.33, and 0.5 + Phi^-1(0.33) * 18 ~= -6 - which
+        # is unphysical for a yardage stat (and a real-world count is floored
+        # at zero everywhere else in this app). The Normal has simply broken
+        # down here; fall back to the posted number, the no-odds behaviour.
+        return mean if mean >= 0.0 else max(value, 0.0)
     return value

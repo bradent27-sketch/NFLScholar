@@ -1,0 +1,128 @@
+2026-09-08 13:13:03.114 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.115 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.115 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.116 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.119 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.119 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.120 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.120 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.121 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.121 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.121 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.121 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.122 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.122 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.122 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.123 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.123 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.123 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.124 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.124 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.124 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.125 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.126 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.126 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.126 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.127 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.127 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.128 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.129 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.131 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.149 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.150 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.150 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.150 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.151 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.152 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.152 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.153 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.153 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.157 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.185 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.185 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 13:13:03.186 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:03.772 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:04.404 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:04.405 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 13:13:04.873 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:08.422 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:08.506 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-08 13:13:08.542 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2022 w1: common 311  td-shifted 140
+2026-09-08 13:15:06.493 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 13:15:07.932 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2023 w1: common 320  td-shifted 128
+2026-09-08 13:16:51.634 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 13:16:53.262 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2024 w1: common 321  td-shifted 132
+2026-09-08 13:18:44.158 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-08 13:18:46.322 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2025 w1: common 289  td-shifted 121
+
+============================================================================================
+v2_td_volume_shrink  vs base   years=[2022, 2023, 2024, 2025] weeks=[1]
+============================================================================================
+dMAE = var - base.  NEGATIVE = the shrink is MORE accurate.
+
+scope              n   MAE base    MAE var      dMAE                95% CI    wk W-L   sign p
+ALL             1208      4.843      4.868    +0.024  [+0.006,+0.042] *       0-4    0.125
+WR               514      5.369      5.378    +0.010  [-0.028,+0.046]         2-2    1.000
+TE               245      3.541      3.639    +0.099  [+0.068,+0.134] *       0-4    0.125
+START-WR         208      6.929      6.950    +0.020  [-0.064,+0.124]         2-2    1.000
+START-TE          77      4.603      4.558    -0.044  [-0.272,+0.164]         2-2    1.000
+START-QB          95      5.901      5.718    -0.183  [-0.543,+0.000]         1-0    1.000
+START-RB         158      5.764      5.764    +0.000  [-0.000,+0.000]         1-0    1.000
+
+receiving_tds MAE (startable WR/TE)   n_wk=4  obs=285
+  base 0.4451   var 0.4746   dMAE +0.0295  [+0.0198,+0.0428] *  W-L 0-4
+
+============================================================================================
+BIGGEST receiving_tds SHIFTS (521 rows > 0.02)
+============================================================================================
+  2024 w1  NE  WR DeMario Douglas        tgt  9.8  TD 0.16->0.81 (+0.65)  actual=0.0
+  2025 w1  ARI TE Trey McBride           tgt 14.1  TD 0.19->0.59 (+0.40)  actual=0.0
+  2023 w1  NO  WR Chris Olave            tgt 13.3  TD 0.36->0.74 (+0.38)  actual=0.0
+  2022 w1  PIT WR Gunner Olszewski       tgt  0.5  TD 0.36->0.04 (-0.32)  actual=0.0
+  2024 w1  ATL TE Kyle Pitts             tgt  8.3  TD 0.35->0.63 (+0.28)  actual=1.0
+  2022 w1  NYG WR Kenny Golladay         tgt  9.4  TD 0.17->0.43 (+0.26)  actual=0.0
+  2023 w1  NYJ WR Garrett Wilson         tgt  8.8  TD 0.26->0.52 (+0.26)  actual=1.0
+  2024 w1  TB  WR Chris Godwin Jr.       tgt  9.1  TD 0.22->0.47 (+0.24)  actual=1.0
+  2022 w1  CAR WR DJ Moore               tgt 13.5  TD 0.35->0.59 (+0.24)  actual=0.0
+  2024 w1  CLE WR Elijah Moore           tgt  7.9  TD 0.15->0.38 (+0.24)  actual=0.0
+  2024 w1  JAX TE Evan Engram            tgt  8.6  TD 0.28->0.51 (+0.23)  actual=0.0
+  2025 w1  MIA WR Nick Westbrook-Ikhine  tgt  7.0  TD 1.00->0.77 (-0.23)  actual=0.0
+  2024 w1  ARI TE Trey McBride           tgt  8.8  TD 0.17->0.40 (+0.23)  actual=0.0
+  2022 w1  DEN WR Courtland Sutton       tgt  7.2  TD 0.12->0.34 (+0.22)  actual=0.0
+  2025 w1  MIN TE T.J. Hockenson         tgt  7.8  TD 0.13->0.35 (+0.22)  actual=0.0
+  2022 w1  BAL WR Rashod Bateman         tgt  6.8  TD 0.15->0.37 (+0.22)  actual=1.0
+  2023 w1  PIT WR Diontae Johnson        tgt  9.7  TD 0.17->0.38 (+0.21)  actual=0.0
+  2025 w1  NYJ WR Adonai Mitchell        tgt  6.3  TD 0.19->0.40 (+0.21)  actual=0.0
+  2025 w1  DEN WR Elijah Moore           tgt  6.0  TD 0.10->0.31 (+0.21)  actual=0.0
+  2024 w1  ATL WR Drake London           tgt  9.7  TD 0.21->0.42 (+0.20)  actual=0.0
+  2023 w1  LA  WR Ben Skowronek          tgt  4.7  TD 0.09->0.28 (+0.19)  actual=0.0
+  2024 w1  LA  WR Puka Nacua             tgt  9.7  TD 0.33->0.52 (+0.19)  actual=0.0
+  2024 w1  NYG WR Wan'Dale Robinson      tgt  6.7  TD 0.17->0.36 (+0.19)  actual=0.0
+  2025 w1  NYG TE Daniel Bellinger       tgt  3.3  TD 0.16->0.35 (+0.19)  actual=0.0
+  2025 w1  NYJ TE Jeremy Ruckert         tgt  4.6  TD 0.15->0.34 (+0.19)  actual=0.0
+  2022 w1  DEN WR Jerry Jeudy            tgt  7.6  TD 0.10->0.29 (+0.19)  actual=1.0
+  2025 w1  MIA WR Jaylen Waddle          tgt 11.7  TD 0.40->0.58 (+0.18)  actual=0.0
+  2023 w1  JAX WR Zay Jones              tgt  9.0  TD 0.36->0.54 (+0.18)  actual=1.0
+  2025 w1  MIA WR Malik Washington       tgt  6.3  TD 0.37->0.55 (+0.18)  actual=0.0
+  2022 w1  ARI WR Rondale Moore          tgt  4.8  TD 0.17->0.36 (+0.18)  actual=None
+  2022 w1  NE  WR Jakobi Meyers          tgt  6.1  TD 0.07->0.25 (+0.18)  actual=0.0
+  2022 w1  DET WR Amon-Ra St. Brown      tgt 10.8  TD 0.35->0.53 (+0.18)  actual=1.0
+  2025 w1  NYG TE Theo Johnson           tgt  5.7  TD 0.23->0.40 (+0.18)  actual=0.0
+  2023 w1  DEN WR Courtland Sutton       tgt  6.8  TD 0.14->0.31 (+0.17)  actual=1.0
+  2022 w1  CHI TE Cole Kmet              tgt  3.8  TD 0.04->0.21 (+0.17)  actual=0.0
+  2022 w1  CAR WR Andre Roberts          tgt  0.3  TD 0.20->0.03 (-0.17)  actual=0.0
+  2022 w1  JAX WR Zay Jones              tgt  5.0  TD 0.11->0.28 (+0.17)  actual=0.0
+  2025 w1  TEN TE Chig Okonkwo           tgt  6.0  TD 0.12->0.29 (+0.17)  actual=0.0
+  2025 w1  CLE WR Jerry Jeudy            tgt  9.1  TD 0.24->0.41 (+0.17)  actual=0.0
+  2022 w1  ATL TE Kyle Pitts             tgt  4.5  TD 0.05->0.22 (+0.17)  actual=0.0
+  2025 w1  NO  WR Chris Olave            tgt 12.9  TD 0.31->0.48 (+0.17)  actual=0.0
+  2025 w1  LA  WR Puka Nacua             tgt  8.2  TD 0.29->0.46 (+0.17)  actual=0.0
+  2022 w1  IND WR Ashton Dulin           tgt  1.9  TD 0.30->0.14 (-0.16)  actual=0.0
+  2024 w1  SEA TE Noah Fant              tgt  4.1  TD 0.15->0.32 (+0.16)  actual=0.0
+  2024 w1  NYJ TE Tyler Conklin          tgt  4.9  TD 0.05->0.22 (+0.16)  actual=0.0
+
+* = bootstrap 95% CI on the pooled weekly dMAE excludes zero.

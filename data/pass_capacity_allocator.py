@@ -155,6 +155,49 @@ TE_MARGINAL_TARGET_WEIGHT = _env_float("TE_MARGINAL_TARGET_WEIGHT", 0.20, 0.0, 1
 # trusted/tail line reads sensibly. Does not change the fit math.
 PASS_CAPACITY_TRUSTED_TIER_TE = 2
 
+# --- v2_pass_capacity_matchup_flex (2026-09-08) ------------------------------
+# This pass runs LAST on the target channel, after each player's own +-22%
+# forward matchup multiplier is already baked into `targets`. With a hard
+# prior-season RB/(WR/TE) split and a targets-denominated deadband, a real
+# matchup edge that should tilt volume toward one group (a checkdown-friendly
+# coverage look lifting the RBs; a shell that funnels to WRs) is reconciled
+# straight back out: the RB sub-budget never moved, so a slice that is over
+# its budget - which it usually is, since the raw board over-claims team
+# targets league-wide - gets a uniform factor < 1 that shaves the boost off.
+# Two bounded relaxations, both behind the flag:
+#
+#   (1) RB SHARE BAND. Instead of rb_capacity = capacity * prior_rb_share,
+#       let the split follow THIS WEEK's projected mix, clamped to within
+#       +-BAND of the prior share:
+#         model_rb_share = rb_claim / (rb_claim + wr_te_claim)
+#         rb_share_used  = clip(model_rb_share, prior - BAND, prior + BAND)
+#       BAND = 0 reproduces the hard prior split exactly (a no-op arm).
+#
+#   (2) MULTIPLICATIVE DEADBAND. A group is also left untouched when its
+#       fit factor is within [1/(1+M), 1+M] - i.e. the whole room is only
+#       ~M off its budget, the "every catcher nudged a few percent by a soft
+#       matchup" case. Union with the existing +-DEADBAND-targets band, so a
+#       small absolute miss is still protected too. M = 0 is a no-op arm.
+#
+# Both are env-overridable so a sweep can move one at a time.
+#
+# BACKTESTED 2026-09-08/09 (scripts/sweep_pass_capacity_matchup_flex.py):
+#   arm (1), band 0.08:  START-RB fantasy pts -0.060, and RB startable
+#     targets / receptions / receiving_yards MAE -0.108* / -0.091* / -0.609*
+#     (all bootstrap-CI-excludes-0), no significant regression on any pool
+#     (START-WR +0.019 n.s. is the only negative), team catcher-targets /
+#     QB-attempts ratio unchanged (0.962 -> 0.963). The lifted RBs (~860)
+#     carried a -0.65-pt SIGNED under-projection at base -> -0.04 at var:
+#     the allocator WAS washing out a real RB receiving matchup edge.
+#   arm (2), any M:  no help. M=0.10 is neutral-to-slightly-worse; M=0.15
+#     is ALL +0.016* / START-RB +0.022* / WR +0.019* / TE +0.028* and the
+#     ratio balloons to 0.979 - it just reopens the team-target over-claim
+#     this pass exists to close. Rejected: shipped default M = 0.0.
+# SHIPPED in DEFAULT_FEATURES 2026-09-09 at band 0.08 (per user: the WR /
+# START-WR downtick is non-significant and worth the RB receiving accuracy).
+PASS_CAPACITY_RB_SHARE_BAND = _env_float("PASS_CAPACITY_RB_SHARE_BAND", 0.08, 0.0, 0.5)
+PASS_CAPACITY_FACTOR_DEADBAND = _env_float("PASS_CAPACITY_FACTOR_DEADBAND", 0.0, 0.0, 0.5)
+
 CAPACITY_LEDGER_COLUMNS = [
     'team', 'position_group', 'capacity', 'capacity_source', 'trusted_claim', 'tail_claim',
     'allocated', 'unallocated', 'trusted_count', 'tail_count', 'reason',
@@ -256,6 +299,9 @@ def apply_pass_capacity_conservation(
         team_col: str = 'team', tier_size: int = PASS_CAPACITY_TRUSTED_TIER,
         wr_te_split: bool = False,
         te_marginal_target_weight: float | None = None,
+        matchup_flex: bool = False,
+        rb_share_band: float | None = None,
+        factor_deadband: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit one team's RB/WR/TE targets (and dependents) to a real pass budget.
 
@@ -278,9 +324,21 @@ def apply_pass_capacity_conservation(
     ``TE_MARGINAL_TARGET_WEIGHT`` at call time, so monkeypatching that global
     (sweeps, env override) actually takes effect rather than being frozen to
     whatever it was when this def was evaluated.
+
+    ``matchup_flex`` (default off; 'v2_pass_capacity_matchup_flex') turns on
+    the two bounded relaxations documented at PASS_CAPACITY_RB_SHARE_BAND /
+    PASS_CAPACITY_FACTOR_DEADBAND: the RB/(WR/TE) split follows this week's
+    projected mix within +-``rb_share_band`` of the prior share, and a group
+    within a +-``factor_deadband`` MULTIPLICATIVE band of its budget is left
+    unadjusted. Both dial args left at None read the module globals at call
+    time (so an env override / monkeypatch takes effect).
     """
     if te_marginal_target_weight is None:
         te_marginal_target_weight = TE_MARGINAL_TARGET_WEIGHT
+    rb_share_band = (PASS_CAPACITY_RB_SHARE_BAND if rb_share_band is None
+                     else float(np.clip(rb_share_band, 0.0, 0.5)))
+    factor_deadband = (PASS_CAPACITY_FACTOR_DEADBAND if factor_deadband is None
+                       else float(np.clip(factor_deadband, 0.0, 0.5)))
     if result is None or result.empty or 'Team' not in result.columns or 'Pos' not in result.columns:
         return (result.copy() if result is not None else pd.DataFrame(),
                pd.DataFrame(columns=CAPACITY_LEDGER_COLUMNS))
@@ -333,6 +391,13 @@ def apply_pass_capacity_conservation(
         current_total = float(current.sum())
 
         allocated = current.copy()
+        _raw_factor = group_capacity / current_total if current_total > 0 else 1.0
+        # v2_pass_capacity_matchup_flex: also leave a group alone when its fit
+        # factor is within a +-factor_deadband MULTIPLICATIVE band - the whole
+        # room is only ~M off budget (every catcher nudged a few percent by a
+        # soft matchup), not a structural over-claim.
+        _in_factor_band = (matchup_flex and factor_deadband > 0.0 and current_total > 0
+                           and (1.0 / (1.0 + factor_deadband)) <= _raw_factor <= (1.0 + factor_deadband))
         if current_total <= 0:
             reason = 'No projected volume in this group; nothing to fit.'
         elif abs(current_total - group_capacity) <= PASS_CAPACITY_DEADBAND:
@@ -340,6 +405,9 @@ def apply_pass_capacity_conservation(
             # noise - leave every player's own number exactly as projected.
             reason = (f"Claim {current_total:.1f} is within {PASS_CAPACITY_DEADBAND:.1f} of the "
                       f"{group_capacity:.1f} budget; left unadjusted.")
+        elif _in_factor_band:
+            reason = (f"Claim {current_total:.1f} vs {group_capacity:.1f} budget is within the "
+                      f"+-{factor_deadband:.0%} factor band (x{_raw_factor:.3f}); left unadjusted.")
         else:
             # One uniform factor, applied to every player - symmetric for
             # over- and under-budget rooms alike.
@@ -413,6 +481,18 @@ def apply_pass_capacity_conservation(
         # nobody in it would just shrink WR/TE's real budget for nothing.
         if len(rb_idx) and len(other_idx):
             rb_share = float(rb_share_by_team.get(str(team), league_rb_share))
+            # v2_pass_capacity_matchup_flex: let the split follow THIS WEEK's
+            # projected RB/(WR+TE) target mix, clamped to +-rb_share_band of
+            # the prior share, so a matchup (or injury/scheme) tilt toward one
+            # group survives the reconciliation instead of being pulled back
+            # to a stale prior mix. band=0 reproduces the hard prior split.
+            if matchup_flex and rb_share_band > 0.0:
+                _rb_claim = float(out.loc[rb_idx, 'targets'].sum())
+                _other_claim = float(out.loc[other_idx, 'targets'].sum())
+                if _rb_claim + _other_claim > 0.0:
+                    _model_rb_share = _rb_claim / (_rb_claim + _other_claim)
+                    rb_share = float(np.clip(_model_rb_share,
+                                             rb_share - rb_share_band, rb_share + rb_share_band))
             rb_capacity = capacity * rb_share
         elif len(rb_idx):
             rb_capacity = capacity

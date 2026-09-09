@@ -62,6 +62,11 @@ NAME_TO_ABBR = {
     "New York Jets": "NYJ", "Philadelphia Eagles": "PHI", "Pittsburgh Steelers": "PIT",
     "San Francisco 49ers": "SF", "Seattle Seahawks": "SEA", "Tampa Bay Buccaneers": "TB",
     "Tennessee Titans": "TEN", "Washington Commanders": "WAS",
+    # Franchise names Ourlads' archive pages still render for pre-rename seasons
+    # (LV pages before 2020, WAS before 2022). Mapped to the current nflverse
+    # abbreviation so a historical snapshot lands on the same team key.
+    "Oakland Raiders": "LV", "Washington Redskins": "WAS",
+    "Washington Football Team": "WAS",
 }
 
 SECTION_MAP = {

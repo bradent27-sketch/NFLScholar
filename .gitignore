@@ -103,3 +103,10 @@ external_data/ourlads_inbox/*
 !external_data/ourlads_inbox/README.md
 external_data/ourlads_archive/*
 !external_data/ourlads_archive/.gitkeep
+
+# Raw browser "Save as -> single file" captures of the Ourlads season-archive
+# pages. ~2.5 MB each (240 MB for one league-decade) and fully redundant once
+# scripts/convert_ourlads_mhtml.py flattens each to the sibling .html that
+# scripts/import_ourlads_historical.py actually parses - those .html pages ARE
+# tracked, same as the 2022-2025 set.
+external_data/OurLads Historical Depth Charts - Week Before Season 0901/*.mhtml

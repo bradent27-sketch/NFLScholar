@@ -1828,6 +1828,87 @@ def test_v2_defense_matchup_falls_back_to_prior_season_at_true_cold_start():
     assert matchup['value'] == 10.0
 
 
+def test_partially_played_week_one_stays_a_live_cold_start_and_keeps_every_team():
+    # The Thursday opener is final; the rest of the Week-1 slate is not.
+    # Building Week 1 now must behave exactly as it did an hour before
+    # kickoff: still a cold start, still LIVE (not an as-of/backtest run),
+    # every team still on the board, and the two teams that already played
+    # projected off prior-season data alone - their opener box score must
+    # NOT leak in.
+    def _prior_rows():
+        rows = []
+        for team, opp in (('KC', 'DEN'), ('DEN', 'KC'), ('BUF', 'NYJ'), ('PHI', 'DAL')):
+            for wk in range(1, 6):
+                rows.append({
+                    'name': f'{team} WR', 'team': team, 'opponent_team': opp, 'week': wk,
+                    'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 7.0,
+                    'receptions': 5.0, 'receiving_yards': 65.0, 'receiving_tds': 0.4,
+                    'fantasy_points': 14.0,
+                })
+        return weekly(rows)
+
+    roster = pd.DataFrame([
+        {'name': f'{team} WR', 'team': team, 'position': 'WR'}
+        for team in ('KC', 'DEN', 'BUF', 'PHI')
+    ])
+    # After the opener: the same roster, plus KC/DEN Week-1 box rows with a
+    # deliberately huge line that must be ignored.
+    opener_box = weekly([
+        {'name': f'{team} WR', 'team': team, 'opponent_team': opp, 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 99.0, 'targets': 99.0,
+         'receptions': 99.0, 'receiving_yards': 999.0, 'receiving_tds': 9.0}
+        for team, opp in (('KC', 'DEN'), ('DEN', 'KC'))
+    ])
+    after_current = pd.concat([roster, opener_box], ignore_index=True)
+
+    sched_pre = pd.DataFrame([
+        {'week': 1, 'home_team': h, 'away_team': a, 'home_score': np.nan, 'away_score': np.nan}
+        for h, a in (('KC', 'DEN'), ('BUF', 'NYJ'), ('PHI', 'DAL'))
+    ])
+    sched_post = pd.DataFrame([
+        {'week': 1, 'home_team': 'KC', 'away_team': 'DEN', 'home_score': 24, 'away_score': 20},
+        {'week': 1, 'home_team': 'BUF', 'away_team': 'NYJ', 'home_score': np.nan, 'away_score': np.nan},
+        {'week': 1, 'home_team': 'PHI', 'away_team': 'DAL', 'home_score': np.nan, 'away_score': np.nan},
+    ])
+
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving)
+    wp.build_weekly_projections.clear()
+    try:
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+
+        wp.load_and_merge_data = lambda year, scoring: (
+            (roster.copy() if year == 2026 else _prior_rows()), 'team', 'name', None)
+        wp.load_schedule = lambda year: sched_pre.copy()
+        before, meta_before = wp.build_weekly_projections(
+            2026, 1, 'Full PPR', as_of_week=1, apply_injury=False,
+            availability_fingerprint='partial_wk1_before')
+
+        wp.load_and_merge_data = lambda year, scoring: (
+            (after_current.copy() if year == 2026 else _prior_rows()), 'team', 'name', None)
+        wp.load_schedule = lambda year: sched_post.copy()
+        after, meta_after = wp.build_weekly_projections(
+            2026, 1, 'Full PPR', as_of_week=1, apply_injury=False,
+            availability_fingerprint='partial_wk1_after')
+    finally:
+        wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving = original
+        wp.build_weekly_projections.clear()
+
+    # One final game does not make Week 1 a historical/as-of target.
+    assert meta_before['source_contract']['historical_target'] is False
+    assert meta_after['source_contract']['historical_target'] is False
+    assert meta_after['source_contract']['pace'] != 'weekly_box_score_proxy'
+
+    # The board still covers every team, not just the two that kicked off.
+    assert set(after['Team']) == {'KC', 'DEN', 'BUF', 'PHI'}
+    assert set(after['Team']) == set(before['Team'])
+
+    # The opener's box score did not move its teams' projections at all.
+    b = before.set_index('Player')['Raw Model Proj Pts']
+    a = after.set_index('Player')['Raw Model Proj Pts']
+    for player in ('KC WR', 'DEN WR', 'BUF WR', 'PHI WR'):
+        assert abs(float(a[player]) - float(b[player])) < 1e-9
+
+
 def test_v2_full_projection_contract_is_cutoff_safe_and_explained():
     # Integration fixture: patch only I/O boundaries, then exercise the
     # real V2 build end to end.  Future Week 2 values are deliberately huge;
@@ -1864,8 +1945,15 @@ def test_v2_full_projection_contract_is_cutoff_safe_and_explained():
                     stats.append(row)
     current = pd.DataFrame([r for r in stats if r['season'] == 2026])
     prior = pd.DataFrame([r for r in stats if r['season'] == 2025])
+    # Weeks 1 AND 2 carry final scores: this fixture is a genuine as-of/
+    # backtest target (week 2 is in the past, its box score already exists),
+    # which is what historical_target / the box-score pace proxy key off.
+    # A scoreless week-2 row here would now read as a still-in-progress week
+    # (see build_weekly_projections' _week_is_complete) and correctly flip
+    # the run back to live mode.
     schedule = pd.DataFrame([
-        {'week': 2, 'home_team': 'KC', 'away_team': 'DEN', 'home_score': np.nan, 'away_score': np.nan},
+        {'week': 1, 'home_team': 'KC', 'away_team': 'DEN', 'home_score': 24, 'away_score': 20},
+        {'week': 2, 'home_team': 'DEN', 'away_team': 'KC', 'home_score': 27, 'away_score': 17},
     ])
     original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving)
     try:

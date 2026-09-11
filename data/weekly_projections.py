@@ -5284,6 +5284,39 @@ def _week_opponents(schedule_df, week):
     return out
 
 
+def _week_is_complete(schedule_df, week):
+    """True when EVERY regular-season game scheduled for `week` has a final
+    score - i.e. the week is genuinely in the past, not just under way.
+
+    This is the line between a finished week (a backtest target, or a week
+    the live season has rolled past) and one that is only PARTIALLY played -
+    a Thursday opener final with the Sunday/Monday slate still ahead. The
+    partial case must stay a LIVE projection (see build_weekly_projections'
+    ``historical_target``).
+
+    Unknown / empty / score-less schedule -> True: that restores the older
+    ``latest_observed_week >= as_of_week`` behaviour whenever the schedule
+    feed is unreachable, so this can only ever make a live board MORE live,
+    never break a backtest whose feed is down.
+    """
+    if schedule_df is None or getattr(schedule_df, 'empty', True):
+        return True
+    if 'week' not in schedule_df.columns:
+        return True
+    wk = schedule_df[pd.to_numeric(schedule_df['week'], errors='coerce') == int(week)]
+    if 'game_type' in wk.columns:
+        wk = wk[wk['game_type'].astype(str).str.upper() == 'REG']
+    if wk.empty:
+        return True
+    for away_c, home_c in (('away_score', 'home_score'),
+                           ('away_points', 'home_points'),
+                           ('Away Pts', 'Home Pts')):
+        if away_c in wk.columns and home_c in wk.columns:
+            played = wk[away_c].notna() & wk[home_c].notna()
+            return bool(played.all())
+    return True
+
+
 def _injury_multipliers(year, week):
     """{player: multiplier} from the injury report AS OF `week` - Out/IR/
     Suspended zero the projection out, Doubtful/Questionable discount it.
@@ -5616,7 +5649,7 @@ def redistribute_v2_vacated_usage(result, injury_profiles, skip_rb=False, skip_r
     return out.drop(columns=['_v2_availability']), len(adjusted), ledger
 
 
-def _cold_start_pool(stats_df, name_col, team_col, as_of_week):
+def _cold_start_pool(stats_df, name_col, team_col, as_of_week, target_week_played=False):
     """
     Player identity (name/team/position) for a COLD START - projecting a
     week with zero real games played this season yet to compare against
@@ -5633,15 +5666,20 @@ def _cold_start_pool(stats_df, name_col, team_col, as_of_week):
         season's real team/position from the roster file (offseason trades,
         cuts, depth-chart moves already reflected), just zero real stat
         rows. Every row here IS the current snapshot - nothing to leak.
-      - A 'week' column exists (a real, possibly-already-played season) but
-        `as_of_week` itself has no rows yet (the live "haven't kicked off
-        week 1" case, or testing as_of_week=1 against a completed season).
-        Using the UNFILTERED stats_df for team/position here would pull in
-        a later week's post-trade team and leak it backward into what's
-        supposed to be a week-1-only read - so this reads ONLY rows from
-        `as_of_week` itself when they exist, and only falls back to the
-        unfiltered frame when even those don't exist yet (nothing legitimate
-        to leak in that case either - the season hasn't started).
+      - A 'week' column exists AND the target week is genuinely FINISHED
+        (``target_week_played`` - a backtest against a completed season, or
+        a completed week the live season has rolled past). Using the
+        UNFILTERED stats_df for team/position here would pull in a later
+        week's post-trade team and leak it backward, so this reads ONLY
+        rows from `as_of_week` itself, falling back to the unfiltered frame
+        only when even those don't exist.
+
+    ``target_week_played`` defaults False: pre-kickoff, and the live case
+    the flag exists for - a target week that is only PARTIALLY played (the
+    Thursday opener is final, the rest of the slate is not). Filtering to
+    `as_of_week`'s rows THEN would shrink the board to the two teams that
+    have kicked off. The roster frame is already the current snapshot and
+    there is no later week to leak, so use it whole.
     """
     if stats_df.empty or name_col not in stats_df.columns:
         return pd.DataFrame(columns=[name_col, team_col, 'position'])
@@ -5663,7 +5701,7 @@ def _cold_start_pool(stats_df, name_col, team_col, as_of_week):
         'draft_number', 'is_rookie_flag', 'years_exp', 'entry_year',
     )
     cols = list(dict.fromkeys(c for c in identity_cols if c in source.columns))
-    if 'week' in source.columns:
+    if 'week' in source.columns and target_week_played:
         this_week = source[pd.to_numeric(source['week'], errors='coerce') == as_of_week]
         pool = this_week[cols] if not this_week.empty else source[cols]
     else:
@@ -5798,11 +5836,26 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                       .dropna())
     latest_observed_week = int(observed_weeks[observed_weeks > 0].max()) \
         if (observed_weeks > 0).any() else None
+    schedule_df = load_schedule(year)
     # If the loaded season includes the target week or a later one, this is
     # necessarily a historical evaluation.  Sources that only expose a
     # season total (PFF alignment, full-season pace) and live injury/odds
     # feeds cannot be treated as known then.
-    historical_target = latest_observed_week is not None and latest_observed_week >= as_of_week
+    #
+    # EXCEPT a target week that is only PARTIALLY played - the Thursday
+    # opener is final, the Sunday slate is not. That is still a LIVE
+    # projection. Treated as historical it would (a) collapse
+    # _cold_start_pool to just the two rosters that have already played and
+    # (b) switch off every live path below (injury feed, market script,
+    # Ourlads preseason role floors) - so one TNF box score would rewrite
+    # the entire Week-1 board. Require the target week to be genuinely
+    # finished: a strictly later observed week (only a backtest against a
+    # completed season has one) OR every game of as_of_week already final.
+    historical_target = (
+        latest_observed_week is not None and latest_observed_week >= as_of_week
+        and (latest_observed_week > as_of_week
+             or _week_is_complete(schedule_df, as_of_week))
+    )
     use_v2_guard = 'v2_as_of_guard' in feats
     source_contract = {
         'as_of_week': int(as_of_week),
@@ -5838,7 +5891,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                           f'season, and {year - 1} has no data to fall back on either - '
                                           'nothing to build even a rough cold-start projection from.'}
 
-    schedule_df = load_schedule(year)
+    # schedule_df already loaded above for the historical_target check.
     opponents = _week_opponents(schedule_df, week)
     env = game_environment(schedule_df, week) if (
         'game_env' in feats or 'v2_game_total_elasticity' in feats
@@ -6169,7 +6222,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if use_v2_guard and historical_target else load_team_weekly_plays(year))
     prior_plays = _team_game_plays_lookup(load_team_weekly_plays(year - 1))
 
-    cold_pool = _cold_start_pool(stats_df, name_col, team_col, as_of_week) if cold_start else pd.DataFrame()
+    cold_pool = (_cold_start_pool(stats_df, name_col, team_col, as_of_week,
+                                  target_week_played=historical_target)
+                 if cold_start else pd.DataFrame())
     prior_played = _all_played_weeks(prior_stats)
     prior2_played = _all_played_weeks(prior2_stats)
 

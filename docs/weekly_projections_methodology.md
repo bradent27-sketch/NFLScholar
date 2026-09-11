@@ -1233,6 +1233,42 @@ downtick is worth the larger, significant RB receiving-line accuracy;
 ALL-scope move is `-0.005`; `WEEKLY_CALIBRATION` re-fit deferred per the
 established small-move precedent.
 
+## 2026-09-10 — a partially-played target week no longer flips the board into as-of/backtest mode — BUG FIX
+
+`historical_target` was `latest_observed_week >= as_of_week`. The instant the
+FIRST game of the target week went final — a Thursday opener — that became true
+for a live Week-1 board, with two visible consequences:
+
+- `_cold_start_pool` filtered player identity to rows whose `week == as_of_week`.
+  With one game played that is **only the two rosters that kicked off**, so the
+  board collapsed from ~500 players to ~35 (2026: NE / SEA only).
+- Every live path keyed off `not historical_target` switched off: the live
+  injury feed, the market game-script read, and the Ourlads preseason
+  role-floor block at `weekly_projections.py:~7400` (which also gates both
+  rookie-backup gates). A live board silently became a backtest.
+
+The target week's own box score was *not* leaking into the rates —
+`_played_weeks_before` uses a strict `< as_of_week` — so this was a pool /
+live-source regression, not a projection-leak one.
+
+**Fix.** `historical_target` now also requires the target week to be genuinely
+finished: a strictly later observed week (only a completed-season backtest has
+one), OR `_week_is_complete(schedule_df, as_of_week)` — every REG game that week
+carries a final score. A scoreless / unreachable schedule returns `True`, so a
+backtest whose schedule feed is down keeps its old behaviour; the fix can only
+ever make a live board *more* live. `_cold_start_pool` takes a matching
+`target_week_played` argument and only applies its `week == as_of_week` identity
+filter when that is true (the anti-leak reason for that filter — a later week's
+post-trade team — cannot apply mid-week-1 anyway).
+
+Verified: real 2026 Week 1 after the opener rebuilds to 503 rows / 32 teams,
+`historical_target=False`, `cold_start=True`, live injury feed on; 2024 w1 /
+2024 w10 / 2023 w18 backtests are unchanged (`historical_target=True`,
+box-score pace proxy). New regression test
+`test_partially_played_week_one_stays_a_live_cold_start_and_keeps_every_team`
+pins that the opener's box score moves neither team's projection and no team is
+dropped. 544 tests pass.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

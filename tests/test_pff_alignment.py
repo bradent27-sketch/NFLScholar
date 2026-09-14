@@ -192,7 +192,7 @@ def test_weekly_schema_failure_is_visible_and_never_becomes_a_zero_profile():
         assert neutral["alignment_matchup_multiplier"] == 1.0
 
 
-def test_pff_id_preserves_a_player_across_team_change_while_name_fallback_stays_safe():
+def test_pff_id_preserves_a_player_across_team_change_and_name_fallback_carries_it_forward_too():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "pff_imports"
         _write_week(root, 2026, 1, [_summary_row(player_id=77, team_name="SEA", slot_rate=20.0)], [_concept_row(player_id=77, team_name="SEA")])
@@ -203,7 +203,41 @@ def test_pff_id_preserves_a_player_across_team_change_while_name_fallback_stays_
         assert row["team"] == "KC" and row["source_weeks"] == "1,2"
         assert math.isclose(row["slot_alignment_rate"], 0.30)
         assert pa.lookup_alignment_profile(result.profiles, player_id=77)["player"] == "Sample Receiver"
-        assert pa.lookup_alignment_profile(result.profiles, player="Sample Receiver", team="NO")["alignment_available"] is False
+        # A queried team that doesn't match the archive's own (a trade since
+        # the archive was built) is no longer refused outright (explicit
+        # request 2026-09-14): with exactly one name(+position) match
+        # anywhere in the archive, the profile carries forward rather than
+        # being discarded - a player's slot/wide/inline tendency is mostly
+        # personal, so this is materially better evidence than neutral at a
+        # cold start with nothing else to go on. Exercised via the name-only
+        # path (no player_id passed) - how a live caller with no working
+        # PFF-id crosswalk actually calls this today.
+        carried = pa.lookup_alignment_profile(result.profiles, player="Sample Receiver", team="NO")
+        assert carried["alignment_available"] is True
+        assert carried["team"] == "KC"
+        assert "team change" in carried["source_notes"]
+        assert carried["identity_quality"] == "name_position_cross_team"
+
+
+def test_ambiguous_same_name_different_teams_still_returns_neutral():
+    # The cross-team carry-forward above must not become a blanket license
+    # to guess: two real, DISTINCT players sharing a name, neither on the
+    # queried team, is exactly the case lookup_alignment_profile's own
+    # docstring says it will never resolve - there is no way to tell which
+    # (if either) is really the target player.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "pff_imports"
+        _write_week(root, 2026, 1, [
+            _summary_row(player_id=77, team_name="SEA", slot_rate=20.0),
+            _summary_row(player_id=88, team_name="DAL", slot_rate=60.0),
+        ], [
+            _concept_row(player_id=77, team_name="SEA"),
+            _concept_row(player_id=88, team_name="DAL"),
+        ])
+        result = pa.load_weekly_alignment_profiles(2026, as_of_week=2, pff_root=root)
+        assert len(result.profiles) == 2
+        neutral = pa.lookup_alignment_profile(result.profiles, player="Sample Receiver", team="NO")
+        assert neutral["alignment_available"] is False
 
 
 def test_season_prior_requires_reviewed_regular_season_and_historical_time_validity():

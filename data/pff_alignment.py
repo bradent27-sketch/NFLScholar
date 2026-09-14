@@ -42,6 +42,8 @@ import re
 import numpy as np
 import pandas as pd
 
+from data.utils import clean_name_for_merge
+
 
 PFF_ALIGNMENT_VERSION = "v1_player_role_foundation"
 # This is deliberately separate from the player-role profile version above.
@@ -673,6 +675,25 @@ def _clean_id(value: Any) -> str:
 
 def _name_key(value: Any) -> str:
     return re.sub(r"[^a-z0-9]", "", _clean_text(value).lower())
+
+
+@functools.lru_cache(maxsize=4096)
+def _loose_name_key(value: Any) -> str:
+    """Suffix-tolerant name key - a FALLBACK for when _name_key finds nothing.
+
+    Reuses data.utils.clean_name_for_merge (strips Jr./Sr./II/III/IV/V, then
+    canonicalizes curated first-name variants like "Ken Walker" for "Kenneth
+    Walker III") rather than a second, possibly-diverging implementation -
+    that module documents the exact problem this fixes: a roster/PFF
+    spelling disagreement over a suffix (confirmed here 2026-09-14: this
+    app's own roster lists "Michael Pittman", PFF's export "Michael Pittman
+    Jr.") is common. Never the first key: two different real players can
+    share a base name once a suffix is stripped (that module's own example,
+    Byron Murphy vs. Byron Murphy II), so this only ever gets tried when the
+    strict key already came up completely empty, and only trusted if it
+    then resolves to exactly one candidate - see lookup_alignment_profile.
+    """
+    return str(clean_name_for_merge(pd.Series([_clean_text(value)])).iloc[0])
 
 
 @functools.lru_cache(maxsize=4096)
@@ -3565,6 +3586,14 @@ def blend_alignment_profile_toward_prior2(
     return out
 
 
+def _name_and_position_matches(frame: pd.DataFrame, name_key_fn, player: str, position: str | None) -> pd.DataFrame:
+    matches = frame[frame.get("player", pd.Series("", index=frame.index)).map(name_key_fn).eq(name_key_fn(player))]
+    if position:
+        matches = matches[matches.get("position", pd.Series("", index=matches.index))
+                          .map(_normalise_position).eq(_normalise_position(position))]
+    return matches
+
+
 def lookup_alignment_profile(
     profiles: pd.DataFrame | None,
     *,
@@ -3575,24 +3604,43 @@ def lookup_alignment_profile(
 ) -> dict[str, Any]:
     """Find a profile by stable PFF ID first, otherwise a conservative fallback.
 
-    Ambiguous fallback names intentionally return a neutral object.  A future
-    projection integration may use a crosswalk before this lookup, but this
-    helper never guesses which of two same-name players should receive an
-    alignment effect.
+    Ambiguous fallback names intentionally return a neutral object. Two
+    deliberate exceptions to "conservative", both explicit 2026-09-14
+    requests once a real player was confirmed missed by their absence:
+
+    - A strict-key name miss retries once with a suffix-tolerant key
+      (_loose_name_key) - see that function's own docstring - trusted only
+      when it resolves to exactly one candidate.
+    - A single name(+position) match that exists under a DIFFERENT team
+      than the one queried (a trade since the archive was built) is trusted
+      anyway, since a player's slot/wide/inline tendency is mostly personal
+      - materially better evidence than neutral at a cold start with
+      nothing else to go on.
+
+    Two or more same-name candidates at any stage still returns neutral:
+    this helper never guesses which of two real, distinct players should
+    receive an alignment effect.
     """
     if profiles is None or profiles.empty:
         return neutral_alignment_profile()
     frame = profiles.copy()
     if player_id is not None and "player_id" in frame.columns:
         desired_id = _clean_id(player_id)
-        matches = frame[frame["player_id"].map(_clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
-        if len(matches) == 1:
-            return matches.iloc[0].to_dict()
-        if len(matches) > 1:
+        id_matches = frame[frame["player_id"].map(_clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
+        if len(id_matches) == 1:
+            return id_matches.iloc[0].to_dict()
+        if len(id_matches) > 1:
             return neutral_alignment_profile("Ambiguous PFF player_id alignment profile")
     if not player:
         return neutral_alignment_profile()
-    matches = frame[frame.get("player", pd.Series("", index=frame.index)).map(_name_key).eq(_name_key(player))]
+    by_name = _name_and_position_matches(frame, _name_key, player, position)
+    suffix_fallback = False
+    if by_name.empty:
+        loose = _name_and_position_matches(frame, _loose_name_key, player, position)
+        if len(loose) == 1:
+            by_name, suffix_fallback = loose, True
+    matches = by_name
+    cross_team_from = None
     if team:
         # _canonical_team_key, not _team_key: the stored "team" field is the
         # raw PFF export value by design (see _TEAM_CODE_ALIASES' own
@@ -3603,12 +3651,34 @@ def lookup_alignment_profile(
         # comparing - exactly how every defense_team identity key in this
         # module already matches (found 2026-09-14: Zay Flowers' real,
         # correctly-spelled archive row was silently missed by this alone).
-        matches = matches[matches.get("team", pd.Series("", index=matches.index))
-                          .map(_canonical_team_key).eq(_canonical_team_key(team))]
-    if position:
-        matches = matches[matches.get("position", pd.Series("", index=matches.index)).map(_normalise_position).eq(_normalise_position(position))]
+        same_team = by_name[by_name.get("team", pd.Series("", index=by_name.index))
+                           .map(_canonical_team_key).eq(_canonical_team_key(team))]
+        if len(same_team) == 0 and len(by_name) == 1:
+            # No archived row under the CURRENT team, but exactly one
+            # name(+position) match overall - almost certainly the same
+            # player after a trade, not a coincidental namesake (explicit
+            # request 2026-09-14: carry the tendency forward rather than
+            # discarding it just because the archive predates the move).
+            cross_team_from = str(by_name.iloc[0].get("team", "")) or None
+        else:
+            matches = same_team
     if len(matches) == 1:
-        return matches.iloc[0].to_dict()
+        result = matches.iloc[0].to_dict()
+        notes = []
+        if suffix_fallback:
+            notes.append("matched via a suffix-tolerant name key (e.g. a dropped/added Jr./Sr./II/III)")
+        if cross_team_from is not None:
+            notes.append(f"matched by name across a team change ({cross_team_from} -> {team})")
+        if notes:
+            result = dict(result)
+            result["identity_quality"] = (
+                "name_position_cross_team" if cross_team_from is not None else "name_position_suffix_fallback"
+            )
+            result["source_notes"] = (
+                f"{result.get('source_notes', '')} - {'; '.join(notes)}; "
+                "alignment tendency carried forward."
+            ).strip(" -")
+        return result
     return neutral_alignment_profile(
         "No unique local PFF alignment profile" if matches.empty else "Ambiguous name-based PFF alignment profile"
     )
@@ -3624,30 +3694,59 @@ def lookup_scheme_profile(
 ) -> dict[str, Any]:
     """Player-level man/zone tendency lookup - exact structural mirror of
     lookup_alignment_profile, PFF ID first then a conservative name/team/
-    position fallback, neutral_scheme_profile() on any ambiguity or miss."""
+    position fallback, neutral_scheme_profile() on any ambiguity or miss.
+    Also mirrors its two fallbacks: a strict-key name miss retries once with
+    a suffix-tolerant key, and a single name(+position) match under a
+    different team than queried (a trade) is trusted anyway rather than
+    only ever a same-team match - see lookup_alignment_profile's own
+    docstring for why."""
     if profiles is None or profiles.empty:
         return neutral_scheme_profile()
     frame = profiles.copy()
     if player_id is not None and "player_id" in frame.columns:
         desired_id = _clean_id(player_id)
-        matches = frame[frame["player_id"].map(_clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
-        if len(matches) == 1:
-            return matches.iloc[0].to_dict()
-        if len(matches) > 1:
+        id_matches = frame[frame["player_id"].map(_clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
+        if len(id_matches) == 1:
+            return id_matches.iloc[0].to_dict()
+        if len(id_matches) > 1:
             return neutral_scheme_profile("Ambiguous PFF player_id scheme profile")
     if not player:
         return neutral_scheme_profile()
-    matches = frame[frame.get("player", pd.Series("", index=frame.index)).map(_name_key).eq(_name_key(player))]
+    by_name = _name_and_position_matches(frame, _name_key, player, position)
+    suffix_fallback = False
+    if by_name.empty:
+        loose = _name_and_position_matches(frame, _loose_name_key, player, position)
+        if len(loose) == 1:
+            by_name, suffix_fallback = loose, True
+    matches = by_name
+    cross_team_from = None
     if team:
         # _canonical_team_key - see lookup_alignment_profile's identical fix
         # (2026-09-14) for why the raw PFF team code must be aliased before
         # comparing against this app's own nflverse-style team code.
-        matches = matches[matches.get("team", pd.Series("", index=matches.index))
-                          .map(_canonical_team_key).eq(_canonical_team_key(team))]
-    if position:
-        matches = matches[matches.get("position", pd.Series("", index=matches.index)).map(_normalise_position).eq(_normalise_position(position))]
+        same_team = by_name[by_name.get("team", pd.Series("", index=by_name.index))
+                           .map(_canonical_team_key).eq(_canonical_team_key(team))]
+        if len(same_team) == 0 and len(by_name) == 1:
+            cross_team_from = str(by_name.iloc[0].get("team", "")) or None
+        else:
+            matches = same_team
     if len(matches) == 1:
-        return matches.iloc[0].to_dict()
+        result = matches.iloc[0].to_dict()
+        notes = []
+        if suffix_fallback:
+            notes.append("matched via a suffix-tolerant name key (e.g. a dropped/added Jr./Sr./II/III)")
+        if cross_team_from is not None:
+            notes.append(f"matched by name across a team change ({cross_team_from} -> {team})")
+        if notes:
+            result = dict(result)
+            result["identity_quality"] = (
+                "name_position_cross_team" if cross_team_from is not None else "name_position_suffix_fallback"
+            )
+            result["source_notes"] = (
+                f"{result.get('source_notes', '')} - {'; '.join(notes)}; "
+                "scheme tendency carried forward."
+            ).strip(" -")
+        return result
     return neutral_scheme_profile(
         "No unique local PFF scheme profile" if matches.empty else "Ambiguous name-based PFF scheme profile"
     )

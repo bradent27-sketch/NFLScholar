@@ -129,6 +129,52 @@ def _assert_team_capacity_conservation(allocations, ledger, team):
             f'{team} {resource}: no volume may appear or disappear outside the explicit bucket')
 
 
+def test_carries_and_targets_fully_reconcile_when_a_charted_back_is_ruled_out():
+    """Regression (2026-09-14): a charted back ruled OUT this week used to
+    shrink the team's OWN carry/target allocation by the exact size of the
+    other_fraction reserve (5% -> 10% once only 2 of 3 charted backs are
+    still eligible), because only snap share was rescaled back up to full
+    capacity afterward - carries/targets kept reconciling against a
+    capacity already reduced by that reserve, with nobody left this week to
+    claim it. Confirmed live against the Tampa Bay Week 1 2026 board (Sean
+    Tucker OUT, Bucky Irving/Kenny Gainwell active): carries/targets read
+    only ~90% allocated while snap share correctly read ~100%.
+    """
+    candidates = [
+        _candidate('TB', 'Active One', ourlads_depth_rank=1, same_team=True, prior_games=12,
+                   prior_active_snap_share=0.45, prior_whole_snap_share=0.40,
+                   prior_active_carry_share=0.40, prior_active_target_share=0.20),
+        _candidate('TB', 'Active Two', ourlads_depth_rank=2, same_team=True, prior_games=10,
+                   prior_active_snap_share=0.30, prior_whole_snap_share=0.26,
+                   prior_active_carry_share=0.20, prior_active_target_share=0.15),
+        _candidate('TB', 'Ruled Out', ourlads_depth_rank=3, same_team=True, prior_games=14,
+                   prior_active_snap_share=0.25, prior_whole_snap_share=0.22,
+                   prior_active_carry_share=0.15, prior_active_target_share=0.10,
+                   availability=0.0, is_active=False),
+    ]
+    allocations, ledger = _allocation_and_ledger(candidates)
+    _assert_team_capacity_conservation(allocations, ledger, 'TB')
+
+    for resource in ('core_rb_snaps', 'rb_carries', 'rb_targets'):
+        entry = ledger.loc[(ledger['team'] == 'TB') & (ledger['resource'] == resource)].iloc[0]
+        # Precondition: confirm the fixture actually exercises the 2-charted-
+        # backs 10% reserve, not some other code path, before trusting the
+        # unallocated assertion below to mean what it claims.
+        assert np.isclose(float(entry['other_fraction']), 0.10), (
+            f'{resource}: expected other_fraction=0.10 (2 charted backs), '
+            f'got {entry["other_fraction"]}')
+        assert float(entry['unallocated']) < 1e-6, (
+            f'{resource}: the other_fraction reserve must not vanish once the only '
+            f'excluded candidate is a confirmed weekly OUT, not an unidentified bench back')
+
+    # The ruled-out candidate isn't merely zeroed - he's excluded from the
+    # allocator's output entirely (unrelated to this fix; asserted here so a
+    # future change to that exclusion doesn't silently invalidate the
+    # reconciliation checks above by reintroducing a 3rd row).
+    assert not allocations['Player'].eq('Ruled Out').any()
+    assert set(allocations['Player']) == {'Active One', 'Active Two'}
+
+
 def test_functional_position_prioritizes_depth_chart_then_ourlads_then_prior_source():
     frame = pd.DataFrame([
         # Roster says FB even though the fantasy roster's broad position is RB.

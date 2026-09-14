@@ -1416,6 +1416,51 @@ report now resolve (`alignment_available=True`) - Pittman and Brown via
 these two fixes, Flowers via the team-alias fix above, Metcalf/Pierce
 unaffected. 546 tests pass.
 
+## 2026-09-14 — a charted RB ruled OUT no longer shrinks the team's own carry/target allocation — BUG FIX
+
+Case study: Tampa Bay Week 1 2026, Sean Tucker OUT, Bucky Irving and Kenny
+Gainwell active. Snap share correctly summed to ~100%+ (confirmed already
+working). Carries and targets summed to only ~90%.
+
+Root cause (`data/rb_role_allocator.py`, `allocate_preseason_rb_roles`):
+`_other_fraction(charted_players)` reserves a residual slice of team
+capacity for personnel not clearly in the top 3 of the depth chart - 5% at
+3 charted, 10% at 2, rising further with fewer. Tucker's in-week
+availability exclusion happens BEFORE this count is taken, so a 3-back room
+reads as only 2 charted the moment its 3rd back is ruled out, and the
+reserve jumps 5% -> 10% - correctly modeling "we don't know who the real
+RB3 is" when that's actually the situation, but the SAME formula also fires
+when the answer is "there is no RB3 this week, the only candidate is
+confirmed out." Snap share has a rescue rescale for exactly this
+(`RB_TEAM_SNAP_SHARE_TARGET`, already documented above); carries and
+targets never got the equivalent pass, so that reserved slice - with
+nobody eligible to claim it - simply vanished from the board's own touch
+totals instead of landing back on the two real backs.
+
+**Fix.** After each is allocated (and after the existing cross-team-
+distrust bound), `carry_alloc`/`target_alloc` get their own rescale back up
+to the full, un-reduced `carry_capacity`/`target_capacity` -
+`_bounded_allocation(carry_alloc, carry_capacity)`, mirroring the snap-share
+rescale exactly, with no individual-share cap (matching carries/targets'
+own first allocation pass - only snap share has ever had one, since a
+player's touches are already self-limiting relative to the snaps he's
+rescaled to).
+
+This is a deliberate, mechanical choice, not a claim that `_other_fraction`
+is wrong: it does not distinguish "genuine preseason role ambiguity" from
+"a confirmed weekly injury," and could instead have been fixed by teaching
+it that distinction directly. The rescale was chosen as the lower-risk of
+the two options on an already heavily-tuned formula, and is exactly the
+existing snap-share precedent.
+
+Verified: real 2026 Week 1 Tampa Bay ledger now reads `rb_carries`
+capacity=23.41 allocated=23.41 unallocated=0.0 and `rb_targets`
+capacity=5.35 allocated=5.35 unallocated=0.0 (both were ~90% allocated
+before), `core_rb_snaps` unchanged. New test
+`test_carries_and_targets_fully_reconcile_when_a_charted_back_is_ruled_out`
+pins a minimal 3-candidate/1-OUT fixture against this exact regression.
+547 tests pass.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

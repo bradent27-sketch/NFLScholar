@@ -1090,6 +1090,25 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
                 target_alloc, target_capacity, snap_fraction, _no_backstop_new_team,
                 RB_WEEK1_CROSS_TEAM_SHARE_TOLERANCE)
 
+        # Rescale carries/targets back up to their full real capacity,
+        # mirroring the snap-share rescale below (RB_TEAM_SNAP_SHARE_TARGET)
+        # rather than leaving the other_fraction reservation as a permanent
+        # gap in the board's own touch totals. other_fraction inflates
+        # (5%->10%->18%->25%) as fewer backs are clearly charted, without
+        # distinguishing "we don't know who RB3 is yet" from "there is no
+        # RB3 this week because the only candidate is confirmed OUT" - in
+        # the second case nobody exists to claim the reserved slice, and
+        # only snap share (not carries/targets) was previously rescaled to
+        # recover it. Explicit request 2026-09-14, reported as a 2-back
+        # room reading ~90% of team carries/targets after an injury
+        # exclusion while its snap share correctly read ~100%. No
+        # individual-share cap passed, matching carry_alloc/target_alloc's
+        # own first allocation pass a few lines up (only snap share has an
+        # individual ceiling; a player's carries/targets are already
+        # self-limiting relative to the snaps he's rescaled to above).
+        carry_alloc = _bounded_allocation(carry_alloc, carry_capacity)
+        target_alloc = _bounded_allocation(target_alloc, target_capacity)
+
         out.loc[indexes, "expected_snap_share"] = snap_alloc
         # Keep the allocation in the same unit as the capacity ledger.  The
         # weekly model divides by the team capacity when it needs a fraction
@@ -1109,8 +1128,10 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
         # above deliberately redistributes the gap between the two (plus the
         # `other RB` residual) back to the projected core RBs, so the ledger
         # must reconcile against the number they were actually rescaled to.
-        # Carries/targets are untouched by that rescale and keep reconciling
-        # against their own real capacities.
+        # rb_carries/rb_targets get their own equivalent rescale now too
+        # (2026-09-14) and reconcile against their real, un-reduced
+        # capacities the same way - `unallocated` on both rows should read
+        # ~0 whenever the core group is nonempty, not just for snaps.
         for metric, capacity, allocation in (("core_rb_snaps", snap_share_target, snap_alloc),
                                              ("rb_carries", carry_capacity, carry_alloc),
                                              ("rb_targets", target_capacity, target_alloc)):

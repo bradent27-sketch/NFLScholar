@@ -1376,6 +1376,46 @@ The lookup feeds both scoring and display from the same call
 missed match also meant that player's projection silently fell back to the
 broad (non-alignment-specific) matchup multiplier for that stat.
 
+## 2026-09-14 — PFF alignment/scheme lookup now carries a profile across a trade or a suffix-only name mismatch — FOLLOW-UP
+
+Immediate follow-up to the team-code-alias fix above, which resolved Zay
+Flowers but left Michael Pittman Jr. and A.J. Brown still neutral. Both were
+explicit requests once traced to their actual root causes.
+
+- **A.J. Brown**: exactly one `player`(+position) match exists in the
+  archive, under `PHI` — his team on this season's board is `NE`, a real
+  trade since the archive was built. `lookup_alignment_profile` previously
+  discarded this outright (never trusts a name match across a team it
+  didn't ask for). Now: when the team-scoped match is empty but the
+  name(+position)-only match is exactly one row, that row is used, with
+  `identity_quality='name_position_cross_team'` and a `source_notes`
+  suffix recording the trade. A player's slot/wide/inline tendency is
+  mostly personal, so this is materially better evidence than neutral at a
+  Week 1 cold start.
+- **Michael Pittman Jr.**: this app's own roster lists him as "Michael
+  Pittman" (no suffix); PFF's export has "Michael Pittman Jr." - the strict
+  name key (`_name_key`) never matched. New `_loose_name_key` reuses
+  `data.utils.clean_name_for_merge` (strips Jr./Sr./II/III/IV/V, plus its
+  curated first-name-variant table) as a FALLBACK, tried only when the
+  strict key finds nothing at all, and trusted only when it then resolves
+  to exactly one candidate — the same two-tier discipline
+  `clean_name_for_merge`'s own docstring documents (a naive suffix-strip-
+  always key would collide two different real players, e.g. Byron Murphy
+  vs. Byron Murphy II). Pittman also changed teams (IND -> PIT), so both
+  fixes fire together for him.
+
+Two or more same-name matches at any stage (regardless of team, or after
+the suffix retry) still returns neutral — this never guesses between two
+real, distinct players. New test
+`test_ambiguous_same_name_different_teams_still_returns_neutral` pins that
+boundary; the existing team-change test now asserts the carried-forward
+result instead of the old refusal.
+
+Verified against real 2026 Week 1 data: all five names from the original
+report now resolve (`alignment_available=True`) - Pittman and Brown via
+these two fixes, Flowers via the team-alias fix above, Metcalf/Pierce
+unaffected. 546 tests pass.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

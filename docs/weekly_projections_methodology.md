@@ -1269,6 +1269,60 @@ box-score pace proxy). New regression test
 pins that the opener's box score moves neither team's projection and no team is
 dropped. 544 tests pass.
 
+## 2026-09-14 — team pace leaked a single already-played game into that team's own live projection — BUG FIX
+
+A second, narrower leak in the same family as 2026-09-10 above, reported by the
+user against the same NE/SEA opener: their own frozen Week-1 projections were
+moving anyway, even though the board/pool fix above was already live.
+
+Root cause was one line downstream of `historical_target`, in the branch that
+fix correctly keeps disabled: `pace = load_team_pace(year)` on the "live" side
+of the pace source split (`weekly_projections.py:~6201`). `load_team_pace`
+(`data/loaders.py:1096`) pulls nflreadpy's team-week stats for the whole year
+with **no as-of-week concept at all** — it returns whatever nflreadpy currently
+has. The moment any game in the target week goes final, that call starts
+returning real one-game pace for exactly the team(s) that already played and
+nothing for the rest, since `groupby('team')` only sees teams present in the
+data. That frame is never empty once any 2026 game exists, so the existing
+`if cold_start and pace.empty: use last season` fallback never fires.
+
+Two effects, both keyed to a team that has already played THIS target week:
+
+- `league_pace = pace['def_pace'].mean()` is computed from only the played
+  team(s) — an N=1-or-2 sample standing in for a league average.
+- `pace_mult = clip(opp_pace.fillna(league_pace) / league_pace, 0.85, 1.15)`
+  (`weekly_projections.py:~8537`) is neutral (exactly 1.0) for every player
+  whose opponent hasn't played yet, because `fillna(league_pace)` divided by
+  that same `league_pace` cancels to 1.0 — **but** any player whose own team
+  already played has a real opponent entry in `pace`, so that player gets a
+  real, single-game, un-clipped-by-sample-size pace ratio instead of the
+  neutral 1.0 every other frozen cold-start row gets. On 2026-09-10 that meant
+  NE/SEA specifically (they are each other's only possible "already played"
+  opponent in week 1). Checked again on 2026-09-14 with Week 1 nearly complete
+  (30 of 32 teams already final, only the KC/DEN game outstanding), the same
+  bug would by then have been live for the *entire* board — every player whose
+  opponent was one of those 30 teams — not just two teams' rows.
+
+**Fix.** `load_team_pace` takes an optional `through_week`; when given, it
+drops any row with `week >= through_week` before aggregating — the same strict
+cutoff `_played_weeks_before` uses everywhere else. The live branch now calls
+`load_team_pace(year, through_week=as_of_week)`. For a target week that
+genuinely hasn't started, this changes nothing (there was no such-week data to
+drop anyway). For a target week that has partially started, it now correctly
+returns empty, which lets the existing `cold_start` fallback do what it always
+intended — fall back to last season's full-year pace for every team, not a
+live read for a lucky/unlucky few.
+
+Verified: `load_team_pace(2026, through_week=1)` is empty against real
+9/14/2026 data even though the unfiltered call already returns real pace for
+30 of 32 teams; the live Week-1 board still builds to 519 rows / 32 teams with
+`historical_target=False`, `cold_start=True`. New test
+`test_load_team_pace_through_week_drops_the_in_progress_week`
+(`tests/test_loaders.py`) pins the cutoff directly against a mocked nflreadpy
+response. 545 tests pass. `current_plays` / `load_team_weekly_plays` has the
+identical unfiltered-source shape but is never read on the cold-start branch
+(only `prior_plays` is), so it was left alone rather than changed speculatively.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

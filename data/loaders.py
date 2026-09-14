@@ -1093,7 +1093,7 @@ def load_player_id_crosswalk():
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
-def load_team_pace(year):
+def load_team_pace(year, through_week=None):
     """
     Offensive plays run per game and defensive plays FACED per game, both
     derived from nflreadpy's weekly team stats (attempts + carries +
@@ -1105,9 +1105,24 @@ def load_team_pace(year):
     regardless of per-play matchup quality, independent of the points/stats-
     allowed signal build_stat_allowed_matrix already captures.
 
+    ``through_week``, when given, drops any row with week >= through_week -
+    the same strict cutoff data.weekly_projections._played_weeks_before
+    uses. Without it this is a whole-season-TO-DATE source: fine for a
+    target week that genuinely has not kicked off, but nflreadpy has no
+    concept of "as of week N" - a live call made after, say, a Thursday
+    opener but before that same week's Sunday/Monday games would otherwise
+    return real data for only the team(s) that already played and nothing
+    for the other ~30, corrupting the league-average denominator and
+    handing exactly those teams' own players a live, one-game pace_mult
+    while every other team stays neutral (see build_weekly_projections'
+    ``pace`` line - this is the leak the 2026-09-10 historical_target fix
+    did not cover, reported 2026-09-14). Callers building a live, as-of-
+    week-aware board should always pass through_week=as_of_week; a prior,
+    fully-complete season should never pass it.
+
     Returns a DataFrame indexed by team abbreviation with 'off_pace' /
-    'def_pace' columns (empty DataFrame if nflreadpy has nothing for this
-    year, e.g. a season with no games played yet).
+    'def_pace' columns (empty DataFrame if nflreadpy has nothing usable for
+    this year/cutoff, e.g. a season with no games played yet).
     """
     try:
         df = nflreadpy.load_team_stats([year], summary_level='week').to_pandas()
@@ -1115,6 +1130,12 @@ def load_team_pace(year):
         return pd.DataFrame()
     if df.empty or 'team' not in df.columns:
         return pd.DataFrame()
+    if through_week is not None:
+        if 'week' not in df.columns:
+            return pd.DataFrame()
+        df = df[pd.to_numeric(df['week'], errors='coerce') < through_week]
+        if df.empty:
+            return pd.DataFrame()
     play_cols = [c for c in ['attempts', 'carries', 'sacks_suffered'] if c in df.columns]
     if not play_cols:
         return pd.DataFrame()

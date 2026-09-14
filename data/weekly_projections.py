@@ -6198,8 +6198,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     source_contract['pff_alignment_defense'] = pff_alignment_defense_contract
     source_contract['pff_scheme'] = pff_scheme_contract
     source_contract['pff_scheme_defense'] = pff_scheme_defense_contract
+    # through_week=as_of_week keeps this cutoff-safe even outside the
+    # historical_target branch below: nflreadpy has no "as of week N"
+    # concept of its own, so a live call made mid-week (e.g. after a
+    # Thursday opener, before that week's Sunday/Monday games) would
+    # otherwise return real data for only the team(s) that already played -
+    # see load_team_pace's own docstring for the 2026-09-14 bug this closes.
     pace = (as_of_team_pace(stats_df, team_col, as_of_week)
-            if use_v2_guard and historical_target else load_team_pace(year))
+            if use_v2_guard and historical_target else load_team_pace(year, through_week=as_of_week))
     if cold_start and (pace is None or pace.empty):
         # This season's own pace data doesn't exist yet either (same reason
         # as everything else in a cold start) - last season's team pace is

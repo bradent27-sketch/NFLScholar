@@ -1231,7 +1231,7 @@ def test_cold_start_manual_qb1_receives_full_prior_per_game_workload():
             (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
         wp.load_schedule = lambda year: schedule.copy()
         wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
-        wp.load_team_pace = lambda year: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
         wp.load_qb1_overrides = lambda _year: (
             pd.DataFrame([{'year': 2026, 'team': 'KC', 'player': 'Starter'}]), None)
         wp._target_margins_by_team = lambda year, week: {}
@@ -1400,7 +1400,7 @@ def test_nonstarter_qb_has_zero_projected_volume_not_a_relief_rate_projection():
             (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
         wp.load_schedule = lambda year: schedule.copy()
         wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
-        wp.load_team_pace = lambda year: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
         wp.load_qb1_overrides = lambda _year: (pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS), None)
         wp._target_margins_by_team = lambda year, week: {}
         out, meta = wp.build_weekly_projections(
@@ -2015,7 +2015,7 @@ def test_v2_decomposition_refreshes_the_stat_line_after_vacancy_redistribution()
             (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
         wp.load_schedule = lambda year: schedule.copy()
         wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
-        wp.load_team_pace = lambda year: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
         wp._target_margins_by_team = lambda year, week: {}
         wp._injury_profiles = lambda year, week: {
             'Out WR': {'plays_probability': 0.0, 'workload_if_active': 1.0, 'status': 'out'},

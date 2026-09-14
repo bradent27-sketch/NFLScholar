@@ -2168,6 +2168,45 @@ def _limit_rows(df, key):
     return df if choice == "All" or len(df) <= choice else df.head(choice)
 
 
+def _week_matchups(df, team_col='Team', opponent_col='Opponent'):
+    """This week's real games as [(label, {team_a, team_b}), ...].
+
+    Built off the board's OWN Team/Opponent columns rather than a second
+    schedule source (e.g. data.game_slate, which reads a separately-sourced
+    CSV) - so a label's teams are guaranteed to match what's actually on the
+    board, with no cross-source team-abbreviation mismatch possible. Only
+    the unordered pair is trustworthy this way (a row's own Team/Opponent
+    doesn't say which side is home), so the label is deliberately "A vs B",
+    not "A @ B".
+    """
+    if df.empty or team_col not in df.columns or opponent_col not in df.columns:
+        return []
+    pairs = df[[team_col, opponent_col]].dropna()
+    seen = set()
+    matchups = []
+    for team, opp in zip(pairs[team_col].astype(str), pairs[opponent_col].astype(str)):
+        game = tuple(sorted((team, opp)))
+        if game in seen:
+            continue
+        seen.add(game)
+        matchups.append((f"{game[0]} vs {game[1]}", {game[0], game[1]}))
+    return sorted(matchups, key=lambda m: m[0])
+
+
+def _apply_matchup_filter(df, selected_labels, matchups, team_col='Team'):
+    """Keep only rows whose team is part of a selected game - empty
+    selection means no filtering, same convention as apply_position_group."""
+    if not selected_labels or df.empty or team_col not in df.columns:
+        return df
+    teams = set()
+    for label, teams_in_game in matchups:
+        if label in selected_labels:
+            teams |= teams_in_game
+    if not teams:
+        return df
+    return df[df[team_col].astype(str).isin(teams)]
+
+
 def _week_options(year):
     """
     [(week, label, is_next_incomplete)], from the real schedule
@@ -2999,7 +3038,20 @@ def render():
         # display_cols re-select (indexed = indexed[[...]]).
         keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position']
         positions, group_label = position_group_buttons('wr', default='SUPERFLEX')
+        # Matchup filter (explicit request, prop-betting workflow): isolate
+        # one game's slate instead of scanning the whole week. Keyed by the
+        # board's own (year, week, scoring) so switching weeks always starts
+        # from "all games" rather than carrying over a selection whose teams
+        # may not even play this week (a stale value Streamlit would refuse
+        # to render against a changed options list).
+        week_matchups = _week_matchups(merged_model[keep_cols])
+        selected_matchups = st.multiselect(
+            "Matchup", [label for label, _teams in week_matchups],
+            key=f"weekly_rank_matchup_filter_{wk_year}_{wk_week}_{wk_scoring}",
+            placeholder="All games — pick one or more to isolate a slate for props",
+        )
         filtered_df = apply_position_group(merged_model[keep_cols], positions, pos_col='Position')
+        filtered_df = _apply_matchup_filter(filtered_df, selected_matchups, week_matchups)
         total_filtered = len(filtered_df)
         display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
         tier_values = display_df['_tier'].tolist()

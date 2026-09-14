@@ -2904,13 +2904,19 @@ def render():
                 merged_model = merged_model.rename(columns={src_col: 'FantasyPros Proj Pts'})
         # Per-player market detail for the projection decomposition dialog,
         # keyed the way the row-select handler keys a row: (Player, Pos,
-        # Team). Built here, before the stat columns are renamed to their
-        # display labels below, so the raw model stat line is still readable
-        # for the backfill. Always a dict so `.get` is safe with no market
-        # pull.
-        market_by_key = {}
+        # Team). Resolved ON DEMAND (_market_detail_for_key below) for
+        # whichever single player is actually opened, rather than eagerly
+        # built for the whole board on every rerun - this used to be a
+        # Python-level .iterrows() loop over ~500-900 rows regardless of
+        # whether anyone ever opens a decomposition (perf report
+        # 2026-09-14; same "resolve only the one row clicked" discipline
+        # row_keys/_selected_player_detail below already apply to
+        # model_meta['explanations']). market_detail_snapshot is captured
+        # HERE, before Market Coverage is reformatted into a display
+        # string a few lines down - the lookup needs the raw numeric value.
         consensus_stats = (market_df.attrs.get('consensus_stats', [])
                            if market_df is not None else [])
+        market_detail_snapshot = None
         if market_df is not None and not market_df.empty:
             merged_model = _attach_by_name(
                 merged_model, market_df,
@@ -2943,33 +2949,47 @@ def render():
             backfill = (raw_model_total - model_on_priced).clip(lower=0.0)
             merged_model['Market Proj Pts'] = (partial + backfill).round(1)
 
-            for _, r in merged_model.iterrows():
-                cons = {st_: float(r[f'Mkt {st_}']) for st_ in consensus_stats
-                        if f'Mkt {st_}' in merged_model.columns and pd.notna(r.get(f'Mkt {st_}'))}
-                partial_v = float(r['Mkt Market Pts']) if pd.notna(r.get('Mkt Market Pts')) else None
-                if not cons and partial_v is None:
-                    continue
-                full_v = float(r['Market Proj Pts']) if pd.notna(r.get('Market Proj Pts')) else None
-                cov_raw = r.get('Market Coverage')
-                cov = float(cov_raw) if cov_raw is not None and pd.notna(cov_raw) else None
-                pk = r.get('Mkt player_key')
-                bl = None
-                _bl_all = market_df.attrs.get('book_lines')
-                if _bl_all is not None and not _bl_all.empty and pd.notna(pk):
-                    sub = _bl_all[_bl_all['player_key'] == pk]
-                    if not sub.empty:
-                        # Keep the per-side prices and the devig - the Market
-                        # lines tab shows each book's O/U odds and the
-                        # consensus fair value, not just the bare number.
-                        _keep = [c for c in ('market', 'provider', 'line', 'over_payout',
-                                             'under_payout', 'p_over', 'implied_mean')
-                                 if c in sub.columns]
-                        bl = sub[_keep].copy()
-                market_by_key[(r['Player'], r['Pos'], r['Team'])] = {
-                    'consensus': cons, 'book_lines': bl,
-                    'market_points_partial': partial_v, 'market_points_full': full_v,
-                    'coverage': cov, 'scoring_mode': wk_scoring,
-                }
+            _snapshot_cols = (['Player', 'Pos', 'Team'] + [f'Mkt {s}' for s in consensus_stats]
+                             + ['Mkt Market Pts', 'Market Proj Pts', 'Market Coverage', 'Mkt player_key'])
+            market_detail_snapshot = merged_model[
+                [c for c in _snapshot_cols if c in merged_model.columns]].copy()
+
+        def _market_detail_for_key(key):
+            if market_detail_snapshot is None:
+                return None
+            player, pos, team = key
+            match = market_detail_snapshot[
+                market_detail_snapshot['Player'].eq(player) & market_detail_snapshot['Pos'].eq(pos)
+                & market_detail_snapshot['Team'].eq(team)]
+            if match.empty:
+                return None
+            r = match.iloc[0]
+            cons = {st_: float(r[f'Mkt {st_}']) for st_ in consensus_stats
+                    if f'Mkt {st_}' in match.columns and pd.notna(r.get(f'Mkt {st_}'))}
+            partial_v = float(r['Mkt Market Pts']) if pd.notna(r.get('Mkt Market Pts')) else None
+            if not cons and partial_v is None:
+                return None
+            full_v = float(r['Market Proj Pts']) if pd.notna(r.get('Market Proj Pts')) else None
+            cov_raw = r.get('Market Coverage')
+            cov = float(cov_raw) if cov_raw is not None and pd.notna(cov_raw) else None
+            pk = r.get('Mkt player_key')
+            bl = None
+            _bl_all = market_df.attrs.get('book_lines') if market_df is not None else None
+            if _bl_all is not None and not _bl_all.empty and pd.notna(pk):
+                sub = _bl_all[_bl_all['player_key'] == pk]
+                if not sub.empty:
+                    # Keep the per-side prices and the devig - the Market
+                    # lines tab shows each book's O/U odds and the
+                    # consensus fair value, not just the bare number.
+                    _keep = [c for c in ('market', 'provider', 'line', 'over_payout',
+                                         'under_payout', 'p_over', 'implied_mean')
+                             if c in sub.columns]
+                    bl = sub[_keep].copy()
+            return {
+                'consensus': cons, 'book_lines': bl,
+                'market_points_partial': partial_v, 'market_points_full': full_v,
+                'coverage': cov, 'scoring_mode': wk_scoring,
+            }
 
             if 'Market Coverage' in merged_model.columns:
                 # A book that posted only a receptions prop shows a real but
@@ -3172,7 +3192,7 @@ def render():
                 # numbers instead of the pre-injury breakdown.
                 st.session_state[_PROJECTION_DETAIL_KEY] = {
                     'config': detail_config, 'detail': fresh, 'key': prev_key,
-                    'market_detail': market_by_key.get(prev_key),
+                    'market_detail': _market_detail_for_key(prev_key),
                 }
             else:
                 # A real board switch (week / scoring), or nothing to
@@ -3196,7 +3216,7 @@ def render():
                 if detail:
                     st.session_state[_PROJECTION_DETAIL_KEY] = {
                         'config': detail_config, 'detail': detail, 'key': row_key,
-                        'market_detail': market_by_key.get(row_key),
+                        'market_detail': _market_detail_for_key(row_key),
                     }
 
         st.dataframe(

@@ -23,7 +23,7 @@ import pandas as pd
 import streamlit as st
 
 from config import (AVAILABLE_SEASONS_WITH_UPCOMING, TEAM_CONFIG, TAB_PLAYER_SEARCH,
-                    TAB_DEFENSIVE_YIELD, abbr_to_pff_team)
+                    TAB_DEFENSIVE_YIELD, TAB_DEPTH_CHARTS, abbr_to_pff_team)
 from data.draft_board import DEFAULT_SCORING, tier_by_position
 from data.transforms import (load_and_merge_data, build_recent_form_rank, build_form_series,
                              score_projected_stats)
@@ -1342,11 +1342,50 @@ def _render_pipeline_diagnostics(model_meta):
                 for issue in issues:
                     st.caption(f"• {issue}")
 
-    if contract.get('qb1_selection_required_teams'):
+    needs_qb1 = contract.get('qb1_selection_required_teams')
+    if needs_qb1:
         st.warning(
-            "QB1 selection required for: " + ", ".join(contract['qb1_selection_required_teams']) +
+            "QB1 selection required for: " + ", ".join(needs_qb1) +
             " - those teams' QB rooms receive no normal QB volume until one player is selected."
         )
+        # The fix lives on a different tab (Depth Charts' own "Weekly
+        # projection QB1 selection" expander) with no other link to it from
+        # here - explicit gap report (2026-09-14): "no QB created til
+        # selected...how to select?". One jump button per team, same
+        # switch_tab(..., **context) pattern _render_decomposition_navigation
+        # already uses to hand off a player/opponent - depth_charts.render()
+        # reads dc_jump_to_team/dc_jump_to_year to pre-select both the Team
+        # and Season pickers before its QB1 expander renders (which then
+        # opens itself, since status is still 'selection_required' there).
+        jump_year = (model_meta or {}).get('year')
+        cols = st.columns(min(len(needs_qb1), 4) or 1)
+        for i, team in enumerate(needs_qb1):
+            with cols[i % len(cols)]:
+                st.button(
+                    f"🏈 Select {team} QB1", key=f"wr_nav_qb1_{team}", width="stretch",
+                    on_click=switch_tab, args=(TAB_DEPTH_CHARTS,),
+                    kwargs={'dc_jump_to_team': team, 'dc_jump_to_year': jump_year},
+                )
+
+    # source_contract['qb1_override_warnings'] is qb1_resolution['warnings']
+    # verbatim (data/weekly_projections.py:6453,6463) - populated but never
+    # actually rendered anywhere, discovered 2026-09-14 while tracing a
+    # report of ATL showing "QB1 selection required" here yet "Manual
+    # selection: Tua Tagovailoa" on Depth Charts (that override is real in
+    # qb1_overrides.csv, but Tua reads as unavailable for ATL - almost
+    # certainly a fat-fingered override, since the actual Tua Tagovailoa
+    # plays for Miami). This exact mismatch was already being detected and
+    # explained; it just never reached the user. Filtered to "QB1 override"
+    # text specifically because this same list is also extended with the
+    # Ourlads import's general per-position warnings (:6432-6433, e.g. an
+    # RB's lc_red status flag) - those already have their own home in the
+    # "Depth-chart warnings" expander above and would be mislabeled here.
+    qb1_override_warnings = [
+        w for w in (contract.get('qb1_override_warnings') or []) if 'QB1 override' in w
+    ]
+    if qb1_override_warnings:
+        for warning in qb1_override_warnings:
+            st.warning(f"QB1 override problem: {warning}")
 
     segments = contract.get('rb_role_segments')
     if isinstance(segments, dict) and segments:
@@ -1657,6 +1696,13 @@ def _render_decomposition_audit_body(detail):
         st.success(f"Expected QB1: full workload from {role.get('starter_source', 'QB1 selection')}.")
     elif detail.get('position') == 'QB' and role.get('qb1_selection_required'):
         st.warning("QB1 selection required: this room receives no normal QB volume until one player is selected.")
+        team = detail.get('team')
+        if team:
+            st.button(
+                f"🏈 Select {team} QB1", key=f"wr_deepdive_nav_qb1_{team}",
+                on_click=switch_tab, args=(TAB_DEPTH_CHARTS,),
+                kwargs={'dc_jump_to_team': team, 'dc_jump_to_year': detail.get('season_year')},
+            )
     elif detail.get('position') == 'QB':
         st.caption("QB status: not the expected starter; projected QB volume is held at zero.")
     elif role.get('starter_source') and role.get('starter_source') != 'Not applicable':

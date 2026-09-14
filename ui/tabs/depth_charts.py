@@ -444,6 +444,20 @@ def _render_ourlads_import_control(year, team):
 
 def render():
     st.markdown("<div class='custom-section-header'>NFL DEPTH CHARTS</div>", unsafe_allow_html=True)
+    # Weekly Rankings' "QB1 selection required" warning has no control of
+    # its own - the fix lives only in this tab's own QB1 expander below, so
+    # its jump button stashes the target team/year via switch_tab and lands
+    # here. Popped (not .get()) so a one-time jump doesn't keep re-forcing
+    # these pickers on every later visit to this tab, and applied BEFORE the
+    # selectboxes below are created - Streamlit reads a widget's initial
+    # value from session_state[key] at creation time, so setting it after
+    # would be a no-op this run.
+    _jump_team = st.session_state.pop('dc_jump_to_team', None)
+    _jump_year = st.session_state.pop('dc_jump_to_year', None)
+    if _jump_team in MASTER_TEAMS_LIST:
+        st.session_state['team_sel_t2'] = _jump_team
+    if _jump_year in AVAILABLE_SEASONS_WITH_UPCOMING:
+        st.session_state['year_tab2'] = _jump_year
     c_year, c_team = st.columns(2)
     with c_year:
         t2_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_tab2")

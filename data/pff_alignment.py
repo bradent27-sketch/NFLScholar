@@ -3594,7 +3594,17 @@ def lookup_alignment_profile(
         return neutral_alignment_profile()
     matches = frame[frame.get("player", pd.Series("", index=frame.index)).map(_name_key).eq(_name_key(player))]
     if team:
-        matches = matches[matches.get("team", pd.Series("", index=matches.index)).map(_team_key).eq(_team_key(team))]
+        # _canonical_team_key, not _team_key: the stored "team" field is the
+        # raw PFF export value by design (see _TEAM_CODE_ALIASES' own
+        # comment - "raw player-role output remains exactly as supplied"),
+        # so a quirky PFF code (Baltimore's "BLT", etc.) never equals the
+        # nflverse-style code this app's own board passes in as `team`
+        # unless BOTH sides go through the same alias table before
+        # comparing - exactly how every defense_team identity key in this
+        # module already matches (found 2026-09-14: Zay Flowers' real,
+        # correctly-spelled archive row was silently missed by this alone).
+        matches = matches[matches.get("team", pd.Series("", index=matches.index))
+                          .map(_canonical_team_key).eq(_canonical_team_key(team))]
     if position:
         matches = matches[matches.get("position", pd.Series("", index=matches.index)).map(_normalise_position).eq(_normalise_position(position))]
     if len(matches) == 1:
@@ -3629,7 +3639,11 @@ def lookup_scheme_profile(
         return neutral_scheme_profile()
     matches = frame[frame.get("player", pd.Series("", index=frame.index)).map(_name_key).eq(_name_key(player))]
     if team:
-        matches = matches[matches.get("team", pd.Series("", index=matches.index)).map(_team_key).eq(_team_key(team))]
+        # _canonical_team_key - see lookup_alignment_profile's identical fix
+        # (2026-09-14) for why the raw PFF team code must be aliased before
+        # comparing against this app's own nflverse-style team code.
+        matches = matches[matches.get("team", pd.Series("", index=matches.index))
+                          .map(_canonical_team_key).eq(_canonical_team_key(team))]
     if position:
         matches = matches[matches.get("position", pd.Series("", index=matches.index)).map(_normalise_position).eq(_normalise_position(position))]
     if len(matches) == 1:

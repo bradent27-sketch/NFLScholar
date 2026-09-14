@@ -1323,6 +1323,59 @@ response. 545 tests pass. `current_plays` / `load_team_weekly_plays` has the
 identical unfiltered-source shape but is never read on the cold-start branch
 (only `prior_plays` is), so it was left alone rather than changed speculatively.
 
+## 2026-09-14 — PFF alignment/scheme lookup used the wrong team-code comparison for a traded-team roster mismatch — BUG FIX
+
+Reported as "alignment profile doesn't populate for all receivers" - shows for
+DK Metcalf and Alec Pierce, not for Michael Pittman Jr., Zay Flowers, or A.J.
+Brown, all in the same week.
+
+`lookup_alignment_profile`/`lookup_scheme_profile` (`data/pff_alignment.py`)
+try a PFF `player_id` match first (currently always a no-op live - nothing
+populates a real `pff_id` on the board frame yet), then fall back to a
+name+team+position match. The stored `"team"` field on each archived profile
+is deliberately the RAW PFF export value (`_TEAM_CODE_ALIASES`' own comment:
+"raw player-role output remains exactly as supplied"), which for PFF is
+sometimes a non-nflverse code - Baltimore exports as `"BLT"`, for instance.
+The lookup's team comparison used the plain `_team_key()` (uppercase +
+strip-non-alnum only) on BOTH sides instead of the alias-aware
+`_canonical_team_key()` every OTHER identity match in this module already
+uses (every `defense_team` key, the schedule-join home/away pair) - so
+`"BLT"` (stored) was compared against `"BAL"` (this app's own board), never
+matched, and Zay Flowers fell through to a neutral profile despite his real,
+correctly-spelled row sitting right there in the archive.
+
+Root-caused by direct inspection: all five reported names ARE present,
+correctly spelled, in `pff_imports/2025/weekly/{1,10}/receiving_summary.csv`.
+Metcalf and Pierce work because their archived team (`PIT`, `IND`) already
+matches the live board's team with no aliasing needed. Flowers' archived team
+is the quirky `BLT` - the bug above. Pittman and Brown are a DIFFERENT,
+unfixed case: their live-board team this season (`PIT`, `NE`) is genuinely
+not their 2025 archived team (`IND`, `PHI`) - a real offseason move, not a
+code quirk - and `lookup_alignment_profile` is deliberately conservative
+about trusting a name match across a team change (own docstring: "never
+guesses which of two same-name players should receive an alignment effect").
+Whether a trade should still carry the player's own alignment tendency
+forward (probably still better evidence than neutral, especially at a Week 1
+cold start) is a product call left open - see the session notes for where
+that was raised.
+
+**Fix.** Both lookups now compare `_canonical_team_key(stored team)` against
+`_canonical_team_key(queried team)`, matching the pattern already used for
+every other team-identity comparison in this file. The raw stored value
+itself is untouched (still exactly as PFF supplied it) - only the comparison
+during lookup is now alias-aware.
+
+Verified against real 2026 Week 1 data: Zay Flowers now resolves
+(`alignment_available=True`, `source_notes="Audited regular-season-only 2025
+PFF player-alignment prior for Week 1 of 2026."`), Metcalf/Pierce unchanged
+(still available, no regression), Pittman/Brown unchanged (still neutral,
+correctly - team-change case, not a code-alias case). 545 tests pass.
+
+The lookup feeds both scoring and display from the same call
+(`weekly_projections.py:6878`), so this was never a display-only gap: a
+missed match also meant that player's projection silently fell back to the
+broad (non-alignment-specific) matchup multiplier for that stat.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

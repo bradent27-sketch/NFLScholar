@@ -2579,24 +2579,38 @@ def _render_fantasypros_injury_pull(wk_year, wk_week, roster_df=None):
 
 def _render_pff_weekly_alignment_upload(wk_year, wk_week):
     """
-    Upload widget for the weekly PFF slot/wide/inline archive (data.
-    pff_alignment - see docs/pff_weekly_alignment_archive.md for the export
-    itself). Purely additive to a season's archive: each upload here is one
-    more week alongside whatever weeks are already saved, and the model only
-    ever reads weeks strictly before the one being projected (the same as-of
-    guard every other current-season input in this app goes through).
+    Upload widget for the weekly PFF slot/wide/inline alignment archive AND
+    its man/zone receiving-scheme companion (data.pff_alignment - see
+    docs/pff_weekly_alignment_archive.md for both exports). Purely additive
+    to a season's archive: each upload here is one more week alongside
+    whatever weeks are already saved, and the model only ever reads weeks
+    strictly before the one being projected (the same as-of guard every
+    other current-season input in this app goes through).
 
-    This is intentionally the ONLY thing this expander does - no matchup
-    preview, no defense ranking. The player role rates and defense
-    vulnerability profile this feeds are audit-only in the decomposition
-    dialog until they clear a predeclared backtest (see that module's own
-    docstring), so nothing here changes a single displayed point yet.
+    Both are LIVE scoring inputs, not audit-only - v2_pff_alignment_matchup
+    (slot/wide/inline) and v2_scheme_matchup (man/zone, TE only - see
+    SCHEME_MATCHUP_SCORING_POSITIONS in data/weekly_projections.py) are both
+    in DEFAULT_FEATURES. Without an upload here for a given week, both
+    fall back to a neutral (1.0x) matchup residual for that week - this
+    widget is the only supported way real weekly evidence reaches either
+    one; nothing else in the app pulls or scrapes it automatically.
+
+    receiving_scheme.csv is genuinely independent of the receiving_summary/
+    receiving_concept pair on disk (its own file, its own schema, no
+    manifest row of its own) - but NOT independently useful:
+    load_weekly_scheme_profiles only reads a week's scheme export once that
+    same week's pair is also complete (see that function's own docstring).
+    The uploader below still accepts scheme alone so it can be dropped in
+    ahead of the pair (PFF doesn't always publish every report at once),
+    but save_weekly_alignment_export flags when that leaves it inert for
+    now rather than claiming a plain, unqualified success.
     """
     from data.pff_alignment import save_weekly_alignment_export, discover_weekly_alignment_exports
     st.caption(
-        "One league-wide receiving_summary.csv + receiving_concept.csv pair per played week. "
-        "Builds the player role-rate and defense-vulnerability foundation for a future slot/wide/"
-        "inline matchup model; audit-only today, not applied to any projection yet."
+        "One league-wide receiving_summary.csv + receiving_concept.csv pair per played week "
+        "builds the slot/wide/inline alignment matchup (WR/TE targets, receptions, yards). "
+        "The optional receiving_scheme.csv alongside it builds the man/zone scheme matchup - "
+        "TE's own 'Defense multiplier' uses this instead of alignment wherever it's available."
     )
     upload_week = st.number_input("Week this export covers", min_value=1, max_value=22,
                                   value=int(wk_week) if wk_week else 1, step=1, key="wr_pff_align_week")
@@ -2605,11 +2619,17 @@ def _render_pff_weekly_alignment_upload(wk_year, wk_week):
         summary_up = st.file_uploader("receiving_summary.csv", type=["csv"], key="wr_pff_align_summary")
     with c2:
         concept_up = st.file_uploader("receiving_concept.csv", type=["csv"], key="wr_pff_align_concept")
+    scheme_up = st.file_uploader(
+        "receiving_scheme.csv (optional - man/zone route/target/reception/yard split)",
+        type=["csv"], key="wr_pff_align_scheme")
     if st.button("Save this week's archive", key="wr_pff_align_save",
-                 disabled=not (summary_up and concept_up)):
-        ok, issues = save_weekly_alignment_export(summary_up, concept_up, wk_year, int(upload_week))
+                 disabled=not ((summary_up and concept_up) or scheme_up)):
+        ok, issues = save_weekly_alignment_export(
+            summary_up, concept_up, wk_year, int(upload_week), scheme_file=scheme_up)
         if ok:
             st.success(f"Saved Week {int(upload_week)}, {wk_year} to the alignment archive.")
+            for issue in issues:
+                st.warning(issue)
             st.rerun()
         else:
             st.error(" ".join(issues) or "Could not save that export.")
@@ -2619,6 +2639,14 @@ def _render_pff_weekly_alignment_upload(wk_year, wk_week):
     if archives is not None and not archives.empty and 'week' in archives.columns:
         weeks_present = sorted(int(w) for w in archives['week'].dropna().unique())
         st.caption(f"Weeks archived for {wk_year}: {weeks_present}.")
+        if 'scheme_present' in archives.columns:
+            scheme_weeks = sorted(int(w) for w in archives.loc[archives['scheme_present'].astype(bool), 'week'].dropna().unique())
+            st.caption(
+                f"Of those, weeks with a receiving_scheme.csv too: {scheme_weeks}."
+                if scheme_weeks else
+                "None of those weeks has a receiving_scheme.csv yet - the man/zone scheme "
+                "matchup is neutral (1.0x) for every week until one is uploaded."
+            )
     else:
         st.caption(f"No weekly archive saved for {wk_year} yet.")
 

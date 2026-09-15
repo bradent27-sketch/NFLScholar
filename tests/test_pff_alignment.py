@@ -361,6 +361,73 @@ def test_save_weekly_alignment_export_rejects_a_bad_schema_before_writing_anythi
         assert not (root / "2026" / "weekly" / "1").exists()
 
 
+def test_save_weekly_alignment_export_with_scheme_saves_all_three_and_loads_back():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "pff_imports"
+        ok, issues = pa.save_weekly_alignment_export(
+            io.StringIO(pd.DataFrame([_summary_row()]).to_csv(index=False)),
+            io.StringIO(pd.DataFrame([_concept_row()]).to_csv(index=False)),
+            2026, 1, scheme_file=io.StringIO(pd.DataFrame([_scheme_row()]).to_csv(index=False)),
+            pff_root=root,
+        )
+        assert ok and not issues
+        assert (root / "2026" / "weekly" / "1" / "receiving_scheme.csv").is_file()
+
+        # The pair is complete for this week, so the scheme upload is
+        # immediately eligible - not just written to disk.
+        result = pa.load_weekly_scheme_profiles(2026, as_of_week=2, pff_root=root)
+        assert result.available and len(result.profiles) == 1
+
+
+def test_save_weekly_alignment_export_scheme_alone_saves_but_warns_it_is_unused_without_the_pair():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "pff_imports"
+        ok, issues = pa.save_weekly_alignment_export(
+            None, None, 2026, 1,
+            scheme_file=io.StringIO(pd.DataFrame([_scheme_row()]).to_csv(index=False)),
+            pff_root=root,
+        )
+        # Saving succeeds (the file is real and independently valid) but the
+        # caller gets a clear, specific reason it won't score anything yet -
+        # load_weekly_scheme_profiles' own eligibility rule requires that
+        # week's receiving_summary/receiving_concept pair too.
+        assert ok
+        assert any("won't be used" in issue for issue in issues)
+        assert (root / "2026" / "weekly" / "1" / "receiving_scheme.csv").is_file()
+        assert not (root / "2026" / "weekly" / "1" / "receiving_summary.csv").exists()
+
+        result = pa.load_weekly_scheme_profiles(2026, as_of_week=2, pff_root=root)
+        assert not result.available or len(result.profiles) == 0
+
+        # Uploading the pair afterward, for the SAME week, makes the
+        # already-saved scheme file eligible without re-uploading it.
+        ok2, issues2 = pa.save_weekly_alignment_export(
+            io.StringIO(pd.DataFrame([_summary_row()]).to_csv(index=False)),
+            io.StringIO(pd.DataFrame([_concept_row()]).to_csv(index=False)),
+            2026, 1, pff_root=root,
+        )
+        assert ok2 and not issues2
+        result2 = pa.load_weekly_scheme_profiles(2026, as_of_week=2, pff_root=root)
+        assert result2.available and len(result2.profiles) == 1
+
+
+def test_save_weekly_alignment_export_bad_scheme_schema_does_not_block_a_valid_pair():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp) / "pff_imports"
+        bad_scheme = io.StringIO(pd.DataFrame([{"player": "X", "position": "WR", "team_name": "KC"}]
+                                              ).to_csv(index=False))  # no man_targets/zone_targets
+        ok, issues = pa.save_weekly_alignment_export(
+            io.StringIO(pd.DataFrame([_summary_row()]).to_csv(index=False)),
+            io.StringIO(pd.DataFrame([_concept_row()]).to_csv(index=False)),
+            2026, 1, scheme_file=bad_scheme, pff_root=root,
+        )
+        # The pair is independently valid and must still save even though
+        # the scheme upload in the SAME action failed its own schema check.
+        assert ok and issues
+        assert (root / "2026" / "weekly" / "1" / "receiving_summary.csv").is_file()
+        assert not (root / "2026" / "weekly" / "1" / "receiving_scheme.csv").exists()
+
+
 def test_offensive_weekly_archive_builds_schedule_mapped_defense_profiles_and_neutral_preview():
     """Only offensive weekly reports may create the experimental defense side."""
     with tempfile.TemporaryDirectory() as tmp:

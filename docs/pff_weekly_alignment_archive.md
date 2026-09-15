@@ -11,6 +11,7 @@ Save one league-wide export of each report after the week's games:
 ```text
 pff_imports/{year}/weekly/{week}/receiving_summary.csv
 pff_imports/{year}/weekly/{week}/receiving_concept.csv
+pff_imports/{year}/weekly/{week}/receiving_scheme.csv   # optional - see below
 pff_imports/{year}/weekly/manifest.csv
 ```
 
@@ -19,12 +20,20 @@ For example:
 ```text
 pff_imports/2026/weekly/1/receiving_summary.csv
 pff_imports/2026/weekly/1/receiving_concept.csv
+pff_imports/2026/weekly/1/receiving_scheme.csv
 pff_imports/2026/weekly/manifest.csv
 ```
 
-One pair is league-wide: it covers WR, TE, HB/RB, and FB. Do not create one export per
+One export is league-wide: it covers WR, TE, HB/RB, and FB. Do not create one export per
 position or player. The raw weekly folder is intentionally Git-ignored so it cannot be
 staged accidentally for a public push.
+
+`receiving_summary.csv` and `receiving_concept.csv` are a PAIR - both are required together,
+and the in-app uploader (Weekly Rankings → Live data pulls → PFF alignment) will not save
+either one alone. `receiving_scheme.csv` is a separate, self-contained report (man/zone
+already partitions every route/target PFF assigned a coverage shell to, so there is no
+second file to merge it with) - the uploader accepts it independently, but see "What the
+model uses" below for why it still needs that same week's pair to actually take effect.
 
 ## Manifest
 
@@ -46,6 +55,13 @@ plain-language label that identifies the manual export process.
 - A target Week *N* projection can read only archives from Weeks `< N`.
 - `receiving_summary` supplies player slot/wide/inline alignment rates and snaps.
 - `receiving_concept` supplies slot routes, targets, receptions, yards, and touchdowns.
+- `receiving_scheme` (optional) supplies each player's man-coverage and zone-coverage routes,
+  targets, receptions, yards, and touchdowns - the same event shape as `receiving_concept`, but
+  split by coverage shell instead of by alignment. A week's `receiving_scheme.csv` is only ever
+  read once that SAME week's `receiving_summary`/`receiving_concept` pair is also complete
+  (`load_weekly_scheme_profiles` reuses the pair's own eligibility check) - uploading scheme
+  alone for a week with no pair yet saves a real file that simply sits unused until the pair
+  exists too. The in-app uploader flags this rather than reporting a plain, unqualified success.
 - The app creates WR and TE player slot/wide/inline profiles from `receiving_summary`'s real
   per-player `slot_snaps`/`wide_snaps`/`inline_snaps`. RB/FB alignment remains audit-only.
 - Defense profiles are built from the same weekly **offensive** reports, mapped through the
@@ -74,6 +90,16 @@ why (removing a redundant second multiplier and an over-aggressive normalization
 were both explicit requests) and its own outstanding "not yet re-backtested" caveat. "Explanatory
 only" describes the underlying `pff_alignment.py` helper's own `multiplier` field (always 1.0), not
 the `candidate_multiplier` this app's caller uses. Alignment touchdown effects are always neutral.
+
+The man/zone counterpart works the same way from `receiving_scheme` data, shown in the
+projection decomposition under "Scheme mix (man / zone)", and is `v2_scheme_matchup`-gated -
+also live in `DEFAULT_FEATURES` (built 2026-08-27). It is computed for both WR and TE
+(`SCHEME_DEFENSE_SUPPORTED_POSITIONS`), but only REPLACES the broad role/defense matchup for
+TE's own scoring (`SCHEME_MATCHUP_SCORING_POSITIONS = {'TE'}` in `data/weekly_projections.py`) -
+for a WR it stays a reference-only preview in the decomposition, same "explanatory only"
+distinction as alignment above. Without a `receiving_scheme.csv` for a given week, the scheme
+residual is neutral (1.0x) for every player that week - a TE's "Defense multiplier" then falls
+back to the alignment blend above it, or the broad matchup if that is unavailable too.
 
 **Update, 2026-08-26:** re-measured against `docs/weekly_projections_methodology.md`'s own
 A/B convention (`scripts/eval_weekly_model.py`, isolating this one flag, 2025 weeks 2-18).

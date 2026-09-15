@@ -1057,65 +1057,115 @@ def save_weekly_alignment_export(
     year: int,
     week: int,
     *,
+    scheme_file: Any = None,
     pff_root: str | Path = DEFAULT_PFF_ROOT,
 ) -> tuple[bool, list[str]]:
-    """Write one week's uploaded receiving_summary/receiving_concept pair to
-    the local archive layout this module reads (pff_imports/{year}/weekly/
-    {week}/*.csv), and upsert that week's manifest.csv row.
+    """Write one week's uploaded receiving_summary/receiving_concept pair,
+    and/or its receiving_scheme export, to the local archive layout this
+    module reads (pff_imports/{year}/weekly/{week}/*.csv), and upsert that
+    week's manifest.csv row.
 
-    Runs the SAME _validate_summary/_validate_concept schema check used at
-    load time before writing anything, so a bad upload is rejected with a
-    clear reason instead of silently landing as a file load_weekly_alignment_
-    profiles will later reject anyway - and the manifest's schema_valid flag
-    this writes is therefore true validation, not an optimistic guess.
+    Runs the SAME _validate_summary/_validate_concept/_validate_scheme
+    schema checks used at load time before writing anything, so a bad
+    upload is rejected with a clear reason instead of silently landing as
+    a file load_weekly_alignment_profiles/load_weekly_scheme_profiles will
+    later reject anyway - and the manifest's schema_valid flag this writes
+    is therefore true validation, not an optimistic guess.
 
-    Marks regular_season=True: this is an in-season upload of a week that was
-    just played, not a season-total export, so the ambiguity
-    load_season_alignment_prior guards against (playoff-contaminated totals)
-    does not apply here.
+    The pair and scheme_file are saved INDEPENDENTLY - either can succeed
+    or fail without blocking the other, and either can be omitted entirely
+    (pass None). This is safe because the two are genuinely independent
+    files on disk, but it does NOT make them independently USEFUL:
+    load_weekly_scheme_profiles only ever reads a week's receiving_scheme.csv
+    when that SAME week's summary/concept pair is also complete (its own
+    docstring - eligible_as_of, computed once for the whole week, gates
+    both). Saving scheme_file for a week with no pair on disk yet (from
+    this call or an earlier one) writes a real file that simply won't be
+    read by anything until the pair also exists - the caller should surface
+    that rather than let it look like a silent success with no caveat.
+
+    Marks regular_season=True: this is an in-season upload of a week that
+    was just played, not a season-total export, so the ambiguity
+    load_season_alignment_prior guards against (playoff-contaminated
+    totals) does not apply here.
     """
     issues: list[str] = []
-    if summary_file is None or concept_file is None:
-        return False, ["Both the receiving_summary and receiving_concept files are required."]
-    try:
-        summary_df = pd.read_csv(summary_file, low_memory=False)
-    except Exception as exc:
-        return False, [f"Could not read the receiving_summary file: {type(exc).__name__}: {exc}"]
-    try:
-        concept_df = pd.read_csv(concept_file, low_memory=False)
-    except Exception as exc:
-        return False, [f"Could not read the receiving_concept file: {type(exc).__name__}: {exc}"]
+    week_dir = Path(pff_root) / str(int(year)) / "weekly" / str(int(week))
+    pair_saved = False
+    scheme_saved = False
 
-    _summary_validated, summary_ok = _validate_summary(summary_df, "receiving_summary.csv", issues)
-    _concept_validated, concept_ok = _validate_concept(concept_df, "receiving_concept.csv", issues)
-    schema_valid = bool(summary_ok and concept_ok)
-    if not schema_valid:
+    if summary_file is not None or concept_file is not None:
+        if summary_file is None or concept_file is None:
+            issues.append("Both the receiving_summary and receiving_concept files are required together.")
+        else:
+            summary_df = concept_df = None
+            try:
+                summary_df = pd.read_csv(summary_file, low_memory=False)
+            except Exception as exc:
+                issues.append(f"Could not read the receiving_summary file: {type(exc).__name__}: {exc}")
+            try:
+                concept_df = pd.read_csv(concept_file, low_memory=False)
+            except Exception as exc:
+                issues.append(f"Could not read the receiving_concept file: {type(exc).__name__}: {exc}")
+            if summary_df is not None and concept_df is not None:
+                _summary_validated, summary_ok = _validate_summary(summary_df, "receiving_summary.csv", issues)
+                _concept_validated, concept_ok = _validate_concept(concept_df, "receiving_concept.csv", issues)
+                if summary_ok and concept_ok:
+                    week_dir.mkdir(parents=True, exist_ok=True)
+                    summary_df.to_csv(week_dir / "receiving_summary.csv", index=False)
+                    concept_df.to_csv(week_dir / "receiving_concept.csv", index=False)
+                    pair_saved = True
+
+    if scheme_file is not None:
+        scheme_df = None
+        try:
+            scheme_df = pd.read_csv(scheme_file, low_memory=False)
+        except Exception as exc:
+            issues.append(f"Could not read the receiving_scheme file: {type(exc).__name__}: {exc}")
+        if scheme_df is not None:
+            _scheme_validated, scheme_ok = _validate_scheme(scheme_df, "receiving_scheme.csv", issues)
+            if scheme_ok:
+                week_dir.mkdir(parents=True, exist_ok=True)
+                scheme_df.to_csv(week_dir / "receiving_scheme.csv", index=False)
+                scheme_saved = True
+        if scheme_saved and not (
+            pair_saved
+            or ((week_dir / "receiving_summary.csv").is_file() and (week_dir / "receiving_concept.csv").is_file())
+        ):
+            issues.append(
+                f"Saved receiving_scheme.csv for Week {int(week)}, but it won't be used until "
+                "receiving_summary.csv and receiving_concept.csv also exist for that same week "
+                "(scheme eligibility follows the alignment pair)."
+            )
+
+    if not pair_saved and not scheme_saved:
+        if not issues:
+            issues.append(
+                "Nothing to save - provide the receiving_summary/receiving_concept pair, "
+                "a receiving_scheme export, or both."
+            )
         return False, issues
 
-    week_dir = Path(pff_root) / str(int(year)) / "weekly" / str(int(week))
-    week_dir.mkdir(parents=True, exist_ok=True)
-    summary_df.to_csv(week_dir / "receiving_summary.csv", index=False)
-    concept_df.to_csv(week_dir / "receiving_concept.csv", index=False)
-
-    weekly_dir = Path(pff_root) / str(int(year)) / "weekly"
-    manifest_path = weekly_dir / "manifest.csv"
-    manifest = pd.DataFrame(columns=["week", "regular_season", "schema_valid", "source_confidence", "export_date"])
-    if manifest_path.is_file():
-        try:
-            manifest = pd.read_csv(manifest_path, low_memory=False)
-        except Exception:
-            manifest = manifest.iloc[0:0]
-    for column in ("week", "regular_season", "schema_valid", "source_confidence", "export_date"):
-        if column not in manifest.columns:
-            manifest[column] = pd.NA
-    manifest["week"] = pd.to_numeric(manifest["week"], errors="coerce")
-    manifest = manifest[manifest["week"].ne(int(week))]
-    new_row = pd.DataFrame([{
-        "week": int(week), "regular_season": True, "schema_valid": True,
-        "source_confidence": "in_app_upload_regular_season_export",
-        "export_date": pd.Timestamp.now().strftime("%Y-%m-%d"),
-    }])
-    pd.concat([manifest, new_row], ignore_index=True).to_csv(manifest_path, index=False)
+    if pair_saved:
+        weekly_dir = Path(pff_root) / str(int(year)) / "weekly"
+        manifest_path = weekly_dir / "manifest.csv"
+        manifest = pd.DataFrame(columns=["week", "regular_season", "schema_valid", "source_confidence", "export_date"])
+        if manifest_path.is_file():
+            try:
+                manifest = pd.read_csv(manifest_path, low_memory=False)
+            except Exception:
+                manifest = manifest.iloc[0:0]
+        for column in ("week", "regular_season", "schema_valid", "source_confidence", "export_date"):
+            if column not in manifest.columns:
+                manifest[column] = pd.NA
+        manifest["week"] = pd.to_numeric(manifest["week"], errors="coerce")
+        manifest = manifest[manifest["week"].ne(int(week))]
+        new_row = pd.DataFrame([{
+            "week": int(week), "regular_season": True, "schema_valid": True,
+            "source_confidence": "in_app_upload_regular_season_export",
+            "export_date": pd.Timestamp.now().strftime("%Y-%m-%d"),
+        }])
+        pd.concat([manifest, new_row], ignore_index=True).to_csv(manifest_path, index=False)
     return True, issues
 
 

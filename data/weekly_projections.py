@@ -334,8 +334,12 @@ QB_SPLIT_MAX_SNAP_SHARE = 0.80
 QB_SPLIT_MIN_COMBINED_SHARE = 0.90
 QB_SPLIT_MAX_COMBINED_SHARE = 1.10
 # A final score alone cannot prove when a player sat.  This only acts when a
-# proven full-time player also logged a sharply reduced share in an extreme,
-# winning blowout.
+# proven full-time player also logged a sharply reduced share in an extreme
+# blowout, decided by 28+ either direction - a winning blowout benches
+# starters late, and a losing blowout just as often pulls a veteran out of a
+# lost cause or shuffles in backups once the outcome is no longer in doubt
+# (2026-09-15: reported on Cleveland's WR1 logging a suppressed ~60% snap
+# share in a 28+ point road loss to Jacksonville, versus his normal ~85%).
 SEVERE_BLOWOUT_MARGIN = 28.0
 SEVERE_BLOWOUT_MAX_SNAP_SHARE = 0.65
 SEVERE_BLOWOUT_RELATIVE_MAX_SHARE = 0.75
@@ -991,6 +995,16 @@ MODEL_FEATURES = (
                              # pushes the charted TE1 up instead); STACKED with
                              # bump+growth it made START-TE +0.206* (a
                              # significant knock) - do NOT combine. OFF.
+    'v2_defense_blowout_discount',  # down-weight (not exclude) a defense's
+                             # own team-game evidence in build_team_game_
+                             # quality_adjusted_matchup when that game was a
+                             # 28+ point blowout, either direction - the
+                             # defense-side mirror of SEVERE_BLOWOUT_MARGIN's
+                             # player-side rest exclusion. See
+                             # DEFENSE_BLOWOUT_MARGIN/_DISCOUNT and
+                             # _defense_script_weight_multiplier. NOT in
+                             # DEFAULT_FEATURES - a new signal path, backtest
+                             # pending (scripts/eval_weekly_model.py).
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -1947,6 +1961,34 @@ def _build_defense_weekly_log(pos_rows, team_col, stats, game_universe, as_of_we
     return {team: g for team, g in game.groupby('_defense')}
 
 
+def _defense_script_weight_multiplier(game, schedule_df):
+    """Per-row weight discount for a DEFENSE's own team-game evidence when
+    that game was a 28+ point blowout, either direction - see
+    'v2_defense_blowout_discount' / DEFENSE_BLOWOUT_MARGIN in MODEL_FEATURES.
+
+    ``game`` is a _position_team_games()-shaped frame (needs '_defense' and
+    '_week'). Returns a Series of multipliers aligned to ``game``'s index:
+    DEFENSE_BLOWOUT_WEIGHT_DISCOUNT for a game where the DEFENSE's own final
+    margin was 28+ in either direction, 1.0 otherwise (including when no
+    schedule/margin data resolves a game). Discounts rather than excludes,
+    same caution as SEVERE_BLOWOUT_MARGIN's player-side rule: a whole
+    defense does not bench itself the way one player can, so a decided game
+    is noisier evidence of its normal quality, not unusable evidence.
+    """
+    margins = _team_week_margins(schedule_df)
+    if margins.empty or game.empty:
+        return pd.Series(1.0, index=game.index)
+    margin_frame = margins.copy()
+    margin_frame['_defense'] = _clean_team_key(margin_frame['Team'])
+    margin_frame['_week'] = pd.to_numeric(margin_frame['week'], errors='coerce')
+    margin_map = margin_frame.dropna(subset=['_week']).drop_duplicates(
+        ['_defense', '_week'], keep='last').set_index(['_defense', '_week'])['margin']
+    lookup = pd.MultiIndex.from_frame(game[['_defense', '_week']])
+    own_margin = margin_map.reindex(lookup).to_numpy(dtype=float)
+    blowout = np.abs(own_margin) >= DEFENSE_BLOWOUT_MARGIN
+    return pd.Series(np.where(blowout, DEFENSE_BLOWOUT_WEIGHT_DISCOUNT, 1.0), index=game.index)
+
+
 def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
                                partition_keys=(), plays=None):
     """Pooled observed/expected team-game defense factor.
@@ -2014,6 +2056,12 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
     baseline_keys = ['_offense'] + partition_keys
     baseline = game.groupby(baseline_keys, observed=True)[stats].transform('mean')
     weights = defense_recency_weights(game['_week'], as_of_week, recency_floor)
+    if '_script_weight' in game.columns:
+        # v2_defense_blowout_discount - see _defense_script_weight_multiplier.
+        # A column (not a separately-indexed argument) so it survives the
+        # partition_keys recursion above, which splits `game` via groupby
+        # before ever reaching this branch.
+        weights = weights * pd.to_numeric(game['_script_weight'], errors='coerce').fillna(1.0)
     observed = game[stats].mul(weights, axis=0)
     expected = baseline.mul(weights, axis=0)
     observed['_defense'] = game['_defense'].to_numpy()
@@ -2043,7 +2091,7 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
 
 def build_team_game_quality_adjusted_matchup(hist_pos, team_col, stats, as_of_week,
                                              recency_floor=0.0, game_universe=None,
-                                             plays=None):
+                                             plays=None, schedule_df=None):
     """Robust defense profile for one projected position channel.
 
     For every statistic, first sum *all players at that position* into one
@@ -2062,11 +2110,20 @@ def build_team_game_quality_adjusted_matchup(hist_pos, team_col, stats, as_of_we
     its docstring for why the ratio is normalized by each game's own play
     count rather than left as a raw-total volume that pace_mult would then
     double-apply.
+
+    ``schedule_df``, when given, down-weights (never drops) a defense's own
+    28+ point blowout games via _defense_script_weight_multiplier - gated by
+    'v2_defense_blowout_discount' at the call site (this function applies the
+    discount whenever a non-empty schedule_df is passed, same on/off-by-
+    caller-omission convention as ``plays``).
     """
     game, group_keys = _position_team_games(
         hist_pos, team_col, stats, game_universe=game_universe)
     if game.empty:
         return pd.DataFrame()
+    if schedule_df is not None and not schedule_df.empty:
+        game = game.copy()
+        game['_script_weight'] = _defense_script_weight_multiplier(game, schedule_df)
     result, _evidence = _team_game_quality_profile(
         game, stats, as_of_week, recency_floor=recency_floor,
         partition_keys=group_keys[3:], plays=plays,
@@ -2152,6 +2209,26 @@ DEFENSE_PRIOR_GAMES = 12.0
 # nonzero, only a deliberate sweep variant is. See
 # scripts/sweep_defense_prior_games.py.
 DEFENSE_PRIOR_GAMES_OVERRIDE = None
+
+# --- v2_defense_blowout_discount --------------------------------------------
+# Built 2026-09-15 alongside the losing-side mirror of SEVERE_BLOWOUT_MARGIN
+# (see annotate_player_history_participation) - that fix stops a decided
+# game from contaminating a PLAYER's own rate history; this is the same idea
+# for a DEFENSE's own allowed-rate profile
+# (build_team_game_quality_adjusted_matchup / _team_game_quality_profile),
+# which had no equivalent. A defense up or down 28+ often faces a script
+# (a soft prevent shell protecting the lead, an opponent running clock or
+# pulling ITS OWN starters once the outcome is decided) that is not
+# representative of a competitive game, and that game's raw allowed totals
+# currently feed the observed/expected ratio at full recency weight either
+# way. DOWN-WEIGHTS rather than excludes (see
+# _defense_script_weight_multiplier) - a whole defense does not bench itself
+# the way one player can, so the evidence is noisier, not unusable. NOT in
+# DEFAULT_FEATURES: unlike the player-side change (a symmetry fix to an
+# already-shipped, always-on mechanism), this is a new signal path and needs
+# its own backtest first - see scripts/eval_weekly_model.py.
+DEFENSE_BLOWOUT_MARGIN = 28.0
+DEFENSE_BLOWOUT_WEIGHT_DISCOUNT = 0.5
 
 
 def _defense_game_evidence(hist_pos, game_universe=None, team_col=None):
@@ -4634,8 +4711,10 @@ def annotate_player_history_participation(history, name_col, team_col, schedule_
       upcoming-starter sample;
     * a previously fringe player took part of the same-position work after
       that proven teammate's abrupt exit; or
-    * a proven starter had sharply reduced work in a 28+ point win, a clear
-      late-game-rest situation rather than an ordinary lower-workload game.
+    * a proven starter had sharply reduced work in a game decided by 28+
+      points (either direction) - a clear late-game-rest situation on the
+      winning side, or a lost-cause snap reduction on the losing side -
+      rather than an ordinary lower-workload game.
 
     Rows with missing or zero snap data remain eligible.  The annotation is
     intentionally for *player baseline/rate* inputs only.  Defense profiles
@@ -4772,8 +4851,13 @@ def annotate_player_history_participation(history, name_col, team_col, schedule_
         mark(incoming['_row'].to_numpy(), 'partial replacement after teammate exit')
 
     # Margin is supporting evidence only.  A score cannot tell us when a
-    # player sat, so use it solely for a huge winning margin plus an already
-    # established player's materially reduced measured participation.
+    # player sat, so use it solely for a huge margin (either direction) plus
+    # an already established player's materially reduced measured
+    # participation. Symmetric by design: a winning blowout benches starters
+    # late, and a losing blowout (2026-09-15: Cleveland's WR1 at ~60% snaps
+    # in a 28+ point road loss, versus his normal ~85%) just as often pulls a
+    # veteran once the outcome is no longer in doubt - both describe a game
+    # that is not a normal upcoming-role sample, not just the winning side.
     margins = _team_week_margins(schedule_df)
     if not margins.empty:
         margin_frame = margins.copy()
@@ -4783,14 +4867,17 @@ def annotate_player_history_participation(history, name_col, team_col, schedule_
             ['_offense', '_week'], keep='last').set_index(['_offense', '_week'])['margin']
         lookup = pd.MultiIndex.from_frame(frame[['_offense', '_week']])
         frame['_final_margin'] = margin_map.reindex(lookup).to_numpy(dtype=float)
-        blowout_rest = (
+        blowout_reduced_role = (
             frame['_established_role']
-            & frame['_final_margin'].ge(SEVERE_BLOWOUT_MARGIN)
+            & frame['_final_margin'].abs().ge(SEVERE_BLOWOUT_MARGIN)
             & frame['_snap'].gt(0.0)
             & frame['_snap'].le(SEVERE_BLOWOUT_MAX_SNAP_SHARE)
             & frame['_snap'].le(SEVERE_BLOWOUT_RELATIVE_MAX_SHARE * frame['_prior_snap_reference'])
         )
-        mark(frame.loc[blowout_rest, '_row'].to_numpy(), 'severe blowout rest')
+        winning_side = blowout_reduced_role & frame['_final_margin'].gt(0.0)
+        losing_side = blowout_reduced_role & frame['_final_margin'].lt(0.0)
+        mark(frame.loc[winning_side, '_row'].to_numpy(), 'severe blowout rest')
+        mark(frame.loc[losing_side, '_row'].to_numpy(), 'severe blowout rest (losing side)')
 
     excluded = reasons != ''
     annotated['_player_history_eligible'] = ~excluded
@@ -6428,7 +6515,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     player_prior2 = prior2_annotated[prior2_annotated['_player_history_eligible']].copy()
     source_contract['partial_game_history_filter'] = (
         'exclude only snap-confirmed QB splits, abrupt established-role exits, '
-        'paired partial replacements, and severe winning-blowout rest games'
+        'paired partial replacements, and severe blowout rest games (either side)'
     )
     source_contract['partial_game_history_exclusions'] = {
         'current_season': int((~hist_annotated['_player_history_eligible']).sum()),
@@ -7113,6 +7200,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     prior_pos_rows, prior_team_col, stats, anchor_week,
                     recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
                     game_universe=prior_played, plays=prior_plays,
+                    schedule_df=(prior_schedule_df if 'v2_defense_blowout_discount' in feats else None),
                 ) if anchor_week is not None else pd.DataFrame()
             )
             # Deep Dive: no CURRENT-season games exist yet at cold start, so
@@ -7192,7 +7280,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 pos_rows, game_universe=hist, team_col=team_col)
             upcoming_opponent_map = dict(zip(cur[name_col], cur['Opponent']))
             matchup_matrix = build_team_game_quality_adjusted_matchup(
-                pos_rows, team_col, stats, as_of_week, game_universe=hist, plays=current_plays)
+                pos_rows, team_col, stats, as_of_week, game_universe=hist, plays=current_plays,
+                schedule_df=(schedule_df if 'v2_defense_blowout_discount' in feats else None))
             # prior_pos_rows/prior_anchor/prior_matrix are computed
             # unconditionally (not just under v2_defense_prior) because the
             # Deep Dive's prior-season selector needs them regardless of
@@ -7211,6 +7300,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     prior_pos_rows, prior_team_col, stats, prior_anchor,
                     recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
                     game_universe=prior_played, plays=prior_plays,
+                    schedule_df=(prior_schedule_df if 'v2_defense_blowout_discount' in feats else None),
                 ) if prior_anchor is not None else pd.DataFrame()
             )
             if 'v2_defense_prior' in feats:

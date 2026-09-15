@@ -378,6 +378,59 @@ def test_team_game_quality_profile_drops_a_game_with_unknown_plays_instead_of_ra
     assert not out.empty and np.isfinite(out.loc['HOU', 'receiving_yards'])
 
 
+def test_defense_script_weight_multiplier_discounts_a_blowout_either_direction():
+    # DEF's own week-1 game was a 35-point win (blowout, discount), week-2 a
+    # 30-point loss (blowout, discount - the discount is symmetric, unlike
+    # the player-side rest exclusion which only fires on a winning margin),
+    # week-3 a 3-point win (not a blowout, full weight).
+    game = pd.DataFrame([
+        {'_defense': 'DEF', '_week': 1},
+        {'_defense': 'DEF', '_week': 2},
+        {'_defense': 'DEF', '_week': 3},
+    ])
+    schedule = pd.DataFrame([
+        {'week': 1, 'home_team': 'DEF', 'away_team': 'A', 'home_score': 42, 'away_score': 7},
+        {'week': 2, 'home_team': 'B', 'away_team': 'DEF', 'home_score': 33, 'away_score': 3},
+        {'week': 3, 'home_team': 'DEF', 'away_team': 'C', 'home_score': 20, 'away_score': 17},
+    ])
+    weights = wp._defense_script_weight_multiplier(game, schedule)
+    assert weights.iloc[0] == wp.DEFENSE_BLOWOUT_WEIGHT_DISCOUNT
+    assert weights.iloc[1] == wp.DEFENSE_BLOWOUT_WEIGHT_DISCOUNT
+    assert weights.iloc[2] == 1.0
+
+
+def test_defense_blowout_discount_tones_down_a_prevent_defense_garbage_time_game():
+    # Offense A plays DEF (week 1, a normal 3-point DEF win) and CTRL (week
+    # 2) for 100 receiving yards each - A's own baseline is a flat 100.
+    # Offense B plays DEF (week 3, a 35-point DEF blowout win - a prevent
+    # shell letting trailing B pile up garbage-time yards) for 300, and CTRL
+    # (week 4) for its own normal 100 - B's own baseline is (300+100)/2=200.
+    # Raw, DEF's allowed ratio is pulled up by B's 300-yard game; the
+    # blowout discount should pull it back down, without needing the
+    # feature wired through build_weekly_projections to prove the mechanism.
+    rows = [
+        {'name': 'A WR', 'team': 'A', 'opponent_team': 'DEF', 'week': 1,
+         'position': 'WR', 'receiving_yards': 100.0},
+        {'name': 'A WR', 'team': 'A', 'opponent_team': 'CTRL', 'week': 2,
+         'position': 'WR', 'receiving_yards': 100.0},
+        {'name': 'B WR', 'team': 'B', 'opponent_team': 'DEF', 'week': 3,
+         'position': 'WR', 'receiving_yards': 300.0},
+        {'name': 'B WR', 'team': 'B', 'opponent_team': 'CTRL', 'week': 4,
+         'position': 'WR', 'receiving_yards': 100.0},
+    ]
+    df = weekly(rows)
+    schedule = pd.DataFrame([
+        {'week': 1, 'home_team': 'DEF', 'away_team': 'A', 'home_score': 20, 'away_score': 17},
+        {'week': 3, 'home_team': 'DEF', 'away_team': 'B', 'home_score': 42, 'away_score': 7},
+    ])
+    without = wp.build_team_game_quality_adjusted_matchup(
+        df, 'team', ['receiving_yards'], as_of_week=5)
+    with_discount = wp.build_team_game_quality_adjusted_matchup(
+        df, 'team', ['receiving_yards'], as_of_week=5, schedule_df=schedule)
+    assert without.loc['DEF', 'receiving_yards'] > 1.0
+    assert with_discount.loc['DEF', 'receiving_yards'] < without.loc['DEF', 'receiving_yards']
+
+
 def test_role_matchup_pace_normalization_survives_partition_recursion():
     # Same HOU/FAST par-per-play setup as the team-game test above, but
     # role-partitioned - exercises _team_game_quality_profile's recursive
@@ -1334,6 +1387,30 @@ def test_partial_game_screen_uses_a_final_margin_only_for_extreme_rest_case():
     rested = with_score.loc[with_score['week'].eq(4)].iloc[0]
     assert not rested['_player_history_eligible']
     assert rested['_player_history_reason'] == 'severe blowout rest'
+
+
+def test_partial_game_screen_uses_a_final_margin_for_a_losing_blowout_too():
+    # 2026-09-15: reported on Cleveland's WR1 logging a suppressed ~60% snap
+    # share in a 28+ point road loss to Jacksonville, versus his normal
+    # ~85% - the losing-side mirror of the winning-blowout-rest case above.
+    # A score alone cannot prove why, but combined with an established
+    # player's sharply reduced share in a decided loss, it is not a normal
+    # upcoming-role sample either.
+    rows = [
+        {'name': 'WR', 'team': 'CLE', 'opponent_team': 'JAX', 'week': week,
+         'position': 'WR', 'weekly_snap_pct': share, 'has_snap_match': True,
+         'targets': 7.0}
+        for week, share in ((1, 94.0), (2, 95.0), (3, 93.0), (4, 60.0))
+    ]
+    schedule = pd.DataFrame([
+        {'week': 4, 'home_team': 'JAX', 'away_team': 'CLE', 'home_score': 35, 'away_score': 7},
+    ])
+    without_score = wp.annotate_player_history_participation(weekly(rows), 'name', 'team')
+    with_score = wp.annotate_player_history_participation(weekly(rows), 'name', 'team', schedule)
+    assert without_score.loc[without_score['week'].eq(4), '_player_history_eligible'].iloc[0]
+    rested = with_score.loc[with_score['week'].eq(4)].iloc[0]
+    assert not rested['_player_history_eligible']
+    assert rested['_player_history_reason'] == 'severe blowout rest (losing side)'
 
 
 def test_partial_game_screen_never_treats_an_unmatched_snap_source_as_an_exit():

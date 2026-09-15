@@ -1524,6 +1524,86 @@ above, this is a correctness fix to what `pace_mult` (an always-on, ungated
 mechanism) reads as input, not a new hypothesis-driven component requiring
 its own A/B measurement before shipping.
 
+## 2026-09-15 — blowout-game "protection": a losing-team player exclusion, and a new (unshipped) defense-side discount
+
+Reported by the user against the real Week 2 slate: Jacksonville blew out
+Cleveland, and Cleveland's WR1 logged a snap share in the ~60% range instead
+of the ~85% his role otherwise supports - the user asked whether this app
+had any "blowout protection" for players (all positions, not just this one
+case) and, separately, for defenses (do they get credited/dinged
+inconsistently for a blowout game's allowed stats).
+
+**Player-side: the existing rule only fired on the WINNING side - FIXED.**
+`annotate_player_history_participation` already excluded an established
+player's own abnormal-share game from his rate history when his TEAM won by
+`SEVERE_BLOWOUT_MARGIN` (28) or more (`_final_margin.ge(28)`) - built for a
+starter getting pulled once a win is decided. It had no mirror for a player
+whose team LOST by 28+, which is exactly the Cleveland WR1 case: a lost
+cause pulling a veteran, or a rotation shuffle once the outcome is no longer
+in doubt, produces the same "not a normal upcoming-role sample" game, just
+on the other side of the score. Changed the winning-only `.ge(MARGIN)` check
+to `.abs().ge(MARGIN)` and split the two directions into distinct exclusion
+reasons (`'severe blowout rest'` for winning, `'severe blowout rest (losing
+side)'` for losing) so the Deep Dive's exclusion summary still says which
+happened. Same thresholds both directions (`SEVERE_BLOWOUT_MAX_SNAP_SHARE`,
+`SEVERE_BLOWOUT_RELATIVE_MAX_SHARE`) - this is a symmetry fix to an
+already-shipped, always-on mechanism, not a new hypothesis, so it ships
+ungated like the 2026-09-14/09-15 pace entries above. (Position-general
+already - it keys on snap share and prior role, never on position - so
+"the same for all other positions" the user asked for was already true of
+the existing rule; the fix just makes it true for both game directions.)
+
+Note this is deliberately narrower than "does game script generally change
+a player's role" - that forward-looking question is already answered by
+`_vectorized_game_script_multiplier` (targets/receptions/receiving_yards/
+rushing_attempts/rushing_yards, any position, reads each player's OWN
+history across margin buckets against the market-implied line for the
+target week, ±15% capped). This exclusion is backward-looking only: it
+keeps one anomalous game out of a player's baseline rate; it does not
+predict who is due for one.
+
+**Defense-side: no equivalent existed - BUILT, gated, backtest pending.**
+The opponent-allowed matrix that feeds every offensive player's matchup
+multiplier (`build_team_game_quality_adjusted_matchup` /
+`_team_game_quality_profile`) had no script awareness at all: a defense's
+raw allowed total from a 28+ point blowout (either direction - a soft
+prevent shell protecting a big lead, or an opponent running clock / pulling
+its own starters once it's decided) fed the observed/expected ratio at full
+recency weight, same as any competitive game. New optional component
+`v2_defense_blowout_discount` (`DEFENSE_BLOWOUT_MARGIN=28`,
+`DEFENSE_BLOWOUT_WEIGHT_DISCOUNT=0.5`, `_defense_script_weight_multiplier`)
+halves - does not drop - a defense's own weight for a game it played that
+was decided by 28+, on the reasoning that a whole defense doesn't bench
+itself the way one player can, so this is noisier evidence, not unusable
+evidence. Wired as a per-row `_script_weight` column on the same `game`
+frame `_team_game_quality_profile` already recency-weights, so it survives
+the function's role-partition recursion for free. Threaded through all three
+`build_team_game_quality_adjusted_matchup` call sites in
+`build_weekly_projections` (cold-start prior-season matrix, live
+current-season matrix, live prior-season blend matrix), each passing its own
+matching schedule only when the flag is set - `schedule_df=None` is a no-op,
+so an unset flag costs nothing extra.
+
+**Not added to `DEFAULT_FEATURES`.** Unlike the player-side change (a
+symmetry fix to a mechanism already proven and shipped), this is a genuinely
+new signal path: it isn't obvious a priori which stats/positions it helps,
+by how much, or whether the pooled-into-one-ratio ADDITIVE prior
+(`DEFENSE_PRIOR_GAMES` worth of league-average evidence, already mixed into
+every defense's ratio) already absorbs most of a single blowout game's
+distortion without this. Per this repo's own convention (see the
+`MODEL_FEATURES` module comment and every `BUILT, BACKTESTED, …` entry
+above), a new component needs its own `scripts/eval_weekly_model.py`
+measurement before joining the shipped set - queued, not yet run as of this
+entry.
+
+Verified: `tests/test_weekly_projections.py::test_partial_game_screen_uses_a_final_margin_for_a_losing_blowout_too`
+mirrors the existing winning-side test with Cleveland/Jacksonville's real
+score (7-35); `test_defense_script_weight_multiplier_discounts_a_blowout_either_direction`
+pins the per-game weight directly; `test_defense_blowout_discount_tones_down_a_prevent_defense_garbage_time_game`
+proves the discount actually moves `build_team_game_quality_adjusted_matchup`'s
+output (a synthetic prevent-defense garbage-time game inflates a defense's
+allowed ratio less once discounted). 556 tests pass.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

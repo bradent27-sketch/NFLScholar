@@ -193,8 +193,11 @@ def switch_tab(tab_label, **context):
     separate pre-script phase, before the next run's st.tabs() call, which
     is the only place this assignment is actually legal. Callbacks also
     auto-trigger their own rerun afterward, so this deliberately does NOT
-    call st.rerun() itself - doing so from inside a callback is redundant
-    and unsupported.
+    call st.rerun() itself - doing so from inside a callback is a no-op
+    (Streamlit catches the RerunException and posts a warning instead;
+    confirmed live 2026-09-15 - a tempting-looking fix when this needed to
+    escape an st.fragment, and wrong: see ui.tabs.rankings._render_board's
+    own docstring for what actually works instead).
     """
     # Records where we're jumping FROM so render_back_button() can offer a
     # way back - read before overwriting active_tab below, since a callback
@@ -925,7 +928,7 @@ POSITION_GROUP_HELP = {
 }
 
 
-def position_group_buttons(key, default='SUPERFLEX', groups=POSITION_GROUPS):
+def position_group_buttons(key, default='SUPERFLEX', groups=POSITION_GROUPS, rerun_scope='app'):
     """
     A row of lineup-slot buttons (QB / RB / WR / TE / FLEX / SUPERFLEX)
     instead of a multiselect - explicit request, and the same reasoning
@@ -941,6 +944,20 @@ def position_group_buttons(key, default='SUPERFLEX', groups=POSITION_GROUPS):
 
     Returns (positions, label). `positions` is the list to filter a Pos
     column against.
+
+    `rerun_scope='app'` (default) preserves this helper's original
+    behavior for every caller that isn't inside an st.fragment - a plain
+    st.rerun() there was always redundant (the button click already
+    triggers a full rerun on its own) but harmless. Pass
+    rerun_scope='fragment' from a caller that lives inside an
+    @st.fragment-decorated function (e.g. ui.tabs.rankings._render_board,
+    ui.tabs.draft_hq._render_position_filter's own hand-rolled equivalent)
+    so a position click only reruns that fragment instead of rebuilding
+    the whole tab around it - the explicit st.rerun() below still has to
+    fire (`positions`/`group_label` are computed from the state read at
+    the TOP of this call, before the click is applied, so nothing after
+    it in the caller sees the new group without a forced rerun), it just
+    shouldn't escape the fragment when the caller doesn't need it to.
     """
     state_key = f'{key}_group'
     current = st.session_state.get(state_key, default)
@@ -965,7 +982,7 @@ def position_group_buttons(key, default='SUPERFLEX', groups=POSITION_GROUPS):
                          help=POSITION_GROUP_HELP.get(label),
                          type="primary" if current == label else "secondary"):
                 st.session_state[state_key] = label
-                st.rerun()
+                st.rerun(scope=rerun_scope)
     return dict(groups).get(current, []), current
 
 

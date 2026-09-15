@@ -74,6 +74,52 @@ RECENT_FORM_GAMES = 5
 _SHOW_N_OPTIONS = [25, 50, 100, 200, "All"]
 _PROJECTION_DETAIL_KEY = 'weekly_rank_projection_detail'
 _PLAYER_DETAIL_CACHE_KEY = 'weekly_rank_player_detail_cache'
+_PENDING_TAB_JUMP_KEY = 'weekly_rank_pending_tab_jump'
+
+
+def _switch_tab_from_fragment(tab_label, **context):
+    """
+    on_click replacement for ui.components.switch_tab, for the cross-tab
+    jump buttons that render from INSIDE _render_board's st.fragment (the
+    decomposition dialog's "Player Search" / "defense breakdown" / QB1
+    buttons - see _render_decomposition_navigation and
+    _render_decomposition_audit_body).
+
+    switch_tab itself still does the actual work (writing active_tab, etc.)
+    - it just can't be called directly as this button's own on_click
+    anymore, and needs an st.rerun() after it that switch_tab still
+    correctly doesn't call itself. Two confirmed-live 2026-09-15 facts
+    forced this split:
+
+    1. Calling st.rerun() (any scope) from WITHIN a widget callback is
+       unconditionally a no-op - Streamlit catches the RerunException
+       itself and posts "Calling st.rerun() within a callback is a no-op."
+       instead of acting on it. switch_tab's own docstring already
+       correctly said this; the mistake here was assuming a fragment
+       changed that rule; it does not.
+    2. A fragment-nested widget's own IMPLICIT post-callback rerun (the one
+       that happens when a callback does NOT call st.rerun()) stays scoped
+       to that fragment regardless of what session_state keys the callback
+       wrote - it is not "smart" about escaping for a key like active_tab
+       that belongs to app.py, outside any fragment. Confirmed by testing
+       switch_tab unmodified from here: active_tab was set correctly, and
+       the tab never visibly changed, because app.py's own st.tabs() never
+       ran again to read it.
+
+    The fix is the fragment's documented escape hatch (see @st.fragment's
+    own docstring, its "count_to_five" example): a plain st.rerun() DOES
+    force a full app rerun from inside a fragment, but ONLY from PLAIN
+    SCRIPT FLOW, never from inside a callback. So this callback only
+    stages the request; the drain that calls switch_tab and then
+    st.rerun() as ordinary statements - past the callback-dispatch phase,
+    where that combination actually works - lives at the top of
+    _open_projection_dialog's own _body, not here and not in
+    _render_board. See that function's docstring for why it has to be
+    there specifically: st.dialog is ITSELF an implicit nested fragment,
+    so a button clicked inside the open dialog only ever reruns the
+    dialog, never the outer _render_board fragment it's nested in.
+    """
+    st.session_state[_PENDING_TAB_JUMP_KEY] = (tab_label, context)
 
 
 def _selected_player_detail(model_meta, detail_config, key):
@@ -273,7 +319,7 @@ def _render_decomposition_navigation(detail):
             kwargs['jump_to_team'] = team
         st.button(f"🔎 {player} in Player Search", key=f"wr_nav_ps_{player}_{team}",
                   width="stretch", help="Full profile: percentiles, game log, career totals.",
-                  on_click=switch_tab, args=(TAB_PLAYER_SEARCH,), kwargs=kwargs)
+                  on_click=_switch_tab_from_fragment, args=(TAB_PLAYER_SEARCH,), kwargs=kwargs)
     with right:
         # Guarded: the destination selectbox raises if handed a value that
         # isn't one of its options, so a missing/unknown opponent offers no
@@ -282,7 +328,7 @@ def _render_decomposition_navigation(detail):
             st.button(f"🛡️ {opponent} defense breakdown",
                       key=f"wr_nav_dy_{player}_{opponent}", width="stretch",
                       help=f"How {opponent} defends this position, by scheme and alignment.",
-                      on_click=switch_tab, args=(TAB_DEFENSIVE_YIELD,),
+                      on_click=_switch_tab_from_fragment, args=(TAB_DEFENSIVE_YIELD,),
                       kwargs={'radar_opponent': abbr_to_pff_team(opponent)})
 
 
@@ -1700,7 +1746,7 @@ def _render_decomposition_audit_body(detail):
         if team:
             st.button(
                 f"🏈 Select {team} QB1", key=f"wr_deepdive_nav_qb1_{team}",
-                on_click=switch_tab, args=(TAB_DEPTH_CHARTS,),
+                on_click=_switch_tab_from_fragment, args=(TAB_DEPTH_CHARTS,),
                 kwargs={'dc_jump_to_team': team, 'dc_jump_to_year': detail.get('season_year')},
             )
     elif detail.get('position') == 'QB':
@@ -2061,76 +2107,125 @@ def _open_projection_dialog(detail, market_detail=None):
     what was previously one long scroll of every section stacked in a row
     (explicit request, 2026-08-25: same content, organized so a specific
     question - "what's my range of outcomes," "why this role" - is one click
-    instead of a long scroll)."""
+    instead of a long scroll).
+
+    st.dialog is ITSELF an implicit st.fragment (confirmed in Streamlit's
+    own source, elements/dialog_decorator.py: "st.dialog inherits behavior
+    from st.fragment... Streamlit only reruns the dialog function instead
+    of the full script") - this whole dialog is therefore a fragment
+    NESTED inside _render_board's own fragment, not just a plain function
+    called from within it. That's why the cross-tab-jump drain below has
+    to live HERE, at the top of _body, rather than at the top of
+    _render_board where it was first tried (2026-09-15): a button clicked
+    inside this dialog only reruns THIS fragment, never the outer one, so
+    _render_board's own top never ran again to find the queued jump -
+    confirmed live by a debug toast placed there that simply never fired a
+    second time. See _switch_tab_from_fragment's own docstring for the
+    full chain of what was tried before this.
+    """
     if not detail:
         return
 
     def _body():
+        pending_jump = st.session_state.pop(_PENDING_TAB_JUMP_KEY, None)
+        if pending_jump:
+            jump_tab_label, jump_context = pending_jump
+            switch_tab(jump_tab_label, **jump_context)
+            st.rerun()
+
         _render_decomposition_header(detail)
 
+        # key= + on_change="rerun" (this app's pinned 1.59.1 already has
+        # it - see app.py's own use of the same mechanism for the outer
+        # tab bar) makes each tab's .open real instead of always None, so
+        # only the tab actually being looked at computes - the KDE
+        # distribution chart (matplotlib), the full audit tables, and the
+        # News tab's live FantasyPros fetch used to run on EVERY dialog
+        # interaction (any Deep Dive season radio, any OTHER tab click)
+        # regardless of which one was visible, since a plain st.tabs()
+        # sends every tab's content on every rerun (perf pass 2026-09-15 -
+        # same fix app.py already applies to the outer tab bar, for the
+        # same reason; see app.py's own comment on why).
+        # Fixed key: this tab set never varies by player/position.
         tab_overview, tab_market, tab_outcomes, tab_audit, tab_news = st.tabs(
             ["Overview", "Market lines", "Range of outcomes",
-             "Role, audit & data sources", "News"])
+             "Role, audit & data sources", "News"],
+            key="wr_decomp_tabs", on_change="rerun")
 
-        with tab_overview:
-            _render_decomposition_primary_table(detail, market_detail)
-            # For a TE the primary table's 'Defense multiplier' is the
-            # man/zone (scheme) blend, so lead with that worked-calc table
-            # and render the alignment table right after it as reference
-            # only. For a WR (alignment scores, scheme does not) it stays
-            # the single alignment table. _render_scheme_mix is a no-op for
-            # anyone but a TE with scheme evidence.
-            if detail.get('position') == 'TE':
-                _render_scheme_mix(detail)
-                _render_alignment_mix(detail, reference_only=True)
-            else:
-                _render_alignment_mix(detail)
+        if tab_overview.open:
+            with tab_overview:
+                _render_decomposition_primary_table(detail, market_detail)
+                # For a TE the primary table's 'Defense multiplier' is the
+                # man/zone (scheme) blend, so lead with that worked-calc table
+                # and render the alignment table right after it as reference
+                # only. For a WR (alignment scores, scheme does not) it stays
+                # the single alignment table. _render_scheme_mix is a no-op for
+                # anyone but a TE with scheme evidence.
+                if detail.get('position') == 'TE':
+                    _render_scheme_mix(detail)
+                    _render_alignment_mix(detail, reference_only=True)
+                else:
+                    _render_alignment_mix(detail)
 
-            stats = detail.get('stats', {})
-            if stats:
-                st.markdown("**Deep dive**")
-                game_log_by_season = detail.get('game_log_by_season') or {}
-                defense_log_by_season = detail.get('defense_weekly_log_by_season') or {}
-                # Default to whichever season actually has games logged - the
-                # honest empty case is a cold-start CURRENT season, and
-                # there's no reason to land the user on a blank tab by
-                # default when last season's full log is one click away.
-                # Each stat tab owns its OWN season selector below (explicit
-                # request - a single shared control meant switching season
-                # on one stat silently moved every other stat's tab too), so
-                # this is only the shared starting point, not a value that
-                # controls every tab at once.
-                all_years = sorted(set(game_log_by_season) | set(defense_log_by_season), reverse=True)
-                default_year = next(
-                    (yr for yr in all_years if game_log_by_season.get(yr)),
-                    all_years[0] if all_years else detail.get('season_year'))
-                stat_keys = list(stats.keys())
-                deep_dive_tabs = st.tabs([s.replace('_', ' ').title() for s in stat_keys] + ['Context'])
-                for stat, tab in zip(stat_keys, deep_dive_tabs[:-1]):
-                    with tab:
-                        _render_stat_deep_dive(
-                            detail, stat, game_log_by_season, defense_log_by_season, default_year)
-                with deep_dive_tabs[-1]:
-                    _render_context_deep_dive(detail)
+                stats = detail.get('stats', {})
+                if stats:
+                    st.markdown("**Deep dive**")
+                    game_log_by_season = detail.get('game_log_by_season') or {}
+                    defense_log_by_season = detail.get('defense_weekly_log_by_season') or {}
+                    # Default to whichever season actually has games logged - the
+                    # honest empty case is a cold-start CURRENT season, and
+                    # there's no reason to land the user on a blank tab by
+                    # default when last season's full log is one click away.
+                    # Each stat tab owns its OWN season selector below (explicit
+                    # request - a single shared control meant switching season
+                    # on one stat silently moved every other stat's tab too), so
+                    # this is only the shared starting point, not a value that
+                    # controls every tab at once.
+                    all_years = sorted(set(game_log_by_season) | set(defense_log_by_season), reverse=True)
+                    default_year = next(
+                        (yr for yr in all_years if game_log_by_season.get(yr)),
+                        all_years[0] if all_years else detail.get('season_year'))
+                    stat_keys = list(stats.keys())
+                    # Keyed by position (not a fixed key): stat_keys itself
+                    # is position-determined, and Streamlit falls back to
+                    # the first tab on its own if a stored label doesn't
+                    # match the current set - this just avoids that reset
+                    # ever being visible when switching between two
+                    # players at the same position.
+                    deep_dive_tabs = st.tabs(
+                        [s.replace('_', ' ').title() for s in stat_keys] + ['Context'],
+                        key=f"wr_decomp_deep_dive_{detail.get('position')}", on_change="rerun")
+                    for stat, tab in zip(stat_keys, deep_dive_tabs[:-1]):
+                        if tab.open:
+                            with tab:
+                                _render_stat_deep_dive(
+                                    detail, stat, game_log_by_season, defense_log_by_season, default_year)
+                    if deep_dive_tabs[-1].open:
+                        with deep_dive_tabs[-1]:
+                            _render_context_deep_dive(detail)
 
-        with tab_market:
-            _render_market_lines_tab(detail, market_detail)
+        if tab_market.open:
+            with tab_market:
+                _render_market_lines_tab(detail, market_detail)
 
-        with tab_outcomes:
-            distribution = detail.get('distribution')
-            if distribution:
-                _render_distribution_chart(distribution, detail['position'])
-            else:
-                st.caption(
-                    "Range of outcomes: not available yet for this run — needs scripts/fit_weekly_"
-                    "distribution.py's bands (see data/weekly_distribution.py)."
-                )
+        if tab_outcomes.open:
+            with tab_outcomes:
+                distribution = detail.get('distribution')
+                if distribution:
+                    _render_distribution_chart(distribution, detail['position'])
+                else:
+                    st.caption(
+                        "Range of outcomes: not available yet for this run — needs scripts/fit_weekly_"
+                        "distribution.py's bands (see data/weekly_distribution.py)."
+                    )
 
-        with tab_audit:
-            _render_decomposition_audit_body(detail)
+        if tab_audit.open:
+            with tab_audit:
+                _render_decomposition_audit_body(detail)
 
-        with tab_news:
-            _render_player_news(detail)
+        if tab_news.open:
+            with tab_news:
+                _render_player_news(detail)
 
     dialog = st.dialog(f"Projection decomposition — {detail['player']}", width="large",
                        on_dismiss=_close_projection_dialog)(_body)
@@ -2894,389 +2989,430 @@ def render():
             st.dataframe(style_plain_dataframe(indexed), width="stretch",
                         height=df_auto_height(min(len(display_df), 40)))
     else:
-        merged_model = model_df.copy()
-        if fp_weekly is not None:
-            merged_model = _attach_by_name(
-                merged_model, fp_weekly,
-                ['FP Proj Pts', 'FP Proj Pts PPR', 'FP Proj Pts Half'] + _MODEL_STAT_COLS, 'FP ')
-            src_col = 'FP ' + _fantasypros_points_column(wk_scoring)
-            if src_col in merged_model.columns:
-                merged_model = merged_model.rename(columns={src_col: 'FantasyPros Proj Pts'})
-        # Per-player market detail for the projection decomposition dialog,
-        # keyed the way the row-select handler keys a row: (Player, Pos,
-        # Team). Resolved ON DEMAND (_market_detail_for_key below) for
-        # whichever single player is actually opened, rather than eagerly
-        # built for the whole board on every rerun - this used to be a
-        # Python-level .iterrows() loop over ~500-900 rows regardless of
-        # whether anyone ever opens a decomposition (perf report
-        # 2026-09-14; same "resolve only the one row clicked" discipline
-        # row_keys/_selected_player_detail below already apply to
-        # model_meta['explanations']). market_detail_snapshot is captured
-        # HERE, before Market Coverage is reformatted into a display
-        # string a few lines down - the lookup needs the raw numeric value.
-        consensus_stats = (market_df.attrs.get('consensus_stats', [])
-                           if market_df is not None else [])
-        market_detail_snapshot = None
-        if market_df is not None and not market_df.empty:
-            merged_model = _attach_by_name(
-                merged_model, market_df,
-                ['Market Pts', 'Coverage', 'player_key'] + consensus_stats, 'Mkt ')
-            merged_model = merged_model.rename(columns={'Mkt Coverage': 'Market Coverage'})
+        # No key= here - this app's pinned Streamlit (1.59.1; the .venv's
+        # 1.63.0 is a newer, unused copy discovered mid-perf-pass) predates
+        # st.fragment's key parameter, so identity is positional (this
+        # function is only ever defined/called from this one call site,
+        # once per full run - the same guarantee a keyed fragment would add
+        # is already true here without one).
+        @st.fragment
+        def _render_board():
+            """
+            The whole board - merges, position/matchup filters, the model
+            table and the projection-decomposition dialog - as one
+            fragment, so a position click, a matchup pick, a "Show" change,
+            a row select, or anything clicked inside an open decomposition
+            (a Deep Dive stat tab, a season radio, Market lines vs.
+            Overview) only reruns THIS, not the whole Weekly Rankings tab.
 
-            # REQUEST (2026-09-02): the board's market total must never be a
-            # truncated sum. score_market_lines scores a stat the books
-            # haven't posted yet (common days out from kickoff) as ZERO,
-            # which drags the total well below the model's and makes the
-            # side-by-side comparison meaningless. Here - and ONLY here, on
-            # the single ranking-table number, never inside the
-            # decomposition - each unpriced scoring stat is filled with this
-            # app's own projection for it, so "Market Proj Pts" is always a
-            # complete, like-for-like figure. The raw partial stays on
-            # 'Mkt Market Pts' for the decomposition's own honest read.
-            _priced = [st_ for st_ in _MARKET_SCORING_STATS
-                       if st_ in consensus_stats and f'Mkt {st_}' in merged_model.columns
-                       and st_ in merged_model.columns]
+            Before this (2026-09-15 perf pass), every one of those was a
+            full-script rerun: reload/remerge the board, regenerate a
+            sparkline SVG per displayed row, rebuild the percentile-
+            heatmap Styler, AND re-run '_render_live_data_hub' above (the
+            live FantasyPros/market-prop pull, itself uncached - see
+            docs/weekly_projections_methodology.md) - on every single
+            click anywhere in the tab, dialog included. Real reported
+            cost: "tabbing between positions" and "clicking into player
+            decompositions" both paid for the other one's work too.
 
-            def _model_pts_on_priced(row):
-                d = {st_: float(row[st_]) for st_ in _priced
-                     if pd.notna(row.get(f'Mkt {st_}')) and pd.notna(row.get(st_))}
-                return score_projected_stats(d, wk_scoring) if d else 0.0
+            Only the position-group buttons need to say so explicitly
+            (rerun_scope='fragment' below) - every other widget here
+            (multiselect, selectbox, the dataframe's on_select) is
+            fragment-scoped automatically the moment it's created inside
+            this function.
 
-            partial = pd.to_numeric(merged_model.get('Mkt Market Pts'), errors='coerce')
-            raw_model_total = pd.to_numeric(
-                merged_model.get('Raw Model Proj Pts'), errors='coerce')
-            model_on_priced = merged_model.apply(_model_pts_on_priced, axis=1)
-            backfill = (raw_model_total - model_on_priced).clip(lower=0.0)
-            merged_model['Market Proj Pts'] = (partial + backfill).round(1)
+            The decomposition dialog's cross-tab jump buttons ("Player
+            Search" / "defense breakdown" / QB1-override) deliberately
+            escape BOTH this fragment AND the dialog's own inner one -
+            see _open_projection_dialog's docstring for why that drain has
+            to live there, not here, and _switch_tab_from_fragment's for
+            the two ways of doing this that looked right and were not.
+            """
+            merged_model = model_df.copy()
+            if fp_weekly is not None:
+                merged_model = _attach_by_name(
+                    merged_model, fp_weekly,
+                    ['FP Proj Pts', 'FP Proj Pts PPR', 'FP Proj Pts Half'] + _MODEL_STAT_COLS, 'FP ')
+                src_col = 'FP ' + _fantasypros_points_column(wk_scoring)
+                if src_col in merged_model.columns:
+                    merged_model = merged_model.rename(columns={src_col: 'FantasyPros Proj Pts'})
+            # Per-player market detail for the projection decomposition dialog,
+            # keyed the way the row-select handler keys a row: (Player, Pos,
+            # Team). Resolved ON DEMAND (_market_detail_for_key below) for
+            # whichever single player is actually opened, rather than eagerly
+            # built for the whole board on every rerun - this used to be a
+            # Python-level .iterrows() loop over ~500-900 rows regardless of
+            # whether anyone ever opens a decomposition (perf report
+            # 2026-09-14; same "resolve only the one row clicked" discipline
+            # row_keys/_selected_player_detail below already apply to
+            # model_meta['explanations']). market_detail_snapshot is captured
+            # HERE, before Market Coverage is reformatted into a display
+            # string a few lines down - the lookup needs the raw numeric value.
+            consensus_stats = (market_df.attrs.get('consensus_stats', [])
+                               if market_df is not None else [])
+            market_detail_snapshot = None
+            if market_df is not None and not market_df.empty:
+                merged_model = _attach_by_name(
+                    merged_model, market_df,
+                    ['Market Pts', 'Coverage', 'player_key'] + consensus_stats, 'Mkt ')
+                merged_model = merged_model.rename(columns={'Mkt Coverage': 'Market Coverage'})
 
-            _snapshot_cols = (['Player', 'Pos', 'Team'] + [f'Mkt {s}' for s in consensus_stats]
-                             + ['Mkt Market Pts', 'Market Proj Pts', 'Market Coverage', 'Mkt player_key'])
-            market_detail_snapshot = merged_model[
-                [c for c in _snapshot_cols if c in merged_model.columns]].copy()
+                # REQUEST (2026-09-02): the board's market total must never be a
+                # truncated sum. score_market_lines scores a stat the books
+                # haven't posted yet (common days out from kickoff) as ZERO,
+                # which drags the total well below the model's and makes the
+                # side-by-side comparison meaningless. Here - and ONLY here, on
+                # the single ranking-table number, never inside the
+                # decomposition - each unpriced scoring stat is filled with this
+                # app's own projection for it, so "Market Proj Pts" is always a
+                # complete, like-for-like figure. The raw partial stays on
+                # 'Mkt Market Pts' for the decomposition's own honest read.
+                _priced = [st_ for st_ in _MARKET_SCORING_STATS
+                           if st_ in consensus_stats and f'Mkt {st_}' in merged_model.columns
+                           and st_ in merged_model.columns]
 
-        def _market_detail_for_key(key):
-            if market_detail_snapshot is None:
-                return None
-            player, pos, team = key
-            match = market_detail_snapshot[
-                market_detail_snapshot['Player'].eq(player) & market_detail_snapshot['Pos'].eq(pos)
-                & market_detail_snapshot['Team'].eq(team)]
-            if match.empty:
-                return None
-            r = match.iloc[0]
-            cons = {st_: float(r[f'Mkt {st_}']) for st_ in consensus_stats
-                    if f'Mkt {st_}' in match.columns and pd.notna(r.get(f'Mkt {st_}'))}
-            partial_v = float(r['Mkt Market Pts']) if pd.notna(r.get('Mkt Market Pts')) else None
-            if not cons and partial_v is None:
-                return None
-            full_v = float(r['Market Proj Pts']) if pd.notna(r.get('Market Proj Pts')) else None
-            cov_raw = r.get('Market Coverage')
-            cov = float(cov_raw) if cov_raw is not None and pd.notna(cov_raw) else None
-            pk = r.get('Mkt player_key')
-            bl = None
-            _bl_all = market_df.attrs.get('book_lines') if market_df is not None else None
-            if _bl_all is not None and not _bl_all.empty and pd.notna(pk):
-                sub = _bl_all[_bl_all['player_key'] == pk]
-                if not sub.empty:
-                    # Keep the per-side prices and the devig - the Market
-                    # lines tab shows each book's O/U odds and the
-                    # consensus fair value, not just the bare number.
-                    _keep = [c for c in ('market', 'provider', 'line', 'over_payout',
-                                         'under_payout', 'p_over', 'implied_mean')
-                             if c in sub.columns]
-                    bl = sub[_keep].copy()
-            return {
-                'consensus': cons, 'book_lines': bl,
-                'market_points_partial': partial_v, 'market_points_full': full_v,
-                'coverage': cov, 'scoring_mode': wk_scoring,
-            }
+                def _model_pts_on_priced(row):
+                    d = {st_: float(row[st_]) for st_ in _priced
+                         if pd.notna(row.get(f'Mkt {st_}')) and pd.notna(row.get(st_))}
+                    return score_projected_stats(d, wk_scoring) if d else 0.0
 
-            if 'Market Coverage' in merged_model.columns:
-                # A book that posted only a receptions prop shows a real but
-                # PARTIAL coverage number next to the (now backfilled) total,
-                # so a thin line still reads as thin rather than as a broken
-                # projection.
-                merged_model['Market Coverage'] = merged_model['Market Coverage'].map(
-                    lambda v: f"{v * 100:.0f}%" if pd.notna(v) else None)
-        # Ranking column, directly after Opponent, colored by TIER rather
-        # than a continuous scale - explicit request. Tiers are clustered
-        # per position on Model Proj Pts wherever a significant cutoff
-        # actually falls (data.draft_board.tier_by_position, the same
-        # k-means-on-points technique Draft HQ's board tiers with), not a
-        # fixed players-per-tier bucket.
-        # Tier shading for the model's own rank column - explicit request.
-        # Tiers are clustered per position on Model Proj Pts wherever a
-        # significant cutoff actually falls (data.draft_board.tier_by_position,
-        # the same k-means-on-points technique Draft HQ's board tiers with),
-        # not a fixed players-per-tier bucket.
-        merged_model['_tier'] = tier_by_position(merged_model, 'Model Proj Pts', pos_col='Pos')
+                partial = pd.to_numeric(merged_model.get('Mkt Market Pts'), errors='coerce')
+                raw_model_total = pd.to_numeric(
+                    merged_model.get('Raw Model Proj Pts'), errors='coerce')
+                model_on_priced = merged_model.apply(_model_pts_on_priced, axis=1)
+                backfill = (raw_model_total - model_on_priced).clip(lower=0.0)
+                merged_model['Market Proj Pts'] = (partial + backfill).round(1)
 
-        # One rank column per projection SOURCE, not just this app's own
-        # model - explicit request. Each is a sortable NUMBER carrying a
-        # "RB4" label (see _woven_rank for why that split exists and which
-        # three sorting bugs it fixes); only built when that source actually
-        # produced a points column to rank. Computed on the FULL pool, before
-        # the position filter and row limit below, so "RB4" always means
-        # fourth among every RB rather than fourth among what's on screen.
-        rank_labels = {}
-        for rank_col, points_col in (('Model Rank', 'Model Proj Pts'),
-                                     ('Market Rank', 'Market Proj Pts'),
-                                     ('FantasyPros Rank', 'FantasyPros Proj Pts')):
-            if points_col not in merged_model.columns:
-                continue
-            values, labels = _woven_rank(merged_model, points_col)
-            if values is None:
-                continue
-            merged_model[rank_col] = values
-            rank_labels[rank_col] = labels
+                _snapshot_cols = (['Player', 'Pos', 'Team'] + [f'Mkt {s}' for s in consensus_stats]
+                                 + ['Mkt Market Pts', 'Market Proj Pts', 'Market Coverage', 'Mkt player_key'])
+                market_detail_snapshot = merged_model[
+                    [c for c in _snapshot_cols if c in merged_model.columns]].copy()
 
-        # The leading "Rank" column is the table's scan anchor and its
-        # default sort - FantasyPros' rank when their projection has actually
-        # been pulled this session, this app's model rank otherwise. It
-        # deliberately repeats one of the three source ranks at the far right
-        # rather than being a fourth, separate ranking: the requested layout
-        # puts a rank first (what am I looking at) and the full three-source
-        # comparison last (who disagrees with whom).
-        primary_rank = next((c for c in ('FantasyPros Rank', 'Model Rank') if c in rank_labels), None)
-        if primary_rank:
-            merged_model['Rank'] = merged_model[primary_rank]
-            rank_labels['Rank'] = rank_labels[primary_rank]
-            # Woven order by construction (QB1, RB1, WR1, TE1, QB2, ...), the
-            # ordering the whole encoding exists to produce - so the table
-            # OPENS in it instead of only reaching it after a header click.
-            merged_model = merged_model.sort_values('Rank', kind='mergesort').reset_index(drop=True)
-
-        # Does our model's rank actually MATCH FantasyPros' own published
-        # consensus rank (their real ECR, not the positional rank derived
-        # above from their points projection - the two aren't guaranteed to
-        # agree, since a projection reflects only the stat line while a
-        # published ECR also folds in analyst judgment calls a raw point
-        # total won't capture) - explicit request. Reads whatever weekly
-        # FantasyPros export is already sitting in this session's uploader
-        # (below) without requiring it to be re-uploaded once it's there;
-        # see that uploader's own docstring for why a live per-week ECR
-        # pull isn't wired in here (that endpoint exists on FantasyPros'
-        # API - see draft_sources.py's "/rankings or /consensus-rankings"
-        # note - but is unverified against a real response in this app and
-        # a wrong guess would silently spend the call budget on garbage;
-        # the CSV export is the same real ECR with zero guessing involved).
-        _weekly_ecr_df = st.session_state.get('_weekly_rank_ecr_df')
-        if _weekly_ecr_df is not None and not _weekly_ecr_df.empty:
-            ecr_comparison = build_rankings_comparison(
-                merged_model, value_col='Model Proj Pts', rank_label='Model Overall',
-                fp_df=_weekly_ecr_df)
-            if not ecr_comparison.empty and 'FantasyPros Rank' in ecr_comparison.columns:
-                ecr_comparison = ecr_comparison.rename(columns={
-                    'FantasyPros Rank': 'FantasyPros ECR',
-                    'Model Overall vs FantasyPros': 'Model vs FantasyPros ECR',
-                })
-                keep = [c for c in ('Player', 'FantasyPros ECR', 'Model vs FantasyPros ECR')
-                       if c in ecr_comparison.columns]
-                merged_model = merged_model.merge(ecr_comparison[keep], on='Player', how='left')
-
-        merged_model = merged_model.rename(columns={'Pos': 'Position'})
-        merged_model = merged_model.rename(columns=dict(_STAT_DISPLAY_COLS))
-
-        # Explicit column order, per request: identity first, then the three
-        # projections side by side, then the stat line behind this app's own
-        # number, then the context columns, then the three source ranks
-        # together as a comparison block at the end.
-        #
-        # No standalone Position column - dropped to save table width, per
-        # explicit request. Its info isn't lost: every rank column already
-        # carries it in the "RB4"-style label (_woven_rank), and the rank
-        # columns are now colored by position too (position_values/
-        # position_cols below) so the same at-a-glance signal the Position
-        # column gave survives without spending a column on it.
-        display_cols = ['Rank', 'Player', 'Team', 'Opponent',
-                        'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts']
-        display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
-        display_cols += ['Injury Status', 'Last 5 Weeks',
-                        'FantasyPros Rank', 'Model Rank', 'Market Rank', 'Market Coverage',
-                        'FantasyPros ECR', 'Model vs FantasyPros ECR']
-
-        # 'Last 5 Weeks' is built per-displayed-row further down, so it isn't
-        # a real column yet at slicing time. 'Position' is kept even though
-        # it's no longer in display_cols (see the comment above) - the
-        # position-group filter just below and the rank-column position
-        # coloring further down both still need the raw values; it's
-        # dropped from the actually-rendered frame later, at the
-        # display_cols re-select (indexed = indexed[[...]]).
-        keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position']
-        positions, group_label = position_group_buttons('wr', default='SUPERFLEX')
-        # Matchup filter (explicit request, prop-betting workflow): isolate
-        # one game's slate instead of scanning the whole week. Keyed by the
-        # board's own (year, week, scoring) so switching weeks always starts
-        # from "all games" rather than carrying over a selection whose teams
-        # may not even play this week (a stale value Streamlit would refuse
-        # to render against a changed options list).
-        week_matchups = _week_matchups(merged_model[keep_cols])
-        selected_matchups = st.multiselect(
-            "Matchup", [label for label, _teams in week_matchups],
-            key=f"weekly_rank_matchup_filter_{wk_year}_{wk_week}_{wk_scoring}",
-            placeholder="All games — pick one or more to isolate a slate for props",
-        )
-        filtered_df = apply_position_group(merged_model[keep_cols], positions, pos_col='Position')
-        filtered_df = _apply_matchup_filter(filtered_df, selected_matchups, week_matchups)
-        total_filtered = len(filtered_df)
-        display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
-        tier_values = display_df['_tier'].tolist()
-        position_values = display_df['Position'].tolist()
-        display_df = display_df.drop(columns=['_tier'])
-        indexed = display_df.set_index('Player')
-
-        # Recent-form sparkline: the last five games' fantasy points as a
-        # line, with the player's SEASON average as a dotted reference line
-        # under it - explicit request, and the reason this is an inline SVG
-        # in an ImageColumn rather than the st.column_config.LineChartColumn
-        # Rookie Watch/Risers use (that column can draw the line and nothing
-        # else - see ui.charts.sparkline_data_uri).
-        #
-        # Gated to games BEFORE the selected week, which is also the fix for
-        # "Last 5 Weeks doesn't currently show anything": this tab opens on
-        # the UPCOMING season/week, and an upcoming season has no weekly stat
-        # rows at all, so every cell was correctly-but-uselessly empty. When
-        # that happens the series falls back to the prior season, captioned,
-        # the same "based on last season" fallback the model itself already
-        # makes for a cold-start week (see build_weekly_projections).
-        form_series = build_form_series(df_stats, n_col, metric='fantasy_points',
-                                        n_weeks=RECENT_FORM_GAMES, before_week=wk_week)
-        form_source_year = wk_year
-        if not form_series:
-            try:
-                prior_stats, _pt, _pn, _ = load_and_merge_data(wk_year - 1, wk_scoring)
-                form_series = build_form_series(prior_stats, _pn, metric='fantasy_points',
-                                                n_weeks=RECENT_FORM_GAMES)
-                form_source_year = wk_year - 1
-            except Exception:
-                form_series = {}
-        indexed['Last 5 Weeks'] = [
-            sparkline_data_uri(*_form_entry(form_series, name)) for name in indexed.index
-        ]
-        # Re-apply the requested order now that Last 5 Weeks exists - it has
-        # to be built per DISPLAYED row (one SVG each), which is after the
-        # slice above, so it lands on the end of the frame rather than in
-        # its requested slot next to Injury Status.
-        indexed = indexed[[c for c in display_cols if c in indexed.columns]]
-
-        pct_cols = {}
-        for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
-            if c in indexed.columns and indexed[c].notna().any():
-                pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
-        column_config = build_column_help_config(
-            indexed, pinned_cols=['Rank', 'Team', 'Opponent'])
-        column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
-            help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
-                  f"({form_source_year}), with the dotted line at that season's average"),
-            width="small",
-        )
-        # The availability fingerprint is part of the key so a manual injury
-        # override / FantasyPros pull for this week (which rebuilds the board
-        # and can move the injured player plus every vacancy recipient) forces
-        # the open decomposition and the per-player detail cache to re-resolve
-        # from the rebuild instead of showing the pre-injury breakdown.
-        detail_config = (wk_year, wk_week, wk_scoring, avail_fp)
-        selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
-        if selected_state and selected_state.get('config') != detail_config:
-            prev_config = selected_state.get('config')
-            prev_key = selected_state.get('key')
-            same_board = (isinstance(prev_config, tuple) and len(prev_config) == len(detail_config)
-                          and prev_config[:-1] == detail_config[:-1])
-            fresh = (_selected_player_detail(model_meta, detail_config, prev_key)
-                     if same_board and prev_key is not None else None)
-            if fresh is not None:
-                # Same week/scoring, only the availability fingerprint moved -
-                # an injury override / feed pull rebuilt this board. Keep the
-                # decomposition open but re-resolve it against the rebuild so
-                # the injured player and every vacancy recipient show fresh
-                # numbers instead of the pre-injury breakdown.
-                st.session_state[_PROJECTION_DETAIL_KEY] = {
-                    'config': detail_config, 'detail': fresh, 'key': prev_key,
-                    'market_detail': _market_detail_for_key(prev_key),
+            def _market_detail_for_key(key):
+                if market_detail_snapshot is None:
+                    return None
+                player, pos, team = key
+                match = market_detail_snapshot[
+                    market_detail_snapshot['Player'].eq(player) & market_detail_snapshot['Pos'].eq(pos)
+                    & market_detail_snapshot['Team'].eq(team)]
+                if match.empty:
+                    return None
+                r = match.iloc[0]
+                cons = {st_: float(r[f'Mkt {st_}']) for st_ in consensus_stats
+                        if f'Mkt {st_}' in match.columns and pd.notna(r.get(f'Mkt {st_}'))}
+                partial_v = float(r['Mkt Market Pts']) if pd.notna(r.get('Mkt Market Pts')) else None
+                if not cons and partial_v is None:
+                    return None
+                full_v = float(r['Market Proj Pts']) if pd.notna(r.get('Market Proj Pts')) else None
+                cov_raw = r.get('Market Coverage')
+                cov = float(cov_raw) if cov_raw is not None and pd.notna(cov_raw) else None
+                pk = r.get('Mkt player_key')
+                bl = None
+                _bl_all = market_df.attrs.get('book_lines') if market_df is not None else None
+                if _bl_all is not None and not _bl_all.empty and pd.notna(pk):
+                    sub = _bl_all[_bl_all['player_key'] == pk]
+                    if not sub.empty:
+                        # Keep the per-side prices and the devig - the Market
+                        # lines tab shows each book's O/U odds and the
+                        # consensus fair value, not just the bare number.
+                        _keep = [c for c in ('market', 'provider', 'line', 'over_payout',
+                                             'under_payout', 'p_over', 'implied_mean')
+                                 if c in sub.columns]
+                        bl = sub[_keep].copy()
+                return {
+                    'consensus': cons, 'book_lines': bl,
+                    'market_points_partial': partial_v, 'market_points_full': full_v,
+                    'coverage': cov, 'scoring_mode': wk_scoring,
                 }
-            else:
-                # A real board switch (week / scoring), or nothing to
-                # re-resolve: a Week 3 explanation is not meaningful over a
-                # Week 4 table.
-                st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
-        # Row KEYS only here, not a model_meta['explanations'] lookup per
-        # row - that dict lookup is cheap today, but every displayed row
-        # (up to 40) was being looked up on EVERY rerun regardless of
-        # whether anyone selects a row. Deferred into
-        # _selected_player_detail below so only the one row actually
-        # clicked ever gets resolved.
-        row_keys = [(row['Player'], row['Position'], row['Team']) for _, row in display_df.iterrows()]
-        model_table_key = f"weekly_rank_model_table_{wk_year}_{wk_week}_{wk_scoring}"
 
-        def _on_model_row_select():
-            rows = st.session_state.get(model_table_key, {}).get('selection', {}).get('rows', [])
-            if rows and rows[0] < len(row_keys):
-                row_key = row_keys[rows[0]]
-                detail = _selected_player_detail(model_meta, detail_config, row_key)
-                if detail:
-                    st.session_state[_PROJECTION_DETAIL_KEY] = {
-                        'config': detail_config, 'detail': detail, 'key': row_key,
-                        'market_detail': _market_detail_for_key(row_key),
-                    }
+                if 'Market Coverage' in merged_model.columns:
+                    # A book that posted only a receptions prop shows a real but
+                    # PARTIAL coverage number next to the (now backfilled) total,
+                    # so a thin line still reads as thin rather than as a broken
+                    # projection.
+                    merged_model['Market Coverage'] = merged_model['Market Coverage'].map(
+                        lambda v: f"{v * 100:.0f}%" if pd.notna(v) else None)
+            # Ranking column, directly after Opponent, colored by TIER rather
+            # than a continuous scale - explicit request. Tiers are clustered
+            # per position on Model Proj Pts wherever a significant cutoff
+            # actually falls (data.draft_board.tier_by_position, the same
+            # k-means-on-points technique Draft HQ's board tiers with), not a
+            # fixed players-per-tier bucket.
+            # Tier shading for the model's own rank column - explicit request.
+            # Tiers are clustered per position on Model Proj Pts wherever a
+            # significant cutoff actually falls (data.draft_board.tier_by_position,
+            # the same k-means-on-points technique Draft HQ's board tiers with),
+            # not a fixed players-per-tier bucket.
+            merged_model['_tier'] = tier_by_position(merged_model, 'Model Proj Pts', pos_col='Pos')
 
-        st.dataframe(
-            style_plain_dataframe(indexed, numeric_pct_cols=pct_cols,
-                                  tier_cols={'Model Rank': tier_values} if 'Model Rank' in indexed.columns else None,
-                                  # Model Rank keeps its existing tier shading
-                                  # (a separate explicit request - performance
-                                  # cliffs, not position) rather than also
-                                  # getting position colors here; the other
-                                  # three rank columns had no coloring at all
-                                  # before, so this is a clean addition there.
-                                  position_cols={c: position_values for c in
-                                                 ('Rank', 'FantasyPros Rank', 'Market Rank')
-                                                 if c in indexed.columns},
-                                  label_cols={c: labels for c, labels in rank_labels.items()
-                                              if c in indexed.columns}),
-            width="stretch", height=df_auto_height(min(len(display_df), 40), row_px=42),
-            row_height=42, column_config=column_config,
-            on_select=_on_model_row_select, selection_mode="single-row", key=model_table_key,
-        )
-        selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
-        if selected_state and selected_state.get('config') == detail_config:
-            _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))
-        shown_note = f"Showing {len(display_df)} of {total_filtered} {group_label} players"
-        if total_filtered > len(display_df):
-            st.caption(f"{shown_note} — widen \"Show\" above to see more.")
-        else:
-            st.caption(f"{shown_note}.")
-        if form_source_year != wk_year:
-            st.caption(
-                f"↩︎ **Last 5 Weeks** falls back to {form_source_year} — {wk_year} has no played "
-                "games before the selected week to chart yet."
+            # One rank column per projection SOURCE, not just this app's own
+            # model - explicit request. Each is a sortable NUMBER carrying a
+            # "RB4" label (see _woven_rank for why that split exists and which
+            # three sorting bugs it fixes); only built when that source actually
+            # produced a points column to rank. Computed on the FULL pool, before
+            # the position filter and row limit below, so "RB4" always means
+            # fourth among every RB rather than fourth among what's on screen.
+            rank_labels = {}
+            for rank_col, points_col in (('Model Rank', 'Model Proj Pts'),
+                                         ('Market Rank', 'Market Proj Pts'),
+                                         ('FantasyPros Rank', 'FantasyPros Proj Pts')):
+                if points_col not in merged_model.columns:
+                    continue
+                values, labels = _woven_rank(merged_model, points_col)
+                if values is None:
+                    continue
+                merged_model[rank_col] = values
+                rank_labels[rank_col] = labels
+
+            # The leading "Rank" column is the table's scan anchor and its
+            # default sort - FantasyPros' rank when their projection has actually
+            # been pulled this session, this app's model rank otherwise. It
+            # deliberately repeats one of the three source ranks at the far right
+            # rather than being a fourth, separate ranking: the requested layout
+            # puts a rank first (what am I looking at) and the full three-source
+            # comparison last (who disagrees with whom).
+            primary_rank = next((c for c in ('FantasyPros Rank', 'Model Rank') if c in rank_labels), None)
+            if primary_rank:
+                merged_model['Rank'] = merged_model[primary_rank]
+                rank_labels['Rank'] = rank_labels[primary_rank]
+                # Woven order by construction (QB1, RB1, WR1, TE1, QB2, ...), the
+                # ordering the whole encoding exists to produce - so the table
+                # OPENS in it instead of only reaching it after a header click.
+                merged_model = merged_model.sort_values('Rank', kind='mergesort').reset_index(drop=True)
+
+            # Does our model's rank actually MATCH FantasyPros' own published
+            # consensus rank (their real ECR, not the positional rank derived
+            # above from their points projection - the two aren't guaranteed to
+            # agree, since a projection reflects only the stat line while a
+            # published ECR also folds in analyst judgment calls a raw point
+            # total won't capture) - explicit request. Reads whatever weekly
+            # FantasyPros export is already sitting in this session's uploader
+            # (below) without requiring it to be re-uploaded once it's there;
+            # see that uploader's own docstring for why a live per-week ECR
+            # pull isn't wired in here (that endpoint exists on FantasyPros'
+            # API - see draft_sources.py's "/rankings or /consensus-rankings"
+            # note - but is unverified against a real response in this app and
+            # a wrong guess would silently spend the call budget on garbage;
+            # the CSV export is the same real ECR with zero guessing involved).
+            _weekly_ecr_df = st.session_state.get('_weekly_rank_ecr_df')
+            if _weekly_ecr_df is not None and not _weekly_ecr_df.empty:
+                ecr_comparison = build_rankings_comparison(
+                    merged_model, value_col='Model Proj Pts', rank_label='Model Overall',
+                    fp_df=_weekly_ecr_df)
+                if not ecr_comparison.empty and 'FantasyPros Rank' in ecr_comparison.columns:
+                    ecr_comparison = ecr_comparison.rename(columns={
+                        'FantasyPros Rank': 'FantasyPros ECR',
+                        'Model Overall vs FantasyPros': 'Model vs FantasyPros ECR',
+                    })
+                    keep = [c for c in ('Player', 'FantasyPros ECR', 'Model vs FantasyPros ECR')
+                           if c in ecr_comparison.columns]
+                    merged_model = merged_model.merge(ecr_comparison[keep], on='Player', how='left')
+
+            merged_model = merged_model.rename(columns={'Pos': 'Position'})
+            merged_model = merged_model.rename(columns=dict(_STAT_DISPLAY_COLS))
+
+            # Explicit column order, per request: identity first, then the three
+            # projections side by side, then the stat line behind this app's own
+            # number, then the context columns, then the three source ranks
+            # together as a comparison block at the end.
+            #
+            # No standalone Position column - dropped to save table width, per
+            # explicit request. Its info isn't lost: every rank column already
+            # carries it in the "RB4"-style label (_woven_rank), and the rank
+            # columns are now colored by position too (position_values/
+            # position_cols below) so the same at-a-glance signal the Position
+            # column gave survives without spending a column on it.
+            display_cols = ['Rank', 'Player', 'Team', 'Opponent',
+                            'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts']
+            display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
+            display_cols += ['Injury Status', 'Last 5 Weeks',
+                            'FantasyPros Rank', 'Model Rank', 'Market Rank', 'Market Coverage',
+                            'FantasyPros ECR', 'Model vs FantasyPros ECR']
+
+            # 'Last 5 Weeks' is built per-displayed-row further down, so it isn't
+            # a real column yet at slicing time. 'Position' is kept even though
+            # it's no longer in display_cols (see the comment above) - the
+            # position-group filter just below and the rank-column position
+            # coloring further down both still need the raw values; it's
+            # dropped from the actually-rendered frame later, at the
+            # display_cols re-select (indexed = indexed[[...]]).
+            keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position']
+            positions, group_label = position_group_buttons(
+                'wr', default='SUPERFLEX', rerun_scope='fragment')
+            # Matchup filter (explicit request, prop-betting workflow): isolate
+            # one game's slate instead of scanning the whole week. Keyed by the
+            # board's own (year, week, scoring) so switching weeks always starts
+            # from "all games" rather than carrying over a selection whose teams
+            # may not even play this week (a stale value Streamlit would refuse
+            # to render against a changed options list).
+            week_matchups = _week_matchups(merged_model[keep_cols])
+            selected_matchups = st.multiselect(
+                "Matchup", [label for label, _teams in week_matchups],
+                key=f"weekly_rank_matchup_filter_{wk_year}_{wk_week}_{wk_scoring}",
+                placeholder="All games — pick one or more to isolate a slate for props",
             )
-        st.caption(
-            "**Rank** is the table's default order and its scan anchor — FantasyPros' positional "
-            "rank when their projection has been pulled above, this app's model rank otherwise. "
-            "Every rank column sorts WOVEN (QB1, RB1, WR1, TE1, QB2, …) rather than alphabetically, "
-            "so no single position sweeps the top of the table, and a player a source doesn't rank "
-            "shows \"—\" and sorts to the bottom instead of the top. "
-            "**FantasyPros Rank** / **Model Rank** / **Market Rank** at the right are each source's "
-            "own positional rank, side by side — Model Rank is shaded by tier, a cluster break in "
-            "Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
-            "**FantasyPros ECR** (when a weekly FantasyPros export is uploaded below) is "
-            "their own REAL published consensus rank, not derived from the points projection above "
-            "it — **Model vs FantasyPros ECR** shows how far apart the two actually are, which is "
-            "not always the same story a proj-pts comparison alone would tell, since a published "
-            "ECR also folds in analyst judgment a raw stat-line projection doesn't capture. "
-            "**Model Proj Pts** is this app's own projection (usage blended toward the current "
-            "season as it grows, opponent/pace/game-script adjusted - see "
-            "docs/weekly_projections_methodology.md), with the stat line it's built from shown "
-            "alongside it. **Market Proj Pts** is this week's live sportsbook player-prop lines "
-            "re-scored under this league's settings, with any stat no book has posted yet filled "
-            "in from this app's own projection so the total is always a complete, like-for-like "
-            "number rather than a truncated sum — **Market Coverage** shows how much of it the "
-            "real posted lines actually cover (a low number means more of it is model-backfilled). "
-            "Open a player's decomposition → **Market lines** for the per-book breakdown, where a "
-            "missing stat stays blank and nothing is backfilled. **FantasyPros Proj Pts** is "
-            "their analysts' number, pulled live above. Independent reads, shown side by side, "
-            "never blended."
-        )
+            filtered_df = apply_position_group(merged_model[keep_cols], positions, pos_col='Position')
+            filtered_df = _apply_matchup_filter(filtered_df, selected_matchups, week_matchups)
+            total_filtered = len(filtered_df)
+            display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
+            tier_values = display_df['_tier'].tolist()
+            position_values = display_df['Position'].tolist()
+            display_df = display_df.drop(columns=['_tier'])
+            indexed = display_df.set_index('Player')
+
+            # Recent-form sparkline: the last five games' fantasy points as a
+            # line, with the player's SEASON average as a dotted reference line
+            # under it - explicit request, and the reason this is an inline SVG
+            # in an ImageColumn rather than the st.column_config.LineChartColumn
+            # Rookie Watch/Risers use (that column can draw the line and nothing
+            # else - see ui.charts.sparkline_data_uri).
+            #
+            # Gated to games BEFORE the selected week, which is also the fix for
+            # "Last 5 Weeks doesn't currently show anything": this tab opens on
+            # the UPCOMING season/week, and an upcoming season has no weekly stat
+            # rows at all, so every cell was correctly-but-uselessly empty. When
+            # that happens the series falls back to the prior season, captioned,
+            # the same "based on last season" fallback the model itself already
+            # makes for a cold-start week (see build_weekly_projections).
+            form_series = build_form_series(df_stats, n_col, metric='fantasy_points',
+                                            n_weeks=RECENT_FORM_GAMES, before_week=wk_week)
+            form_source_year = wk_year
+            if not form_series:
+                try:
+                    prior_stats, _pt, _pn, _ = load_and_merge_data(wk_year - 1, wk_scoring)
+                    form_series = build_form_series(prior_stats, _pn, metric='fantasy_points',
+                                                    n_weeks=RECENT_FORM_GAMES)
+                    form_source_year = wk_year - 1
+                except Exception:
+                    form_series = {}
+            indexed['Last 5 Weeks'] = [
+                sparkline_data_uri(*_form_entry(form_series, name)) for name in indexed.index
+            ]
+            # Re-apply the requested order now that Last 5 Weeks exists - it has
+            # to be built per DISPLAYED row (one SVG each), which is after the
+            # slice above, so it lands on the end of the frame rather than in
+            # its requested slot next to Injury Status.
+            indexed = indexed[[c for c in display_cols if c in indexed.columns]]
+
+            pct_cols = {}
+            for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
+                if c in indexed.columns and indexed[c].notna().any():
+                    pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
+            column_config = build_column_help_config(
+                indexed, pinned_cols=['Rank', 'Team', 'Opponent'])
+            column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
+                help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
+                      f"({form_source_year}), with the dotted line at that season's average"),
+                width="small",
+            )
+            # The availability fingerprint is part of the key so a manual injury
+            # override / FantasyPros pull for this week (which rebuilds the board
+            # and can move the injured player plus every vacancy recipient) forces
+            # the open decomposition and the per-player detail cache to re-resolve
+            # from the rebuild instead of showing the pre-injury breakdown.
+            detail_config = (wk_year, wk_week, wk_scoring, avail_fp)
+            selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
+            if selected_state and selected_state.get('config') != detail_config:
+                prev_config = selected_state.get('config')
+                prev_key = selected_state.get('key')
+                same_board = (isinstance(prev_config, tuple) and len(prev_config) == len(detail_config)
+                              and prev_config[:-1] == detail_config[:-1])
+                fresh = (_selected_player_detail(model_meta, detail_config, prev_key)
+                         if same_board and prev_key is not None else None)
+                if fresh is not None:
+                    # Same week/scoring, only the availability fingerprint moved -
+                    # an injury override / feed pull rebuilt this board. Keep the
+                    # decomposition open but re-resolve it against the rebuild so
+                    # the injured player and every vacancy recipient show fresh
+                    # numbers instead of the pre-injury breakdown.
+                    st.session_state[_PROJECTION_DETAIL_KEY] = {
+                        'config': detail_config, 'detail': fresh, 'key': prev_key,
+                        'market_detail': _market_detail_for_key(prev_key),
+                    }
+                else:
+                    # A real board switch (week / scoring), or nothing to
+                    # re-resolve: a Week 3 explanation is not meaningful over a
+                    # Week 4 table.
+                    st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
+            # Row KEYS only here, not a model_meta['explanations'] lookup per
+            # row - that dict lookup is cheap today, but every displayed row
+            # (up to 40) was being looked up on EVERY rerun regardless of
+            # whether anyone selects a row. Deferred into
+            # _selected_player_detail below so only the one row actually
+            # clicked ever gets resolved.
+            row_keys = [(row['Player'], row['Position'], row['Team']) for _, row in display_df.iterrows()]
+            model_table_key = f"weekly_rank_model_table_{wk_year}_{wk_week}_{wk_scoring}"
+
+            def _on_model_row_select():
+                rows = st.session_state.get(model_table_key, {}).get('selection', {}).get('rows', [])
+                if rows and rows[0] < len(row_keys):
+                    row_key = row_keys[rows[0]]
+                    detail = _selected_player_detail(model_meta, detail_config, row_key)
+                    if detail:
+                        st.session_state[_PROJECTION_DETAIL_KEY] = {
+                            'config': detail_config, 'detail': detail, 'key': row_key,
+                            'market_detail': _market_detail_for_key(row_key),
+                        }
+
+            st.dataframe(
+                style_plain_dataframe(indexed, numeric_pct_cols=pct_cols,
+                                      tier_cols={'Model Rank': tier_values} if 'Model Rank' in indexed.columns else None,
+                                      # Model Rank keeps its existing tier shading
+                                      # (a separate explicit request - performance
+                                      # cliffs, not position) rather than also
+                                      # getting position colors here; the other
+                                      # three rank columns had no coloring at all
+                                      # before, so this is a clean addition there.
+                                      position_cols={c: position_values for c in
+                                                     ('Rank', 'FantasyPros Rank', 'Market Rank')
+                                                     if c in indexed.columns},
+                                      label_cols={c: labels for c, labels in rank_labels.items()
+                                                  if c in indexed.columns}),
+                width="stretch", height=df_auto_height(min(len(display_df), 40), row_px=42),
+                row_height=42, column_config=column_config,
+                on_select=_on_model_row_select, selection_mode="single-row", key=model_table_key,
+            )
+            selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
+            if selected_state and selected_state.get('config') == detail_config:
+                _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))
+            shown_note = f"Showing {len(display_df)} of {total_filtered} {group_label} players"
+            if total_filtered > len(display_df):
+                st.caption(f"{shown_note} — widen \"Show\" above to see more.")
+            else:
+                st.caption(f"{shown_note}.")
+            if form_source_year != wk_year:
+                st.caption(
+                    f"↩︎ **Last 5 Weeks** falls back to {form_source_year} — {wk_year} has no played "
+                    "games before the selected week to chart yet."
+                )
+            st.caption(
+                "**Rank** is the table's default order and its scan anchor — FantasyPros' positional "
+                "rank when their projection has been pulled above, this app's model rank otherwise. "
+                "Every rank column sorts WOVEN (QB1, RB1, WR1, TE1, QB2, …) rather than alphabetically, "
+                "so no single position sweeps the top of the table, and a player a source doesn't rank "
+                "shows \"—\" and sorts to the bottom instead of the top. "
+                "**FantasyPros Rank** / **Model Rank** / **Market Rank** at the right are each source's "
+                "own positional rank, side by side — Model Rank is shaded by tier, a cluster break in "
+                "Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
+                "**FantasyPros ECR** (when a weekly FantasyPros export is uploaded below) is "
+                "their own REAL published consensus rank, not derived from the points projection above "
+                "it — **Model vs FantasyPros ECR** shows how far apart the two actually are, which is "
+                "not always the same story a proj-pts comparison alone would tell, since a published "
+                "ECR also folds in analyst judgment a raw stat-line projection doesn't capture. "
+                "**Model Proj Pts** is this app's own projection (usage blended toward the current "
+                "season as it grows, opponent/pace/game-script adjusted - see "
+                "docs/weekly_projections_methodology.md), with the stat line it's built from shown "
+                "alongside it. **Market Proj Pts** is this week's live sportsbook player-prop lines "
+                "re-scored under this league's settings, with any stat no book has posted yet filled "
+                "in from this app's own projection so the total is always a complete, like-for-like "
+                "number rather than a truncated sum — **Market Coverage** shows how much of it the "
+                "real posted lines actually cover (a low number means more of it is model-backfilled). "
+                "Open a player's decomposition → **Market lines** for the per-book breakdown, where a "
+                "missing stat stays blank and nothing is backfilled. **FantasyPros Proj Pts** is "
+                "their analysts' number, pulled live above. Independent reads, shown side by side, "
+                "never blended."
+            )
+        _render_board()
 
     if form_df.empty:
         st.info(f"Not enough {wk_year} weekly data yet to build a recent-form baseline.")

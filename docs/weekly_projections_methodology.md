@@ -1584,17 +1584,25 @@ current-season matrix, live prior-season blend matrix), each passing its own
 matching schedule only when the flag is set - `schedule_df=None` is a no-op,
 so an unset flag costs nothing extra.
 
-**Not added to `DEFAULT_FEATURES`.** Unlike the player-side change (a
-symmetry fix to a mechanism already proven and shipped), this is a genuinely
-new signal path: it isn't obvious a priori which stats/positions it helps,
-by how much, or whether the pooled-into-one-ratio ADDITIVE prior
-(`DEFENSE_PRIOR_GAMES` worth of league-average evidence, already mixed into
-every defense's ratio) already absorbs most of a single blowout game's
-distortion without this. Per this repo's own convention (see the
-`MODEL_FEATURES` module comment and every `BUILT, BACKTESTED, …` entry
-above), a new component needs its own `scripts/eval_weekly_model.py`
-measurement before joining the shipped set - queued, not yet run as of this
-entry.
+**Not added to `DEFAULT_FEATURES` - BUILT, BACKTESTED, REJECTED (stays OFF).**
+Unlike the player-side change (a symmetry fix to a mechanism already proven
+and shipped), this is a genuinely new signal path, so it went through this
+repo's own `scripts/eval_weekly_model.py` paired A/B gate before touching the
+shipped set (2024+2025, weeks 5-17, `default` vs `default+v2_defense_blowout_discount`,
+8,058 paired player-weeks): whole-pool ALL is a wash (dMAE +0.001, rankρ
+-0.000) but LOSES 19 of 26 weeks despite the near-zero average - the same
+"tiny average, lopsided week record" pattern several other rejected
+candidates above show. By position it's a wash everywhere at the full-pool
+level (QB +0.002, RB +0.001, WR +0.001, TE -0.000). The startable subsets
+split: START-QB (-0.022), START-RB (-0.019, and a real 17-9 week record) and
+START-TE (-0.012) each nudge better, but START-WR - the largest and most
+decision-relevant startable pool - gets WORSE (+0.027 MAE, 9-17 weeks lost).
+Likely cause: `DEFENSE_PRIOR_GAMES`'s existing additive league-average prior
+(see its own note above) already absorbs most of a single blowout game's
+distortion in the aggregate ratio, so halving that one game's weight mostly
+adds noise rather than removing it, and WR - the position most exposed to
+what a defense allows through the air - is where that noise costs the most.
+Kept switchable per repo convention; not part of any default board.
 
 Verified: `tests/test_weekly_projections.py::test_partial_game_screen_uses_a_final_margin_for_a_losing_blowout_too`
 mirrors the existing winning-side test with Cleveland/Jacksonville's real

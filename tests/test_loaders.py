@@ -53,10 +53,14 @@ def test_load_team_pace_through_week_drops_the_in_progress_week():
     ])
     both_weeks = pd.concat([week1, week2], ignore_index=True)
 
-    original = loaders.nflreadpy.load_team_stats
+    original_stats = loaders.nflreadpy.load_team_stats
+    original_sched = loaders.nflreadpy.load_schedules
     try:
         loaders.nflreadpy.load_team_stats = (
             lambda years, summary_level='week': _FakeFrame(both_weeks))
+        # No OT games in this fixture - an empty schedule keeps
+        # _overtime_team_weeks a no-op without ever hitting the network.
+        loaders.nflreadpy.load_schedules = lambda years: _FakeFrame(pd.DataFrame())
 
         # Only week 1 exists (in progress); as-of week 1 must see nothing
         # this season, not NE/SEA's one game.
@@ -75,7 +79,81 @@ def test_load_team_pace_through_week_drops_the_in_progress_week():
         unfiltered = loaders.load_team_pace(2099)
         assert set(unfiltered.index) == {'NE', 'SEA', 'KC', 'DEN'}
     finally:
-        loaders.nflreadpy.load_team_stats = original
+        loaders.nflreadpy.load_team_stats = original_stats
+        loaders.nflreadpy.load_schedules = original_sched
+
+
+def test_load_team_pace_reports_games_played_alongside_each_average():
+    stats = pd.DataFrame([
+        {'team': 'KC', 'opponent_team': 'DEN', 'week': 1,
+         'attempts': 28, 'carries': 22, 'sacks_suffered': 1},
+        {'team': 'DEN', 'opponent_team': 'KC', 'week': 1,
+         'attempts': 32, 'carries': 18, 'sacks_suffered': 3},
+        {'team': 'KC', 'opponent_team': 'LAC', 'week': 2,
+         'attempts': 30, 'carries': 20, 'sacks_suffered': 2},
+        {'team': 'LAC', 'opponent_team': 'KC', 'week': 2,
+         'attempts': 25, 'carries': 25, 'sacks_suffered': 1},
+    ])
+    original_stats = loaders.nflreadpy.load_team_stats
+    original_sched = loaders.nflreadpy.load_schedules
+    try:
+        loaders.nflreadpy.load_team_stats = (
+            lambda years, summary_level='week': _FakeFrame(stats))
+        loaders.nflreadpy.load_schedules = lambda years: _FakeFrame(pd.DataFrame())
+        loaders.load_team_pace.clear()
+        pace = loaders.load_team_pace(2099)
+    finally:
+        loaders.nflreadpy.load_team_stats = original_stats
+        loaders.nflreadpy.load_schedules = original_sched
+    # KC has two games on the books, DEN and LAC one each - the shrinkage
+    # build_weekly_projections applies to pace_mult (PACE_PRIOR_GAMES) needs
+    # this count sitting right next to the average it was built from.
+    assert pace.loc['KC', 'off_games'] == 2
+    assert pace.loc['DEN', 'def_games'] == 1
+    assert pace.loc['LAC', 'def_games'] == 1
+
+
+def test_load_team_pace_discounts_a_game_that_went_to_overtime():
+    # A and B's Week 1 game ran long (70 combined plays); C and D's did not
+    # (60). Raw, A/B would look like the faster pair purely from bonus OT
+    # time - reported 2026-09-15 (the Lions' Week 1 opener went to OT).
+    stats = pd.DataFrame([
+        {'team': 'A', 'opponent_team': 'B', 'week': 1,
+         'attempts': 40, 'carries': 28, 'sacks_suffered': 2},
+        {'team': 'B', 'opponent_team': 'A', 'week': 1,
+         'attempts': 38, 'carries': 30, 'sacks_suffered': 2},
+        {'team': 'C', 'opponent_team': 'D', 'week': 1,
+         'attempts': 35, 'carries': 23, 'sacks_suffered': 2},
+        {'team': 'D', 'opponent_team': 'C', 'week': 1,
+         'attempts': 32, 'carries': 26, 'sacks_suffered': 2},
+    ])
+    schedule = pd.DataFrame([
+        {'week': 1, 'game_type': 'REG', 'home_team': 'A', 'away_team': 'B', 'overtime': 1},
+        {'week': 1, 'game_type': 'REG', 'home_team': 'C', 'away_team': 'D', 'overtime': 0},
+    ])
+    original_stats = loaders.nflreadpy.load_team_stats
+    original_sched = loaders.nflreadpy.load_schedules
+    try:
+        loaders.nflreadpy.load_team_stats = (
+            lambda years, summary_level='week': _FakeFrame(stats))
+        loaders.nflreadpy.load_schedules = lambda years: _FakeFrame(schedule)
+        loaders.load_team_pace.clear()
+        loaders.load_schedule.clear()
+        loaders._overtime_team_weeks.clear()
+        pace = loaders.load_team_pace(2099)
+
+        loaders.load_team_weekly_plays.clear()
+        plays = loaders.load_team_weekly_plays(2099)
+    finally:
+        loaders.nflreadpy.load_team_stats = original_stats
+        loaders.nflreadpy.load_schedules = original_sched
+    # 70 combined plays scaled by OVERTIME_PLAY_DISCOUNT (60/70) lands on the
+    # same 60 the non-OT pair already shows - not still-inflated.
+    for team in ('A', 'B', 'C', 'D'):
+        assert abs(pace.loc[team, 'off_pace'] - 60.0) < 1e-9
+        assert abs(pace.loc[team, 'def_pace'] - 60.0) < 1e-9
+        row = plays.loc[plays['team'] == team].iloc[0]
+        assert abs(row['plays'] - 60.0) < 1e-9
 
 
 def main():

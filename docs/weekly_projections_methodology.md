@@ -1461,6 +1461,69 @@ before), `core_rb_snaps` unchanged. New test
 pins a minimal 3-candidate/1-OUT fixture against this exact regression.
 547 tests pass.
 
+## 2026-09-15 — pace_mult trusted a one-game current-season sample as hard as a full season, and never corrected for overtime — BUG FIX
+
+Reported by the user against the real 2026 Week 2 board, built the day after
+Week 1 went final: Detroit's Week 2 pace read was inflated for two separate
+reasons stacked on the same number - (1) it was driven entirely by New
+Orleans' own tempo in Detroit's Week 1 game (a fast opponent inflates BOTH
+sides' measured plays, and Detroit had played exactly one game), and (2)
+that Week 1 Lions/Saints game went to overtime, adding bonus plays no part
+of the pipeline discounted back out.
+
+**Sample size.** `pace_mult = clip(opp_pace / league_pace, 0.85, 1.15)`
+(`weekly_projections.py`) was un-shrunk by games played the moment
+`cold_start` went false - which is Week 1's OWN cutoff (`hist.empty`), not a
+gradual thing. The 2026-09-14 entry above already documented the mechanism
+by which a team's real one-game pace, once that game is final, drives
+`pace_mult` "as hard as a full season would" for every one of that team's
+upcoming opponents; this is the same root cause, now visible for the entire
+board every single week (not just the two-teams-already-played edge case
+that entry fixed) because Week 1 fully completing is the normal, expected
+state one day into Week 2, not a rare mid-week race condition.
+
+**Fix.** `pace_mult` now shrinks toward neutral (1.0) by
+`alpha = games / (games + PACE_PRIOR_GAMES)`, the same n/(n+prior_games)
+shrinkage shape `DEFENSE_PRIOR_GAMES` already uses for defensive matchup
+quality - same constant value (12.0), so a 1-game opponent keeps ~8% of its
+raw pace read and a full ~17-game season still keeps ~59%, same asymptote
+`DEFENSE_PRIOR_GAMES` itself settles at. `games` comes from a new
+`off_games`/`def_games` column on both pace sources
+(`data.loaders.load_team_pace` and `data.weekly_projections.as_of_team_pace`) -
+each side's games-played count sitting next to the average it was built
+from, so the shrink uses the SAME sample the ratio itself came from rather
+than a second, potentially-inconsistent count.
+
+**Overtime.** `load_team_pace`/`load_team_weekly_plays` sum `attempts +
+carries + sacks_suffered` per team-game with no notion of how long that game
+ran - a regular-season OT game (a single untimed 10-minute period, not
+open-ended: sudden death, both teams guaranteed a possession unless the
+first drive scores a TD) real-runs more plays than a same-tempo game that
+stayed in regulation, purely from the extra 10 minutes. Both loaders now
+scale any (team, week) game flagged `overtime=1` in `data.loaders.load_schedule`
+by `OVERTIME_PLAY_DISCOUNT = 60/70`, converting it back to a
+regulation-equivalent basis before it feeds either the season pace average
+or the per-game defense-matchup-ratio denominator. Deliberately NOT applied
+to `as_of_team_pace` (the historical/backtest box-score proxy) - that
+source predates this fix and is only ever read against a fully-complete
+historical season, where OT games are a small, already-fixed share of any
+existing backtest measurement; correcting it retroactively would silently
+shift past numbers rather than just improving new ones.
+
+Verified: `tests/test_loaders.py::test_load_team_pace_discounts_a_game_that_went_to_overtime`
+pins a synthetic OT game reading identical to a non-OT game of the same real
+length once discounted;
+`test_load_team_pace_reports_games_played_alongside_each_average` and the
+`as_of_team_pace` games-column check in `test_weekly_projections.py` pin the
+new sample-size columns; `test_pace_multiplier_shrinks_toward_neutral_for_a_thin_current_season_sample`
+pins the shrink itself end-to-end through `build_weekly_projections`,
+computing the expected multiplier from `PACE_CLIP`/`PACE_PRIOR_GAMES`
+directly rather than a hard-coded number. 553 tests pass. Not gated behind a
+new `MODEL_FEATURES` flag - like the two 2026-09-14 pace/team-code entries
+above, this is a correctness fix to what `pace_mult` (an always-on, ungated
+mechanism) reads as input, not a new hypothesis-driven component requiring
+its own A/B measurement before shipping.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to
@@ -1488,12 +1551,14 @@ pins a minimal 3-candidate/1-OUT fixture against this exact regression.
   read. None of it is new information about which of two comparable
   starters will out-score the other, which remains the hardest and least
   solved part of the problem.
-- **Pace uses the full season's team stats, not an as-of-week-filtered
-  cut** — `data.loaders.load_team_pace` isn't parameterized for a cutoff.
-  A minor, accepted leak for the backtest (pace is a slow-moving signal
-  relative to opponent-allowed rates and game script); not a leak at all
-  for live use, where "the season so far" and "as of today" are the same
-  thing.
+- **The historical/backtest pace proxy (`as_of_team_pace`) doesn't correct
+  for overtime the way the live source (`load_team_pace`) does as of
+  2026-09-15** — see that entry above for why this is deliberate rather
+  than an oversight (retroactively correcting a source only ever read
+  against an already-complete, already-measured-against season would shift
+  past backtest numbers, not just improve new ones). A minor, accepted
+  leak: OT games are a small, historically-fixed share of any backtest
+  population already baked into every existing measurement against it.
 - **Injury status has no historical week granularity** — see above. Live
   use is correct; backtesting needs `apply_injury=False`.
 - **Vegas lines aren't posted for every future week** — `data/odds_market.py`

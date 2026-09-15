@@ -1092,6 +1092,67 @@ def load_player_id_crosswalk():
         return pd.DataFrame()
 
 
+# A regular-season OT is a single untimed 10-minute period on top of a
+# 60-minute regulation game (sudden death, both teams guaranteed a
+# possession unless the first one scores a TD) - not open-ended, so scaling
+# a game's play count by this fixed ratio converts it back to a
+# regulation-equivalent basis rather than guessing. Without it, a team (and,
+# symmetrically, the opponent it played) that went to OT reads as running or
+# facing more plays per game than a same-tempo team that didn't, purely from
+# bonus game time - reported 2026-09-15 against the Lions' Week 1 opener,
+# which went to OT.
+OVERTIME_PLAY_DISCOUNT = 60.0 / 70.0
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def _overtime_team_weeks(year):
+    """{(team, week)} for every completed game this season that went to
+    overtime, both participants included - the join key load_team_pace and
+    load_team_weekly_plays use to scale that game's play count down by
+    OVERTIME_PLAY_DISCOUNT (see that constant's own comment for why).
+
+    Sourced from load_schedule(year), the same nflreadpy schedule every other
+    caller in this module uses - REG season only, matching load_team_pace's
+    own scope. Returns an empty frozenset (a no-op discount) if the schedule
+    is unavailable or carries no 'overtime' column, rather than raising.
+    """
+    try:
+        sched = load_schedule(year)
+    except Exception:
+        return frozenset()
+    if sched is None or sched.empty or 'overtime' not in sched.columns or 'week' not in sched.columns:
+        return frozenset()
+    ot = sched[pd.to_numeric(sched['overtime'], errors='coerce').fillna(0) > 0]
+    if ot.empty:
+        return frozenset()
+    weeks = pd.to_numeric(ot['week'], errors='coerce')
+    pairs = set()
+    for col in ('home_team', 'away_team'):
+        if col in ot.columns:
+            teams = ot[col].astype(str).str.strip().str.upper()
+            pairs.update((t, w) for t, w in zip(teams, weeks) if t and pd.notna(w))
+    return frozenset(pairs)
+
+
+def _discount_overtime_plays(team_series, week_series, plays_series, year):
+    """Scale any (team, week) row whose game went to overtime by
+    OVERTIME_PLAY_DISCOUNT. Shared by load_team_pace and
+    load_team_weekly_plays - both read the same per-team-per-week play count
+    off the same nflreadpy team-stats source, so both need the identical
+    correction rather than two copies that could drift apart.
+    """
+    ot_weeks = _overtime_team_weeks(year)
+    out = pd.to_numeric(plays_series, errors='coerce').astype(float)
+    if not ot_weeks:
+        return out
+    teams = team_series.astype(str).str.strip().str.upper()
+    weeks = pd.to_numeric(week_series, errors='coerce')
+    keys = pd.Series(list(zip(teams, weeks)), index=out.index)
+    mask = keys.isin(ot_weeks)
+    out.loc[mask] = out.loc[mask] * OVERTIME_PLAY_DISCOUNT
+    return out
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_team_pace(year, through_week=None):
     """
@@ -1120,9 +1181,16 @@ def load_team_pace(year, through_week=None):
     week-aware board should always pass through_week=as_of_week; a prior,
     fully-complete season should never pass it.
 
+    Any game that went to overtime has its play count scaled down by
+    OVERTIME_PLAY_DISCOUNT first (see that constant) - otherwise a team (and
+    the opponent it played) reads as faster purely from bonus game time.
+
     Returns a DataFrame indexed by team abbreviation with 'off_pace' /
-    'def_pace' columns (empty DataFrame if nflreadpy has nothing usable for
-    this year/cutoff, e.g. a season with no games played yet).
+    'def_pace' columns, plus 'off_games' / 'def_games' (each team's games-
+    played count behind its own average - callers use this to judge how much
+    to trust a still-small in-season sample). Empty DataFrame if nflreadpy
+    has nothing usable for this year/cutoff, e.g. a season with no games
+    played yet.
     """
     try:
         df = nflreadpy.load_team_stats([year], summary_level='week').to_pandas()
@@ -1141,6 +1209,7 @@ def load_team_pace(year, through_week=None):
         return pd.DataFrame()
     df = df.copy()
     df['plays'] = df[play_cols].sum(axis=1)
+    df['plays'] = _discount_overtime_plays(df['team'], df['week'], df['plays'], year)
 
     off = df.groupby('team', observed=True).agg(off_plays=('plays', 'sum'), off_games=('week', 'nunique'))
     off['off_pace'] = off['off_plays'] / off['off_games'].replace(0, 1)
@@ -1149,7 +1218,7 @@ def load_team_pace(year, through_week=None):
     defn['def_pace'] = defn['def_plays'] / defn['def_games'].replace(0, 1)
     defn.index.name = 'team'
 
-    return pd.concat([off[['off_pace']], defn[['def_pace']]], axis=1)
+    return pd.concat([off[['off_pace', 'off_games']], defn[['def_pace', 'def_games']]], axis=1)
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
@@ -1168,6 +1237,11 @@ def load_team_weekly_plays(year):
     each game's own play count would leave the same volume signal counted
     twice.
 
+    Same OVERTIME_PLAY_DISCOUNT correction as load_team_pace, applied here
+    too - this per-game table feeds the defense-matchup ratio's own
+    denominator, so an OT game would otherwise inflate that game's play
+    count the same way it would load_team_pace's season average.
+
     Returns columns ['team', 'week', 'plays'] (empty DataFrame if nflreadpy
     has nothing for this year).
     """
@@ -1182,6 +1256,7 @@ def load_team_weekly_plays(year):
         return pd.DataFrame(columns=['team', 'week', 'plays'])
     out = df[['team', 'week']].copy()
     out['plays'] = df[play_cols].sum(axis=1)
+    out['plays'] = _discount_overtime_plays(out['team'], out['week'], out['plays'], year)
     return out.groupby(['team', 'week'], observed=True, as_index=False)['plays'].sum()
 
 

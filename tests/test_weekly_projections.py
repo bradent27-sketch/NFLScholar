@@ -1749,6 +1749,10 @@ def test_v2_as_of_pace_excludes_future_week_rows():
     pace = wp.as_of_team_pace(df, 'team', as_of_week=2)
     assert pace.loc['KC', 'off_pace'] == 50
     assert pace.loc['DEN', 'def_pace'] == 50
+    # Only week 1 is "before" as_of_week=2, so each side has exactly one
+    # game on the books - the sample-size count pace_mult's shrink reads.
+    assert pace.loc['KC', 'off_games'] == 1
+    assert pace.loc['DEN', 'def_games'] == 1
 
 
 def test_as_of_team_weekly_plays_excludes_future_week_rows_and_stays_per_game():
@@ -2038,6 +2042,60 @@ def test_v2_decomposition_refreshes_the_stat_line_after_vacancy_redistribution()
     assert trace['vacancy_delta'] > 0
     assert detail['stat_line']['targets'] == float(healthy['targets'])
     assert trace['final_projection'] == float(healthy['targets'])
+
+
+def test_pace_multiplier_shrinks_toward_neutral_for_a_thin_current_season_sample():
+    # DEN's def_pace (115) is well above the other three teams (100), but
+    # DEN has only ONE game on the books this season - a single opponent's
+    # own tempo, not yet a read on DEN's own defense (reported 2026-09-15: a
+    # Week 1 opener's opponent fully driving next week's pace read for every
+    # one of their upcoming opponents, e.g. a fast Week-1 foe inflating the
+    # very next week's "defense" pace before that defense has played a game
+    # of its own). pace_mult should shrink hard toward 1.0 by games played,
+    # not trust one game as much as a full season's worth.
+    current = weekly([
+        {'name': 'KC WR', 'team': 'KC', 'opponent_team': 'LAC', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'targets': 5.0,
+         'receptions': 3.0, 'receiving_yards': 40.0, 'receiving_tds': 0.2},
+    ])
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 2, 'home_team': 'KC', 'away_team': 'DEN'}])
+    pace = pd.DataFrame({
+        'off_pace': [100.0, 100.0, 100.0, 115.0],
+        'off_games': [10.0, 10.0, 10.0, 1.0],
+        'def_pace': [100.0, 100.0, 100.0, 115.0],
+        'def_games': [10.0, 10.0, 10.0, 1.0],
+    }, index=['KC', 'LAC', 'SF', 'DEN'])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pace.copy()
+        # Other tests call build_weekly_projections with this exact same
+        # (year, week, scoring, as_of_week, apply_injury) signature against
+        # different mocked data - @st.cache_data keys on the arguments, not
+        # on what the monkeypatched loaders return, so without clearing this
+        # would silently replay a stale cached result from one of them.
+        wp.build_weekly_projections.clear()
+        out, meta = wp.build_weekly_projections(
+            2026, 2, 'Full PPR', as_of_week=2, apply_injury=False)
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+         wp.load_team_pace) = original
+    detail = meta['explanations'][('KC WR', 'WR', 'KC')]
+    trace = detail['stats']['receiving_yards']
+    raw_ratio = np.clip(115.0 / 103.75, *wp.PACE_CLIP)
+    alpha = 1.0 / (1.0 + wp.PACE_PRIOR_GAMES)
+    expected = 1.0 + alpha * (raw_ratio - 1.0)
+    # The decomposition trace rounds to 3 decimals (_trace_number) - compare
+    # at that same precision rather than the full float.
+    assert np.isclose(trace['pace_multiplier'], round(expected, 3), atol=1e-9)
+    # Meaningfully attenuated, not just formula-consistent - nowhere near the
+    # raw, un-shrunk ~1.108 a single game hasn't earned yet.
+    assert 1.0 < trace['pace_multiplier'] < 1.02
 
 
 # --- teammate vacancy ---------------------------------------------------------

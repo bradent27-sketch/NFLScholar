@@ -598,6 +598,17 @@ MATCHUP_CLIP = (0.82, 1.22)
 # sitting inside the same noise band as this whole family of variants).
 HISTORY_MATCHUP_CLIP = (0.85, 1.15)
 PACE_CLIP = (0.85, 1.15)
+# A defense with only one or two games on the books this season drives
+# pace_mult exactly as hard as one with a full season, reported 2026-09-15
+# (a Week 1 opener's opponent - already the OTHER team's own pace, not a
+# read on this defense at all with n=1 - fully driving next-week's pace read
+# for every one of their upcoming opponents). Shrunk toward neutral (1.0) by
+# alpha = games / (games + PACE_PRIOR_GAMES), the same n/(n+prior_games)
+# shrinkage shape DEFENSE_PRIOR_GAMES already uses for defensive matchup
+# quality below - same value, so a 1-game sample gets ~92% pulled back to
+# neutral and a full ~17-game season still keeps ~59% trust, same asymptote
+# DEFENSE_PRIOR_GAMES itself settles at.
+PACE_PRIOR_GAMES = 12.0
 SCRIPT_CLIP = (0.85, 1.15)
 # Which raw stats the game-script read applies to - VOLUME only. Touchdowns
 # are excluded: too sparse per player-game to bucket reliably by margin
@@ -2229,12 +2240,25 @@ def as_of_team_pace(stats_df, team_col, as_of_week):
     attempts plus team rushing attempts per completed game.  It omits sacks,
     so it is deliberately called a proxy and used only in V2 historical
     runs; it is still much more honest than reading the future.
+
+    Also returns 'off_games'/'def_games' - each side's games-played count
+    behind its own average, same shape as load_team_pace's - so the
+    standalone pace multiplier can shrink a still-small in-season sample
+    toward neutral (see PACE_PRIOR_GAMES) the same way for both sources. Does
+    NOT itself correct for overtime the way load_team_pace does - this proxy
+    predates that fix and is only ever used for a fully-complete historical
+    season, where OT games are a small, historically-fixed share of the
+    backtest population already baked into any measurement made against it.
     """
     games = _as_of_team_game_plays(stats_df, team_col, as_of_week)
     if games.empty:
-        return pd.DataFrame(columns=['off_pace', 'def_pace'])
-    off = games.groupby(team_col, observed=True)['_plays'].mean().rename('off_pace')
-    defense = games.groupby('opponent_team', observed=True)['_plays'].mean().rename('def_pace')
+        return pd.DataFrame(columns=['off_pace', 'def_pace', 'off_games', 'def_games'])
+    off_group = games.groupby(team_col, observed=True)['_plays']
+    off = off_group.mean().rename('off_pace').to_frame()
+    off['off_games'] = off_group.size()
+    def_group = games.groupby('opponent_team', observed=True)['_plays']
+    defense = def_group.mean().rename('def_pace').to_frame()
+    defense['def_games'] = def_group.size()
     defense.index.name = off.index.name
     return pd.concat([off, defense], axis=1)
 
@@ -8545,6 +8569,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if league_pace and league_pace > 0:
             opp_pace = cur['Opponent'].map(pace['def_pace'])
             pace_mult = np.clip(opp_pace.fillna(league_pace) / league_pace, *PACE_CLIP)
+            if 'def_games' in pace.columns:
+                # See PACE_PRIOR_GAMES: a defense with only a game or two of
+                # current-season sample shrinks toward neutral instead of
+                # driving pace_mult exactly as hard as a full-season read
+                # would. A player whose opponent has no games column entry
+                # (e.g. hasn't played yet this season) gets 0 -> full shrink
+                # to neutral, correct since fillna(league_pace) already made
+                # opp_pace itself uninformative for that row anyway.
+                opp_games = cur['Opponent'].map(pace['def_games']).fillna(0.0)
+                pace_alpha = opp_games / (opp_games + PACE_PRIOR_GAMES)
+                pace_mult = 1.0 + pace_alpha * (pace_mult - 1.0)
 
         inj_mult = cur[name_col].map(injury_mult).fillna(1.0)
         perstat_env = 'v2_game_total_elasticity_perstat' in feats

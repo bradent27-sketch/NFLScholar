@@ -1912,8 +1912,9 @@ def _defense_adjusted_prior_average(player_game_log_prior, stats):
     ``_defadj_{stat}`` values (ELIGIBLE games only) - literally an average
     of the SAME numbers the Deep Dive's per-game "Defense-adj" column
     already shows for that season, not a new/separate adjustment. Added
-    2026-08-25 for the decomposition table's "Season average (adj)" column
-    ("this is based on the defenses a player has played" - the user's own
+    2026-08-25 for the decomposition table's "Previous Adj Avg" column
+    (renamed from "Season average (adj)" 2026-09-15;
+    "this is based on the defenses a player has played" - the user's own
     framing), distinct from `raw_prior_rate` (the plain, unadjusted
     average) and from `blended_rate` (which is about the UPCOMING
     opponent, not games already played). Display-only - never an input to
@@ -8132,7 +8133,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 qb1_workload_override, player_prior, prior2_history=player_prior2,
                 prior_history_team=prior_stats)
 
-        # Display-only "Season average (adj)" ingredient - see
+        # Display-only "Previous Adj Avg" ingredient - see
         # _defense_adjusted_prior_average's own docstring. player_game_log_
         # prior is set by both the cold_start and in-season branches above,
         # aligned one-per-row to `cur`.

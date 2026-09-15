@@ -624,8 +624,8 @@ def _render_scheme_mix(detail):
 
 def _render_decomposition_primary_table(detail, market_detail=None):
     """The at-a-glance table: one row per projected stat, left-to-right in
-    build order - Raw Average -> Season average (adj) -> Player Projection
-    -> [Weighted average, only in-season] -> Defense multiplier -> Context
+    build order - Previous Avg -> Previous Adj Avg -> [Current Season Avg,
+    only in-season] -> Player Projection -> Defense multiplier -> Context
     multiplier -> [Team capacity Δ] -> Vacancy Δ -> Projected value - plus a
     trailing "Fantasy points at this stage" row, inside this SAME table,
     showing what the whole stat line was worth at each checkpoint above.
@@ -640,22 +640,31 @@ def _render_decomposition_primary_table(detail, market_detail=None):
 
     RESTRUCTURED 2026-08-25 (second pass) per explicit request to walk the
     columns in build order and fold the points readout into the table
-    itself rather than a second one underneath.
+    itself rather than a second one underneath. REORDERED/RENAMED
+    2026-09-15 per explicit request: 'Raw Average' -> 'Previous Avg',
+    'Season average (adj)' -> 'Previous Adj Avg', 'Weighted average' ->
+    'Current Season Avg', and the latter moved next to Player Projection
+    (the two real ingredients that build it) rather than trailing it.
 
-    Raw Average = `raw_prior_rate` - this player's own plain per-game
-    history, no adjustment of any kind (see the caption below for exactly
-    which seasons/weights fed it). Season average (adj) = the SAME history
-    after removing each past game's own opponent's specific strength
-    (`defense_adjusted_prior_rate` - literally the average of the per-game
-    "Defense-adj" values the Deep Dive tab already shows) - about defenses
-    ALREADY PLAYED, not the upcoming one, so it is deliberately a different
-    number from 'Defense multiplier' further right. Player Projection =
-    `blended_rate`, that history after role/snap-share normalization and
-    (once real current-season games exist) blending with this season's own
-    rate - not yet adjusted for the upcoming matchup or game context.
-    'Weighted average' (`current_rate`) is only ever non-zero once real
-    current-season games exist, so it's hidden entirely at cold start
-    instead of printing a column of dashes."""
+    Previous Avg = `raw_prior_rate` - this player's own plain per-game
+    history from BEFORE this season, no adjustment of any kind. It is one of
+    the two real ingredients Player Projection blends (see the caption
+    below for exactly which seasons/weights fed it). Previous Adj Avg = the
+    SAME history after removing each past game's own opponent's specific
+    strength (`defense_adjusted_prior_rate` - literally the average of the
+    per-game "Defense-adj" values the Deep Dive tab already shows) - about
+    defenses ALREADY PLAYED, not the upcoming one, so it is deliberately a
+    different number from 'Defense multiplier' further right, AND IT IS
+    DISPLAY-ONLY: unlike Previous Avg, it never feeds Player Projection (see
+    `_defense_adjusted_prior_average`'s own docstring in
+    data/weekly_projections.py). Current Season Avg (`current_rate`) is the
+    other real ingredient - this player's own rate so far in the CURRENT
+    season only, no prior-season data mixed in - and is only ever non-zero
+    once real current-season games exist, so it's hidden entirely at cold
+    start instead of printing a column of dashes. Player Projection =
+    `blended_rate`, Previous Avg after role/snap-share normalization and
+    (once Current Season Avg is real) blended with it - not yet adjusted for
+    the upcoming matchup or game context."""
     stats = detail.get('stats', {})
     if not stats:
         st.caption("No projected stat line for this player.")
@@ -752,10 +761,10 @@ def _render_decomposition_primary_table(detail, market_detail=None):
 
         rows.append({
             'Stat': stat.replace('_', ' ').title(),
-            'Raw Average': _fmt_stat(stat, raw_avg_val),
-            'Season average (adj)': _fmt_stat(stat, season_adj_val),
+            'Previous Avg': _fmt_stat(stat, raw_avg_val),
+            'Previous Adj Avg': _fmt_stat(stat, season_adj_val),
+            'Current Season Avg': _fmt_stat(stat, weighted_avg_val),
             'Player Projection': _fmt_stat(stat, player_proj_val),
-            'Weighted average': _fmt_stat(stat, weighted_avg_val),
             # 'Defense multiplier' already IS the position-specific residual
             # for a WR/TE row wherever evidence exists - it replaces the
             # broad role/defense matchup outright (2026-08-26 redesign, see
@@ -787,9 +796,10 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     vacancy_vals = table['_vacancy_raw'].tolist()
     capacity_vals = table['_capacity_raw'].tolist()
     show_capacity = any(abs(v) > 0.0005 for v in capacity_vals)
-    display_cols = ['Stat', 'Raw Average', 'Season average (adj)', 'Player Projection']
+    display_cols = ['Stat', 'Previous Avg', 'Previous Adj Avg']
     if has_current_season_data:
-        display_cols.append('Weighted average')
+        display_cols.append('Current Season Avg')
+    display_cols.append('Player Projection')
     display_cols.append('Defense multiplier')
     display_cols.append('Context multiplier')
     if show_capacity:
@@ -805,11 +815,11 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     # per explicit request ("not a separate table... it should be within
     # the table"). Only columns that represent an actual running LEVEL of
     # the stat line (not a bare multiplier/ingredient column) get a number -
-    # Weighted average is a side ingredient already folded into Player
+    # Current Season Avg is a side ingredient already folded into Player
     # Projection, not a sequential checkpoint, so it stays blank here to
     # avoid double-counting.
     stage_by_col = {
-        'Raw Average': 'raw_average', 'Season average (adj)': 'season_adj',
+        'Previous Avg': 'raw_average', 'Previous Adj Avg': 'season_adj',
         'Player Projection': 'player_projection', 'Defense multiplier': 'after_defense',
         'Context multiplier': 'after_context', 'Team capacity Δ': 'after_capacity',
         'Vacancy Δ': 'after_vacancy', 'Projected value': 'final',
@@ -883,11 +893,14 @@ def _render_decomposition_primary_table(detail, market_detail=None):
 
     note_text = " / ".join(sorted(raw_average_notes)) if raw_average_notes else "prior-season history"
     st.caption(
-        f"Raw Average = this player's own plain per-game history, no adjustment ({note_text}). "
-        "Season average (adj) = that same history with each past game's OWN opponent's strength removed "
-        "(what he'd average against a neutral defense) - about defenses already played, not the upcoming "
-        "one. Player Projection = Raw Average after role/snap-share normalization (and, once real "
-        "current-season games exist, blended with this season's own rate)."
+        "Previous Avg = this player's own plain per-game history from before this season, no "
+        "adjustment - the 'prior' side of the blend below. Previous Adj Avg = that same history with "
+        "each past game's OWN opponent's strength removed (what he'd average against a neutral defense) "
+        "- about defenses already played, not the upcoming one, shown for context only and never fed "
+        "into Player Projection. Current Season Avg = this player's own rate so far in the CURRENT "
+        "season only, blank until he's actually played a game. Player Projection = Previous Avg after "
+        f"role/snap-share normalization, blended with Current Season Avg once real games exist ({note_text})"
+        " - not yet adjusted for the upcoming matchup or game context."
     )
     if prior2_weights:
         lo, hi = min(prior2_weights), max(prior2_weights)

@@ -1060,12 +1060,13 @@ MODEL_FEATURES = (
                              # whole-pool / -0.020 START-RB, a genuine dose-
                              # response peaking at K=6, fading to noise by
                              # K=9-18) - QB/WR/TE never leave noise at any K.
-                             # NOT in DEFAULT_FEATURES yet: the RB result is
-                             # real by this window's own CI but the window is
-                             # small (12 week-instances) and the sign-test
-                             # doesn't clear significance on its own - a wider
-                             # confirm should precede shipping. See the dated
-                             # methodology-doc entry.
+                             # SHIPPED in DEFAULT_FEATURES 2026-09-16, RB only
+                             # (OFFENSE_PRIOR_GAMES_POSITIONS) - the CI result
+                             # was judged sufficient despite the small window
+                             # (12 week-instances) and a sign-test that doesn't
+                             # clear significance on its own; revisit with a
+                             # wider confirm if that judgement call needs
+                             # re-checking. See the dated methodology-doc entry.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -1340,6 +1341,20 @@ DEFAULT_FEATURES = frozenset({
     # position gating, not a better blowout definition. See the dated
     # methodology-doc entries.
     'v2_defense_blowout_discount',
+    # SHIPPED 2026-09-16, RB only (see OFFENSE_PRIOR_GAMES_POSITIONS) - blend a
+    # thin current-season offense's own baseline toward the league average,
+    # weighted by that offense's games played so far (OFFENSE_PRIOR_GAMES,
+    # n/(n+K), K=6). scripts/sweep_offense_prior_games.py, weeks 2-4 (the real
+    # early-season window) 2022-2025: a genuine dose-response peaking at K=6,
+    # CI-excludes-0 for both RB whole-pool (-0.003 MAE) and START-RB (-0.020
+    # MAE), fading back to noise by K=9-18. QB/WR/TE never left noise at any K
+    # - gated to RB only on that basis. Pushed live at the user's explicit
+    # request 2026-09-16 despite the window being smaller (12 week-instances)
+    # than this file's usual confirm bar and the sign-test not clearing
+    # significance on its own - the CI result was judged sufficient. Revisit
+    # with a wider window if that judgement needs re-checking. See the dated
+    # methodology-doc entry.
+    'v2_offense_prior_blend',
 })
 
 
@@ -2434,6 +2449,17 @@ DEFENSE_PRIOR_GAMES_OVERRIDE = None
 # (see build_weekly_projections) whenever that flag is unset, an exact no-op
 # in _team_game_quality_profile's offense_prior_games branch.
 OFFENSE_PRIOR_GAMES = 6.0
+
+# Which positions 'v2_offense_prior_blend' actually fires for - see
+# _offense_prior_games_for_pos inside build_weekly_projections. SHIPPED at
+# {'RB'} 2026-09-16: scripts/sweep_offense_prior_games.py found a real,
+# CI-excludes-0 dose-response for RB at K=6 (weeks 2-4, 2022-2025) but QB/WR/TE
+# never left noise at any K tested - gated to the one position with a
+# confirmed effect rather than applied uniformly. A module constant (not
+# hardcoded in that closure) so a future sweep can retest QB/WR/TE without
+# feature-flag plumbing of its own, same pattern as
+# DEFENSE_BLOWOUT_DISCOUNT_POSITIONS.
+OFFENSE_PRIOR_GAMES_POSITIONS = frozenset({'RB'})
 
 # --- v2_defense_blowout_discount --------------------------------------------
 # Built 2026-09-15 alongside the losing-side mirror of SEVERE_BLOWOUT_MARGIN
@@ -6799,8 +6825,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             return _defense_blowout_team_weeks(schedule_frame)
         return None
 
-    offense_prior_games_for_matchup = (
-        OFFENSE_PRIOR_GAMES if 'v2_offense_prior_blend' in feats else None)
+    def _offense_prior_games_for_pos(pos):
+        """OFFENSE_PRIOR_GAMES gated by both the feature flag and
+        OFFENSE_PRIOR_GAMES_POSITIONS (RB only, see that constant's own
+        comment) - None is an exact no-op in _team_game_quality_profile's
+        offense_prior_games branch."""
+        if 'v2_offense_prior_blend' not in feats or pos not in OFFENSE_PRIOR_GAMES_POSITIONS:
+            return None
+        return OFFENSE_PRIOR_GAMES
 
     prior_annotated = annotate_player_history_participation(
         prior_played, prior_name_col, prior_team_col, prior_schedule_df)
@@ -7498,7 +7530,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
                     game_universe=prior_played, plays=prior_plays,
                     blowout_team_weeks=_blowout_weeks_for_matchup(prior_schedule_df, year - 1),
-                    offense_prior_games=offense_prior_games_for_matchup,
+                    offense_prior_games=_offense_prior_games_for_pos(pos),
                     blowout_stats=DEFENSE_BLOWOUT_DISCOUNT_STATS.get(pos),
                 ) if anchor_week is not None else pd.DataFrame()
             )
@@ -7581,7 +7613,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             matchup_matrix = build_team_game_quality_adjusted_matchup(
                 pos_rows, team_col, stats, as_of_week, game_universe=hist, plays=current_plays,
                 blowout_team_weeks=_blowout_weeks_for_matchup(schedule_df, year),
-                offense_prior_games=offense_prior_games_for_matchup,
+                offense_prior_games=_offense_prior_games_for_pos(pos),
                 blowout_stats=DEFENSE_BLOWOUT_DISCOUNT_STATS.get(pos))
             # prior_pos_rows/prior_anchor/prior_matrix are computed
             # unconditionally (not just under v2_defense_prior) because the
@@ -7602,7 +7634,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
                     game_universe=prior_played, plays=prior_plays,
                     blowout_team_weeks=_blowout_weeks_for_matchup(prior_schedule_df, year - 1),
-                    offense_prior_games=offense_prior_games_for_matchup,
+                    offense_prior_games=_offense_prior_games_for_pos(pos),
                     blowout_stats=DEFENSE_BLOWOUT_DISCOUNT_STATS.get(pos),
                 ) if prior_anchor is not None else pd.DataFrame()
             )

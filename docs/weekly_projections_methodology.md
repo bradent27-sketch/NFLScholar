@@ -1812,7 +1812,9 @@ average) and a credibility blend in `_team_game_quality_profile`:
 `baseline = credibility * own_baseline + (1-credibility) * league_average`,
 `credibility = games_played/(games_played+OFFENSE_PRIOR_GAMES)` - same
 n/(n+K) shape as everywhere else in this file. Gated behind
-`v2_offense_prior_blend` in `MODEL_FEATURES`, not `DEFAULT_FEATURES`.
+`v2_offense_prior_blend` in `MODEL_FEATURES`, and further restricted to RB
+by `OFFENSE_PRIOR_GAMES_POSITIONS` (see "Shipped" below) since only RB showed
+a measured effect.
 
 **The pandas bug above (K-independent output) voided the first sweep run.**
 Once fixed - verified with a direct before/after check showing the blend
@@ -1832,17 +1834,19 @@ posted historical data (2022-2025, 12 week-instances):
 - QB, WR, TE and their startable cuts: every CI spans 0 at every K tested -
   no measurable effect either direction.
 
-**Not yet shipped.** RB's result is real by this window's own bootstrap CI,
-but the window is small (12 week-instances - there are only so many
+**Shipped 2026-09-16, RB only** (`OFFENSE_PRIOR_GAMES_POSITIONS = frozenset({'RB'})`,
+`DEFAULT_FEATURES`). RB's result is real by this window's own bootstrap CI,
+though the window is small (12 week-instances - there are only so many
 distinct "weeks 2-4" per season to sample, unlike the standard wk5-17
 confirms elsewhere in this file which draw from 13 weeks x however many
 years) and the RB sign-test p-value (0.15) doesn't clear conventional
-significance on its own, so this reads as a promising, dose-response-backed
-signal rather than a settled confirm. A full DEFAULT_FEATURES ship decision
-should wait on a wider confirm (more years back if the historical archive
-supports it, or accumulating more in-season data over time) rather than
-finalizing off this one sweep - flagged for the user's call rather than
-decided here.
+significance on its own. Pushed live at the user's explicit request on the
+strength of the CI result despite the small window - not the wider confirm
+this entry originally flagged as the ideal path, but a judgement call the
+user made knowingly. QB/WR/TE stay ungated (no measured effect at any K, see
+above); revisit `OFFENSE_PRIOR_GAMES_POSITIONS` if a future sweep finds one
+for them, and revisit RB's inclusion if a larger window ever moves its CI
+back to spanning 0.
 
 ## Known limitations
 

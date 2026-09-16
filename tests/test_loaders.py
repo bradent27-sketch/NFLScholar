@@ -156,6 +156,48 @@ def test_load_team_pace_discounts_a_game_that_went_to_overtime():
         assert abs(row['plays'] - 60.0) < 1e-9
 
 
+def test_progressive_blowout_catches_a_game_decided_by_half_that_closed_under_the_final_threshold():
+    # X leads Y 28-0 at halftime (a real prevent-defense/backup situation
+    # already underway), then Y scores twice in garbage time while X coasts,
+    # so the FINAL margin closes to 21 - under BOTH the plain
+    # DEFENSE_BLOWOUT_MARGIN (28) and this game's own final-checkpoint
+    # threshold (24). A single final-margin test would call this a
+    # competitive game; the progressive quarter-checkpoint test correctly
+    # still flags it, because it WAS decided by half (the point of building
+    # this alternative - see PROGRESSIVE_BLOWOUT_CHECKPOINTS' own comment).
+    # C/D stays close throughout and should never be flagged at any checkpoint.
+    pbp = pd.DataFrame([
+        # X vs Y, week 1 - decided by half, final margin narrows under 28.
+        {'game_id': 'g1', 'week': 1, 'home_team': 'X', 'away_team': 'Y',
+         'qtr': 1, 'game_seconds_remaining': 2700, 'total_home_score': 7, 'total_away_score': 0},
+        {'game_id': 'g1', 'week': 1, 'home_team': 'X', 'away_team': 'Y',
+         'qtr': 2, 'game_seconds_remaining': 1800, 'total_home_score': 28, 'total_away_score': 0},
+        {'game_id': 'g1', 'week': 1, 'home_team': 'X', 'away_team': 'Y',
+         'qtr': 3, 'game_seconds_remaining': 900, 'total_home_score': 28, 'total_away_score': 3},
+        {'game_id': 'g1', 'week': 1, 'home_team': 'X', 'away_team': 'Y',
+         'qtr': 4, 'game_seconds_remaining': 0, 'total_home_score': 31, 'total_away_score': 10},
+        # C vs D, week 1 - close the whole way, never hits any checkpoint.
+        {'game_id': 'g2', 'week': 1, 'home_team': 'C', 'away_team': 'D',
+         'qtr': 1, 'game_seconds_remaining': 2700, 'total_home_score': 3, 'total_away_score': 0},
+        {'game_id': 'g2', 'week': 1, 'home_team': 'C', 'away_team': 'D',
+         'qtr': 2, 'game_seconds_remaining': 1800, 'total_home_score': 10, 'total_away_score': 7},
+        {'game_id': 'g2', 'week': 1, 'home_team': 'C', 'away_team': 'D',
+         'qtr': 3, 'game_seconds_remaining': 900, 'total_home_score': 13, 'total_away_score': 10},
+        {'game_id': 'g2', 'week': 1, 'home_team': 'C', 'away_team': 'D',
+         'qtr': 4, 'game_seconds_remaining': 0, 'total_home_score': 17, 'total_away_score': 14},
+    ])
+    original_pbp = loaders.nflreadpy.load_pbp
+    try:
+        loaders.nflreadpy.load_pbp = lambda years: _FakeFrame(pbp)
+        loaders.load_pbp.clear()
+        loaders._progressive_blowout_team_weeks.clear()
+        decided = loaders._progressive_blowout_team_weeks(2099)
+    finally:
+        loaders.nflreadpy.load_pbp = original_pbp
+    assert ('X', 1) in decided and ('Y', 1) in decided
+    assert ('C', 1) not in decided and ('D', 1) not in decided
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith('test_') and callable(fn)]

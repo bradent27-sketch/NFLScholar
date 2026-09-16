@@ -1048,6 +1048,74 @@ def load_pbp(year):
         return pd.DataFrame()
 
 
+# --- v2_defense_blowout_discount_progressive --------------------------------
+# A single FINAL-margin threshold (see DEFENSE_BLOWOUT_MARGIN in
+# data.weekly_projections) misses a game that was clearly decided well
+# before the final whistle but closed under that threshold (a trailing
+# team's late garbage-time score narrows the final margin back down), and
+# can also flag a game that stayed competitive for three quarters and only
+# got out of hand in the final minutes - neither actually describes "prevent
+# defense / clock-killing for most of the second half", which is the real
+# thing a blowout discount is trying to catch. Checked chronologically by
+# INCREASING quarter - the first checkpoint reached decides it (a game
+# already 21+ at half stays flagged even if the final margin comes back
+# under 24). User-suggested starting values (2026-09-15); not yet swept
+# independently of DEFENSE_BLOWOUT_WEIGHT_DISCOUNT itself.
+PROGRESSIVE_BLOWOUT_CHECKPOINTS = [(2, 21.0), (3, 17.0), (4, 24.0)]
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def _progressive_blowout_team_weeks(year):
+    """{(team, week)} for every game this season that hit ANY of
+    PROGRESSIVE_BLOWOUT_CHECKPOINTS' (quarter-end, abs-margin) thresholds -
+    the richer sibling of data.weekly_projections._defense_blowout_team_weeks'
+    final-margin-only test, built from play-by-play score progression
+    (load_pbp) instead of just the schedule's final score.
+
+    ``game_seconds_remaining`` counts down across the WHOLE game (not reset
+    each quarter, confirmed against real 2024 play-by-play), so among rows
+    with qtr <= a checkpoint's quarter, the one with the SMALLEST
+    game_seconds_remaining is the last real play at or before that quarter
+    boundary - its total_home_score/total_away_score is the score at that
+    checkpoint.
+
+    Returns an empty frozenset (a no-op) if play-by-play is unavailable or
+    missing a needed column, same convention as _overtime_team_weeks.
+    """
+    try:
+        pbp = load_pbp(year)
+    except Exception:
+        return frozenset()
+    needed = {'game_id', 'week', 'home_team', 'away_team', 'qtr',
+              'game_seconds_remaining', 'total_home_score', 'total_away_score'}
+    if pbp is None or pbp.empty or not needed.issubset(pbp.columns):
+        return frozenset()
+    frame = pbp.loc[:, list(needed)].copy()
+    frame['qtr'] = pd.to_numeric(frame['qtr'], errors='coerce')
+    frame['game_seconds_remaining'] = pd.to_numeric(frame['game_seconds_remaining'], errors='coerce')
+    frame = frame.dropna(subset=['qtr', 'game_seconds_remaining'])
+    if frame.empty:
+        return frozenset()
+
+    pairs = set()
+    for end_qtr, threshold in PROGRESSIVE_BLOWOUT_CHECKPOINTS:
+        at_checkpoint = frame[frame['qtr'] <= end_qtr]
+        if at_checkpoint.empty:
+            continue
+        last_play = (at_checkpoint.sort_values('game_seconds_remaining')
+                     .groupby('game_id', observed=True).first())
+        margin = (pd.to_numeric(last_play['total_home_score'], errors='coerce')
+                 - pd.to_numeric(last_play['total_away_score'], errors='coerce')).abs()
+        decided = last_play[margin >= threshold]
+        if decided.empty:
+            continue
+        weeks = pd.to_numeric(decided['week'], errors='coerce')
+        for col in ('home_team', 'away_team'):
+            teams = decided[col].astype(str).str.strip().str.upper()
+            pairs.update((t, w) for t, w in zip(teams, weeks) if t and pd.notna(w))
+    return frozenset(pairs)
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_team_logos():
     """

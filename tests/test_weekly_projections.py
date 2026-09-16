@@ -393,7 +393,7 @@ def test_defense_script_weight_multiplier_discounts_a_blowout_either_direction()
         {'week': 2, 'home_team': 'B', 'away_team': 'DEF', 'home_score': 33, 'away_score': 3},
         {'week': 3, 'home_team': 'DEF', 'away_team': 'C', 'home_score': 20, 'away_score': 17},
     ])
-    weights = wp._defense_script_weight_multiplier(game, schedule)
+    weights = wp._defense_script_weight_multiplier(game, wp._defense_blowout_team_weeks(schedule))
     assert weights.iloc[0] == wp.DEFENSE_BLOWOUT_WEIGHT_DISCOUNT
     assert weights.iloc[1] == wp.DEFENSE_BLOWOUT_WEIGHT_DISCOUNT
     assert weights.iloc[2] == 1.0
@@ -426,7 +426,8 @@ def test_defense_blowout_discount_tones_down_a_prevent_defense_garbage_time_game
     without = wp.build_team_game_quality_adjusted_matchup(
         df, 'team', ['receiving_yards'], as_of_week=5)
     with_discount = wp.build_team_game_quality_adjusted_matchup(
-        df, 'team', ['receiving_yards'], as_of_week=5, schedule_df=schedule)
+        df, 'team', ['receiving_yards'], as_of_week=5,
+        blowout_team_weeks=wp._defense_blowout_team_weeks(schedule))
     assert without.loc['DEF', 'receiving_yards'] > 1.0
     assert with_discount.loc['DEF', 'receiving_yards'] < without.loc['DEF', 'receiving_yards']
 

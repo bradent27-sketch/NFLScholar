@@ -1704,21 +1704,29 @@ these specific threshold values. (The 21/17/24 checkpoints were the user's
 own starting guess, explicitly not yet swept - a threshold sweep is the
 obvious next step if this approach gets revisited.)
 
-**Final ship decision: position-gate the plain definition to RB only, rather
-than search for a better blowout definition.** With one real, reproducible
-win (START-RB) and one real, reproducible loss (WR/START-WR) both confirmed
-on the full window, and the "smarter definition" attempt at saving both
-washing out both instead, the surgical fix is gating by position rather than
-by game-decidedness: `v2_defense_blowout_discount` is now in
-`DEFAULT_FEATURES`, but `_blowout_weeks_for_matchup` (the nested closure
-inside `build_weekly_projections` that all three
+**Final ship decision: position-gate the plain definition to RB/QB/TE, WR
+excluded, rather than search for a better blowout definition.** With one
+real, reproducible win (START-RB) and one real, reproducible loss
+(WR/START-WR) both confirmed on the full window, and the "smarter
+definition" attempt at saving both washing out both instead, the surgical
+fix is gating by position rather than by game-decidedness:
+`v2_defense_blowout_discount` is now in `DEFAULT_FEATURES`, but
+`_blowout_weeks_for_matchup` (the nested closure inside
+`build_weekly_projections` that all three
 `build_team_game_quality_adjusted_matchup` call sites route through) only
-returns a non-None discount set when `pos == 'RB'` - QB/WR/TE always get
-`None` (no discount), regardless of the flag. This leaves WR untouched at its
-pre-2026-09-15 baseline while keeping the one confirmed win. QB and TE stay
-off pending more data (neither is a confirmed win OR a confirmed loss - just
-under-powered at this sample size); revisit if a future full-window run with
-more weeks moves either scope's CI off zero.
+returns a non-None discount set when `pos in ('RB', 'QB', 'TE')` - WR always
+gets `None` (no discount), regardless of the flag. This leaves WR untouched
+at its pre-2026-09-15 baseline while keeping the one confirmed win.
+
+**QB and TE pushed live 2026-09-16 at the user's explicit request, on
+direction rather than a CI confirmation.** Neither is a confirmed win OR a
+confirmed loss at this sample size (every CI at both the full-pool and
+startable cut spans 0), but neither showed any confirmed cost either - the
+same standard WR failed and RB passed. What tipped it: START-QB (-0.022 MAE)
+and START-TE (-0.012 MAE) both point the same favorable direction as RB's
+confirmed win, at whole-pool QB/TE reading flat-to-neutral rather than
+harmful. Revisit if a future full-window run with more weeks moves either
+scope's CI off zero in either direction.
 
 ## Known limitations
 

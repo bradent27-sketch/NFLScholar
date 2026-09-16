@@ -1524,7 +1524,7 @@ above, this is a correctness fix to what `pace_mult` (an always-on, ungated
 mechanism) reads as input, not a new hypothesis-driven component requiring
 its own A/B measurement before shipping.
 
-## 2026-09-15 — blowout-game "protection": a losing-team player exclusion, and a new (unshipped) defense-side discount
+## 2026-09-15 — blowout-game "protection": a losing-team player exclusion, and a new defense-side discount (see 2026-09-16 below for the final ship decision)
 
 Reported by the user against the real Week 2 slate: Jacksonville blew out
 Cleveland, and Cleveland's WR1 logged a snap share in the ~60% range instead
@@ -1584,7 +1584,7 @@ current-season matrix, live prior-season blend matrix), each passing its own
 matching schedule only when the flag is set - `schedule_df=None` is a no-op,
 so an unset flag costs nothing extra.
 
-**Not added to `DEFAULT_FEATURES` - BUILT, BACKTESTED, REJECTED (stays OFF).**
+**Initial verdict (superseded 2026-09-16 below) - BUILT, BACKTESTED, split result, not a clean reject.**
 Unlike the player-side change (a symmetry fix to a mechanism already proven
 and shipped), this is a genuinely new signal path, so it went through this
 repo's own `scripts/eval_weekly_model.py` paired A/B gate before touching the
@@ -1602,7 +1602,11 @@ Likely cause: `DEFENSE_PRIOR_GAMES`'s existing additive league-average prior
 distortion in the aggregate ratio, so halving that one game's weight mostly
 adds noise rather than removing it, and WR - the position most exposed to
 what a defense allows through the air - is where that noise costs the most.
-Kept switchable per repo convention; not part of any default board.
+
+This first pass used `eval_weekly_model.py`, which has no bootstrap CI or
+significance test - so at this point it was genuinely unclear which of these
+moves were real and which were noise at this sample size. See 2026-09-16
+below for the confirm run that settled it (and the eventual RB-only ship).
 
 Verified: `tests/test_weekly_projections.py::test_partial_game_screen_uses_a_final_margin_for_a_losing_blowout_too`
 mirrors the existing winning-side test with Cleveland/Jacksonville's real
@@ -1611,6 +1615,110 @@ pins the per-game weight directly; `test_defense_blowout_discount_tones_down_a_p
 proves the discount actually moves `build_team_game_quality_adjusted_matchup`'s
 output (a synthetic prevent-defense garbage-time game inflates a defense's
 allowed ratio less once discounted). 556 tests pass.
+
+## 2026-09-16 — `v2_defense_blowout_discount`: confirming the split result with a proper CI, a progressive-definition attempt at fixing WR, and the final ship decision (RB-only)
+
+Follow-up to 2026-09-15 above. The user asked for a rigorous sweep of
+`DEFENSE_BLOWOUT_WEIGHT_DISCOUNT` (how strongly to down-weight, vs. how much
+to trust the defense's own blowout-game evidence directly) before finalizing
+anything, since the original `eval_weekly_model.py` pass had no significance
+test and QB/RB/TE had looked like wins there.
+
+**Sweep tooling.** Neither existing sweep script fit: `sweep_model_constant.py`
+assumes its flag is already in `DEFAULT_FEATURES` for both arms;
+`backtest_component.py --add` compares an unshipped candidate against
+default but only at whatever value the module constant currently holds, not
+across a range. Wrote `scripts/sweep_defense_blowout_discount.py`, combining
+the first script's constant-monkeypatch-with-cache-clearing pattern with the
+second's "add an unshipped candidate" comparison and its bootstrap-CI /
+sign-test reporting (imported directly from `backtest_component.py`, not
+reimplemented).
+
+**Coarse sweep was inconclusive by itself, and that's the point.** An 8-week
+sampled sweep across discount values 0.0/0.25/0.5/0.75/1.0 showed no robust
+win anywhere and, at the shipped 0.5, the OPPOSITE sign for QB/RB from the
+original full-window pass - on its own this looked like the whole mechanism
+should be dropped. But with 9 scopes × 5 values, some CI-excludes-0 results
+are expected from multiple comparisons alone even under a true null, and an
+8-week sample is a fraction of the original 26-week window - not sufficient
+grounds to overrule the original result without checking on equal footing.
+
+**Full-window confirm (2024+2025, weeks 5-17, `backtest_component.py --add`,
+the authoritative tool) reproduced the original point estimates almost
+exactly, now with bootstrap CIs - and that's what settled it.** Two of the
+splits from 2026-09-15 are REAL, not noise:
+- **START-RB: -0.019 MAE, CI[-0.042,-0.000] - excludes 0. A real win.**
+- **WR (whole pool): +0.001 MAE, CI[+0.000,+0.003] - excludes 0.**
+- **START-WR: +0.027 MAE, CI[+0.000,+0.053] - excludes 0. A real loss**, and
+  the largest, most decision-relevant startable pool of the four.
+- QB, START-QB, RB (whole pool), TE, START-TE: every CI spans 0 - genuinely
+  inconclusive, not "small but real." (START-QB's point estimate, -0.022,
+  CI[-0.076,+0.022], leans promising but the interval is too wide at this n
+  to call it; TE reads as flat, dMAE -0.000, at both full-pool and startable
+  cuts - the least promising scope of the four for this mechanism.)
+
+This is itself the clearest demonstration in this whole exercise of why the
+smaller coarse sweep was misleading for RB specifically: the same value, the
+same definition, a bigger sample, and the sign the original run found holds
+up under a real CI. The takeaway isn't "ignore small sweeps" - it's that an
+8-week sample sits below this effect's detectable size, so a null result
+there does not override a properly-measured signal on the full window.
+
+**Progressive (quarter-checkpoint) blowout definition - built, backtested, REJECTED.**
+The user proposed testing whether a richer "was this game actually decided"
+test - not just a 28+ final margin, but e.g. up 21 at half, 17 through three
+quarters, 24 at the final gun - would fix WR's loss without giving up RB's
+win, on the theory that a final-margin-only test misses a game that WAS
+effectively over well before the clock did (garbage-time scoring narrows the
+final number back under 28) and possibly counts some that weren't (a big
+first-half lead that became a real second half). Built as a new,
+independent, mutually-exclusive candidate flag
+`v2_defense_blowout_discount_progressive` alongside the plain one (this one
+wins if both happen to be set - see `_blowout_weeks_for_matchup`):
+`PROGRESSIVE_BLOWOUT_CHECKPOINTS = [(2, 21.0), (3, 17.0), (4, 24.0)]`
+(quarter-end, absolute-margin) in `data/loaders.py`, and a new
+`@st.cache_data`-cached `_progressive_blowout_team_weeks(year)` that pulls
+`load_pbp` and, for each checkpoint, takes each game's score at (or just
+before) that quarter's end (`qtr <= checkpoint`, smallest
+`game_seconds_remaining` per `game_id`) and flags the game if ANY checkpoint's
+margin threshold was hit. A single-week smoke test (2025 week 10) looked
+promising across most scopes - which, in hindsight, is exactly the kind of
+small-sample signal this whole session has been warning against.
+
+The full 26-week confirm (same window, same tool) told a different, cleaner
+story: **every single scope's CI spans 0** - ALL, QB, RB, WR, TE, and all
+four STARTABLE cuts, week win-loss for ALL landing at an almost perfectly
+even 13-13 (vs. the plain definition's lopsided 7-19). The progressive
+definition does not reproduce the plain definition's real START-RB win, and
+it does not fix the plain definition's real WR loss either - WR lands at a
+near-zero, CI-spanning delta, which is "no signal either way," not a
+targeted fix. Read together with the plain definition's own result, checking
+three OR'd checkpoints is more permissive than one final-margin test - it
+likely catches real prevent-defense/garbage-time games AND some that were
+never truly decided (a big first-half lead that saw a real second-half
+comeback), diluting whatever signal the narrower definition was picking up
+on rather than sharpening it. Stays a documented, switchable, OFF candidate
+(`v2_defense_blowout_discount_progressive` in `MODEL_FEATURES`, not
+`DEFAULT_FEATURES`) - not wrong, just doesn't beat the simpler version at
+these specific threshold values. (The 21/17/24 checkpoints were the user's
+own starting guess, explicitly not yet swept - a threshold sweep is the
+obvious next step if this approach gets revisited.)
+
+**Final ship decision: position-gate the plain definition to RB only, rather
+than search for a better blowout definition.** With one real, reproducible
+win (START-RB) and one real, reproducible loss (WR/START-WR) both confirmed
+on the full window, and the "smarter definition" attempt at saving both
+washing out both instead, the surgical fix is gating by position rather than
+by game-decidedness: `v2_defense_blowout_discount` is now in
+`DEFAULT_FEATURES`, but `_blowout_weeks_for_matchup` (the nested closure
+inside `build_weekly_projections` that all three
+`build_team_game_quality_adjusted_matchup` call sites route through) only
+returns a non-None discount set when `pos == 'RB'` - QB/WR/TE always get
+`None` (no discount), regardless of the flag. This leaves WR untouched at its
+pre-2026-09-15 baseline while keeping the one confirmed win. QB and TE stay
+off pending more data (neither is a confirmed win OR a confirmed loss - just
+under-powered at this sample size); revisit if a future full-window run with
+more weeks moves either scope's CI off zero.
 
 ## Known limitations
 

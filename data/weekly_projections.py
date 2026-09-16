@@ -1003,18 +1003,20 @@ MODEL_FEATURES = (
                              # defense-side mirror of SEVERE_BLOWOUT_MARGIN's
                              # player-side rest exclusion. See
                              # DEFENSE_BLOWOUT_MARGIN/_DISCOUNT and
-                             # _defense_script_weight_multiplier. NOT in
-                             # DEFAULT_FEATURES. Backtested 2026-09-15
-                             # (scripts/backtest_component.py --add, 2024+2025
-                             # wk5-17, paired bootstrap CI): a real,
-                             # CI-excludes-0 win for START-RB (-0.019 MAE) and
-                             # a real, CI-excludes-0 loss for WR/START-WR
-                             # (+0.001 / +0.027 MAE); QB/TE inconclusive. A
-                             # split result, not a clean reject - see the
-                             # dated methodology-doc entry and
+                             # _defense_script_weight_multiplier. SHIPPED in
+                             # DEFAULT_FEATURES 2026-09-16, RB-ONLY (see
+                             # _blowout_weeks_for_matchup's `pos != 'RB'` gate).
+                             # Backtested 2026-09-15/16 (scripts/backtest_
+                             # component.py --add, 2024+2025 wk5-17, paired
+                             # bootstrap CI): a real, CI-excludes-0 win for
+                             # START-RB (-0.019 MAE); ungated, the SAME run
+                             # also showed a real, CI-excludes-0 loss for
+                             # WR/START-WR (+0.001 / +0.027 MAE), with QB/TE
+                             # never leaving noise at either scope. Rather than
+                             # try a better blowout definition to save WR (see
                              # 'v2_defense_blowout_discount_progressive' below
-                             # for the follow-up aimed at fixing WR without
-                             # losing the RB win.
+                             # - it didn't), the fix shipped is a position
+                             # gate: this flag now only ever fires for RB.
     'v2_defense_blowout_discount_progressive',  # same discount mechanism and
                              # magnitude (DEFENSE_BLOWOUT_WEIGHT_DISCOUNT) as
                              # the flag above, but a richer "was this game
@@ -1028,10 +1030,14 @@ MODEL_FEATURES = (
                              # missing/mislabeling the specific games driving
                              # WR's regression above (e.g. a game decided by
                              # half whose final margin closed under 28 from
-                             # garbage-time scoring). Mutually exclusive with
+                             # garbage-time scoring). REJECTED 2026-09-16: the
+                             # full 26-week confirm showed EVERY scope's CI
+                             # spanning 0, including START-RB - it washed out
+                             # the real RB win along with the WR loss instead
+                             # of separating them. Mutually exclusive with
                              # 'v2_defense_blowout_discount' (this one wins if
                              # both are set - see _blowout_weeks_for_matchup).
-                             # NOT in DEFAULT_FEATURES - backtest pending.
+                             # NOT in DEFAULT_FEATURES; stays OFF.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -1284,6 +1290,22 @@ DEFAULT_FEATURES = frozenset({
     # See ROOKIE_BACKUP_WR_NARROW_*, scripts/sweep_rookie_backup_wr_dampen_
     # narrow.py, and the dated section in docs/weekly_projections_methodology.md.
     'v2_rookie_backup_wr_dampen_narrow',
+    # SHIPPED 2026-09-16, RB-ONLY (see _blowout_weeks_for_matchup's `pos != 'RB'`
+    # gate inside build_weekly_projections) - down-weight a defense's own
+    # 28+-point-blowout team-game evidence when building the RB matchup matrix.
+    # Full 26-week confirm (2024+2025 wk5-17, scripts/backtest_component.py
+    # --add, bootstrap CI): START-RB -0.019 MAE, CI[-0.042,-0.000] - a real win.
+    # Ungated (all positions) the SAME run also showed a real, CI-excludes-0
+    # WR/START-WR loss (+0.001 / +0.027 MAE); QB/TE never left noise at either
+    # scope (CI spans 0 both places). A richer "was this game decided"
+    # definition (v2_defense_blowout_discount_progressive, quarter-checkpoint
+    # thresholds instead of final margin alone) was built and backtested to
+    # try to fix WR without losing the RB win - it did neither: every scope's
+    # CI spanned 0, washing out the RB win along with the WR loss rather than
+    # separating them. So the surgical fix is position gating, not a better
+    # blowout definition: this flag now only ever fires for RB, leaving
+    # QB/WR/TE untouched. See the dated methodology-doc entries.
+    'v2_defense_blowout_discount',
 })
 
 
@@ -2275,10 +2297,19 @@ DEFENSE_PRIOR_GAMES_OVERRIDE = None
 # currently feed the observed/expected ratio at full recency weight either
 # way. DOWN-WEIGHTS rather than excludes (see
 # _defense_script_weight_multiplier) - a whole defense does not bench itself
-# the way one player can, so the evidence is noisier, not unusable. NOT in
-# DEFAULT_FEATURES: unlike the player-side change (a symmetry fix to an
-# already-shipped, always-on mechanism), this is a new signal path and needs
-# its own backtest first - see scripts/eval_weekly_model.py.
+# the way one player can, so the evidence is noisier, not unusable.
+#
+# SHIPPED in DEFAULT_FEATURES 2026-09-16, RB-ONLY: the full 26-week confirm
+# backtest (scripts/backtest_component.py --add, 2024+2025 wk5-17) found a
+# real, CI-excludes-0 START-RB win at these values (-0.019 MAE) but also a
+# real, CI-excludes-0 WR/START-WR loss (+0.001 / +0.027 MAE) when applied to
+# every position; QB/TE never left noise. A richer "was this game decided"
+# definition (v2_defense_blowout_discount_progressive, quarter-checkpoint
+# thresholds instead of a single final margin) was tried to fix WR without
+# losing RB - it washed out BOTH effects instead of separating them, so it
+# stays off. The shipped fix is a position gate instead: see
+# _blowout_weeks_for_matchup's `pos != 'RB'` check inside
+# build_weekly_projections. See docs/weekly_projections_methodology.md.
 DEFENSE_BLOWOUT_MARGIN = 28.0
 DEFENSE_BLOWOUT_WEIGHT_DISCOUNT = 0.5
 
@@ -6562,7 +6593,18 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         """Which (team, week) set (if any) to down-weight in a defense's own
         quality-profile evidence for THIS build - see the two mutually
         exclusive candidate flags' own MODEL_FEATURES comments. Progressive
-        wins if both are somehow set; None (no discount) if neither is."""
+        wins if both are somehow set; None (no discount) if neither is.
+
+        RB-only (2026-09-16): the full 26-week confirm backtest found a real,
+        CI-confirmed START-RB win and a real, CI-confirmed START-WR loss at
+        the shipped 0.5 discount; QB/TE never left noise at either scope, and
+        the progressive quarter-checkpoint definition washed out ALL of it
+        (RB win included) rather than fixing WR - see the methodology doc's
+        2026-09-16 entry. So this only ever fires while building the RB
+        matchup matrix - relies on `pos` from the enclosing per-position loop.
+        """
+        if pos != 'RB':
+            return None
         if 'v2_defense_blowout_discount_progressive' in feats:
             return _progressive_blowout_team_weeks(matchup_year)
         if 'v2_defense_blowout_discount' in feats:

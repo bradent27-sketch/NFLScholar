@@ -2167,9 +2167,24 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
     # blended toward.
     league_expected = baseline.mean().clip(lower=0.0)
     if offense_prior_games:
+        # BUG FIX 2026-09-16: `.transform('size')` returns a bare Series
+        # (unlike `.transform('mean')`, which returns a DataFrame shaped like
+        # `stats`) - `credibility * baseline` (Series * DataFrame) then
+        # aligns the Series' row index against baseline's COLUMN labels, not
+        # its rows, silently producing an all-NaN result for every real stat
+        # column regardless of the credibility values actually computed.
+        # Downstream, summing an all-NaN column (skipna=True) collapses
+        # `expected_sum` for that stat to a K-INDEPENDENT 0, so every nonzero
+        # offense_prior_games value produced the exact same (wrong) output no
+        # matter its magnitude. Doing the broadcast in numpy - a (n,1)
+        # credibility column against a (1,k) league-average row - sidesteps
+        # pandas' axis-inference entirely.
         offense_games = game.groupby(baseline_keys, observed=True)[stats].transform('size')
-        credibility = offense_games / (offense_games + float(offense_prior_games))
-        baseline = credibility * baseline + (1.0 - credibility) * league_expected
+        credibility = (offense_games / (offense_games + float(offense_prior_games))).to_numpy()[:, None]
+        league_row = league_expected.reindex(baseline.columns).to_numpy()[None, :]
+        baseline = pd.DataFrame(
+            credibility * baseline.to_numpy() + (1.0 - credibility) * league_row,
+            index=baseline.index, columns=baseline.columns)
     weights = defense_recency_weights(game['_week'], as_of_week, recency_floor)
     if '_script_weight' in game.columns:
         # v2_defense_blowout_discount - see _defense_script_weight_multiplier.

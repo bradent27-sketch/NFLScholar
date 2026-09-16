@@ -601,6 +601,39 @@ def test_offense_prior_blend_extracts_signal_from_a_one_game_offense():
     assert blended.loc['X', 'targets'] > unblended.loc['X', 'targets']
 
 
+def test_offense_prior_blend_strength_scales_monotonically_with_k():
+    # Regression guard for a real bug (2026-09-16): `.transform('size')`
+    # returns a bare Series (unlike `.transform('mean')`, which returns a
+    # DataFrame shaped like the stat columns), and `credibility * baseline`
+    # (Series * DataFrame) silently misaligned on the wrong axis, corrupting
+    # `baseline` to all-NaN for every real stat regardless of the actual
+    # credibility values - so every nonzero OFFENSE_PRIOR_GAMES produced the
+    # EXACT SAME (wrong) output no matter its magnitude, only distinguishable
+    # from `offense_prior_games=None` at all. A weak prior (small K, mostly
+    # trust the one game) must land strictly between no blend at all and a
+    # strong prior (large K, mostly trust the league average) - not tie with it.
+    rows = [
+        {'name': 'A WR', 'team': 'A', 'opponent_team': 'X', 'week': 1,
+         'position': 'WR', 'targets': 40.0},
+        {'name': 'B WR', 'team': 'B', 'opponent_team': 'Y', 'week': 1,
+         'position': 'WR', 'targets': 20.0},
+    ]
+    frame = weekly(rows)
+    none_blend = wp.build_team_game_quality_adjusted_matchup(
+        frame, 'team', ['targets'], as_of_week=2)
+    weak = wp.build_team_game_quality_adjusted_matchup(
+        frame, 'team', ['targets'], as_of_week=2, offense_prior_games=1.0)
+    medium = wp.build_team_game_quality_adjusted_matchup(
+        frame, 'team', ['targets'], as_of_week=2, offense_prior_games=6.0)
+    strong = wp.build_team_game_quality_adjusted_matchup(
+        frame, 'team', ['targets'], as_of_week=2, offense_prior_games=50.0)
+    x = [none_blend.loc['X', 'targets'], weak.loc['X', 'targets'],
+         medium.loc['X', 'targets'], strong.loc['X', 'targets']]
+    # Strictly increasing as K grows from 0 (no blend) up through a strong
+    # prior - the bug this guards against made weak/medium/strong identical.
+    assert x[0] < x[1] < x[2] < x[3]
+
+
 def test_broad_position_profile_keeps_a_zero_output_game_from_the_full_universe():
     # Weekly player files are stat-triggered. The TE group has no row in the
     # HOU games, but the offense still played and that zero is real defensive

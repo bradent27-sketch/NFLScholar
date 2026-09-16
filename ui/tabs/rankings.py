@@ -273,6 +273,52 @@ _MARKET_SCORING_STATS = ('passing_yards', 'passing_tds', 'passing_interceptions'
                          'receiving_yards', 'receiving_tds')
 
 
+def _market_proj_pts_with_backfill(merged_model, consensus_stats, wk_scoring):
+    """'Market Proj Pts': the market's own partial total, backfilled with this
+    app's projection for every scoring stat the market didn't price for that
+    player - so the number is always a complete, like-for-like total instead
+    of the truncated sum 'Mkt Market Pts' carries (score_market_lines scores
+    an unpriced stat as ZERO, common days out from kickoff, which drags a
+    partial total well below the model's and makes the side-by-side
+    comparison meaningless).
+
+    REQUEST (2026-09-02) built this fallback. ``merged_model`` must already
+    carry ``Mkt Market Pts``, ``Raw Model Proj Pts``, and a ``Mkt {stat}`` /
+    ``{stat}`` pair of columns for each name in ``consensus_stats`` (see
+    _attach_by_name's 'Mkt ' prefix above). Only ever applied here, on this
+    one ranking-table number - never inside the decomposition, which keeps
+    the raw partial on 'Mkt Market Pts' for its own honest read.
+    """
+    priced = [st_ for st_ in _MARKET_SCORING_STATS
+             if st_ in consensus_stats and f'Mkt {st_}' in merged_model.columns
+             and st_ in merged_model.columns]
+
+    def _model_pts_on_priced(row):
+        d = {st_: float(row[st_]) for st_ in priced
+             if pd.notna(row.get(f'Mkt {st_}')) and pd.notna(row.get(st_))}
+        return score_projected_stats(d, wk_scoring) if d else 0.0
+
+    partial = pd.to_numeric(merged_model.get('Mkt Market Pts'), errors='coerce')
+    raw_model_total = pd.to_numeric(merged_model.get('Raw Model Proj Pts'), errors='coerce')
+    model_on_priced = merged_model.apply(_model_pts_on_priced, axis=1)
+    # NOT clipped at 0 (BUG FIX 2026-09-16): `backfill` is our model's
+    # contribution from stats the market did NOT price for this player, and
+    # that is legitimately negative for a QB whose passing yards/TDs are
+    # priced but whose interceptions (almost never its own market line) are
+    # not - the model's real INT penalty lives entirely in `raw_model_total`
+    # and nowhere in `model_on_priced`, so raw_model_total can come in BELOW
+    # model_on_priced purely because the priced subset omits that penalty.
+    # Clipping the difference at 0 silently threw the whole penalty away
+    # instead of carrying it into the total - every QB whose book hadn't
+    # posted an interceptions line (most weeks, most books) had 'Market Proj
+    # Pts' read too high by exactly his projected INT cost. Only the FINAL
+    # total is floored at 0 (same convention as Raw Model Proj Pts) - a real
+    # player's point total is never negative, but the backfill term feeding
+    # it legitimately can be.
+    backfill = raw_model_total - model_on_priced
+    return (partial + backfill).clip(lower=0.0).round(1)
+
+
 def _fmt_stat(stat, value, signed=False):
     """Reception/yard/attempt-type stats display at 1 decimal, TD/INT-type
     stats at 2 - explicit request, since a TD/INT rate lives in a much
@@ -3098,31 +3144,8 @@ def render():
                     ['Market Pts', 'Coverage', 'player_key'] + consensus_stats, 'Mkt ')
                 merged_model = merged_model.rename(columns={'Mkt Coverage': 'Market Coverage'})
 
-                # REQUEST (2026-09-02): the board's market total must never be a
-                # truncated sum. score_market_lines scores a stat the books
-                # haven't posted yet (common days out from kickoff) as ZERO,
-                # which drags the total well below the model's and makes the
-                # side-by-side comparison meaningless. Here - and ONLY here, on
-                # the single ranking-table number, never inside the
-                # decomposition - each unpriced scoring stat is filled with this
-                # app's own projection for it, so "Market Proj Pts" is always a
-                # complete, like-for-like figure. The raw partial stays on
-                # 'Mkt Market Pts' for the decomposition's own honest read.
-                _priced = [st_ for st_ in _MARKET_SCORING_STATS
-                           if st_ in consensus_stats and f'Mkt {st_}' in merged_model.columns
-                           and st_ in merged_model.columns]
-
-                def _model_pts_on_priced(row):
-                    d = {st_: float(row[st_]) for st_ in _priced
-                         if pd.notna(row.get(f'Mkt {st_}')) and pd.notna(row.get(st_))}
-                    return score_projected_stats(d, wk_scoring) if d else 0.0
-
-                partial = pd.to_numeric(merged_model.get('Mkt Market Pts'), errors='coerce')
-                raw_model_total = pd.to_numeric(
-                    merged_model.get('Raw Model Proj Pts'), errors='coerce')
-                model_on_priced = merged_model.apply(_model_pts_on_priced, axis=1)
-                backfill = (raw_model_total - model_on_priced).clip(lower=0.0)
-                merged_model['Market Proj Pts'] = (partial + backfill).round(1)
+                merged_model['Market Proj Pts'] = _market_proj_pts_with_backfill(
+                    merged_model, consensus_stats, wk_scoring)
 
                 _snapshot_cols = (['Player', 'Pos', 'Team'] + [f'Mkt {s}' for s in consensus_stats]
                                  + ['Mkt Market Pts', 'Market Proj Pts', 'Market Coverage', 'Mkt player_key'])

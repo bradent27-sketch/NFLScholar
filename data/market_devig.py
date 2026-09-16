@@ -51,14 +51,26 @@ _COUNT_STATS = frozenset({
 })
 _YARD_STATS = frozenset({'passing_yards', 'rushing_yards', 'receiving_yards'})
 
-# A "scores a TD" market is posted at a 0.5 line, so a de-vigged P(over) near
-# 0.7 inverts to a Poisson mean near 1.2 - and real single-game TD counts are
-# LESS dispersed than Poisson at the top (goal-line defenses, no 5-TD games),
-# so that overstates the elite backs. Cap the per-game non-passing-TD mean
-# an anytime line can imply; ~1.0/gm is already Henry/Gibbs peak-season
-# territory. Does not touch a genuine 1.5/2.5-line multi-TD market (its mean
-# lands well under the cap anyway).
+# A "scores a TD" (anytime) market is posted at a 0.5 line, so a de-vigged
+# P(over) near 0.7 inverts to a Poisson mean near 1.2 - and real single-game
+# TD counts are LESS dispersed than Poisson at the top (goal-line defenses,
+# no 5-TD games), so that overstates the elite backs. Cap the per-game
+# non-passing-TD mean a 0.5-line ANYTIME market can imply; ~1.0/gm is already
+# Henry/Gibbs peak-season territory.
+#
+# BUG FIX 2026-09-16: this used to gate on `value <= 1.5`, on the assumption
+# that a genuine 1.5-line multi-TD market's mean "lands well under the cap
+# anyway." It does not - an EVENLY priced 1.5-line market (P(>=2) = 0.5)
+# inverts to a Poisson mean of ~1.68 (the module docstring's own worked
+# example for a 1.5 passing-TD line), well above the 1.0 cap. A real
+# multi-TD prop only exists for a workhorse with a genuinely elevated
+# multi-score rate; capping it down to the same 1.0 ceiling as a routine
+# anytime market erased exactly the signal that market carries. Since every
+# real anytime-TD market is posted at 0.5 (see resolve_anytime_td_markets in
+# data.odds_projections), the cap now only fires there, leaving a real
+# 1.5+/2.5+ multi-TD line's own (uncapped) Poisson inversion alone.
 _TD_STATS = frozenset({'rushing_tds', 'receiving_tds'})
+_ANYTIME_TD_LINE_MAX = 0.5
 _ANYTIME_TD_MEAN_CAP = 1.0
 
 # Rough single-GAME standard deviation per (position, yard stat). Only scales
@@ -190,7 +202,7 @@ def implied_mean_from_line(line, p_over, market, position=None, period='game'):
 
     if market in _COUNT_STATS:
         mean = poisson_mean_for_upper_tail(value, p)
-        if market in _TD_STATS and value <= 1.5:
+        if market in _TD_STATS and value <= _ANYTIME_TD_LINE_MAX:
             return min(mean, _ANYTIME_TD_MEAN_CAP)
         return mean
     if market in _YARD_STATS:

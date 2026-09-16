@@ -91,6 +91,31 @@ def test_tiny_yardage_line_with_heavy_under_never_goes_negative():
     assert 0.0 < small_ok < 8.5
 
 
+def test_anytime_td_cap_applies_only_to_the_real_05_line_anytime_market():
+    # A real "does he score anytime" market is posted at 0.5 - the dispersion
+    # cap (_ANYTIME_TD_MEAN_CAP) belongs there: real single-game TD counts
+    # are less dispersed than Poisson at the top, so an elite back's 0.5-line
+    # price shouldn't invert past ~1.0/game.
+    anytime = implied_mean_from_line(0.5, 0.7, 'rushing_tds', 'RB')
+    assert anytime == 1.0   # capped - raw Poisson inversion would be ~1.2
+
+    # BUG FIX 2026-09-16: a genuine 1.5-line multi-TD market (Derrick Henry
+    # "Over/Under 1.5 rushing TDs") is a DIFFERENT, higher-confidence market,
+    # not a dispersion-inflated anytime line - it used to hit the same cap
+    # (`value <= 1.5`) on the mistaken assumption its mean "lands well under
+    # the cap anyway." An evenly priced 1.5 line does not: its raw Poisson
+    # mean is ~1.68 (matching test_even_count_line_still_lifts_for_skew's
+    # passing_tds case, same math), and that real signal must survive
+    # uncapped for rushing/receiving TDs same as it already does for passing.
+    multi_td = implied_mean_from_line(1.5, 0.5, 'rushing_tds', 'RB')
+    assert 1.60 < multi_td < 1.75
+    assert multi_td == poisson_mean_for_upper_tail(1.5, 0.5)   # truly uncapped
+
+    # receiving_tds takes the same path.
+    multi_td_rec = implied_mean_from_line(1.5, 0.5, 'receiving_tds', 'WR')
+    assert 1.60 < multi_td_rec < 1.75
+
+
 def test_no_p_over_falls_back_to_multiplier():
     # Counts: the old MEDIAN_TO_MEAN multiplier, exactly.
     assert implied_mean_from_line(1.5, None, 'passing_tds') == 1.5 * 1.02

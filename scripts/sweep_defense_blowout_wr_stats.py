@@ -117,7 +117,20 @@ def main():
                     continue
 
                 for label, stat_subset in stat_sets:
-                    wp.DEFENSE_BLOWOUT_DISCOUNT_POSITIONS = frozenset({'WR'})
+                    # ADD 'WR' to whatever's already shipped (RB/QB/TE) rather
+                    # than replace it - v2_defense_blowout_discount is already
+                    # in DEFAULT_FEATURES (2026-09-16), so `base_proj` above
+                    # already has RB/QB/TE's discount active. Replacing the
+                    # set instead of extending it silently DISABLED RB/QB/TE's
+                    # already-shipped discount for every variant build - a
+                    # confound that leaked into the WR/START-WR comparison via
+                    # pass_capacity_allocator's cross-position volume
+                    # reconciliation (RB's own discount changes RB's matchup
+                    # rating, which changes RB's projected volume, which
+                    # changes how much passing volume gets reconciled onto
+                    # WR/TE) even though this sweep never touches WR's
+                    # discount status directly in the 'none' arm.
+                    wp.DEFENSE_BLOWOUT_DISCOUNT_POSITIONS = original_positions | {'WR'}
                     wp.DEFENSE_BLOWOUT_DISCOUNT_STATS = {'WR': stat_subset} if stat_subset is not None else {}
                     build_weekly_projections.clear()
                     var_proj, var_meta = build_weekly_projections(

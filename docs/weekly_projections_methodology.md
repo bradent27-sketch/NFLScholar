@@ -1728,6 +1728,122 @@ confirmed win, at whole-pool QB/TE reading flat-to-neutral rather than
 harmful. Revisit if a future full-window run with more weeks moves either
 scope's CI off zero in either direction.
 
+## 2026-09-16 — per-stat WR blowout-discount targeting: null result, WR stays excluded
+
+Follow-up to the RB/QB/TE ship above, testing the user's own hypothesis:
+"maybe receptions and receiving yards are different" - could the discount
+be applied to only SOME of WR's stat channel (targets, receptions,
+receiving_yards, receiving_tds) and recover part of the RB-style win
+without WR's confirmed loss?
+
+**Built:** `build_team_game_quality_adjusted_matchup` gained a
+`blowout_stats` parameter (a subset of `stats` to actually discount - the
+rest build at full weight in the same call, as if `blowout_team_weeks` were
+empty for them), plus `DEFENSE_BLOWOUT_DISCOUNT_STATS` /
+`DEFENSE_BLOWOUT_DISCOUNT_POSITIONS` module constants a sweep script can
+monkeypatch without needing feature-flag plumbing of its own. New
+`scripts/sweep_defense_blowout_wr_stats.py` tests each WR stat individually
+against the confirmed-loss full-channel baseline.
+
+**Two bugs found and fixed before the result could be trusted** (both
+documented in commit messages, `git log` has the full detail):
+- The credibility blend behind `v2_offense_prior_blend` (next entry) was
+  K-independent due to a pandas Series/DataFrame alignment footgun -
+  `.transform('size')` returns a bare Series while `.transform('mean')`
+  returns a DataFrame, and multiplying the two silently misaligned rows
+  against columns. Every nonzero K gave the identical (wrong) answer.
+- The WR-stat sweep script itself had a confound: it REPLACED
+  `DEFENSE_BLOWOUT_DISCOUNT_POSITIONS` with `{'WR'}` for every variant
+  instead of adding WR to the already-shipped `{'RB','QB','TE'}` - silently
+  disabling RB/QB/TE's shipped discount in every comparison, which leaked
+  into the WR-scope numbers via pass_capacity_allocator's cross-position
+  volume reconciliation (RB's own discount status changes RB's projected
+  volume, which changes how much passing-game volume gets reconciled onto
+  WR/TE). The 'none' sanity check (discount fires for no stat, should be a
+  byte-exact no-op) read a nonsensical -0.04 dMAE before this fix and an
+  exact 0.000 after it - the tell that caught it.
+
+**Result (2024+2025, 10 sampled weeks, WR isolated, RB/QB/TE's shipped
+discount left untouched):** the user's hypothesis doesn't hold the way it
+was framed - receptions and receiving_yards do NOT behave differently from
+each other. Discounting EITHER one alone reproduces essentially the same
+small loss as discounting the whole channel:
+- `receptions` alone: WR +0.001 CI[+0.001,+0.002] (excludes 0), START-WR
+  +0.002 CI[+0.000,+0.004] (excludes 0), 0-8 weeks lost outright.
+- `receiving_yards` alone: WR +0.001 CI[+0.000,+0.002] (excludes 0),
+  START-WR +0.002 CI[+0.000,+0.005] (excludes 0).
+- `targets` alone and `receiving_tds` alone: both flat, CI includes 0 -
+  the two stats that carry no measurable cost also carry no offsetting
+  benefit, so excluding them from the discount and keeping only
+  targets/TDs discounted would not recover anything.
+
+Read together: WR's regression isn't hiding in one specific stat that a
+narrower discount could dodge - receptions and receiving_yards are both
+volume-derived and correlated with the same underlying "how much did this
+game's script inflate a WR's counting stats" signal the discount is trying
+to correct for on the DEFENSE side, so discounting either one picks up
+essentially the same contamination (and the same small cost). There is no
+partial-channel configuration that beats full exclusion. **WR stays fully
+excluded from `v2_defense_blowout_discount`** - this closes the question
+rather than reopening it.
+
+## 2026-09-16 — `v2_offense_prior_blend`: an early-season league-average credibility blend for the OFFENSE side
+
+Built at the user's request, after the blowout-discount work above wrapped
+up: "for early weeks, teams (offenses and defenses) don't have an
+established volume/production profile... maybe we can introduce a
+league-wide average... gradually dropped as team-independent evidence
+increases." `DEFENSE_PRIOR_GAMES` already does exactly this for the DEFENSE
+side of every matchup ratio in `_team_game_quality_profile` (an additive
+neutral-games prior that shrinks a thin CURRENT-SEASON defense sample
+toward 1.0). The OFFENSE side of that same ratio - `baseline`, each
+offense's own season-to-date mean, used as the "expected" reference every
+defense's ratio is compared against - had no equivalent guard: a team with
+exactly 1 game has a baseline that trivially EQUALS its own single
+observation, so a defense that has only faced that one team gets ZERO real
+information from the game (observed/expected == 1.0 by construction,
+regardless of how extreme that one game actually was).
+
+**Built:** `OFFENSE_PRIOR_GAMES` (default guess 6.0 - half of
+`DEFENSE_PRIOR_GAMES`'s 12.0, per the user's own instinct that a
+generalized league signal should carry less weight than the defense side's
+prior, which is last year's OWN evidence rather than a league-wide
+average) and a credibility blend in `_team_game_quality_profile`:
+`baseline = credibility * own_baseline + (1-credibility) * league_average`,
+`credibility = games_played/(games_played+OFFENSE_PRIOR_GAMES)` - same
+n/(n+K) shape as everywhere else in this file. Gated behind
+`v2_offense_prior_blend` in `MODEL_FEATURES`, not `DEFAULT_FEATURES`.
+
+**The pandas bug above (K-independent output) voided the first sweep run.**
+Once fixed - verified with a direct before/after check showing the blend
+now scales monotonically with K instead of tying - `scripts/sweep_offense_prior_games.py`
+was re-run on the actual target window (weeks 2-4, the real early-season
+regime; week 1 is a true cold start that falls back entirely to prior-season
+data, a different code path this never touches) across all four years with
+posted historical data (2022-2025, 12 week-instances):
+
+- **RB (whole pool): K=6 gives -0.003 MAE, CI[-0.006,-0.000] - excludes 0.**
+- **START-RB: K=6 gives -0.020 MAE, CI[-0.041,-0.003] - excludes 0**, 9 of
+  12 week-instances won.
+- The effect is a real dose-response, not a flat win: K=3 is weaker and not
+  significant (RB CI[-0.005,+0.003]), K=6 is where it peaks, and K=9/12/18
+  fade back into noise (RB CI spans 0 at every one). The shipped guess of
+  6.0 happens to sit right at the peak.
+- QB, WR, TE and their startable cuts: every CI spans 0 at every K tested -
+  no measurable effect either direction.
+
+**Not yet shipped.** RB's result is real by this window's own bootstrap CI,
+but the window is small (12 week-instances - there are only so many
+distinct "weeks 2-4" per season to sample, unlike the standard wk5-17
+confirms elsewhere in this file which draw from 13 weeks x however many
+years) and the RB sign-test p-value (0.15) doesn't clear conventional
+significance on its own, so this reads as a promising, dose-response-backed
+signal rather than a settled confirm. A full DEFAULT_FEATURES ship decision
+should wait on a wider confirm (more years back if the historical archive
+supports it, or accumulating more in-season data over time) rather than
+finalizing off this one sweep - flagged for the user's call rather than
+decided here.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

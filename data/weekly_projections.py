@@ -1053,9 +1053,19 @@ MODEL_FEATURES = (
                              # see that constant's own comment. The offense-
                              # side mirror of DEFENSE_PRIOR_GAMES, which only
                              # protects a thin DEFENSE sample. Built 2026-09-16
-                             # at the user's request; backtest pending (see
-                             # scripts/sweep_offense_prior_games.py) before any
-                             # DEFAULT_FEATURES verdict. NOT in DEFAULT_FEATURES.
+                             # at the user's request. scripts/sweep_offense_
+                             # prior_games.py on weeks 2-4 (the real early-
+                             # season window), 2022-2025: at the shipped guess
+                             # K=6, a real, CI-excludes-0 win for RB (-0.003
+                             # whole-pool / -0.020 START-RB, a genuine dose-
+                             # response peaking at K=6, fading to noise by
+                             # K=9-18) - QB/WR/TE never leave noise at any K.
+                             # NOT in DEFAULT_FEATURES yet: the RB result is
+                             # real by this window's own CI but the window is
+                             # small (12 week-instances) and the sign-test
+                             # doesn't clear significance on its own - a wider
+                             # confirm should precede shipping. See the dated
+                             # methodology-doc entry.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -2412,8 +2422,14 @@ DEFENSE_PRIOR_GAMES_OVERRIDE = None
 # than DEFENSE_PRIOR_GAMES (12.0) per the user's own instinct that a
 # generalized league signal should carry less weight than the defense-side
 # prior (which represents last year's OWN evidence, not a league-wide
-# average) - 6.0 is a first-pass guess, meant to be swept (see
-# scripts/sweep_offense_prior_games.py) before any DEFAULT_FEATURES verdict.
+# average) - 6.0 was a first-pass guess, since confirmed as the actual sweet
+# spot: scripts/sweep_offense_prior_games.py on weeks 2-4, 2022-2025 found a
+# real dose-response peaking exactly here (RB whole-pool -0.003 MAE,
+# START-RB -0.020 MAE, both CI-excludes-0), weaker at K=3 and fading back to
+# noise by K=9-18. QB/WR/TE never left noise at any K. See the dated
+# methodology-doc entry for the full numbers and why this isn't in
+# DEFAULT_FEATURES yet despite the real CI (small window, sign-test not on
+# its own significant).
 # Gated behind 'v2_offense_prior_blend' in MODEL_FEATURES; None is passed
 # (see build_weekly_projections) whenever that flag is unset, an exact no-op
 # in _team_game_quality_profile's offense_prior_games branch.

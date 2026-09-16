@@ -432,6 +432,47 @@ def test_defense_blowout_discount_tones_down_a_prevent_defense_garbage_time_game
     assert with_discount.loc['DEF', 'receiving_yards'] < without.loc['DEF', 'receiving_yards']
 
 
+def test_blowout_stats_restricts_the_discount_to_only_the_named_columns():
+    # Same prevent-defense/garbage-time shape as the test above, but now with
+    # TWO stats (receiving_yards and targets) both inflated by B's week-3
+    # blowout game against DEF - scripts/sweep_defense_blowout_wr_stats.py
+    # needs to discount one WITHOUT the other, to isolate which stat actually
+    # carries WR's confirmed regression rather than assume it's the whole
+    # channel uniformly.
+    rows = [
+        {'name': 'A WR', 'team': 'A', 'opponent_team': 'DEF', 'week': 1, 'position': 'WR',
+         'receiving_yards': 100.0, 'targets': 10.0},
+        {'name': 'A WR', 'team': 'A', 'opponent_team': 'CTRL', 'week': 2, 'position': 'WR',
+         'receiving_yards': 100.0, 'targets': 10.0},
+        {'name': 'B WR', 'team': 'B', 'opponent_team': 'DEF', 'week': 3, 'position': 'WR',
+         'receiving_yards': 300.0, 'targets': 30.0},
+        {'name': 'B WR', 'team': 'B', 'opponent_team': 'CTRL', 'week': 4, 'position': 'WR',
+         'receiving_yards': 100.0, 'targets': 10.0},
+    ]
+    df = weekly(rows)
+    schedule = pd.DataFrame([
+        {'week': 1, 'home_team': 'DEF', 'away_team': 'A', 'home_score': 20, 'away_score': 17},
+        {'week': 3, 'home_team': 'DEF', 'away_team': 'B', 'home_score': 42, 'away_score': 7},
+    ])
+    blowout_weeks = wp._defense_blowout_team_weeks(schedule)
+    stats = ['receiving_yards', 'targets']
+    without = wp.build_team_game_quality_adjusted_matchup(df, 'team', stats, as_of_week=5)
+    full_discount = wp.build_team_game_quality_adjusted_matchup(
+        df, 'team', stats, as_of_week=5, blowout_team_weeks=blowout_weeks)
+    yards_only = wp.build_team_game_quality_adjusted_matchup(
+        df, 'team', stats, as_of_week=5, blowout_team_weeks=blowout_weeks,
+        blowout_stats={'receiving_yards'})
+    # blowout_stats=None (full_discount) matches today's shipped behavior:
+    # every stat in the channel gets the discount.
+    assert full_discount.loc['DEF', 'receiving_yards'] < without.loc['DEF', 'receiving_yards']
+    assert full_discount.loc['DEF', 'targets'] < without.loc['DEF', 'targets']
+    # blowout_stats={'receiving_yards'}: receiving_yards is still discounted,
+    # but targets is built at full weight - untouched, exactly the undiscounted
+    # value - as if blowout_team_weeks were empty for that one column.
+    assert yards_only.loc['DEF', 'receiving_yards'] < without.loc['DEF', 'receiving_yards']
+    assert np.isclose(yards_only.loc['DEF', 'targets'], without.loc['DEF', 'targets'])
+
+
 def test_role_matchup_pace_normalization_survives_partition_recursion():
     # Same HOU/FAST par-per-play setup as the team-game test above, but
     # role-partitioned - exercises _team_game_quality_profile's recursive
@@ -525,6 +566,39 @@ def test_qb_rushing_profile_ignores_negative_kneel_denominators():
         weekly(rows), 'team', ['rushing_yards'], as_of_week=3)
     assert np.isfinite(out['rushing_yards']).all()
     assert out.loc['HOU', 'rushing_yards'] < out.loc['KC', 'rushing_yards']
+
+
+def test_offense_prior_blend_extracts_signal_from_a_one_game_offense():
+    # v2_offense_prior_blend / OFFENSE_PRIOR_GAMES. Offense A and B each have
+    # exactly ONE game on the books, so - by construction - each one's "own
+    # average" baseline is identical to its single observed total. Without
+    # any offense-side blend, observed/expected == 1.0 for both regardless of
+    # how far apart their totals are (40 vs 20): a one-game sample offers no
+    # information about whether that total was a normal rate for the offense
+    # or a defense letting up extra - the whole point OFFENSE_PRIOR_GAMES
+    # exists to partially resolve, by treating a thin offense sample as
+    # partly its own average and partly the league's.
+    rows = [
+        {'name': 'A WR', 'team': 'A', 'opponent_team': 'X', 'week': 1,
+         'position': 'WR', 'targets': 40.0},
+        {'name': 'B WR', 'team': 'B', 'opponent_team': 'Y', 'week': 1,
+         'position': 'WR', 'targets': 20.0},
+    ]
+    frame = weekly(rows)
+    unblended = wp.build_team_game_quality_adjusted_matchup(
+        frame, 'team', ['targets'], as_of_week=2)
+    blended = wp.build_team_game_quality_adjusted_matchup(
+        frame, 'team', ['targets'], as_of_week=2, offense_prior_games=6.0)
+    # Unblended: neither offense's single game deviates from its own
+    # (trivially identical) average, so X and Y read as exactly the same.
+    assert np.isclose(unblended.loc['X', 'targets'], unblended.loc['Y', 'targets'])
+    # Blended: A's 40 gets pulled toward the (30) league average it hasn't
+    # earned the right to claim as fully its own yet, so some of the 40-vs-20
+    # gap now reads as X allowing more than expected - X separates from Y
+    # where it was identical before, and rises relative to its own unblended
+    # reading.
+    assert blended.loc['X', 'targets'] > blended.loc['Y', 'targets']
+    assert blended.loc['X', 'targets'] > unblended.loc['X', 'targets']
 
 
 def test_broad_position_profile_keeps_a_zero_output_game_from_the_full_universe():

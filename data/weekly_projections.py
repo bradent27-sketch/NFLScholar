@@ -1044,6 +1044,18 @@ MODEL_FEATURES = (
                              # 'v2_defense_blowout_discount' (this one wins if
                              # both are set - see _blowout_weeks_for_matchup).
                              # NOT in DEFAULT_FEATURES; stays OFF.
+    'v2_offense_prior_blend',  # credibility-blend a thin CURRENT-SEASON
+                             # offense's own baseline (the "expected" side of
+                             # every defense-game ratio in
+                             # _team_game_quality_profile) toward the league
+                             # average, weighted by that offense's own games
+                             # played so far (OFFENSE_PRIOR_GAMES, n/(n+K)) -
+                             # see that constant's own comment. The offense-
+                             # side mirror of DEFENSE_PRIOR_GAMES, which only
+                             # protects a thin DEFENSE sample. Built 2026-09-16
+                             # at the user's request; backtest pending (see
+                             # scripts/sweep_offense_prior_games.py) before any
+                             # DEFAULT_FEATURES verdict. NOT in DEFAULT_FEATURES.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -2073,7 +2085,7 @@ def _defense_script_weight_multiplier(game, blowout_team_weeks):
 
 
 def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
-                               partition_keys=(), plays=None):
+                               partition_keys=(), plays=None, offense_prior_games=None):
     """Pooled observed/expected team-game defense factor.
 
     A defense's profile is a *ratio of weighted totals*, not an equal-weight
@@ -2097,6 +2109,16 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
     count, and again through pace_mult. A game whose play count is unknown
     is dropped from the ratio (no evidence) rather than left at raw scale,
     which would silently mix per-play and per-game units in the same sum.
+
+    ``offense_prior_games`` (see OFFENSE_PRIOR_GAMES / 'v2_offense_prior_blend')
+    credibility-blends each OFFENSE's own baseline (the "expected" side of
+    every defense's ratio) toward the league-average baseline, weighted by
+    how many of that offense's games are actually in ``game`` -
+    n/(n+offense_prior_games). None (default) is a strict no-op: the
+    baseline is exactly the offense's own mean, same as before this existed.
+    This is the offense-side mirror of DEFENSE_PRIOR_GAMES below, which only
+    ever protects a thin DEFENSE sample - early season a thin OFFENSE sample
+    is just as noisy an "expected" reference, and had no equivalent guard.
     """
     if game.empty:
         return pd.DataFrame(), pd.Series(dtype=float)
@@ -2108,7 +2130,8 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
         profiles, evidence_blocks = [], []
         for key, block in game.groupby(partition_keys, observed=True):
             profile, evidence = _team_game_quality_profile(
-                block, stats, as_of_week, recency_floor=recency_floor, plays=plays)
+                block, stats, as_of_week, recency_floor=recency_floor, plays=plays,
+                offense_prior_games=offense_prior_games)
             if profile.empty:
                 continue
             labels = key if isinstance(key, tuple) else (key,)
@@ -2138,6 +2161,15 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
 
     baseline_keys = ['_offense'] + partition_keys
     baseline = game.groupby(baseline_keys, observed=True)[stats].transform('mean')
+    # League-average reference, from each offense's own (unshrunk) baseline -
+    # computed BEFORE any offense_prior_games blend below, so a thin-sample
+    # team's blended baseline never feeds back into the average it is being
+    # blended toward.
+    league_expected = baseline.mean().clip(lower=0.0)
+    if offense_prior_games:
+        offense_games = game.groupby(baseline_keys, observed=True)[stats].transform('size')
+        credibility = offense_games / (offense_games + float(offense_prior_games))
+        baseline = credibility * baseline + (1.0 - credibility) * league_expected
     weights = defense_recency_weights(game['_week'], as_of_week, recency_floor)
     if '_script_weight' in game.columns:
         # v2_defense_blowout_discount - see _defense_script_weight_multiplier.
@@ -2155,7 +2187,6 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
     # league-average offense-position games at the profile's average recency
     # weight. Adding it to both numerator and denominator pulls a sparse
     # observed/expected ratio toward 1.0 without inventing a direction.
-    league_expected = baseline.mean().clip(lower=0.0)
     prior = league_expected * float(DEFENSE_PRIOR_GAMES) * float(weights.mean())
     result = observed_sum.add(prior, axis='columns').div(
         expected_sum.add(prior, axis='columns').replace(0, np.nan))
@@ -2174,7 +2205,8 @@ def _team_game_quality_profile(game, stats, as_of_week, recency_floor=0.0,
 
 def build_team_game_quality_adjusted_matchup(hist_pos, team_col, stats, as_of_week,
                                              recency_floor=0.0, game_universe=None,
-                                             plays=None, blowout_team_weeks=None):
+                                             plays=None, blowout_team_weeks=None,
+                                             offense_prior_games=None, blowout_stats=None):
     """Robust defense profile for one projected position channel.
 
     For every statistic, first sum *all players at that position* into one
@@ -2202,17 +2234,60 @@ def build_team_game_quality_adjusted_matchup(hist_pos, team_col, stats, as_of_we
     data.loaders._progressive_blowout_team_weeks(year)); this function applies
     the discount whenever a non-empty set is passed, same on/off-by-caller-
     omission convention as ``plays``.
+
+    ``offense_prior_games`` is forwarded to _team_game_quality_profile - see
+    its own docstring and OFFENSE_PRIOR_GAMES / 'v2_offense_prior_blend'.
+
+    ``blowout_stats``, when given (an iterable of stat names, a subset of
+    ``stats``), restricts the blowout discount to only those columns - the
+    rest of ``stats`` are built at full weight in the same call, exactly as
+    if ``blowout_team_weeks`` were empty for them. None (default) applies the
+    discount to every stat in ``stats``, same as before this existed. Built
+    to test whether a specific stat (e.g. WR receiving_yards vs targets)
+    drives a position's blowout-discount result rather than the whole
+    channel uniformly - see DEFENSE_BLOWOUT_DISCOUNT_STATS and
+    scripts/sweep_defense_blowout_wr_stats.py.
     """
     game, group_keys = _position_team_games(
         hist_pos, team_col, stats, game_universe=game_universe)
     if game.empty:
         return pd.DataFrame()
+    if blowout_team_weeks and blowout_stats is not None:
+        discounted_stats = [s for s in stats if s in set(blowout_stats)]
+        full_weight_stats = [s for s in stats if s not in set(blowout_stats)]
+        parts = []
+        if discounted_stats:
+            discounted_game = game.copy()
+            discounted_game['_script_weight'] = _defense_script_weight_multiplier(
+                discounted_game, blowout_team_weeks)
+            part, _evidence = _team_game_quality_profile(
+                discounted_game, discounted_stats, as_of_week, recency_floor=recency_floor,
+                partition_keys=group_keys[3:], plays=plays,
+                offense_prior_games=offense_prior_games,
+            )
+            if not part.empty:
+                parts.append(part)
+        if full_weight_stats:
+            part, _evidence = _team_game_quality_profile(
+                game, full_weight_stats, as_of_week, recency_floor=recency_floor,
+                partition_keys=group_keys[3:], plays=plays,
+                offense_prior_games=offense_prior_games,
+            )
+            if not part.empty:
+                parts.append(part)
+        if not parts:
+            return pd.DataFrame()
+        result = parts[0]
+        for part in parts[1:]:
+            result = result.join(part, how='outer')
+        return result
     if blowout_team_weeks:
         game = game.copy()
         game['_script_weight'] = _defense_script_weight_multiplier(game, blowout_team_weeks)
     result, _evidence = _team_game_quality_profile(
         game, stats, as_of_week, recency_floor=recency_floor,
         partition_keys=group_keys[3:], plays=plays,
+        offense_prior_games=offense_prior_games,
     )
     return result
 
@@ -2296,6 +2371,39 @@ DEFENSE_PRIOR_GAMES = 12.0
 # scripts/sweep_defense_prior_games.py.
 DEFENSE_PRIOR_GAMES_OVERRIDE = None
 
+# --- v2_offense_prior_blend --------------------------------------------------
+# Built 2026-09-16 at the user's request, after the blowout-discount work
+# above wrapped up. DEFENSE_PRIOR_GAMES (above) protects a thin CURRENT-
+# SEASON defense sample by blending its ratio toward a neutral 1.0 - but the
+# OFFENSE side of that same ratio (_team_game_quality_profile's `baseline`,
+# each offense's own season-to-date mean, used as every defense-game's
+# "expected" reference) has no equivalent guard. Early season a team with
+# 1-2 games on the books has a nearly meaningless "own average" - every
+# defense that team has played so far inherits that offense's small-sample
+# noise as if it were a real baseline. Reported by the user as a general
+# early-season concern (offenses AND defenses lack an established profile in
+# the first few weeks) - the defense side was already handled; this is the
+# missing offense-side half.
+#
+# Same n/(n+K) credibility shape as everywhere else in this file: an
+# offense's baseline is blended toward the (already-computed, unshrunk)
+# league-average baseline, weighted `offense_games/(offense_games+
+# OFFENSE_PRIOR_GAMES)` toward its own mean and the complement toward league
+# average - see _team_game_quality_profile's offense_prior_games branch. At
+# n=0 games it is pure league average; as n grows the blend converges toward
+# the offense's own number, same "gradually dropped as team-independent
+# evidence increases" shape the user asked for, with no separate week-based
+# cutoff needed since n already tracks that directly. Deliberately smaller
+# than DEFENSE_PRIOR_GAMES (12.0) per the user's own instinct that a
+# generalized league signal should carry less weight than the defense-side
+# prior (which represents last year's OWN evidence, not a league-wide
+# average) - 6.0 is a first-pass guess, meant to be swept (see
+# scripts/sweep_offense_prior_games.py) before any DEFAULT_FEATURES verdict.
+# Gated behind 'v2_offense_prior_blend' in MODEL_FEATURES; None is passed
+# (see build_weekly_projections) whenever that flag is unset, an exact no-op
+# in _team_game_quality_profile's offense_prior_games branch.
+OFFENSE_PRIOR_GAMES = 6.0
+
 # --- v2_defense_blowout_discount --------------------------------------------
 # Built 2026-09-15 alongside the losing-side mirror of SEVERE_BLOWOUT_MARGIN
 # (see annotate_player_history_participation) - that fix stops a decided
@@ -2329,6 +2437,28 @@ DEFENSE_PRIOR_GAMES_OVERRIDE = None
 # See docs/weekly_projections_methodology.md.
 DEFENSE_BLOWOUT_MARGIN = 28.0
 DEFENSE_BLOWOUT_WEIGHT_DISCOUNT = 0.5
+
+# Which positions 'v2_defense_blowout_discount'/'..._progressive' actually
+# fire for - see _blowout_weeks_for_matchup inside build_weekly_projections.
+# SHIPPED at {'RB', 'QB', 'TE'} 2026-09-16 (WR excluded on its confirmed
+# loss). A module constant rather than hardcoded in that closure so a sweep
+# script can monkeypatch it (e.g. to {'WR'}) without needing feature-flag
+# plumbing of its own - see scripts/sweep_defense_blowout_wr_stats.py.
+DEFENSE_BLOWOUT_DISCOUNT_POSITIONS = frozenset({'RB', 'QB', 'TE'})
+
+# Sweep hook, built 2026-09-16 - never set outside a sweep script. WR's
+# confirmed loss (see 'v2_defense_blowout_discount' above) applies the
+# discount uniformly to every stat in its channel (targets, receptions,
+# receiving_yards, receiving_tds); the user asked whether one specific stat
+# (e.g. receiving_yards alone) drives that regression rather than the whole
+# channel, in case a narrower per-stat discount could recover some of WR's
+# signal without the cost. {} (default, every position absent) applies the
+# discount to every stat in a position's channel, exactly as before this
+# existed. A position key present here restricts
+# build_team_game_quality_adjusted_matchup's blowout_stats for that position
+# to only the listed stat names - see _blowout_weeks_for_matchup's caller and
+# scripts/sweep_defense_blowout_wr_stats.py.
+DEFENSE_BLOWOUT_DISCOUNT_STATS = {}
 
 
 def _defense_game_evidence(hist_pos, game_universe=None, team_col=None):
@@ -6624,15 +6754,22 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         CI off zero. The progressive quarter-checkpoint definition washed out
         ALL of this (RB win included) rather than fixing WR - see the
         methodology doc's 2026-09-16 entry. Relies on `pos` from the enclosing
-        per-position loop.
+        per-position loop. The eligible-position set is a module constant
+        (DEFENSE_BLOWOUT_DISCOUNT_POSITIONS) rather than hardcoded here so a
+        sweep script can monkeypatch it - e.g. to test WR specifically
+        alongside DEFENSE_BLOWOUT_DISCOUNT_STATS, see
+        scripts/sweep_defense_blowout_wr_stats.py.
         """
-        if pos not in ('RB', 'QB', 'TE'):
+        if pos not in DEFENSE_BLOWOUT_DISCOUNT_POSITIONS:
             return None
         if 'v2_defense_blowout_discount_progressive' in feats:
             return _progressive_blowout_team_weeks(matchup_year)
         if 'v2_defense_blowout_discount' in feats:
             return _defense_blowout_team_weeks(schedule_frame)
         return None
+
+    offense_prior_games_for_matchup = (
+        OFFENSE_PRIOR_GAMES if 'v2_offense_prior_blend' in feats else None)
 
     prior_annotated = annotate_player_history_participation(
         prior_played, prior_name_col, prior_team_col, prior_schedule_df)
@@ -7330,6 +7467,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
                     game_universe=prior_played, plays=prior_plays,
                     blowout_team_weeks=_blowout_weeks_for_matchup(prior_schedule_df, year - 1),
+                    offense_prior_games=offense_prior_games_for_matchup,
+                    blowout_stats=DEFENSE_BLOWOUT_DISCOUNT_STATS.get(pos),
                 ) if anchor_week is not None else pd.DataFrame()
             )
             # Deep Dive: no CURRENT-season games exist yet at cold start, so
@@ -7410,7 +7549,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             upcoming_opponent_map = dict(zip(cur[name_col], cur['Opponent']))
             matchup_matrix = build_team_game_quality_adjusted_matchup(
                 pos_rows, team_col, stats, as_of_week, game_universe=hist, plays=current_plays,
-                blowout_team_weeks=_blowout_weeks_for_matchup(schedule_df, year))
+                blowout_team_weeks=_blowout_weeks_for_matchup(schedule_df, year),
+                offense_prior_games=offense_prior_games_for_matchup,
+                blowout_stats=DEFENSE_BLOWOUT_DISCOUNT_STATS.get(pos))
             # prior_pos_rows/prior_anchor/prior_matrix are computed
             # unconditionally (not just under v2_defense_prior) because the
             # Deep Dive's prior-season selector needs them regardless of
@@ -7430,6 +7571,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     recency_floor=PRIOR_SEASON_DEFENSE_RECENCY_FLOOR,
                     game_universe=prior_played, plays=prior_plays,
                     blowout_team_weeks=_blowout_weeks_for_matchup(prior_schedule_df, year - 1),
+                    offense_prior_games=offense_prior_games_for_matchup,
+                    blowout_stats=DEFENSE_BLOWOUT_DISCOUNT_STATS.get(pos),
                 ) if prior_anchor is not None else pd.DataFrame()
             )
             if 'v2_defense_prior' in feats:

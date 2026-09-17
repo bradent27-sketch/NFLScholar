@@ -926,53 +926,41 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     styler = display_table.style.apply(lambda _: style_grid, axis=None)
     st.dataframe(styler, hide_index=True, width="stretch", height=df_auto_height(len(display_table)))
 
-    if show_market:
-        st.caption(
-            "**Market avg** is the reliability-weighted multi-book consensus for that stat "
-            "AFTER de-vigging — a book pricing the over at −140 is calling for a number above its "
-            "posted line, and this carries that. From the live weekly board (DraftKings / Pinnacle / "
-            "Underdog / PrizePicks); a dash where no book posted one. Open the **Market lines** tab "
-            "for every book's posted line, its O/U odds and its own de-vigged value. The trailing "
-            "points figure counts ONLY the stats the market priced; the full model-backfilled total "
-            "for lineup comparison is on the ranking table, not here."
-        )
-
     note_text = " / ".join(sorted(raw_average_notes)) if raw_average_notes else "prior-season history"
-    st.caption(
-        "Previous Avg = this player's own plain per-game history from before this season, no "
-        "adjustment - the 'prior' side of the blend below. Previous Adj Avg = that same history with "
-        "each past game's OWN opponent's strength removed (what he'd average against a neutral defense) "
-        "- about defenses already played, not the upcoming one, shown for context only and never fed "
-        "into Player Projection. Current Season Avg = this player's own rate so far in the CURRENT "
-        "season only, blank until he's actually played a game. Player Projection = Previous Avg after "
-        f"role/snap-share normalization, blended with Current Season Avg once real games exist ({note_text})"
-        " - not yet adjusted for the upcoming matchup or game context."
-    )
+    bullets = [
+        "**Previous Avg**: plain per-game history before this season, no adjustment.",
+        "**Previous Adj Avg**: same history with each past opponent's strength removed — "
+        "context only, never fed into Player Projection.",
+        "**Current Season Avg**: this player's rate in the current season only; blank until he's played.",
+        f"**Player Projection**: Previous Avg (role/snap-normalized) blended with Current Season Avg "
+        f"({note_text}) — not yet matchup/context-adjusted.",
+        f"**Fantasy points row**: {scoring_mode} scoring applied to the whole stat line at each "
+        "checkpoint, a running total. 'Projected value' should match Raw Model Proj Pts.",
+    ]
+    if show_market:
+        bullets.append(
+            "**Market avg**: de-vigged multi-book consensus (DraftKings/Pinnacle/Underdog/PrizePicks); "
+            "dash = unpriced. See **Market lines** tab for per-book detail. The trailing points row "
+            "counts only priced stats, not the full model-backfilled total on the ranking table."
+        )
     if prior2_weights:
         lo, hi = min(prior2_weights), max(prior2_weights)
         two_years_back = (season_year - 2) if season_year else "two seasons back"
         weight_text = f"~{lo:.0%}" if abs(hi - lo) < 0.01 else f"{lo:.0%}-{hi:.0%}"
-        st.caption(
-            f"That \"prior season\" figure above is itself already blended with {two_years_back} "
-            f"({weight_text} weight on this player's volume/yardage stats, more if 2025 was thin or a down "
-            "year for him, less if 2025 was clearly the better read) - a separate axis from the current-vs-"
-            "prior-season split noted above, not visible in it. TD-type stats use a different two-year "
-            "blend (see the Role/audit/data sources tab) and aren't included in this weight."
+        bullets.append(
+            f"**Prior season blend**: that prior-season figure already includes {weight_text} weight "
+            f"on {two_years_back} (more if last season was thin/down, less if it was the better read). "
+            "TD-type stats use a separate blend — see the Role Audit tab."
         )
     if 'Team capacity Δ' in display_cols:
-        st.caption(
-            "Team capacity Δ: this team's RB/WR/TE targets refit to a realistic pass-attempt budget "
-            "(top 8 pass catchers by current projection keep their own value; the rest share what's left). "
-            "Runs on every V2 board with nobody hurt - separate from Vacancy Δ below, which is only an "
-            "actual OUT teammate's volume moving. Both used to be shown as one 'Vacancy Δ' number; split "
-            "2026-08-24 because that conflation was misleading a low-usage receiver's real story."
+        bullets.append(
+            "**Team capacity Δ**: team's RB/WR/TE volume refit to a realistic pass-attempt budget "
+            "(top 8 pass-catchers keep their own value, rest share what's left) — runs even with "
+            "nobody hurt. Separate from **Vacancy Δ**, which is only an actual OUT teammate's volume moving."
         )
-    st.caption(
-        f"Fantasy points row: same scoring rule as the board ({scoring_mode}), applied to the whole stat "
-        "line frozen at each checkpoint above - a running total, not a per-stat breakdown. 'Projected "
-        "value' should match this player's Raw Model Proj Pts; a mismatch would mean a stat is missing "
-        "from the table above, not a scoring bug."
-    )
+    with st.expander("What these columns mean", expanded=False):
+        for bullet in bullets:
+            st.markdown(f"- {bullet}")
 
     if context_ingredients is not None:
         _render_context_multiplier_table(context_ingredients)
@@ -1563,13 +1551,6 @@ def _render_role_confidence_table(role):
     })
     st.dataframe(style_plain_dataframe(pd.DataFrame(ingredient_rows)), hide_index=True, width="stretch",
                 height=df_auto_height(len(ingredient_rows)))
-    st.caption(
-        "How it's used: role confidence shrinks how fast a stat trusts THIS player's own rate over the "
-        "positional baseline. Higher confidence (closer to 100%) means his own history is trusted sooner "
-        "as real current-season games accumulate; lower confidence (closer to 0%) leans harder on the "
-        "position-average fallback for longer. It has no effect at cold start itself (no current-season "
-        "games exist yet to blend in) - its effect shows up once the season is underway."
-    )
 
 
 def _render_pass_capacity_room(detail):
@@ -2013,20 +1994,6 @@ def _render_decomposition_audit_body(detail):
             "Target classified as historical/backtest; "
             f"latest observed week: {contract.get('latest_observed_week') or 'none'}."
         )
-    # PFF alignment/scheme fields only print once there's a real
-    # profile behind them - right now none of these have data loaded
-    # for any player, so none of these lines appear yet; they'll start
-    # showing per-player once a real archive is imported.
-    for label, key, has_signal in (
-        ('PFF alignment (offense)', 'pff_alignment', lambda v: bool(v.get('included_weeks'))),
-        ('PFF alignment (defense)', 'pff_alignment_defense', lambda v: (v.get('profile_rows') or 0) > 0),
-        ('PFF scheme (offense)', 'pff_scheme', lambda v: bool(v.get('included_weeks'))),
-        ('PFF scheme (defense)', 'pff_scheme_defense', lambda v: (v.get('profile_rows') or 0) > 0),
-    ):
-        value = contract.get(key)
-        if isinstance(value, dict) and has_signal(value):
-            st.caption(f"{label}: {value.get('adjustment', value.get('status'))}.")
-    st.caption("Market and FantasyPros values in the ranking table are comparisons, never inputs to this projection.")
 
 
 # Market prop-stat name -> a readable row label for the "Market lines" tab.

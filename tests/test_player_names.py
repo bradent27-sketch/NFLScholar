@@ -58,6 +58,14 @@ def test_walker_does_not_collide_with_another_walker():
         assert key(other) != key('Kenneth Walker III'), other
 
 
+def test_kenny_and_kenneth_gainwell_share_an_exact_key():
+    # Every nflverse weekly/reg stats file and snap_counts_2025.csv.csv say
+    # "Kenny Gainwell" (2021-2025); every roster_weekly_*.csv and PFF export
+    # say "Kenneth Gainwell" - his entire prior-season history was silently
+    # unjoinable, reported 2026-09-16 as no projected volume for week 2 2026.
+    assert key('Kenny Gainwell') == key('Kenneth Gainwell')
+
+
 # --- HTML entities (found in the real snap-count export) ---------------
 
 def test_html_escaped_apostrophes_resolve():

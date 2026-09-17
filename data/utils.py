@@ -249,6 +249,14 @@ PLAYER_NAME_ALIASES = [
     ("Cam Akers", "Cameron Akers"),
     ("Tank Bigsby", "Tarik Bigsby"),
     ("Nick Westbrook-Ikhine", "Nicholas Westbrook-Ikhine"),
+    # Every nflverse weekly/reg stats file and snap_counts_2025.csv.csv say
+    # "Kenny Gainwell" (2021-2025); every roster_weekly_*.csv and PFF export
+    # say "Kenneth Gainwell". Same defect class as Ken/Kenneth Walker above -
+    # his entire prior-season history silently joined to nothing, so
+    # build_weekly_projections had no rate history to blend and projected him
+    # at ~replacement-level volume. Found 2026-09-16 from a live report (no
+    # projected volume for week 2 2026). GSIS 00-0036919 confirms one player.
+    ("Kenny Gainwell", "Kenneth Gainwell"),
 ]
 
 

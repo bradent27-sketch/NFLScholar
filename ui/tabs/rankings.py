@@ -35,7 +35,7 @@ from data.draft_projections import PROJECTED_STATS as _MARKET_PROJECTED_STATS
 from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
 from data.availability_overrides import availability_fingerprint, AVAILABILITY_OVERRIDE_PATH
 from data.pass_capacity_allocator import (
-    PASS_CAPACITY_TRUSTED_TIER, PASS_CAPACITY_TRUSTED_TIER_RB)
+    PASS_CAPACITY_DEADBAND, PASS_CAPACITY_TRUSTED_TIER, PASS_CAPACITY_TRUSTED_TIER_RB)
 from ui.charts import sparkline_data_uri
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
                         get_diverging_color, get_multiplier_color)
@@ -1574,7 +1574,15 @@ def _render_pass_capacity_room(detail):
             st.caption(f"{group}: {entry.get('reason', 'no capacity signal')}")
             continue
         claimed = (trusted or 0.0) + (tail or 0.0)
-        over_budget = claimed > capacity + 0.01
+        # PASS_CAPACITY_DEADBAND, not a tighter ad-hoc epsilon - that used to
+        # read "over budget by 0.1" in the same breath as the backend's own
+        # "within 0.5 of budget; left unadjusted" reason right after it,
+        # which is a genuine contradiction: this room was NOT actually
+        # rescaled at that margin, so it shouldn't be flagged as over here
+        # either. Matching the same tolerance the allocator itself used to
+        # decide "no-op" keeps the warning reserved for a room that was
+        # actually rescaled.
+        over_budget = abs(claimed - capacity) > PASS_CAPACITY_DEADBAND
         issue = (f"claimed {claimed:.1f} targets against a {capacity:.1f} budget - "
                 f"{'over' if over_budget else 'within'} budget by {abs(claimed - capacity):.1f}")
         (st.warning if over_budget else st.caption)(f"{group} room: {issue}. {entry.get('reason', '')}")
@@ -2994,9 +3002,15 @@ def render():
     # tab open (explicit request 2026-08-29): a user can stage FantasyPros
     # rankings / injury reports / PFF alignment and only then spend the model
     # build, instead of building, uploading, and rebuilding.
+    # Carries 'Pos' alongside 'Player' (when the stats frame had one) so the
+    # market pull can backfill position for a book row that didn't publish
+    # one - see weekly_market_projection's docstring for the Josh Allen case
+    # that caught this missing before 2026-09-22 (Coverage silently blank
+    # despite a fully-priced line).
+    _name_pool_cols = [c for c in ('Player', 'Pos') if hub_roster is not None and c in hub_roster.columns]
     fp_weekly, market_df = _render_live_data_hub(
         wk_year, wk_week, wk_scoring, wk_week_completed,
-        hub_roster[['Player']] if hub_roster is not None else None,
+        hub_roster[_name_pool_cols] if hub_roster is not None else None,
         roster_df=hub_roster,
         model_meta=st.session_state.get('weekly_rank_last_model_meta'))
     _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring)
@@ -3156,13 +3170,18 @@ def render():
                     'coverage': cov, 'scoring_mode': wk_scoring,
                 }
 
-                if 'Market Coverage' in merged_model.columns:
-                    # A book that posted only a receptions prop shows a real but
-                    # PARTIAL coverage number next to the (now backfilled) total,
-                    # so a thin line still reads as thin rather than as a broken
-                    # projection.
-                    merged_model['Market Coverage'] = merged_model['Market Coverage'].map(
-                        lambda v: f"{v * 100:.0f}%" if pd.notna(v) else None)
+            # Was stranded as dead code after the return above (found
+            # 2026-09-22) - never ran, so the main table showed the raw 0-1
+            # fraction instead of a percentage. market_detail_snapshot above
+            # already copied the raw numeric column for _market_detail_for_key,
+            # so reformatting merged_model's copy here is safe.
+            if 'Market Coverage' in merged_model.columns:
+                # A book that posted only a receptions prop shows a real but
+                # PARTIAL coverage number next to the (now backfilled) total,
+                # so a thin line still reads as thin rather than as a broken
+                # projection.
+                merged_model['Market Coverage'] = merged_model['Market Coverage'].map(
+                    lambda v: f"{v * 100:.0f}%" if pd.notna(v) else '—')
             # Ranking column, directly after Opponent, colored by TIER rather
             # than a continuous scale - explicit request. Tiers are clustered
             # per position on Model Proj Pts wherever a significant cutoff
@@ -3241,6 +3260,20 @@ def render():
 
             merged_model = merged_model.rename(columns={'Pos': 'Position'})
             merged_model = merged_model.rename(columns=dict(_STAT_DISPLAY_COLS))
+            # Pre-formatted to a display string (1 decimal, em-dash for a
+            # position that doesn't carry this stat) rather than left as a
+            # raw float for the Styler to format. Found 2026-09-22: this
+            # table's interactive grid does not reliably honor
+            # style_plain_dataframe's Styler.format(na_rep=...) for a plain
+            # numeric column the way the decomposition dialog's own
+            # (non-interactive) Styler does - a WR's blank passing_yards
+            # rendered as the literal word "None" instead of the intended
+            # blank/dash. Formatting here, the same convention _fmt_stat
+            # already uses one dialog over, sidesteps that gap entirely.
+            for _col, _label in _STAT_DISPLAY_COLS:
+                if _label in merged_model.columns:
+                    merged_model[_label] = merged_model[_label].map(
+                        lambda v: f"{v:.1f}" if pd.notna(v) else '—')
 
             # Explicit column order, per request: identity first, then the three
             # projections side by side, then the stat line behind this app's own

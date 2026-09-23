@@ -330,6 +330,17 @@ def weekly_market_projection(props, scoring, board=None):
     just carries a player count for a caption. Never raises - an empty or
     unusable props table returns an empty frame, same degrade-gracefully
     convention as everything else that reads a live odds source.
+
+    ``board``, when it carries a ``Pos`` column, also backfills position for
+    a row whose book didn't publish one - same fallback
+    ui/tabs/draft_hq.py's season-long pull already applies via
+    ``score_market_lines``'s own ``positions`` param. Found 2026-09-22: the
+    weekly path never wired this up, so a player whose first-sorted
+    provider row happened to omit ``position`` fell outside
+    ``_points_weighted_coverage``'s ``KEY_STATS`` lookup and showed a blank
+    Coverage in the Weekly Rankings table despite being fully priced -
+    Josh Allen was the case that caught it, on a slate where DraftKings'
+    row for him carried no position tag.
     """
     from data.odds_projections import market_stat_lines, score_market_lines
     if props is None or props.empty:
@@ -337,7 +348,11 @@ def weekly_market_projection(props, scoring, board=None):
     rows = market_stat_lines(props, season_only=False, board=board)
     if rows.empty:
         return pd.DataFrame(), {'players': 0}
-    scored = score_market_lines(rows, scoring)
+    positions = {}
+    if board is not None and not board.empty and 'Pos' in board.columns:
+        from data.utils import clean_name_exact
+        positions = dict(zip(clean_name_exact(board['Player']), board['Pos'].astype(str)))
+    scored = score_market_lines(rows, scoring, positions=positions)
     return scored, {'players': int(len(scored))}
 
 

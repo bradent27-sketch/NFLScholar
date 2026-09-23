@@ -1616,6 +1616,112 @@ def test_inseason_qb1_resolver_requires_one_clear_recent_starter_or_manual_choic
     assert 'KC' in unresolved['selection_required_teams']
 
 
+def test_inseason_qb1_manual_override_wins_even_with_zero_current_season_snaps():
+    # The Michael Penix Jr./Atlanta case (2026-09-23): `current` here plays
+    # the role of current_qbs inside build_weekly_projections, which is
+    # built from `hist` - itself gated through _played_weeks_before, so a
+    # just-installed starter with zero PLAYED games this season never
+    # appears in it at all (no row, not even an unmatched one). Before this
+    # fix, a manual override for a player entirely absent from `current`
+    # silently fell through to automatic resolution instead of winning.
+    current = pd.DataFrame([
+        {'name': 'OldStarter', 'team': 'ATL', 'position': 'QB'},
+        # NewStarter is deliberately NOT a row here at all.
+    ])
+    history = weekly([
+        {'name': 'OldStarter', 'team': 'ATL', 'opponent_team': 'DEN', 'week': week,
+         'position': 'QB', 'weekly_snap_pct': 95.0}
+        for week in (1, 2)
+    ])
+    resolution = wp.resolve_inseason_qb1s(
+        current, 'name', 'team', history, 'name', 'team', 3, 2026,
+        overrides=pd.DataFrame([{'year': 2026, 'team': 'ATL', 'player': 'NewStarter'}]))
+    key = wp.clean_name_exact(pd.Series(['NewStarter'])).iloc[0]
+    assert resolution['selected'][('ATL', key)] == 'manual_override'
+    assert resolution['by_team']['ATL']['player'] == 'NewStarter'
+    assert 'ATL' not in resolution['selection_required_teams']
+
+
+def test_add_missing_manual_qb1_rows_synthesizes_a_zero_games_row():
+    cur = pd.DataFrame([{'name': 'OldStarter', 'team': 'ATL', 'Games': 2, 'passing_yards': 490.0}])
+    roster_source = weekly([
+        {'name': 'OldStarter', 'team': 'ATL', 'opponent_team': 'DEN', 'week': 2,
+         'position': 'QB', 'weekly_snap_pct': 95.0},
+        {'name': 'NewStarter', 'team': 'ATL', 'opponent_team': 'DEN', 'week': np.nan,
+         'position': 'QB', 'weekly_snap_pct': 0.0, 'has_snap_match': False},
+    ])
+    key = wp.clean_name_exact(pd.Series(['NewStarter'])).iloc[0]
+    resolution = {'selected': {('ATL', key): 'manual_override'}}
+    out = wp._add_missing_manual_qb1_rows(cur, resolution, roster_source, 'name', 'team', ['passing_yards'])
+    assert len(out) == 2
+    added = out.loc[out['name'].eq('NewStarter')].iloc[0]
+    assert added['Games'] == 0
+    assert added['passing_yards'] == 0.0
+    assert added['Team'] == 'ATL'
+    assert pd.notna(added['_identity_key'])
+    # Idempotent - a player already present in `cur` is never duplicated.
+    again = wp._add_missing_manual_qb1_rows(out, resolution, roster_source, 'name', 'team', ['passing_yards'])
+    assert len(again) == 2
+
+
+def test_qb1_manual_override_wins_for_a_new_starter_with_zero_current_season_snaps():
+    # Full end-to-end repro of the Atlanta bug: OldStarter has real 2026
+    # games (weeks 1-2, like Cooper Rush); NewStarter's only 2026 row is a
+    # roster-only placeholder (week=NaN, has_snap_match=False - exactly what
+    # load_and_merge_data emits for a healthy player with no tracked game),
+    # but he has a real 2025 season to project a rate from (like a rookie
+    # QB1's own prior year). A saved QB1 override names NewStarter. Before
+    # this fix, OldStarter kept the full workload because the override could
+    # never match a current-season row for NewStarter and the per-position
+    # QB pool had no row for him to apply the override to even if it had.
+    current_rows = [
+        {'name': 'OldStarter', 'team': 'ATL', 'opponent_team': 'DEN', 'week': week,
+         'position': 'QB', 'weekly_snap_pct': 95.0, 'has_snap_match': True,
+         'passing_attempts': 32.0, 'passing_completions': 21.0,
+         'passing_yards': 245.0, 'passing_tds': 1.5, 'passing_interceptions': 0.5,
+         'rushing_attempts': 3.0, 'rushing_yards': 15.0, 'rushing_tds': 0.1}
+        for week in (1, 2)
+    ]
+    current_rows.append({
+        'name': 'NewStarter', 'team': 'ATL', 'opponent_team': 'DEN', 'week': np.nan,
+        'position': 'QB', 'weekly_snap_pct': 0.0, 'has_snap_match': False,
+    })
+    current = weekly(current_rows)
+    prior = weekly([
+        {'name': 'NewStarter', 'team': 'ATL', 'opponent_team': 'DEN', 'week': week,
+         'position': 'QB', 'weekly_snap_pct': 90.0, 'has_snap_match': True,
+         'passing_attempts': 30.0, 'passing_completions': 19.0,
+         'passing_yards': 220.0, 'passing_tds': 1.2, 'passing_interceptions': 0.6,
+         'rushing_attempts': 4.0, 'rushing_yards': 18.0, 'rushing_tds': 0.1}
+        for week in range(10, 18)
+    ])
+    schedule = pd.DataFrame([{'week': 3, 'home_team': 'ATL', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+                wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp.load_qb1_overrides = lambda _year: (
+            pd.DataFrame([{'year': 2026, 'team': 'ATL', 'player': 'NewStarter'}]), None)
+        wp._target_margins_by_team = lambda year, week: {}
+        out, meta = wp.build_weekly_projections(
+            2026, 3, 'Full PPR', as_of_week=3, apply_injury=False,
+            availability_fingerprint='test_inseason_manual_qb1_new_starter')
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+         wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team) = original
+    new_starter = out.loc[out['Player'].eq('NewStarter')].iloc[0]
+    old_starter = out.loc[out['Player'].eq('OldStarter')].iloc[0]
+    assert new_starter['QB Projected Starter']
+    assert not old_starter['QB Projected Starter']
+    assert new_starter['passing_attempts'] > 0
+    for stat in wp.OFFENSE_PROJECTION_STATS['QB']:
+        assert old_starter[stat] == 0.0
+
+
 def test_nonstarter_qb_has_zero_projected_volume_not_a_relief_rate_projection():
     rows = []
     for week in (1, 2, 3):

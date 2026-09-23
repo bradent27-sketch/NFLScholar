@@ -4841,7 +4841,26 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
                     'reason': 'explicit upcoming-game QB1 selection',
                 }
                 continue
-            warnings.append(f"{team}: QB1 override '{manual.iloc[0]['player']}' does not match one current QB.")
+            # `room` only has PLAYED games this season (current_qbs is built
+            # from `hist`, itself gated through _played_weeks_before) - a
+            # just-installed starter with zero 2026 snaps recorded yet is
+            # exactly the case a manual override exists for, and is
+            # precisely the player who can never appear in `room`. The
+            # choice still wins here rather than silently falling back to
+            # whichever QB DOES have game history (the bug: Cooper Rush kept
+            # getting Atlanta's full workload for weeks after Michael Penix
+            # Jr. was named the Week 3 starter, because the override had zero
+            # 2026 snaps to match against). build_weekly_projections'
+            # per-position loop still needs a Games=0 row to apply this
+            # selection to - see _add_missing_manual_qb1_rows.
+            manual_player = str(manual.iloc[0]['player']).strip()
+            selected[(team, manual_key)] = 'manual_override'
+            by_team[team] = {
+                'status': 'manual_override', 'player': manual_player,
+                'recent_snap_share': 0.0,
+                'reason': 'explicit upcoming-game QB1 selection (no 2026 snaps recorded for him yet)',
+            }
+            continue
 
         available = room[~room['_key'].isin(unavailable)].copy()
         recent_available = available[available['_recently_active']].copy()
@@ -4878,6 +4897,55 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
         'selection_required_teams': requires_selection,
         'warnings': warnings,
     }
+
+
+def _add_missing_manual_qb1_rows(cur, qb1_resolution, roster_source, name_col, team_col, stats):
+    """Give a manually-selected QB1 a Games=0 placeholder row, cold-start
+    style, when he has no PLAYED game this season for the in-season pool to
+    build one from.
+
+    The in-season QB candidate pool (`cur`, built by the caller from
+    _season_totals(player_hist, ...)) only ever contains players with at
+    least one played, no-leakage-eligible game this season - by design, for
+    every position, everywhere else this frame is used. A just-installed
+    starter with zero 2026 snaps recorded is exactly the case a manual QB1
+    override exists for (see resolve_inseason_qb1s's own note on this), and
+    also exactly the player who is structurally invisible to that pool.
+    Without this row, qb1_workload_override downstream has no row of his to
+    flip True, and the QB who DOES have played games keeps the full
+    workload despite losing the job - found 2026-09-23: Michael Penix Jr.
+    named Atlanta's Week 3 starter over Cooper Rush, with zero 2026 snaps
+    recorded for him yet.
+
+    `roster_source` must be the RAW, unfiltered season frame (build_weekly_
+    projections' own `stats_df` parameter - never `hist`/`player_hist`,
+    both of which are gated through _played_weeks_before and so never carry
+    a just-installed starter's roster-only, no-game row either).
+    """
+    selected = qb1_resolution.get('selected', {})
+    manual_keys = {key for (_team, key), source in selected.items() if source == 'manual_override'}
+    if not manual_keys or roster_source is None or roster_source.empty or name_col not in roster_source.columns:
+        return cur
+    present_keys = (set(clean_name_exact(cur[name_col]))
+                    if not cur.empty and name_col in cur.columns else set())
+    missing_keys = manual_keys - present_keys
+    if not missing_keys:
+        return cur
+    roster = roster_source[roster_source['position'].astype(str).str.upper().eq('QB')].copy()
+    roster['_key'] = clean_name_exact(roster[name_col])
+    added_source = roster[roster['_key'].isin(missing_keys)].drop_duplicates(subset=['_key'], keep='last')
+    if added_source.empty:
+        return cur
+    carry_cols = [name_col, team_col] + [c for c in (
+        'player_id', 'gsis_id', 'pff_id', 'depth_chart_position', 'status',
+        'draft_number', 'is_rookie_flag', 'years_exp', 'ourlads_position',
+        'functional_position', 'projection_position') if c in added_source.columns]
+    added = added_source[carry_cols].rename(columns={team_col: 'Team'}).copy()
+    added['Games'] = 0
+    for stat in stats:
+        added[stat] = 0.0
+    added['_identity_key'] = player_identity_keys(added, name_col)
+    return pd.concat([cur, added], ignore_index=True) if not cur.empty else added
 
 
 # How far a prior-season per-game rate may be scaled by a role change. A
@@ -7195,6 +7263,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         else:
             cur = attach_player_identity(
                 _season_totals(player_hist, name_col, team_col, pos, stats), player_hist, name_col)
+            if pos == 'QB' and 'qb1_override' in feats:
+                cur = _add_missing_manual_qb1_rows(cur, qb1_resolution, stats_df, name_col, team_col, stats)
             if cur.empty:
                 continue
         # Keep a non-display functional-position flag through the assembled

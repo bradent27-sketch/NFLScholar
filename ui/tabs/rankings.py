@@ -81,12 +81,14 @@ _NARROW_COLS = ('Rank', 'FantasyPros Rank', 'Model Rank', 'Market Rank',
                 'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts', 'Market Coverage',
                 'Pts Allowed', 'Wind', 'Temp', 'Precip', 'Season Snap %')
 
-# Wind/Temp/Precip bucket thresholds for the weather columns (2026-09-23) -
-# icon + the real number rather than a bare icon, so the cell is
-# self-describing without a legend. Deliberately uncolored (unlike Pts
-# Allowed right next to it): that column already carries this row's one
-# heavy background color, and three more colored cells beside it would read
-# as noisy rather than informative for what's meant to be a quick glance.
+# Wind/Temp/Precip bucket thresholds for the weather columns - icon-only
+# (explicit request, 2026-09-23: the bucket is the useful at-a-glance
+# signal, not the exact mph/degrees), so the column stays compact and
+# consistent with Precip's own already-icon-first labels. Deliberately
+# uncolored (unlike Pts Allowed right next to it): that column already
+# carries this row's one heavy background color, and three more colored
+# cells beside it would read as noisy rather than informative for what's
+# meant to be a quick glance.
 _WIND_CALM_MAX_MPH = 10.0
 _WIND_WINDY_MAX_MPH = 20.0
 _TEMP_FREEZING_MAX_F = 32.0
@@ -98,30 +100,30 @@ _PRECIP_LABELS = {'dry': 'Dry', 'light_rain': '🌦️ Light Rain', 'heavy_rain'
 
 def _weather_cells(is_outdoor, wind_mph, temp_f, precip_bucket):
     """(wind, temp, precip) display strings for one game's weather - a
-    single '🏟️ Dome' in all three when the game isn't outdoors, since wind/
+    single dome emoji in all three when the game isn't outdoors, since wind/
     temp/precip genuinely don't apply there rather than being merely
     unmeasured (a real distinction: an em dash elsewhere on this table means
     "unknown", which a dome game is not)."""
     if not is_outdoor:
-        return '🏟️ Dome', '🏟️ Dome', '🏟️ Dome'
+        return '🏟️', '🏟️', '🏟️'
     if wind_mph is None:
         wind_s = '—'
     elif wind_mph < _WIND_CALM_MAX_MPH:
-        wind_s = f'{wind_mph:.0f} mph'
+        wind_s = '🍃'
     elif wind_mph < _WIND_WINDY_MAX_MPH:
-        wind_s = f'💨 {wind_mph:.0f} mph'
+        wind_s = '💨'
     else:
-        wind_s = f'💨💨 {wind_mph:.0f} mph'
+        wind_s = '💨💨'
     if temp_f is None:
         temp_s = '—'
     elif temp_f <= _TEMP_FREEZING_MAX_F:
-        temp_s = f'🥶 {temp_f:.0f}°F'
+        temp_s = '🥶'
     elif temp_f <= _TEMP_COLD_MAX_F:
-        temp_s = f'❄️ {temp_f:.0f}°F'
+        temp_s = '❄️'
     elif temp_f >= _TEMP_HOT_MIN_F:
-        temp_s = f'🥵 {temp_f:.0f}°F'
+        temp_s = '🥵'
     else:
-        temp_s = f'{temp_f:.0f}°F'
+        temp_s = '☀️'
     precip_s = _PRECIP_LABELS.get(precip_bucket, '—')
     return wind_s, temp_s, precip_s
 
@@ -3813,9 +3815,11 @@ def render():
                 "game to this position this season, colored by percentile among all 32 teams (bright "
                 "green = easiest matchup at the position, bright red = hardest, muted near league-"
                 "average) — the same number the projection decomposition's own \"toughest matchup\" "
-                "line uses. **Wind** / **Temp** / **Precip** just after it are this game's conditions "
-                "(recorded once played, forecast otherwise) — \"🏟️ Dome\" in all three for an indoor "
-                "game rather than an unmeasured dash, since weather genuinely doesn't apply there. "
+                "line uses. **Wind** / **Temp** / **Precip** just after it are this game's conditions, "
+                "icon-only (recorded once played, forecast otherwise): 🍃 calm / 💨 windy / 💨💨 very "
+                "windy, 🥶 freezing / ❄️ cold / ☀️ mild / 🥵 hot, and Dry / 🌦️ Light Rain / 🌧️ Heavy "
+                "Rain / 🌨️ Snow — 🏟️ in all three for an indoor game rather than an unmeasured dash, "
+                "since weather genuinely doesn't apply there. "
                 "**Season Snap %** and its own **Last 5 Snaps** trend, next to Injury Status, are this "
                 "player's role/opportunity — his share of the team's snaps in the games he actually "
                 "played, independent of whether this week's projection is driven by volume or by an "

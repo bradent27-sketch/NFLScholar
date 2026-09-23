@@ -54,10 +54,30 @@ _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing
 # unions every position's columns, so these exist on the merged frame
 # whenever ANY position projected that stat this week.
 _STAT_DISPLAY_COLS = [
-    ('passing_yards', 'Pass Yds'), ('passing_tds', 'Pass TDs'),
+    ('passing_yards', 'Pass Yds'), ('passing_tds', 'Pass TDs'), ('passing_attempts', 'Pass Att'),
+    ('passing_completions', 'Pass Cmp'), ('passing_interceptions', 'INT'),
     ('rushing_attempts', 'Rush Att'), ('rushing_yards', 'Rush Yds'), ('rushing_tds', 'Rush TDs'),
     ('targets', 'Tgt'), ('receptions', 'Rec'), ('receiving_yards', 'Rec Yds'), ('receiving_tds', 'Rec TDs'),
 ]
+
+# Weekly Rankings' own header-truncation and narrow-width requests
+# (2026-09-29) - a per-caller override on build_column_help_config, not a
+# blanket app-wide "FantasyPros" -> "FP" rule, so a less space-constrained
+# table elsewhere keeps the fuller name. Widened once the board actually
+# carries FantasyPros' export (FantasyPros Rank/ECR only exist then), so
+# this dict just lists every column that COULD need the substitution -
+# build_column_help_config only applies an entry that's actually present.
+_RANK_PROJ_SHORT_LABELS = {
+    'FantasyPros Proj Pts': 'FP Proj', 'Market Proj Pts': 'Market Proj', 'Model Proj Pts': 'Model Proj',
+    'FantasyPros Rank': 'FP Rank', 'FantasyPros ECR': 'FP ECR', 'Model vs FantasyPros ECR': 'Model vs FP ECR',
+}
+# Rank badges ("RB4") and one-decimal point totals never need more than a
+# "small" preset column - left to auto-size, the HEADER text (especially
+# before the short_labels above shrink it) was the thing actually forcing
+# these wide, not the cell content.
+_NARROW_COLS = ('Rank', 'FantasyPros Rank', 'Model Rank', 'Market Rank',
+                'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts', 'Market Coverage',
+                'Pts Allowed')
 
 # A fixed number of games, not a user-adjustable window - explicit request.
 # "Recent" reads consistently across positions and weeks only if everyone's
@@ -2873,6 +2893,92 @@ _RANK_POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DST']
 _RANK_SLOTS = 10
 
 
+def _matchup_difficulty_by_pos_opponent(model_meta):
+    """{(position, opponent_team): (fantasy pts/game allowed, percentile)}
+    for the 'Pts Allowed' column. Percentile is 0-100 where 100 = the easiest
+    matchup a player at that position can draw this week (this defense
+    allows MORE fantasy points to the position than everyone else's) and
+    0 = the hardest; the points-allowed figure is what's actually shown in
+    the cell, since a bare percentile means nothing without a legend but
+    "24.3 pts/game allowed" is self-describing next to its own color.
+
+    Deliberately reuses data.matchup_signals.defense_stat_rank's own
+    numbers - the SAME ones the decomposition dialog's "toughest matchup"
+    headline already shows (model_meta['explanations'][...]
+    ['defense_matchup'], identical for every player of one position facing
+    one opponent, since it's a team-level stat) - rather than resolving
+    live per-player defense/pace multiplier detail for every row. That
+    per-player detail is intentionally resolved ON DEMAND, only for
+    whichever single player a decomposition is opened for (see
+    _selected_player_detail's docstring on the 2026-09-14 perf pass this
+    protects) - doing it for every row of a several-hundred-player table
+    would reintroduce exactly the cost that pass removed. Fantasy points
+    actually allowed to the position already reflects that defense's pace
+    and quality as one empirical number rather than needing to re-derive
+    them from the model's own multiplier internals, and is real, tested
+    data this app already trusts for this exact "how tough is this
+    matchup" question.
+
+    One pass over model_meta['explanations'] (already fully computed and
+    cached by build_weekly_projections - this reads it, it doesn't
+    recompute anything), taking the first entry seen per (position,
+    opponent) since every player sharing that pair carries the same value.
+    """
+    lookup = {}
+    for (_player, pos, _team), detail in (model_meta.get('explanations') or {}).items():
+        key = (str(pos).upper(), str(detail.get('opponent')))
+        if key in lookup:
+            continue
+        matchup = detail.get('defense_matchup')
+        if not matchup:
+            continue
+        value, pct = matchup.get('value'), matchup.get('pct')
+        if value is not None and pct is not None:
+            lookup[key] = (float(value), float(pct))
+    return lookup
+
+
+def _positional_ordinal(df, points_col, pos_col='Pos'):
+    """Real, NaN-preserving per-position rank (1 = best) off a points
+    column - the plain ranking half of _woven_rank without its slot-
+    encoding/sentinel machinery, meant for blending two sources' rankings
+    together BEFORE the final woven encode (see the blended 'Rank' column
+    below) rather than for display on its own."""
+    if points_col not in df.columns or df.empty:
+        return pd.Series(np.nan, index=df.index)
+    values = pd.to_numeric(df[points_col], errors='coerce')
+    positions = df[pos_col].astype(str).str.upper()
+    return pd.DataFrame({'_v': values, '_p': positions}, index=df.index).groupby('_p')['_v'].rank(
+        ascending=False, method='first')
+
+
+def _blended_woven_rank(df, points_cols, pos_col='Pos'):
+    """Blend several projection sources into ONE woven rank column, per-
+    position ORDINAL first (each source's own 1st/2nd/3rd/...), not the raw
+    points - a 0.1-point gap and a 10-point gap both just mean "one spot
+    apart" here, which is the point of ranking in the first place rather
+    than re-litigating the score gap a second time. A player only some of
+    the sources carry (the common case when FantasyPros hasn't been pulled
+    this session) averages over whichever ordinals ARE real rather than
+    penalizing him for a source that simply doesn't rank him. The averaged
+    ordinal is then re-ranked per position (via _woven_rank, on a negated
+    pseudo-points column so its own "higher = better" ranking produces the
+    right order) to land back on a clean 1st/2nd/3rd/... ordering - the
+    average itself (e.g. 3.5) is never returned or shown, only the rank it
+    produces. Returns (values, labels) exactly like _woven_rank; (None, {})
+    if none of points_cols exist.
+    """
+    real_cols = [c for c in points_cols if c in df.columns]
+    if not real_cols or df.empty:
+        return None, {}
+    ordinals = [_positional_ordinal(df, c, pos_col) for c in real_cols]
+    stacked = pd.concat(ordinals, axis=1)
+    blended = stacked.mean(axis=1, skipna=True)
+    pseudo_points = -blended
+    return _woven_rank(pd.DataFrame({pos_col: df[pos_col].values, '_pseudo': pseudo_points.values},
+                                    index=df.index), '_pseudo', pos_col)
+
+
 def _woven_rank(df, value_col, pos_col='Pos'):
     """
     A positional rank column ('RB4' style, matching the app's existing
@@ -3050,6 +3156,12 @@ def render():
                 wk_year, wk_week, wk_scoring, availability_fingerprint=avail_fp)
         st.session_state['weekly_rank_last_model_meta'] = model_meta
 
+    # Computed once per real board build (not per fragment-internal rerun -
+    # see _render_board's own closure over this below) since it only
+    # depends on model_meta, which doesn't change until the next "Build
+    # board" click.
+    matchup_difficulty = _matchup_difficulty_by_pos_opponent(model_meta) if model_meta else {}
+
     if not board_ready:
         st.info(
             "Set the season / week / scoring above, stage any FantasyPros rankings or injury "
@@ -3112,6 +3224,25 @@ def render():
             the two ways of doing this that looked right and were not.
             """
             merged_model = model_df.copy()
+            # 'Pts Allowed' - directly right of Opponent per explicit request -
+            # a single combined difficulty read for this position against
+            # this opponent (see _matchup_difficulty_by_pos_opponent's own
+            # docstring for what it actually measures and why). Named for
+            # what the cell shows, not "Matchup" - this same tab already has
+            # a "Matchup" multiselect widget (the game-slate filter) right
+            # above the table, and reusing that word for a column too would
+            # read as if one controlled the other. Built here (not eagerly
+            # inside build_weekly_projections) since it's a cheap O(rows)
+            # dict lookup off matchup_difficulty, itself computed once per
+            # real board build, above. '_matchup_pct' is a hidden column that
+            # drives the color only, same pattern as '_tier' below - dropped
+            # before the frame is ever displayed.
+            _matchup_lookups = [
+                matchup_difficulty.get((str(p).upper(), str(o)))
+                for p, o in zip(merged_model['Pos'], merged_model['Opponent'])
+            ]
+            merged_model['Pts Allowed'] = [m[0] if m else None for m in _matchup_lookups]
+            merged_model['_matchup_pct'] = [m[1] if m else None for m in _matchup_lookups]
             if fp_weekly is not None:
                 merged_model = _attach_by_name(
                     merged_model, fp_weekly,
@@ -3230,16 +3361,29 @@ def render():
                 rank_labels[rank_col] = labels
 
             # The leading "Rank" column is the table's scan anchor and its
-            # default sort - FantasyPros' rank when their projection has actually
-            # been pulled this session, this app's model rank otherwise. It
-            # deliberately repeats one of the three source ranks at the far right
-            # rather than being a fourth, separate ranking: the requested layout
-            # puts a rank first (what am I looking at) and the full three-source
-            # comparison last (who disagrees with whom).
-            primary_rank = next((c for c in ('FantasyPros Rank', 'Model Rank') if c in rank_labels), None)
-            if primary_rank:
-                merged_model['Rank'] = merged_model[primary_rank]
-                rank_labels['Rank'] = rank_labels[primary_rank]
+            # default sort - explicit request (2026-09-29) to make it a BLEND
+            # of FantasyPros' and this app's own rank rather than picking one
+            # source outright (see _blended_woven_rank's own docstring for
+            # the averaging rule). It deliberately repeats a combination of
+            # the source ranks at the far right rather than being a totally
+            # separate opinion: the requested layout puts a rank first (what
+            # am I looking at) and the full three-source comparison last
+            # (who disagrees with whom).
+            blend_values, blend_labels = _blended_woven_rank(
+                merged_model, ('FantasyPros Proj Pts', 'Model Proj Pts'))
+            if blend_values is not None:
+                merged_model['Rank'] = blend_values
+                rank_labels['Rank'] = blend_labels
+            else:
+                # Neither source produced a points column at all (shouldn't
+                # happen - Model Proj Pts always exists on a non-empty board -
+                # but degrade to whichever real source rank exists rather
+                # than crash if it ever does).
+                primary_rank = next((c for c in ('FantasyPros Rank', 'Model Rank') if c in rank_labels), None)
+                if primary_rank:
+                    merged_model['Rank'] = merged_model[primary_rank]
+                    rank_labels['Rank'] = rank_labels[primary_rank]
+            if 'Rank' in merged_model.columns:
                 # Woven order by construction (QB1, RB1, WR1, TE1, QB2, ...), the
                 # ordering the whole encoding exists to produce - so the table
                 # OPENS in it instead of only reaching it after a header click.
@@ -3301,7 +3445,7 @@ def render():
             # columns are now colored by position too (position_values/
             # position_cols below) so the same at-a-glance signal the Position
             # column gave survives without spending a column on it.
-            display_cols = ['Rank', 'Player', 'Team', 'Opponent',
+            display_cols = ['Rank', 'Player', 'Team', 'Opponent', 'Pts Allowed',
                             'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts']
             display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
             display_cols += ['Injury Status', 'Last 5 Weeks',
@@ -3315,7 +3459,7 @@ def render():
             # coloring further down both still need the raw values; it's
             # dropped from the actually-rendered frame later, at the
             # display_cols re-select (indexed = indexed[[...]]).
-            keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position']
+            keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position', '_matchup_pct']
             positions, group_label = position_group_buttons(
                 'wr', default='SUPERFLEX', rerun_scope='fragment')
             # Matchup filter (explicit request, prop-betting workflow): isolate
@@ -3336,7 +3480,8 @@ def render():
             display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
             tier_values = display_df['_tier'].tolist()
             position_values = display_df['Position'].tolist()
-            display_df = display_df.drop(columns=['_tier'])
+            matchup_pct_values = display_df['_matchup_pct'].tolist()
+            display_df = display_df.drop(columns=['_tier', '_matchup_pct'])
             indexed = display_df.set_index('Player')
 
             # Recent-form sparkline: the last five games' fantasy points as a
@@ -3377,6 +3522,19 @@ def render():
             for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
                 if c in indexed.columns and indexed[c].notna().any():
                     pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
+            # 'Pts Allowed' colors off the percentile ALREADY computed for it
+            # (matchup_pct_values, from model_meta - see
+            # _matchup_difficulty_by_pos_opponent), not a fresh percentile of
+            # the displayed rows the way pct_cols above is - a percentile
+            # recomputed from only the ~50 rows on screen would shift every
+            # time "Show" or a position filter changes, which is exactly
+            # backwards for a number meant to describe THIS DEFENSE, not
+            # this table's current slice. centered_pct_cols (not
+            # matchup_pct_cols) per explicit request: bright at the extremes,
+            # fading to a muted neutral at a genuinely average (50th
+            # percentile) matchup, rather than matchup_pct_cols' fixed-alpha
+            # ramp through every color at the same intensity.
+            centered_pct_cols = ({'Pts Allowed': matchup_pct_values} if 'Pts Allowed' in indexed.columns else {})
             # Pre-formatted AFTER percentile calc (which needs the real
             # numeric NaN) for the same reason _STAT_DISPLAY_COLS are -
             # a player with zero market coverage (no book posted anything)
@@ -3388,8 +3546,12 @@ def render():
             for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
                 if c in indexed.columns:
                     indexed[c] = indexed[c].map(lambda v: f"{v:.1f}" if pd.notna(v) else '—')
+            if 'Pts Allowed' in indexed.columns:
+                indexed['Pts Allowed'] = indexed['Pts Allowed'].map(
+                    lambda v: f"{v:.1f}" if pd.notna(v) else '—')
             column_config = build_column_help_config(
-                indexed, pinned_cols=['Rank', 'Team', 'Opponent'])
+                indexed, pinned_cols=['Rank', 'Team', 'Opponent'],
+                short_labels=_RANK_PROJ_SHORT_LABELS, narrow_cols=_NARROW_COLS)
             column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
                 help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
                       f"({form_source_year}), with the dotted line at that season's average"),
@@ -3445,7 +3607,7 @@ def render():
                         }
 
             st.dataframe(
-                style_plain_dataframe(indexed, numeric_pct_cols=pct_cols,
+                style_plain_dataframe(indexed, numeric_pct_cols=pct_cols, centered_pct_cols=centered_pct_cols,
                                       tier_cols={'Model Rank': tier_values} if 'Model Rank' in indexed.columns else None,
                                       # Model Rank keeps its existing tier shading
                                       # (a separate explicit request - performance
@@ -3476,14 +3638,21 @@ def render():
                     "games before the selected week to chart yet."
                 )
             st.caption(
-                "**Rank** is the table's default order and its scan anchor — FantasyPros' positional "
-                "rank when their projection has been pulled above, this app's model rank otherwise. "
+                "**Rank** is the table's default order and its scan anchor — a blend of FantasyPros' "
+                "and this app's own positional rank (averages each source's own ordinal, then re-ranks "
+                "from that average; falls back to whichever one source ranks a player when the other "
+                "doesn't, e.g. FantasyPros not pulled this session). "
                 "Every rank column sorts WOVEN (QB1, RB1, WR1, TE1, QB2, …) rather than alphabetically, "
                 "so no single position sweeps the top of the table, and a player a source doesn't rank "
                 "shows \"—\" and sorts to the bottom instead of the top. "
                 "**FantasyPros Rank** / **Model Rank** / **Market Rank** at the right are each source's "
-                "own positional rank, side by side — Model Rank is shaded by tier, a cluster break in "
-                "Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
+                "own positional rank, side by side, unblended — Model Rank is shaded by tier, a cluster "
+                "break in Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
+                "**Pts Allowed**, right after Opponent, is this defense's fantasy points allowed per "
+                "game to this position this season, colored by percentile among all 32 teams (bright "
+                "green = easiest matchup at the position, bright red = hardest, muted near league-"
+                "average) — the same number the projection decomposition's own \"toughest matchup\" "
+                "line uses. "
                 "**FantasyPros ECR** (when a weekly FantasyPros export is uploaded below) is "
                 "their own REAL published consensus rank, not derived from the points projection above "
                 "it — **Model vs FantasyPros ECR** shows how far apart the two actually are, which is "

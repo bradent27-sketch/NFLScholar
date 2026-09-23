@@ -99,7 +99,7 @@ COLUMN_HELP = {
     'VORP vs FantasyPros': "Positive means this app's VORP model ranks the player higher (better) than FantasyPros does",
     'VORP vs Custom': "Positive means this app's VORP model ranks the player higher (better) than your uploaded ranking does",
     'Proj Pts (17-gm pace)': "Last season's per-game pace stretched to a 17-game season - a volume-based stand-in, not a real projection",
-    'Rank': "The table's default order: FantasyPros' positional rank when their weekly projection has been pulled, this app's model rank otherwise. Sorts WOVEN (QB1, RB1, WR1, TE1, QB2, ...) so no one position sweeps the top; an unranked player shows an em dash and sorts to the bottom",
+    'Rank': "The table's default order: a blend of FantasyPros' and this app's own positional rank (averages each source's own ordinal, then re-ranks - falls back to whichever one source ranks a player when the other doesn't, e.g. FantasyPros not pulled this session). Sorts WOVEN (QB1, RB1, WR1, TE1, QB2, ...) so no one position sweeps the top; an unranked player shows an em dash and sorts to the bottom",
     'Model Rank': "This app's own positional rank for the selected week (e.g. \"RB4\"), shaded by tier - a cluster break in Model Proj Pts at that position, not a fixed players-per-tier cutoff",
     'Market Rank': "Positional rank derived from this week's live sportsbook player-prop lines. An em dash means the books posted no line this app scores for that player",
     'FantasyPros Rank': "Positional rank derived from FantasyPros' own weekly points projection. An em dash means their pull didn't cover that player",
@@ -107,6 +107,7 @@ COLUMN_HELP = {
     'Injury Status': "Out/Doubtful flags a player the injury report discounts or zeroes in Model Proj Pts",
     'Market Proj Pts': "This week's live sportsbook player-prop lines, re-scored under this league's scoring settings - independent of this app's own model",
     'Market Coverage': "Share of a typical week's fantasy points the market's posted lines actually covered for this player",
+    'Pts Allowed': "This opponent's fantasy points allowed per game to this position this season, colored by percentile among all 32 teams - bright green is the easiest matchup at the position, bright red the hardest, muted near league-average. The same number the projection decomposition's own \"toughest matchup\" line uses",
     'L5 Avg FPTS': "Average fantasy points over the player's last 5 games played, not a season-long or extrapolated number",
     'ECR': "FantasyPros consensus rank for the chosen draft FORMAT only (Redraft/Superflex/Dynasty/Best Ball) - not adjusted for your league's PPR/Half-PPR/Standard or TE-premium settings unless pulled via the FantasyPros API",
     'ADP': "Average Draft Position, matched to your Standard/Half-PPR/Full PPR setting (collapses to one Superflex page regardless of PPR if Superflex is on) - not adjusted for your exact team count unless the source is Fantasy Football Calculator",
@@ -118,13 +119,13 @@ for _kind in ['WR', 'TE', 'RB', 'Outside', 'Slot']:
     COLUMN_HELP[f'YPT {_kind}'] = f"Yards Per Target allowed, {_kind} alignment"
 
 
-def build_column_help_config(df, pinned_cols=None, meter_cols=None):
+def build_column_help_config(df, pinned_cols=None, meter_cols=None, short_labels=None, narrow_cols=None):
     """
     Returns the st.dataframe(column_config=...) dict for whichever of this
     table's columns have a COLUMN_HELP entry - pass alongside
     style_plain_dataframe(df) (a Styler can't carry column_config itself,
     that's a separate st.dataframe parameter). Existing callers are
-    unaffected - both new params default to off.
+    unaffected - every new param defaults to off.
 
     pinned_cols: column names to freeze on horizontal scroll (native
     st.column_config.Column(pinned=True), Streamlit 1.59+ - no custom-
@@ -140,18 +141,38 @@ def build_column_help_config(df, pinned_cols=None, meter_cols=None):
     Probability Meter," also native) - ADDITIVE to the existing percentile
     heatmap coloring on the same cell (style_plain_dataframe's job),
     not a replacement for it.
+
+    short_labels: {column_name: display_label} - overrides the HEADER text
+    only (Streamlit's column_config `label`), leaving the underlying
+    DataFrame column name untouched everywhere else (sorting, joins,
+    style_plain_dataframe's own column-name matching). Deliberately per-
+    caller rather than a blanket app-wide abbreviation rule (e.g. always
+    shortening "FantasyPros" -> "FP") - a table with more room to spare
+    can keep the fuller name where it reads clearer.
+
+    narrow_cols: column names to render at Streamlit's "small" width
+    preset instead of auto-sizing to the header text - for a column whose
+    CONTENT is always short (a "RB4"-style rank badge, a one-decimal
+    points total) but whose full header name would otherwise force the
+    column wider than the data ever needs.
     """
     pinned_cols = pinned_cols or []
     meter_cols = meter_cols or {}
+    short_labels = short_labels or {}
+    narrow_cols = narrow_cols or ()
     config = {}
     for col in df.columns:
         help_text = COLUMN_HELP.get(col)
         is_pinned = col in pinned_cols
+        label = short_labels.get(col)
+        width = "small" if col in narrow_cols else None
         if col in meter_cols:
             lo, hi = meter_cols[col]
-            config[col] = st.column_config.ProgressColumn(help=help_text, pinned=is_pinned, min_value=lo, max_value=hi, format="%.1f")
-        elif help_text or is_pinned:
-            config[col] = st.column_config.Column(help=help_text, pinned=is_pinned)
+            config[col] = st.column_config.ProgressColumn(
+                label=label, help=help_text, pinned=is_pinned, min_value=lo, max_value=hi,
+                format="%.1f", width=width)
+        elif help_text or is_pinned or label or width:
+            config[col] = st.column_config.Column(label=label, help=help_text, pinned=is_pinned, width=width)
     return config
 
 
@@ -1575,7 +1596,8 @@ def get_injury_status_style(status):
 
 
 def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None, tier_cols=None,
-                          position_cols=None, label_cols=None, decimals_by_col=None, multiplier_cols=None):
+                          position_cols=None, label_cols=None, decimals_by_col=None, multiplier_cols=None,
+                          centered_pct_cols=None):
     """
     Sortable Styler for st.dataframe (historical totals, risers, rookie
     watch, rankings, VORP sheet, odds tables, coverage scheme tendencies).
@@ -1641,6 +1663,18 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     which used to render with no color at all despite being the same kind
     of ratio the primary table's Defense multiplier already heatmaps.
 
+    centered_pct_cols: dict of {column_name: 0-100 percentile sequence},
+    same row-position matching - colors via get_diverging_color centered on
+    50 rather than matchup_pct_cols' fixed-alpha good/bad ramp. Explicit
+    request (Weekly Rankings' "Pts Allowed" column): bright green at 100,
+    bright red at 0, fading to a muted, low-alpha neutral at 50 - a
+    genuinely AVERAGE matchup should barely read as colored at all, not
+    just land on a different (yellow) hue at the same intensity every
+    other percentile gets. Reuses get_diverging_color's own capped blend
+    (see that function - the same "don't go billboard-solid at the
+    extreme" cap this app's other diverging coloring already has) rather
+    than a fourth color mechanism.
+
     label_cols: dict of {column_name: {raw_value: display_text}} - keeps a
     column's UNDERLYING values numeric while showing text in the cell (e.g.
     Weekly Rankings' rank columns, which store a sortable number and display
@@ -1681,11 +1715,13 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     label_cols = label_cols or {}
     decimals_by_col = decimals_by_col or {}
     multiplier_cols = multiplier_cols or {}
+    centered_pct_cols = centered_pct_cols or {}
     pct_arrays = {col: list(vals) for col, vals in numeric_pct_cols.items()}
     matchup_arrays = {col: list(vals) for col, vals in matchup_pct_cols.items()}
     tier_arrays = {col: list(vals) for col, vals in tier_cols.items()}
     position_arrays = {col: list(vals) for col, vals in position_cols.items()}
     multiplier_arrays = {col: list(vals) for col, vals in multiplier_cols.items()}
+    centered_pct_arrays = {col: list(vals) for col, vals in centered_pct_cols.items()}
 
     _DEFAULT_STYLE = f"background-color:{C['surface_container']}; color:{C['on_surface']};"
 
@@ -1713,6 +1749,7 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
         tier_vals = tier_arrays.get(col)
         position_vals = position_arrays.get(col)
         multiplier_vals = multiplier_arrays.get(col)
+        centered_pct_vals = centered_pct_arrays.get(col)
         is_team = col in ('Team', 'Opponent')
         is_position = col in ('Pos', 'Position')
         is_tier = col == 'Tier'
@@ -1754,6 +1791,19 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
                 mv = multiplier_vals[pos]
                 out.append(f'background-color:{get_multiplier_color(mv)}; color:#ffffff; font-weight:bold;'
                            if mv is not None and pd.notna(mv) else _DEFAULT_STYLE)
+            elif centered_pct_vals is not None and pos < len(centered_pct_vals):
+                # get_multiplier_color IS get_diverging_color re-centered -
+                # reused here at center=50/max_abs=50 instead of the
+                # multiplier convention's center=1.0/max_abs=0.15, so a
+                # genuinely average (50th percentile) cell blends almost
+                # none of the green/red in, and only an extreme percentile
+                # (near 0 or 100) reaches this app's already-capped "most
+                # saturated it ever gets" cell.
+                cv = centered_pct_vals[pos]
+                out.append(
+                    f'background-color:{get_multiplier_color(cv, max_abs=50.0, center=50.0)}; '
+                    'color:#ffffff; font-weight:bold;'
+                    if cv is not None and pd.notna(cv) else _DEFAULT_STYLE)
             elif is_position:
                 # Position chips, same mechanism as the Team column. Under a
                 # pick clock the position is the first thing scanned on every

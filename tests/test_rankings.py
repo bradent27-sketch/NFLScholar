@@ -8,7 +8,7 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ui.tabs.rankings import _market_proj_pts_with_backfill  # noqa: E402
+from ui.tabs.rankings import _blended_woven_rank, _market_proj_pts_with_backfill  # noqa: E402
 
 
 def test_market_proj_pts_backfill_subtracts_an_unpriced_interception_penalty():
@@ -49,6 +49,71 @@ def test_market_proj_pts_backfill_still_floors_the_final_total_at_zero():
     }])
     out = _market_proj_pts_with_backfill(merged, ['passing_tds'], 'Full PPR')
     assert out.iloc[0] == 0.0
+
+
+def _labeled(values, labels):
+    return [labels[int(v)] for v in values]
+
+
+def test_blended_rank_averages_each_sources_own_ordinal_not_the_points():
+    # Explicit request (2026-09-29): the leading "Rank" column blends
+    # FantasyPros' and the model's own rank by averaging each source's
+    # per-position ORDINAL (1st/2nd/3rd/...), not the raw point totals - a
+    # 0.1-point gap and a 10-point gap both just mean "one spot apart".
+    # FP ordinal:    A=1  B=2  C=3
+    # Model ordinal: A=3  B=1  C=2   (Model Proj Pts: B=20 > C=17 > A=15)
+    # Averaged:      A=2.0  B=1.5  C=2.5  -> re-ranked B, A, C
+    df = pd.DataFrame([
+        {'Pos': 'RB', 'FantasyPros Proj Pts': 20.0, 'Model Proj Pts': 15.0},
+        {'Pos': 'RB', 'FantasyPros Proj Pts': 18.0, 'Model Proj Pts': 20.0},
+        {'Pos': 'RB', 'FantasyPros Proj Pts': 16.0, 'Model Proj Pts': 17.0},
+    ])
+    values, labels = _blended_woven_rank(df, ('FantasyPros Proj Pts', 'Model Proj Pts'))
+    assert _labeled(values, labels) == ['RB2', 'RB1', 'RB3']
+
+
+def test_blended_rank_falls_back_to_whichever_source_ranks_a_player():
+    # D has no FantasyPros number at all (that source doesn't carry him) -
+    # he should rank off his Model ordinal alone, not get penalized by
+    # averaging against a missing value.
+    df = pd.DataFrame([
+        {'Pos': 'RB', 'FantasyPros Proj Pts': 20.0, 'Model Proj Pts': 15.0},
+        {'Pos': 'RB', 'FantasyPros Proj Pts': 18.0, 'Model Proj Pts': 20.0},
+        {'Pos': 'RB', 'FantasyPros Proj Pts': 16.0, 'Model Proj Pts': 17.0},
+        {'Pos': 'RB', 'FantasyPros Proj Pts': None, 'Model Proj Pts': 10.0},
+    ])
+    values, labels = _blended_woven_rank(df, ('FantasyPros Proj Pts', 'Model Proj Pts'))
+    assert _labeled(values, labels) == ['RB2', 'RB1', 'RB3', 'RB4']
+
+
+def test_blended_rank_degrades_to_the_one_real_source_when_fantasypros_absent():
+    # The common case: FantasyPros hasn't been pulled this session at all,
+    # so 'FantasyPros Proj Pts' isn't even a column - the blend should
+    # reproduce the model's own ranking exactly, not break or go empty.
+    df = pd.DataFrame([
+        {'Pos': 'RB', 'Model Proj Pts': 15.0},
+        {'Pos': 'RB', 'Model Proj Pts': 20.0},
+        {'Pos': 'RB', 'Model Proj Pts': 17.0},
+    ])
+    values, labels = _blended_woven_rank(df, ('FantasyPros Proj Pts', 'Model Proj Pts'))
+    assert _labeled(values, labels) == ['RB3', 'RB1', 'RB2']
+
+
+def test_blended_rank_weaves_positions_together_like_woven_rank():
+    df = pd.DataFrame([
+        {'Pos': 'RB', 'Model Proj Pts': 20.0},
+        {'Pos': 'WR', 'Model Proj Pts': 18.0},
+        {'Pos': 'RB', 'Model Proj Pts': 10.0},
+    ])
+    values, labels = _blended_woven_rank(df, ('FantasyPros Proj Pts', 'Model Proj Pts'))
+    assert _labeled(values, labels) == ['RB1', 'WR1', 'RB2']
+
+
+def test_blended_rank_with_no_points_columns_at_all_returns_none():
+    df = pd.DataFrame([{'Pos': 'RB', 'Player': 'Nobody'}])
+    values, labels = _blended_woven_rank(df, ('FantasyPros Proj Pts', 'Model Proj Pts'))
+    assert values is None
+    assert labels == {}
 
 
 def test_market_proj_pts_backfill_matches_the_market_when_fully_priced():

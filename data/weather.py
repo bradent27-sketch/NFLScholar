@@ -317,6 +317,115 @@ def resolve_game_weather(schedule_df: pd.DataFrame, week: int,
     return have
 
 
+# --- precipitation (forecast-only) ------------------------------------------
+# A separate function, not a field folded into GameWeather/resolve_game_
+# weather - the schedule's own RECORDED columns (temp/wind/roof) carry no
+# precipitation field at all, only Open-Meteo's FORECAST does, so a fourth
+# GameWeather field would silently read None for every already-played game
+# and every provider but one. Kept additive on purpose: WeatherProvider.fetch
+# and every existing caller/test of it (weather_stat_multipliers, the wind/
+# temp model adjustment) are untouched.
+_PRECIP_BUCKETS = ("dry", "light_rain", "heavy_rain", "snow")
+
+
+def _precip_bucket(precip_mm: float | None, snowfall_cm: float | None) -> str | None:
+    if snowfall_cm is not None and snowfall_cm > 0:
+        return "snow"
+    if precip_mm is None:
+        return None
+    if precip_mm <= 0:
+        return "dry"
+    if precip_mm < 2.5:
+        return "light_rain"
+    return "heavy_rain"
+
+
+def _open_meteo_precip(lat: float, lon: float, when_utc: _dt.datetime) -> str | None:
+    try:
+        import requests
+    except Exception:
+        return None
+    day = when_utc.date().isoformat()
+    params = {
+        "latitude": round(lat, 3), "longitude": round(lon, 3),
+        "hourly": "precipitation,snowfall",
+        "precipitation_unit": "mm",
+        "start_date": day, "end_date": day, "timezone": "UTC",
+    }
+    try:
+        r = requests.get(OpenMeteoProvider.ENDPOINT, params=params, timeout=12)
+        r.raise_for_status()
+        h = r.json().get("hourly", {})
+        times = h.get("time", [])
+        if not times:
+            return None
+        target = when_utc.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+        idx = min(range(len(times)),
+                  key=lambda i: abs(_dt.datetime.fromisoformat(times[i]) - target))
+        precip = h.get("precipitation", [])
+        snow = h.get("snowfall", [])
+        p = precip[idx] if idx < len(precip) else None
+        s = snow[idx] if idx < len(snow) else None
+        return _precip_bucket(p, s)
+    except Exception:
+        return None
+
+
+def resolve_game_precip(schedule_df: pd.DataFrame, week: int, use_cache: bool = True) -> dict[str, str | None]:
+    """{team: 'dry'|'light_rain'|'heavy_rain'|'snow'|None} for the weekly
+    board's Precip column - forecast-only (Open-Meteo), since the schedule's
+    own recorded columns carry no precipitation field. None means indoor or
+    unknown, NOT "confirmed dry" - a caller that also has resolve_game_
+    weather's is_outdoor for the same team should treat that as the real
+    dome signal and only consult this bucket for an outdoor game."""
+    if schedule_df is None or schedule_df.empty:
+        return {}
+    need = {"week", "home_team", "away_team"}
+    if not need.issubset(schedule_df.columns):
+        return {}
+    wk = schedule_df[pd.to_numeric(schedule_df["week"], errors="coerce") == week]
+    if wk.empty:
+        return {}
+    season = int(pd.to_numeric(wk["season"], errors="coerce").dropna().iloc[0]) if "season" in wk else 0
+    ckey = f"precip_{season}_wk{week}"
+    cache = {}
+    if use_cache:
+        p = _cache_path(ckey)
+        if os.path.exists(p) and (time.time() - os.path.getmtime(p)) < _FORECAST_TTL:
+            try:
+                cache = json.load(open(p))
+            except Exception:
+                cache = {}
+
+    out: dict[str, str | None] = {}
+    dirty = False
+    for _, g in wk.iterrows():
+        home = g.get("home_team")
+        if not isinstance(home, str) or home not in STADIUM_COORDS:
+            continue
+        if not _roof_is_outdoor(g.get("roof")):
+            bucket = None
+        elif home in cache:
+            bucket = cache[home]
+        else:
+            lat, lon, _dome = STADIUM_COORDS[home]
+            try:
+                bucket = _open_meteo_precip(lat, lon, _kickoff_utc(g))
+            except Exception:
+                bucket = None
+            cache[home] = bucket
+            dirty = True
+        for team in (g.get("home_team"), g.get("away_team")):
+            if isinstance(team, str) and team:
+                out[team] = bucket
+    if use_cache and dirty:
+        try:
+            json.dump(cache, open(_cache_path(ckey), "w"))
+        except Exception:
+            pass
+    return out
+
+
 if __name__ == "__main__":
     import sys
     import nflreadpy as nfl

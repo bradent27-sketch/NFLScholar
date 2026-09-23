@@ -4983,7 +4983,35 @@ def _team_week_margins(schedule_df):
     return both
 
 
-def annotate_player_history_participation(history, name_col, team_col, schedule_df=None):
+def _player_snap_seed(eligible_history, name_col, n=PARTIAL_GAME_REFERENCE_APPEARANCES):
+    """{clean_name: [snap_share_0_1, ...]} - each player's last `n` ELIGIBLE
+    snap shares in `eligible_history`, oldest -> newest.
+
+    Feeds annotate_player_history_participation's `prior_reference` param so
+    its reference window can start from the season BEFORE `history` instead
+    of empty - see that parameter's own docstring for why an empty start is
+    a real gap, not a conservative default. `eligible_history` should
+    already be filtered to `_player_history_eligible` (the same
+    player_prior/player_prior2 frames every other stat's prior-season rate
+    already uses), so a partial/interrupted prior-season game doesn't seed
+    the new season's reference with a number that was itself excluded as
+    unreliable.
+    """
+    required = {name_col, 'weekly_snap_pct', 'week'}
+    if eligible_history.empty or not required.issubset(eligible_history.columns):
+        return {}
+    df = eligible_history.copy()
+    df['_player'] = clean_name_exact(df[name_col])
+    df['_snap'] = pd.to_numeric(df['weekly_snap_pct'], errors='coerce') / 100.0
+    df['_week'] = pd.to_numeric(df['week'], errors='coerce')
+    df = df[(df['_player'] != '') & df['_snap'].gt(0.0) & df['_snap'].le(1.0) & df['_week'].notna()]
+    if df.empty:
+        return {}
+    df = df.sort_values(['_player', '_week'])
+    return {player: g['_snap'].tail(n).tolist() for player, g in df.groupby('_player', observed=True)}
+
+
+def annotate_player_history_participation(history, name_col, team_col, schedule_df=None, prior_reference=None):
     """Mark only clearly interrupted player-games as unusable rate evidence.
 
     Weekly box scores do not include a trustworthy timestamped injury/bench
@@ -5007,6 +5035,21 @@ def annotate_player_history_participation(history, name_col, team_col, schedule_
     intentionally for *player baseline/rate* inputs only.  Defense profiles
     must continue to use the raw team-game history: an injured starter and
     his replacement still describe what the defense faced that day.
+
+    `prior_reference` (optional): {clean_name: [snap_share_0_1, ...]} from
+    _player_snap_seed, built off the SEASON BEFORE `history` - seeds each
+    player's reference window at the START of `history` instead of empty.
+    Without this, the abrupt-partial check is structurally blind at every
+    season boundary: `history` is always one season at a time (see
+    build_weekly_projections' three separate hist/prior/prior2 calls), so a
+    player's own week 1 has zero prior appearances YET THIS SEASON, and
+    `_established_role` is always False for it - regardless of how
+    established his role was the year before, no different from a rookie's
+    real opening game. Found 2026-09-23 on Zay Flowers: injured out of his
+    2026 week-1 opener at a 29% snap share, coming off an ~85% 2025 role -
+    the abrupt exit was invisible to this screen, and his real, efficient
+    29%-of-a-game line stood as his full observed week-1 role for every
+    rate/expected-snap-share calculation downstream.
     """
     annotated = history.copy()
     annotated['_player_history_eligible'] = True
@@ -5059,8 +5102,9 @@ def annotate_player_history_participation(history, name_col, team_col, schedule_
     frame = frame.sort_values(['_player', '_week', '_game_key', '_row']).copy()
     reference = np.full(len(frame), np.nan)
     appearances = np.zeros(len(frame), dtype=int)
+    _seed = prior_reference or {}
     for _player, positions in frame.groupby('_player', observed=True).indices.items():
-        prior_snaps = []
+        prior_snaps = list(_seed.get(_player, ()))[-PARTIAL_GAME_REFERENCE_APPEARANCES:]
         for position in positions:
             recent = prior_snaps[-PARTIAL_GAME_REFERENCE_APPEARANCES:]
             appearances[position] = len(recent)
@@ -6788,10 +6832,23 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # copies below exclude only clearly interrupted individual games before
     # computing a player's full-game rate, role trend, or snap expectation.
     # An injury replacement still belongs in the opponent's team-game result.
-    hist_annotated = annotate_player_history_participation(
-        hist, name_col, team_col, schedule_df)
-    player_hist = hist_annotated[hist_annotated['_player_history_eligible']].copy()
+    #
+    # Prior season computed FIRST (2026-09-23, reordered from current-season-
+    # first) so its own eligible snap history can seed hist_annotated's
+    # reference window across the season boundary - see
+    # annotate_player_history_participation's `prior_reference` docstring for
+    # why an empty start there is a real gap (a player's own week 1 can never
+    # be flagged as an abrupt partial without it, no matter how established
+    # his role was the year before), not a conservative default.
     prior_schedule_df = load_schedule(year - 1) if not prior_played.empty else pd.DataFrame()
+    prior_annotated = annotate_player_history_participation(
+        prior_played, prior_name_col, prior_team_col, prior_schedule_df)
+    player_prior = prior_annotated[prior_annotated['_player_history_eligible']].copy()
+
+    hist_annotated = annotate_player_history_participation(
+        hist, name_col, team_col, schedule_df,
+        prior_reference=_player_snap_seed(player_prior, prior_name_col))
+    player_hist = hist_annotated[hist_annotated['_player_history_eligible']].copy()
 
     def _blowout_weeks_for_matchup(schedule_frame, matchup_year):
         """Which (team, week) set (if any) to down-weight in a defense's own
@@ -6834,9 +6891,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             return None
         return OFFENSE_PRIOR_GAMES
 
-    prior_annotated = annotate_player_history_participation(
-        prior_played, prior_name_col, prior_team_col, prior_schedule_df)
-    player_prior = prior_annotated[prior_annotated['_player_history_eligible']].copy()
     prior2_schedule_df = (load_schedule(year - 2)
                           if not prior2_played.empty else pd.DataFrame())
     prior2_annotated = annotate_player_history_participation(

@@ -138,6 +138,27 @@ def test_wind_neutral_at_or_below_knee_indoor_and_missing():
     assert weather_stat_multipliers("WR", np.nan, is_outdoor=True) == {}
 
 
+def test_precip_bucket_thresholds():
+    assert wx._precip_bucket(0.0, 0.0) == "dry"
+    assert wx._precip_bucket(1.0, 0.0) == "light_rain"
+    assert wx._precip_bucket(5.0, 0.0) == "heavy_rain"
+    assert wx._precip_bucket(5.0, 2.0) == "snow"          # snowfall wins over rain amount
+    assert wx._precip_bucket(None, None) is None
+
+
+def test_resolve_game_precip_is_dome_none_and_keys_both_teams(monkeypatch):
+    sch = _schedule([
+        {"season": 2026, "week": 1, "home_team": "BUF", "away_team": "NYJ",
+         "roof": "outdoors", "gameday": "2026-09-13", "gametime": "13:00"},
+        {"season": 2026, "week": 1, "home_team": "DET", "away_team": "GB",
+         "roof": "dome", "gameday": "2026-09-13", "gametime": "13:00"},
+    ])
+    monkeypatch.setattr(wx, "_open_meteo_precip", lambda lat, lon, when: "heavy_rain")
+    out = wx.resolve_game_precip(sch, 1, use_cache=False)
+    assert out["BUF"] == "heavy_rain" and out["NYJ"] == "heavy_rain"
+    assert out["DET"] is None and out["GB"] is None
+
+
 def test_wind_is_monotone_and_clamped():
     prev = 2.0
     for w in range(6, 70, 4):

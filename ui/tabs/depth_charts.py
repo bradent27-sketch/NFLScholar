@@ -198,7 +198,8 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
     selected = status.get('player')
     selected_index = player_options.index(selected) if selected in player_options else 0
 
-    with st.expander('Weekly projection QB1 selection', expanded=status.get('status') == 'selection_required'):
+    with st.expander(f'{team} — Weekly projection QB1 selection',
+                     expanded=status.get('status') == 'selection_required'):
         st.caption(
             'The generated chart below is not the weekly QB1 source. A locally imported Ourlads preseason '
             'chart can resolve a healthy listed QB1; a manual selection always wins; otherwise a clear '

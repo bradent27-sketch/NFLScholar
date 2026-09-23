@@ -1532,6 +1532,62 @@ def test_partial_game_screen_never_treats_an_unmatched_snap_source_as_an_exit():
     assert annotated['_player_history_eligible'].all()
 
 
+def test_player_snap_seed_takes_the_last_n_eligible_appearances_oldest_to_newest():
+    rows = [
+        {'name': 'Vet WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+         'position': 'WR', 'weekly_snap_pct': share, 'has_snap_match': True}
+        for week, share in ((1, 80.0), (2, 82.0), (3, 84.0), (4, 86.0))
+    ]
+    eligible = weekly(rows)
+    seed = wp._player_snap_seed(eligible, 'name')
+    assert seed['vetwr'] == [0.82, 0.84, 0.86]  # last 3 (PARTIAL_GAME_REFERENCE_APPEARANCES)
+
+
+def test_partial_game_screen_flags_a_season_opener_using_prior_season_seed():
+    # The Zay Flowers case (2026-09-23): a proven starter's very first game
+    # of a NEW season, cut short by injury, at a snap share far below his
+    # established role. Without prior_reference this game has zero prior
+    # appearances THIS SEASON, so _established_role can never be True and
+    # the abrupt exit is invisible - exactly the gap this test guards.
+    prior_eligible = weekly([
+        {'name': 'WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'has_snap_match': True}
+        for week in (14, 15, 16)
+    ])
+    seed = wp._player_snap_seed(prior_eligible, 'name')
+
+    opener = weekly([
+        {'name': 'WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 29.0, 'has_snap_match': True, 'targets': 6.0},
+    ])
+    without_seed = wp.annotate_player_history_participation(opener, 'name', 'team')
+    assert without_seed['_player_history_eligible'].iloc[0]  # the gap: never flagged
+
+    with_seed = wp.annotate_player_history_participation(opener, 'name', 'team', prior_reference=seed)
+    assert not with_seed['_player_history_eligible'].iloc[0]
+    assert with_seed['_player_history_reason'].iloc[0] == 'abrupt partial role after established workload'
+
+
+def test_partial_game_screen_prior_season_seed_does_not_flag_a_normal_role_change():
+    # A player who simply has a smaller role than last year (not an
+    # in-game injury exit) must not be swept in just because a seed exists -
+    # the existing PARTIAL_GAME_ABSOLUTE_MAX_SNAP_SHARE cap still gates this
+    # the same way it gates an in-season drop.
+    prior_eligible = weekly([
+        {'name': 'WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': week,
+         'position': 'WR', 'weekly_snap_pct': 85.0, 'has_snap_match': True}
+        for week in (14, 15, 16)
+    ])
+    seed = wp._player_snap_seed(prior_eligible, 'name')
+
+    opener = weekly([
+        {'name': 'WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': 1,
+         'position': 'WR', 'weekly_snap_pct': 70.0, 'has_snap_match': True, 'targets': 6.0},
+    ])
+    with_seed = wp.annotate_player_history_participation(opener, 'name', 'team', prior_reference=seed)
+    assert with_seed['_player_history_eligible'].iloc[0]
+
+
 def test_inseason_qb1_resolver_requires_one_clear_recent_starter_or_manual_choice():
     current = pd.DataFrame([
         {'name': 'Starter', 'team': 'KC', 'position': 'QB'},

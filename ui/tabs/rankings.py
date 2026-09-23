@@ -38,7 +38,7 @@ from data.pass_capacity_allocator import (
     PASS_CAPACITY_DEADBAND, PASS_CAPACITY_TRUSTED_TIER, PASS_CAPACITY_TRUSTED_TIER_RB)
 from ui.charts import sparkline_data_uri
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
-                        get_diverging_color, get_multiplier_color)
+                        get_diverging_color, get_multiplier_color, get_team_style)
 from ui.components import (position_group_buttons, apply_position_group, skeleton_loader,
                            import_hint, switch_tab, render_weekly_board_uploads)
 
@@ -498,6 +498,11 @@ def _render_alignment_mix(detail, reference_only=False):
         row = {splits_col: f"{row_label} — {rate:.1%}" if rate is not None and pd.notna(rate) else f"{row_label} — —"}
         table_rows.append(row)
     totals_row = {splits_col: "Blend (all)"}
+    # Row-position-matched raw ratios for style_plain_dataframe's
+    # multiplier_cols - the "Allowed×" columns are formatted display
+    # strings ("1.148×"), so they can't drive numeric coloring off their
+    # own dtype the way a real float column would.
+    multiplier_arrays = {}
 
     for stat, pff_stat, stat_label in _ALIGNMENT_MIX_STATS:
         # NOTE: the underlying columns are named with pff_alignment.py's own
@@ -528,17 +533,21 @@ def _render_alignment_mix(detail, reference_only=False):
         per_game_col = f'{stat_label} /Game'
         mult_col = f'{stat_label} Allowed×'
         combined_col = f'{stat_label} Combined'
+        mult_vals = []
         for row, (key, row_label, _) in zip(table_rows, aligns):
             ratio = role.get(f'alignment_defense_{pff_stat}_{key}_ratio')
             per_game = (blended_rate * shares[key]) if blended_rate is not None else None
             row[per_game_col] = _fmt_stat(stat, per_game)
             row[mult_col] = f"{ratio:.3f}×" if ratio is not None and pd.notna(ratio) else '—'
+            mult_vals.append(float(ratio) if ratio is not None and pd.notna(ratio) else None)
             if per_game is not None and ratio is not None and pd.notna(ratio):
                 row[combined_col] = _fmt_stat(stat, per_game * ratio * context_mult)
             else:
                 row[combined_col] = '—'
         totals_row[per_game_col] = _fmt_stat(stat, blended_rate)
         totals_row[mult_col] = f"{blended_mult:.3f}×" if blended_mult is not None else '—'
+        mult_vals.append(float(blended_mult) if blended_mult is not None and pd.notna(blended_mult) else None)
+        multiplier_arrays[mult_col] = mult_vals
         # The bottom row always uses the authoritative season-aggregate
         # blend (blended_rate * blended_mult * context), not a re-sum of the
         # per-row Combined cells above - those can individually show '—' (e.g.
@@ -549,7 +558,8 @@ def _render_alignment_mix(detail, reference_only=False):
             if blended_rate is not None and blended_mult is not None else '—')
 
     table = pd.DataFrame(table_rows + [totals_row])
-    st.dataframe(style_plain_dataframe(table), hide_index=True, width="stretch", height=df_auto_height(len(table)))
+    st.dataframe(style_plain_dataframe(table, multiplier_cols=multiplier_arrays), hide_index=True, width="stretch",
+                height=df_auto_height(len(table)))
     reconcile_clause = (
         "For a TIGHT END these numbers are CONTEXT ONLY - the primary table's 'Defense multiplier' "
         "uses the scheme (man/zone) blend shown above this, not this alignment blend, wherever scheme "
@@ -624,6 +634,7 @@ def _render_scheme_mix(detail):
     sides = [('man', 'Man', man_share), ('zone', 'Zone', zone_share)]
     table_rows = [{splits_col: f"{label} — {share:.1%}"} for _key, label, share in sides]
     totals_row = {splits_col: "Blend (all)"}
+    multiplier_arrays = {}
 
     for stat, pff_stat, stat_label in _ALIGNMENT_MIX_STATS:
         stat_vals = detail.get('stats', {}).get(stat, {})
@@ -638,11 +649,13 @@ def _render_scheme_mix(detail):
         per_game_col = f'{stat_label} /Game'
         mult_col = f'{stat_label} Allowed×'
         combined_col = f'{stat_label} Combined'
+        mult_vals = []
         for row, (key, _label, share) in zip(table_rows, sides):
             ratio = evidence.get(f'defense_scheme_{pff_stat}_{key}_ratio')
             per_game = (blended_rate * share) if blended_rate is not None else None
             row[per_game_col] = _fmt_stat(stat, per_game)
             row[mult_col] = f"{float(ratio):.3f}×" if ratio is not None and pd.notna(ratio) else '—'
+            mult_vals.append(float(ratio) if ratio is not None and pd.notna(ratio) else None)
             if per_game is not None and ratio is not None and pd.notna(ratio):
                 row[combined_col] = _fmt_stat(stat, per_game * float(ratio) * context_mult)
             else:
@@ -650,12 +663,15 @@ def _render_scheme_mix(detail):
         totals_row[per_game_col] = _fmt_stat(stat, blended_rate)
         totals_row[mult_col] = (f"{float(blended_mult):.3f}×"
                                 if blended_mult is not None and pd.notna(blended_mult) else '—')
+        mult_vals.append(float(blended_mult) if blended_mult is not None and pd.notna(blended_mult) else None)
+        multiplier_arrays[mult_col] = mult_vals
         totals_row[combined_col] = (
             _fmt_stat(stat, blended_rate * float(blended_mult) * context_mult)
             if blended_rate is not None and blended_mult is not None and pd.notna(blended_mult) else '—')
 
     table = pd.DataFrame(table_rows + [totals_row])
-    st.dataframe(style_plain_dataframe(table), hide_index=True, width="stretch", height=df_auto_height(len(table)))
+    st.dataframe(style_plain_dataframe(table, multiplier_cols=multiplier_arrays), hide_index=True, width="stretch",
+                height=df_auto_height(len(table)))
     st.caption(
         "/Game = this player's own per-game projected rate for that stat, split by his own man/zone "
         "route share (not a separately measured per-scheme rate). 'Allowed×' = the opponent's allowed-"
@@ -985,8 +1001,7 @@ def _render_context_multiplier_table(ingredients):
 
 
 def _team_cell_style(team_code):
-    color = TEAM_CONFIG.get(str(team_code).strip().upper(), {}).get('color')
-    return f'background-color:{color}; color:#ffffff; font-weight:bold;' if color else ''
+    return get_team_style(team_code)
 
 
 def _style_team_column(df, col):
@@ -3362,6 +3377,17 @@ def render():
             for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
                 if c in indexed.columns and indexed[c].notna().any():
                     pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
+            # Pre-formatted AFTER percentile calc (which needs the real
+            # numeric NaN) for the same reason _STAT_DISPLAY_COLS are -
+            # a player with zero market coverage (no book posted anything)
+            # leaves 'Market Proj Pts' NaN, and the interactive grid prints
+            # that as the literal word "None" rather than style_plain_
+            # dataframe's intended blank/dash. pct_cols above still colors
+            # correctly since it's matched by row position, not this
+            # column's own (now string) dtype.
+            for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
+                if c in indexed.columns:
+                    indexed[c] = indexed[c].map(lambda v: f"{v:.1f}" if pd.notna(v) else '—')
             column_config = build_column_help_config(
                 indexed, pinned_cols=['Rank', 'Team', 'Opponent'])
             column_config['Last 5 Weeks'] = st.column_config.ImageColumn(

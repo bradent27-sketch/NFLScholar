@@ -1410,6 +1410,14 @@ def _blend_hex(c1, c2, frac):
     return f"#{round(r1 + (r2 - r1) * frac):02x}{round(g1 + (g2 - g1) * frac):02x}{round(b1 + (b2 - b1) * frac):02x}"
 
 
+# Capped below 1.0 (same spirit as _GRADE_ALPHA/_MATCHUP_ALPHA's
+# transparency on the other heatmaps) so even an extreme delta still reads
+# as a tinted cell rather than a billboard-solid block of pure
+# #1ed760/#ef4444 - feedback that the strongest cells felt too intense next
+# to the rest of the app's deliberately muted palette.
+_DIVERGING_MAX_BLEND = 0.82
+
+
 def get_diverging_color(val, max_abs):
     """
     Red-green diverging color for signed DELTA columns (e.g. "VORP vs
@@ -1428,7 +1436,8 @@ def get_diverging_color(val, max_abs):
     frac = max(-1.0, min(1.0, float(val) / max_abs))
     if abs(frac) < 0.05:
         return C['surface_container_high']
-    return _blend_hex(C['surface_container_high'], C['positive'] if frac > 0 else C['negative'], abs(frac))
+    blend = abs(frac) * _DIVERGING_MAX_BLEND
+    return _blend_hex(C['surface_container_high'], C['positive'] if frac > 0 else C['negative'], blend)
 
 
 def get_multiplier_color(val, max_abs=0.15, center=1.0):
@@ -1511,8 +1520,62 @@ def get_tier_color(tier):
     return TIER_COLORS[min(index, len(TIER_COLORS) - 1)]
 
 
+# Official NFL colors span a huge lightness range (Steelers gold #FFB612,
+# Saints tan #D3BC8D and Cowboys/Raiders silver alongside Browns' near-black
+# brown and Ravens purple) - painted at full opacity with flat white text,
+# the light end reads as a washed-out, hard-to-read chip, and the whole row
+# looks like clashing solid paint swatches rather than one themed table.
+# Blending every team color partway toward the app's own dark surface tints
+# each team chip enough to guarantee white text stays legible AND pulls
+# every team into the same muted, cohesive palette this app's other cell
+# coloring (get_pff_color, get_matchup_color) already uses - team identity
+# stays instantly readable (same hue, just not billboard-saturated), it
+# just no longer fights the rest of the dark theme for attention.
+_TEAM_SURFACE_BLEND = 0.42
+
+
+def get_team_style(team_code, text_color='#ffffff'):
+    """Shared muted team-color cell style - every 'Team'/'Opponent'-style
+    column app-wide should use this instead of painting TEAM_CONFIG's color
+    on at full strength, so a game log, a depth chart, and the Weekly
+    Rankings table all render one team the same way."""
+    color = TEAM_CONFIG.get(str(team_code).strip().upper(), {}).get('color')
+    if not color:
+        return ''
+    blended = _blend_hex(color, C['surface_container_high'], _TEAM_SURFACE_BLEND)
+    return f"background-color:{blended}; color:{text_color}; font-weight:bold;"
+
+
+# Reuses _MATCHUP_COLOR_STOPS' exact muted red/orange/yellow (rather than a
+# new hand-picked triple) so an injury-risk flag reads as part of the same
+# small "muted stoplight" vocabulary the matchup tables already established,
+# instead of introducing a fourth palette. Green is deliberately absent -
+# "Healthy" is the unmarked/default case (no chip), not a color earning a
+# gold star, since the vast majority of rows are healthy and painting all of
+# them would make the injured minority harder to spot, not easier.
+_INJURY_STATUS_COLORS = {
+    'out': _MATCHUP_COLOR_STOPS[0][1],       # muted red
+    'doubtful': _MATCHUP_COLOR_STOPS[1][1],  # muted orange
+    'questionable': _MATCHUP_COLOR_STOPS[2][1],  # muted yellow
+}
+_INJURY_STATUS_ALPHA = 0.55
+
+
+def get_injury_status_style(status):
+    """Background for an 'Injury Status' cell ('Out (0%)', 'Questionable
+    (75%)', ...) or '' for healthy/blank - matched on the leading word only,
+    case-insensitively, since the column also carries a reported-probability
+    suffix this shouldn't need to parse."""
+    word = str(status or '').strip().split(' ')[0].lower()
+    rgb = _INJURY_STATUS_COLORS.get(word)
+    if not rgb:
+        return ''
+    r, g, b = rgb
+    return f"background-color:rgba({r}, {g}, {b}, {_INJURY_STATUS_ALPHA}); color:#ffffff; font-weight:bold;"
+
+
 def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchup_pct_cols=None, tier_cols=None,
-                          position_cols=None, label_cols=None, decimals_by_col=None):
+                          position_cols=None, label_cols=None, decimals_by_col=None, multiplier_cols=None):
     """
     Sortable Styler for st.dataframe (historical totals, risers, rookie
     watch, rankings, VORP sheet, odds tables, coverage scheme tendencies).
@@ -1568,6 +1631,16 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     than tier_cols: a column already carrying an explicit tier read (e.g.
     Model Rank) keeps it rather than being overridden by this.
 
+    multiplier_cols: dict of {column_name: multiplier-value sequence}, same
+    row-position matching as the others - colors via get_multiplier_color
+    (green above 1.0, red below, same scale the decomposition dialog's own
+    Defense/Context multiplier columns use). For a column already displayed
+    as a formatted "1.234×" string (so its own dtype isn't numeric and can't
+    drive numeric_pct_cols/diverging_cols), pass the underlying raw floats
+    here instead - e.g. the alignment/scheme mix tables' "Allowed×" columns,
+    which used to render with no color at all despite being the same kind
+    of ratio the primary table's Defense multiplier already heatmaps.
+
     label_cols: dict of {column_name: {raw_value: display_text}} - keeps a
     column's UNDERLYING values numeric while showing text in the cell (e.g.
     Weekly Rankings' rank columns, which store a sortable number and display
@@ -1607,10 +1680,12 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
     position_cols = position_cols or {}
     label_cols = label_cols or {}
     decimals_by_col = decimals_by_col or {}
+    multiplier_cols = multiplier_cols or {}
     pct_arrays = {col: list(vals) for col, vals in numeric_pct_cols.items()}
     matchup_arrays = {col: list(vals) for col, vals in matchup_pct_cols.items()}
     tier_arrays = {col: list(vals) for col, vals in tier_cols.items()}
     position_arrays = {col: list(vals) for col, vals in position_cols.items()}
+    multiplier_arrays = {col: list(vals) for col, vals in multiplier_cols.items()}
 
     _DEFAULT_STYLE = f"background-color:{C['surface_container']}; color:{C['on_surface']};"
 
@@ -1637,9 +1712,11 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
         pct_vals = pct_arrays.get(col)
         tier_vals = tier_arrays.get(col)
         position_vals = position_arrays.get(col)
-        is_team = col == 'Team'
+        multiplier_vals = multiplier_arrays.get(col)
+        is_team = col in ('Team', 'Opponent')
         is_position = col in ('Pos', 'Position')
         is_tier = col == 'Tier'
+        is_injury = col == 'Injury Status'
         out = []
         for pos, v in enumerate(values):
             if is_tier:
@@ -1666,6 +1743,17 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
             elif pct_vals is not None and pos < len(pct_vals):
                 bg = get_pff_color(pct_vals[pos])
                 out.append(f'background-color:{bg}; color:#ffffff; font-weight:bold;')
+            elif multiplier_vals is not None and pos < len(multiplier_vals):
+                # Same green/red-centered-on-1.0 read as the primary
+                # decomposition table's own "Defense multiplier"/"Context
+                # multiplier" columns (get_multiplier_color) - a detail
+                # table's own ratio column (e.g. the alignment/scheme mix
+                # "Allowed×" breakdowns) is the same kind of number and
+                # should look like it, not sit there uncolored while the
+                # summary row above it is fully heatmapped.
+                mv = multiplier_vals[pos]
+                out.append(f'background-color:{get_multiplier_color(mv)}; color:#ffffff; font-weight:bold;'
+                           if mv is not None and pd.notna(mv) else _DEFAULT_STYLE)
             elif is_position:
                 # Position chips, same mechanism as the Team column. Under a
                 # pick clock the position is the first thing scanned on every
@@ -1678,17 +1766,13 @@ def style_plain_dataframe(df, numeric_pct_cols=None, diverging_cols=None, matchu
                 else:
                     out.append(_DEFAULT_STYLE)
             elif is_team:
-                # Same team-color convention already used for the bio card
-                # accent, depth chart Position column, and game log opponent
-                # cell - ties every "Team" column app-wide into one
-                # consistent visual language instead of plain text, and
-                # makes a given team's players easy to spot scanning down a
-                # sorted table (e.g. after sorting Risers by Pct Jump).
-                team_color = TEAM_CONFIG.get(str(v), {}).get('color')
-                if team_color:
-                    out.append(f"background-color:{team_color}; color:#ffffff; font-weight:bold;")
-                else:
-                    out.append(_DEFAULT_STYLE)
+                # Same muted team-color convention used everywhere else a
+                # team badge appears (bio card accent, depth chart, game
+                # log) - see get_team_style's own docstring for why it's
+                # blended rather than a flat brand-color fill.
+                out.append(get_team_style(v) or _DEFAULT_STYLE)
+            elif is_injury:
+                out.append(get_injury_status_style(v) or _DEFAULT_STYLE)
             else:
                 out.append(_DEFAULT_STYLE)
         return out
@@ -1790,8 +1874,7 @@ def render_game_log_html_table(log_df_view, avg_source_df, log_cols, header_map,
                     f"background-color:{C['surface_container']}; color:{C['on_surface']};")
         if col == 'opponent_team':
             team = str(r.get(col, '')).strip().upper() if pd.notna(r.get(col)) else '--'
-            t_bg = TEAM_CONFIG.get(team, {}).get('color', C['surface_container'])
-            return team, f"background-color:{t_bg}; color:#ffffff; font-weight:bold;"
+            return team, get_team_style(team) or f"background-color:{C['surface_container']}; color:{C['on_surface']};"
         # A scheduled-but-not-yet-played week: a present, empty cell (muted),
         # never a 0 - the season fills these in as games happen.
         if bool(r.get('_unplayed')):
@@ -1978,13 +2061,13 @@ def style_depth_chart_table(dc_df, sel_team, snap_map, pff_grades_map, global_ro
         return cell_text, style
 
     text_rows, style_rows = [], []
-    team_bg = TEAM_CONFIG.get(sel_team, {}).get('color', C['surface_container_high'])
+    team_style = get_team_style(sel_team) or f"background-color:{C['surface_container_high']}; color:#ffffff; font-weight:bold;"
     for _, row in dc_df.iterrows():
         text_row, style_row = {}, {}
         for col, val in row.items():
             if col == 'Position':
                 text_row[col] = val
-                style_row[col] = f"background-color:{team_bg}; color:#ffffff; font-weight:bold;"
+                style_row[col] = team_style
             else:
                 text, style = build_cell(val)
                 text_row[col] = text

@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.market_devig import (  # noqa: E402
     implied_mean_from_line, norm_ppf, poisson_mean_for_upper_tail,
-    _poisson_upper_tail,
+    _poisson_upper_tail, _yard_skew_factor,
 )
 
 
@@ -67,12 +67,40 @@ def test_attempts_and_carries_are_devigged_as_counts():
     assert implied_mean_from_line(15.5, None, 'carries', 'RB') == 15.5   # bare board unchanged
 
 
-def test_even_yardage_line_is_unchanged():
-    # A yardage line priced evenly implies its own number - no skew term.
-    assert abs(implied_mean_from_line(74.5, 0.5, 'receiving_yards', 'WR') - 74.5) < 1e-6
-    # Over favoured -> mean above the number, scaled by the WR sigma (36).
+def test_even_yardage_line_gets_the_median_to_mean_skew_correction():
+    # 2026-09-23: an evenly priced yardage line is a MEDIAN, and weekly
+    # yardage is right-skewed, so even a perfectly even line now lifts by the
+    # bucketed factor fit in scripts/fit_yard_skew.py (YARD_MEDIAN_TO_MEAN).
+    factor = _yard_skew_factor('WR', 'receiving_yards', 50.5)
+    assert abs(implied_mean_from_line(50.5, 0.5, 'receiving_yards', 'WR') - 50.5 * factor) < 1e-6
+    # A season-period line skips the skew term entirely (17-game sums are
+    # already close to symmetric) - the even line really is unchanged there.
+    assert abs(implied_mean_from_line(50.5, 0.5, 'receiving_yards', 'WR', period='season') - 50.5) < 1e-6
+    # Over favoured -> vig-lean shift (WR sigma 36) THEN the skew multiplier.
+    hi_factor = _yard_skew_factor('WR', 'receiving_yards', 74.5)
     hi = implied_mean_from_line(74.5, 0.60, 'receiving_yards', 'WR')
-    assert 74.5 + 8 < hi < 74.5 + 11        # 0.253 * 36 ~ 9.1
+    vig_only = 74.5 + norm_ppf(0.60) * 36.0
+    assert abs(hi - vig_only * hi_factor) < 1e-6
+    assert hi > vig_only > 74.5   # skew strictly adds on top of the vig lean
+
+
+def test_yard_skew_factor_falls_back_to_no_correction_for_unknown_position():
+    # A missing or unrecognized position (not one of QB/RB/WR/TE) isn't
+    # guessed at - the caller (weekly_market_projection) is expected to have
+    # already tried to backfill it from the board.
+    assert _yard_skew_factor(None, 'receiving_yards', 74.5) == 1.0
+    assert _yard_skew_factor('', 'receiving_yards', 74.5) == 1.0
+    assert _yard_skew_factor('K', 'receiving_yards', 74.5) == 1.0
+    assert implied_mean_from_line(74.5, 0.5, 'receiving_yards', None) == 74.5
+    assert implied_mean_from_line(74.5, 0.5, 'receiving_yards', 'K') == 74.5
+
+
+def test_yard_skew_shrinks_as_the_player_line_grows():
+    # The whole point of bucketing: a low-volume player's line needs a much
+    # bigger correction than a workhorse's (E2/fit_yard_skew.py finding).
+    low = _yard_skew_factor('RB', 'receiving_yards', 5.0)
+    high = _yard_skew_factor('RB', 'receiving_yards', 70.0)
+    assert low > high > 1.0
 
 
 def test_tiny_yardage_line_with_heavy_under_never_goes_negative():
@@ -120,8 +148,14 @@ def test_no_p_over_falls_back_to_multiplier():
     # Counts: the old MEDIAN_TO_MEAN multiplier, exactly.
     assert implied_mean_from_line(1.5, None, 'passing_tds') == 1.5 * 1.02
     assert implied_mean_from_line(0.5, None, 'receiving_tds') == 0.5 * 1.05
-    # Yards: unchanged (no multiplier entry).
-    assert implied_mean_from_line(64.5, None, 'rushing_yards', 'RB') == 64.5
+    # Yards with a known position: the median->mean skew factor now applies
+    # here too (2026-09-23) - a bare board with no odds is still a median.
+    factor = _yard_skew_factor('RB', 'rushing_yards', 64.5)
+    assert abs(implied_mean_from_line(64.5, None, 'rushing_yards', 'RB') - 64.5 * factor) < 1e-6
+    # No known position: unchanged, same as before.
+    assert implied_mean_from_line(64.5, None, 'rushing_yards') == 64.5
+    # Season period: unchanged regardless of position (skew is game-only).
+    assert implied_mean_from_line(64.5, None, 'rushing_yards', 'RB', period='season') == 64.5
     # Garbage p_over is treated as "no p_over", not an error.
     assert implied_mean_from_line(1.5, float('nan'), 'passing_tds') == 1.5 * 1.02
     assert implied_mean_from_line(2.5, 1.4, 'receptions') == 2.5 * 1.0
@@ -136,5 +170,8 @@ def test_bad_line_returns_none():
 def test_season_yardage_uses_wider_sigma():
     game = implied_mean_from_line(900.5, 0.60, 'receiving_yards', 'WR', period='game')
     season = implied_mean_from_line(900.5, 0.60, 'receiving_yards', 'WR', period='season')
+    # 'game' also carries the skew multiplier, 'season' never does (skew is
+    # game-only) - divide it back out before comparing the sigma scaling.
+    game_vig_only = game / _yard_skew_factor('WR', 'receiving_yards', 900.5)
     # same p_over, but the season sigma is sqrt(17)x, so the shift is bigger
-    assert (season - 900.5) > (game - 900.5) * 3
+    assert (season - 900.5) > (game_vig_only - 900.5) * 3

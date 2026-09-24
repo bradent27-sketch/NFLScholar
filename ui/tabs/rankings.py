@@ -29,7 +29,8 @@ from data.transforms import (load_and_merge_data, build_recent_form_rank, build_
                              score_projected_stats)
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
-from data.weekly_projections import build_weekly_projections, season_snap_share
+from data.weekly_projections import build_weekly_projections, season_snap_share, DEFAULT_FEATURES
+from data.prediction_ledger import record_board
 from data.odds_weekly import weekly_props, weekly_market_projection, weekly_market_book_lines
 from data.draft_projections import PROJECTED_STATS as _MARKET_PROJECTED_STATS
 from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
@@ -3238,6 +3239,16 @@ def render():
             model_df, model_meta = build_weekly_projections(
                 wk_year, wk_week, wk_scoring, availability_fingerprint=avail_fp)
         st.session_state['weekly_rank_last_model_meta'] = model_meta
+        # A permanent record of this real board build (data.prediction_ledger)
+        # - once per explicit "Build board" click, not per fragment rerun a
+        # position/matchup click inside it causes (this line sits outside
+        # _render_board's fragment below). market_df/fp_weekly are whatever
+        # was staged in the Live data pulls hub above, live at click time;
+        # the ledger's own throttle (one file per (year, week, feature set)
+        # per hour) makes re-clicking Build board harmless. Never raises -
+        # see record_board's own docstring.
+        record_board(wk_year, wk_week, model_df, market_df=market_df,
+                     fp_weekly=fp_weekly, feats=DEFAULT_FEATURES)
 
     # Computed once per real board build (not per fragment-internal rerun -
     # see _render_board's own closure over this below) since it only

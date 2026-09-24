@@ -1848,6 +1848,123 @@ above); revisit `OFFENSE_PRIOR_GAMES_POSITIONS` if a future sweep finds one
 for them, and revisit RB's inclusion if a larger window ever moves its CI
 back to spanning 0.
 
+## 2026-09-23 — harness v2 (paired pools + RMSE/pairwise_acc), market yardage skew fix, prediction ledger — items 1 and 2 of `docs/model_improvement_plan_2026-09-23.md`
+
+Two of the seven items from that day's model audit, picked first per the
+plan's own ordering: item 1 is foundational to trusting any later backtest
+result, item 2 is cheap and every week of delay loses live market data for
+good.
+
+**Item 1 — `scripts/harness_v2.py`, built and unit-tested; NOT yet used for
+a real re-ablation.** Two flaws in every backtest number in this file up to
+this point (see the plan's E3/E5 evidence): `backtest_component.py`'s
+`_scope_df` picked each variant's STARTABLE pool with its own separate
+`nlargest`, so base and variant were scored on different players in every
+START scope; and every ship/reject decision used MAE, which is minimized by
+the conditional median and is provably gameable by a variant that just
+shrinks predictions toward zero (real weekly points are right-skewed, mean
+above median by ~+0.95-0.98 pts for startable RB/WR/TE). `harness_v2` fixes
+both: `paired_start_pool`/`scope_pool` score both arms on the union of each
+arm's own top-N restricted to players both boards actually projected;
+`pairwise_acc` (ranking concordance) and RMSE are now primary, MAE is kept
+only as a secondary/informational column. `tests/test_harness_v2.py`'s
+`test_mae_rewards_shrinkage_but_pairwise_acc_does_not` is the proof this
+matters: a synthetic variant that shrinks every prediction by a constant 10%
+against right-skewed actuals reliably lowers MAE while being mathematically
+incapable of changing any pairwise ranking (a positive rescaling preserves
+order) - so a pure MAE artifact moves the old metric and leaves the new one
+exactly unchanged. Also added: a `decide()` ship/reject/inconclusive rule
+(START-ALL RMSE or pairwise CI must exclude 0 in the right direction, no
+START-position scope significantly worse after a one-sided/Holm-corrected
+check, |bias| growth capped at 0.3), a `START-ALL` scope (union of the four
+position START pools), `td_metrics` (Poisson deviance + Brier, for item 6),
+and `stat_metrics` (per-stat RMSE). `scripts/backtest_component.py` now
+takes `--harness {v1,v2}` (v2 default); `v1` is kept so old numbers in this
+file can still be reproduced exactly. Smoke-tested end to end on
+`--flags calibration --years 2024 --weeks 10-12` - real board builds, real
+verdict line, no plumbing errors - but the plan's actual deliverable for
+this item (re-run every shipped/rejected flag in the ranked-priority list
+under `--harness v2` and update the flag-by-flag verdict table here) is an
+overnight, sequential job (~20 flags x 3 seasons x 15 weeks) that has not
+been run yet. `scripts/sweep_model_constant.py` and
+`scripts/eval_weekly_model.py` have not been ported to v2 yet either.
+
+**Item 2a — market yardage skew fix (`data/market_devig.py`).**
+`implied_mean_from_line` treated yardage as symmetric Normal, so an evenly
+priced line returned unchanged as the "implied mean" - but a sportsbook
+line is a MEDIAN, and weekly yardage is right-skewed, so the true mean sits
+above it, more so for a low-volume player than a workhorse.
+`scripts/fit_yard_skew.py` measured the real ratio on 2019-2025
+`stats_player_week_*.csv` (player-seasons, >=8 games, terciled by the
+player's own median yardage per (position, stat)):
+
+| position/stat | low-volume tercile | mid | high-volume tercile |
+|---|---|---|---|
+| QB passing_yards | 1.015 (<=212) | 0.994 (<=246) | 0.986 |
+| QB rushing_yards | 1.953 (<=6) | 1.314 (<=16) | 1.063 |
+| RB rushing_yards | 1.745 (<=17) | 1.197 (<=45.5) | 1.039 |
+| RB receiving_yards | 2.052 (<=7.5) | 1.379 (<=14.5) | 1.123 |
+| WR receiving_yards | 1.597 (<=19) | 1.177 (<=42) | 1.047 |
+| TE receiving_yards | 1.609 (<=12) | 1.200 (<=26) | 1.074 |
+
+Shipped as `YARD_MEDIAN_TO_MEAN`, applied as a multiplier on top of the
+existing vig-lean Normal shift, for a `period == 'game'` line only (a
+17-game season sum is already close to symmetric) - including the no-`p_over`
+fallback path, which previously left a bare board's yardage line completely
+unadjusted. A missing/unrecognized position still returns the line
+unchanged (no guessing). 5 tests updated, 8 new tests added across
+`tests/test_market_devig.py`, `tests/test_odds_sources.py`,
+`tests/test_market_book_lines.py`.
+
+**Re-ran the E1 model-vs-market comparison (live 2026 Week 3 board) after
+the fix:**
+
+| stat | n | raw ratio (before) | corrected ratio (after) |
+|---|---|---|---|
+| receiving_yards | 125 | 1.106 | 0.988 |
+| rushing_yards | 68 | 1.098 | 1.037 |
+| passing_yards | 28 | 1.032 | 1.028 |
+
+Receiving and rushing yardage moved from the model reading ~10% "high" next
+to the books to within 4% - most of what looked like a model bias was this
+bug. QB passing stays a separate, unresolved problem: passing_attempts
+correlation with the market is still weak (pearson 0.566, C.J. Stroud
+41.9 model vs 32.5 market attempts) - that's the game-script gap item 5 is
+for, not a skew artifact.
+
+**Item 2b — props archive (`data/odds_weekly.py`).** `save_snapshot` now
+also writes a permanent, never-overwritten copy to
+`external_data/props_archive/{season}_wk{week:02d}_{fetched_at}.json`
+(`.gitignore`'d, same as the live snapshot) alongside the one-file cache it
+already wrote - the cache is overwritten every week, so 2026 weeks 1-2's
+market lines are already gone for good; this stops that happening again
+from this week forward. `(season, week)` is a best-effort read off the real
+schedule as of the fetch time (naming only - never raises, never affects
+the live pull it rides along with).
+
+**Item 2c — prediction ledger (`data/prediction_ledger.py`,
+`scripts/score_ledger.py`).** `record_board` writes one row per player -
+every model stat, market de-vigged stats + Market Pts, FantasyPros stats +
+points, a feature-set hash, and the git SHA - to
+`data/ledger/{year}_wk{week:02d}_{build_ts}.parquet` on every explicit
+"Build board" click in Weekly Rankings (throttled to one file per
+(year, week, feature hash) per hour, so a click-heavy session doesn't spam
+the directory). `scripts/score_ledger.py --year Y` scores every ledger
+week that has real actuals against model/market/FP on the same paired pool,
+per position and per stat. The model side of a ledger row can always be
+rebuilt after the fact (`as_of_week` has no leakage); the market/FP side
+cannot, which is the entire reason this exists.
+
+**Not done in this pass (explicitly out of scope, flagged for later):**
+the overnight re-ablation itself (item 1's real payoff - every shipped flag
+in this file re-scored under `--harness v2`, with reverts where it comes
+back REJECT); porting `sweep_model_constant.py`/`eval_weekly_model.py` to
+v2; backfilling the 2026 ledger for weeks 1-3 (model side only - market
+lines for weeks 1-2 are unrecoverable, per 2b above); items 3-7 of the plan
+(historical injury replay, per-position early-season `STAT_K`,
+script-neutral QB volume, an opportunity/red-zone TD model, a model+market
+blend).
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

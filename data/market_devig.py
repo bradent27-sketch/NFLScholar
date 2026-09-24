@@ -89,6 +89,45 @@ _YARD_SIGMA_GAME = {
 _YARD_SIGMA_DEFAULT = 32.0
 _SEASON_GAMES = 17.0
 
+# MEDIAN -> MEAN skew, bucketed by how big the line itself is. The Normal
+# model just above only captures the VIG lean (an uneven price moves the
+# number); it assumes the underlying distribution is symmetric, and weekly
+# yardage is not - a few huge games pull the mean above the median, and that
+# gap is much larger for a low-volume player (a committee back's good week
+# looks nothing like his median week) than a workhorse's (his week-to-week
+# yardage is already fairly tight). Fit 2026-09-23 by
+# scripts/fit_yard_skew.py on 2019-2025 stats_player_week_*.csv:
+# player-seasons with >=8 games, grouped into terciles of the player's OWN
+# median for that (position, stat), pooled mean/median ratio per tercile.
+# Each entry is [(bucket_upper_bound, ratio), ...] sorted ascending, keyed by
+# the LINE itself (a book's line approximates the median); the last bucket's
+# bound is inf. Only applies to a 'game'-period line - a season line sums 17
+# games and is already close to symmetric (E2 in
+# docs/model_improvement_plan_2026-09-23.md).
+YARD_MEDIAN_TO_MEAN = {
+    ('QB', 'passing_yards'): [(212.0, 1.015), (246.0, 0.994), (float('inf'), 0.986)],
+    ('QB', 'rushing_yards'): [(6.0, 1.953), (16.0, 1.314), (float('inf'), 1.063)],
+    ('RB', 'rushing_yards'): [(17.0, 1.745), (45.5, 1.197), (float('inf'), 1.039)],
+    ('RB', 'receiving_yards'): [(7.5, 2.052), (14.5, 1.379), (float('inf'), 1.123)],
+    ('WR', 'receiving_yards'): [(19.0, 1.597), (42.0, 1.177), (float('inf'), 1.047)],
+    ('TE', 'receiving_yards'): [(12.0, 1.609), (26.0, 1.2), (float('inf'), 1.074)],
+}
+
+def _yard_skew_factor(position, stat, line):
+    """The median->mean multiplier for one yardage line. 1.0 (no correction)
+    for a missing OR unrecognized position (not one of QB/RB/WR/TE) - the
+    caller is expected to have already tried to backfill position before this
+    point (see data.odds_weekly.weekly_market_projection's own board-position
+    fallback); this function does not guess at a position it wasn't given."""
+    pos = str(position).upper().strip() if position else ''
+    buckets = YARD_MEDIAN_TO_MEAN.get((pos, stat))
+    if not buckets:
+        return 1.0
+    for upper, ratio in buckets:
+        if line <= upper:
+            return ratio
+    return buckets[-1][1]
+
 # Fallback multiplier for a line with no usable P(over). Matches the old
 # data.odds_projections.MEDIAN_TO_MEAN exactly.
 MEDIAN_TO_MEAN_FALLBACK = {
@@ -177,9 +216,12 @@ def implied_mean_from_line(line, p_over, market, position=None, period='game'):
     ``p_over`` is the de-vigged probability the over hits (0..1), or None.
     ``period`` is 'game' or 'season' and only affects the yardage sigma.
 
-    None / non-finite p_over  -> line * MEDIAN_TO_MEAN_FALLBACK.get(market, 1)
+    None / non-finite p_over  -> line * MEDIAN_TO_MEAN_FALLBACK.get(market, 1),
+                                 or line * the yard-skew factor for a yard stat
     count stat  -> Poisson upper-tail inversion (handles skew AND vig lean)
-    yard stat   -> line + Phi^-1(p_over) * sigma  (vig lean only; even -> line)
+    yard stat   -> (line + Phi^-1(p_over) * sigma) * yard-skew factor
+                   (vig lean from the Normal, median->mean skew from
+                   YARD_MEDIAN_TO_MEAN; a 'season' period skips the skew term)
     other       -> line unchanged
     """
     try:
@@ -198,6 +240,8 @@ def implied_mean_from_line(line, p_over, market, position=None, period='game'):
             usable_p = False
 
     if not usable_p:
+        if market in _YARD_STATS and period == 'game':
+            return value * _yard_skew_factor(position, market, value)
         return value * MEDIAN_TO_MEAN_FALLBACK.get(market, 1.0)
 
     if market in _COUNT_STATS:
@@ -214,5 +258,12 @@ def implied_mean_from_line(line, p_over, market, position=None, period='game'):
         # is unphysical for a yardage stat (and a real-world count is floored
         # at zero everywhere else in this app). The Normal has simply broken
         # down here; fall back to the posted number, the no-odds behaviour.
-        return mean if mean >= 0.0 else max(value, 0.0)
+        if mean < 0.0:
+            return max(value, 0.0)
+        # Median->mean skew correction (see YARD_MEDIAN_TO_MEAN above) - a
+        # season line is a sum of 17 games and already close to symmetric, so
+        # only a single-game line gets it.
+        if period == 'game':
+            mean *= _yard_skew_factor(position, market, value)
+        return mean
     return value

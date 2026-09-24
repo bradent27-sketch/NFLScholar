@@ -70,6 +70,14 @@ WEEKLY_BOOKS = ('PrizePicks', 'Underdog', 'DraftKings', 'Pinnacle')
 
 WEEKLY_SNAPSHOT_PATH = os.path.join('external_data', 'weekly_props_snapshot.json')
 
+# WEEKLY_SNAPSHOT_PATH is a CACHE - one file, overwritten every week. That's
+# fine for "what should I do this week" but it means last week's lines are
+# gone for good the moment this week's post - so the market side of a
+# prediction ledger (data.prediction_ledger) had no history to score against
+# for a board built more than a week ago. This is a permanent, append-only
+# copy of every snapshot ever saved; see _archive_snapshot below.
+PROPS_ARCHIVE_DIR = os.path.join('external_data', 'props_archive')
+
 # Tuesday, 10:00 America/New_York. Books put the coming weekend up on Tuesday
 # or Wednesday; anchoring on the earlier of the two means the first Wednesday
 # open is already current rather than a day behind. Stored as a UTC hour to
@@ -127,6 +135,51 @@ def load_snapshot(path=WEEKLY_SNAPSHOT_PATH):
         return _empty_props(), None, {}
 
 
+def _season_week_for_props(fetched_at):
+    """Best-effort (season, week) the board being saved right now is for -
+    the coming weekend's slate as of ``fetched_at``, read off the real
+    schedule. Only used to NAME an archive file (see _archive_snapshot); a
+    wrong guess costs a mislabeled filename, never the lines themselves, so
+    this deliberately doesn't share machinery with anything that scores off
+    it. Returns (None, None) if no schedule can be resolved."""
+    from data.loaders import load_schedule
+    date = fetched_at.date() if hasattr(fetched_at, 'date') else fetched_at
+    for season in (date.year, date.year - 1):
+        try:
+            sched = load_schedule(season)
+        except Exception:
+            continue
+        if sched is None or sched.empty or 'gameday' not in sched.columns:
+            continue
+        gamedays = pd.to_datetime(sched['gameday'], errors='coerce').dt.date
+        upcoming = sched[gamedays >= date]
+        if upcoming.empty:
+            continue
+        week = pd.to_numeric(upcoming['week'], errors='coerce').min()
+        if pd.notna(week):
+            return season, int(week)
+    return None, None
+
+
+def _archive_snapshot(props, status, fetched_at):
+    """Permanent copy of a weekly pull, alongside the overwritten cache file
+    - see PROPS_ARCHIVE_DIR's own comment. Never raises: a failed archive
+    write must not break a live props pull, which is the thing anyone is
+    actually looking at when this runs."""
+    try:
+        season, week = _season_week_for_props(fetched_at)
+        if season is None:
+            return
+        os.makedirs(PROPS_ARCHIVE_DIR, exist_ok=True)
+        stamp = fetched_at.strftime('%Y%m%dT%H%M%SZ')
+        fname = f'{season}_wk{week:02d}_{stamp}.json'
+        with open(os.path.join(PROPS_ARCHIVE_DIR, fname), 'w', encoding='utf-8') as handle:
+            json.dump({'fetched_at': fetched_at.isoformat(), 'season': season, 'week': week,
+                       'status': status, 'rows': props.to_dict('records')}, handle)
+    except Exception:
+        pass
+
+
 def save_snapshot(props, status, fetched_at=None, path=WEEKLY_SNAPSHOT_PATH):
     """Persist a weekly pull. Returns an error string, or None."""
     fetched_at = fetched_at or datetime.datetime.now(datetime.timezone.utc)
@@ -138,6 +191,7 @@ def save_snapshot(props, status, fetched_at=None, path=WEEKLY_SNAPSHOT_PATH):
                        'rows': props.to_dict('records')}, handle)
     except Exception as exc:
         return f"Pulled the lines but couldn't save them: {exc}"
+    _archive_snapshot(props, status, fetched_at)
     return None
 
 

@@ -75,6 +75,12 @@ external_data/prizepicks_weekly_projections.json
 external_data/draftkings_weekly_props.json
 external_data/weekly_props_snapshot.json
 
+# Permanent per-week archive of the same live board (data.odds_weekly's
+# _archive_snapshot) - same "someone else's board" reasoning as the snapshot
+# above, but never overwritten, so it would otherwise grow forever in a
+# public repo instead of just churning it.
+external_data/props_archive/
+
 # Ourlads depth-chart snapshot: previously excluded so raw browser exports
 # never churned a public repository. Tracking restored 2026-08-24 at the
 # user's explicit request so the imported snapshot survives into git instead

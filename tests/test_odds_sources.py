@@ -1348,6 +1348,70 @@ def test_weekly_snapshot_round_trips_and_survives_a_bad_file():
     assert (consensus['Books'] >= 1).all()
 
 
+def test_props_archive_writes_a_permanent_copy_keyed_by_season_and_week():
+    """save_snapshot overwrites WEEKLY_SNAPSHOT_PATH every call (by design -
+    it's a cache); _archive_snapshot's whole job is to also keep a permanent
+    copy so an earlier week's lines survive being overwritten (2026-09-23,
+    docs/model_improvement_plan_2026-09-23.md item 2b)."""
+    import tempfile
+    import datetime
+    import data.loaders as loaders
+    import data.odds_weekly as ow
+
+    props, _ = parse_underdog_payload(_fixture('underdog_over_under_lines.json'))
+    game = props[props['period'] == 'game']
+
+    fake_schedule = pd.DataFrame({'week': [1, 2, 3],
+                                  'gameday': ['2026-09-10', '2026-09-17', '2026-09-24']})
+    original_load_schedule = loaders.load_schedule
+    original_dir = ow.PROPS_ARCHIVE_DIR
+    loaders.load_schedule = lambda year, include_postseason=False: (
+        fake_schedule.copy() if year == 2026 else pd.DataFrame())
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            ow.PROPS_ARCHIVE_DIR = os.path.join(tmp, 'props_archive')
+            with tempfile.TemporaryDirectory() as snap_dir:
+                snap_path = os.path.join(snap_dir, 'snap.json')
+                fetched_at = datetime.datetime(2026, 9, 15, 16, 0, tzinfo=datetime.timezone.utc)
+                err = ow.save_snapshot(game, {'Underdog': {'rows': len(game)}},
+                                       fetched_at=fetched_at, path=snap_path)
+                assert err is None
+            files = os.listdir(ow.PROPS_ARCHIVE_DIR)
+            assert len(files) == 1
+            # gameday 2026-09-17 is the nearest slate at/after 2026-09-15 -> week 2.
+            assert files[0].startswith('2026_wk02_')
+            with open(os.path.join(ow.PROPS_ARCHIVE_DIR, files[0]), encoding='utf-8') as handle:
+                archived = json.load(handle)
+            assert archived['season'] == 2026 and archived['week'] == 2
+            assert len(archived['rows']) == len(game)
+
+            # A second save the same week adds a second, distinctly-stamped
+            # file rather than overwriting - "keep every file" per the plan.
+            fetched_at2 = fetched_at + datetime.timedelta(hours=1)
+            ow.save_snapshot(game, {}, fetched_at=fetched_at2, path=os.path.join(tmp, 'snap2.json'))
+            assert len(os.listdir(ow.PROPS_ARCHIVE_DIR)) == 2
+    finally:
+        loaders.load_schedule = original_load_schedule
+        ow.PROPS_ARCHIVE_DIR = original_dir
+
+
+def test_props_archive_never_raises_when_the_schedule_is_unavailable():
+    import data.loaders as loaders
+    import data.odds_weekly as ow
+
+    props, _ = parse_underdog_payload(_fixture('underdog_over_under_lines.json'))
+    game = props[props['period'] == 'game']
+    original_load_schedule = loaders.load_schedule
+    loaders.load_schedule = lambda year, include_postseason=False: (_ for _ in ()).throw(RuntimeError('down'))
+    try:
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, 'snap.json')
+            assert ow.save_snapshot(game, {}, path=path) is None   # the snapshot itself still saves
+    finally:
+        loaders.load_schedule = original_load_schedule
+
+
 def test_weekly_consensus_repeats_a_player_across_stats():
     """
     One row per player PER STAT, so player names repeat. This is the thing
@@ -1408,9 +1472,12 @@ def test_weekly_consensus_medians_across_books_and_reports_the_spread():
     assert out['Consensus'].iloc[0] == 62.5, "median of the three, not the mean"
     assert out['Books'].iloc[0] == 3
     assert out['Spread'].iloc[0] == 4.0
-    # No p_over on any row -> the de-vigged projection is just the posted
-    # consensus, unchanged.
-    assert out['Market proj'].iloc[0] == 62.5
+    # No p_over on any row, but a known position/stat still gets the
+    # median->mean yardage skew correction (2026-09-23) - it isn't vig-lean,
+    # it's the shape of the underlying distribution, and applies either way.
+    from data.market_devig import _yard_skew_factor
+    factor = _yard_skew_factor('RB', 'rushing_yards', 62.5)
+    assert abs(out['Market proj'].iloc[0] - round(62.5 * factor, 2)) < 1e-6
 
 
 def test_weekly_consensus_backfills_a_blank_team_from_another_book():

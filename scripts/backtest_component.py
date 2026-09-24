@@ -199,7 +199,15 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR'):
                 for scope, pos, startable in harness_v2.SCOPES:
                     pool = harness_v2.scope_pool(base_proj, var_proj, pos, startable,
                                                  actual_players=actual.index)
-                    if len(pool) < 20:
+                    # A per-position START pool (TE=20, QB=24) can't clear a
+                    # flat 20-player floor most weeks once it's also required
+                    # to be the INTERSECTION of both arms' own top-N and to
+                    # have a real actual - that flat floor silently starved
+                    # START-TE/START-QB of every week in a smoke test. Scale
+                    # the floor to the scope's own size instead; whole-pool
+                    # and START-ALL scopes keep the original 20.
+                    min_pool = max(8, harness_v2.STARTABLE_N.get(pos, 40) // 2) if (startable and pos) else 20
+                    if len(pool) < min_pool:
                         continue
                     mb = harness_v2.metrics(base_idx.reindex(pool), actual.loc[pool])
                     mv = harness_v2.metrics(var_idx.reindex(pool), actual.loc[pool])

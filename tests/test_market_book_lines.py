@@ -12,6 +12,7 @@ pd.options.mode.string_storage = "python"
 
 from data.odds_projections import market_book_stat_lines, market_stat_lines  # noqa: E402
 from data.odds_weekly import weekly_market_book_lines  # noqa: E402
+from data.market_devig import _yard_skew_factor  # noqa: E402
 
 
 def _props():
@@ -45,10 +46,12 @@ def test_one_row_per_player_stat_book_scorable_only():
     assert 'PrizePicks (demon)' not in set(bl['provider'])
     ry = bl[bl['market'] == 'rushing_yards'].set_index('provider')['line'].to_dict()
     assert ry == {'DraftKings': 64.5, 'PrizePicks': 66.5}
-    # No prices in this fixture -> implied_mean falls back to the raw line
-    # for a yardage stat (MEDIAN_TO_MEAN has no entry), so it equals `line`.
+    # No prices in this fixture -> no vig-lean shift, but a known position
+    # still gets the median->mean yardage skew correction (2026-09-23).
     im = bl[bl['market'] == 'rushing_yards'].set_index('provider')['implied_mean'].to_dict()
-    assert im == {'DraftKings': 64.5, 'PrizePicks': 66.5}
+    factor = _yard_skew_factor('RB', 'rushing_yards', 64.5)
+    assert abs(im['DraftKings'] - 64.5 * factor) < 1e-9
+    assert abs(im['PrizePicks'] - 66.5 * _yard_skew_factor('RB', 'rushing_yards', 66.5)) < 1e-9
 
 
 def test_average_matches_market_stat_lines_consensus():
@@ -57,9 +60,11 @@ def test_average_matches_market_stat_lines_consensus():
     bl = market_book_stat_lines(_props(), season_only=False)
     wide = market_stat_lines(_props(), season_only=False).iloc[0]
     # DraftKings priced rushing_yards too, so PrizePicks is dropped from the
-    # blended consensus (fallback-only); the number is DK's raw 64.5 (no
-    # prices in the fixture -> no devig shift on a yardage line).
-    assert abs(float(wide['rushing_yards']) - 64.5) < 1e-9
+    # blended consensus (fallback-only); the number is DK's implied mean -
+    # no vig-lean shift (no prices in the fixture), but the yardage skew
+    # correction still applies (2026-09-23).
+    factor = _yard_skew_factor('RB', 'rushing_yards', 64.5)
+    assert abs(float(wide['rushing_yards']) - 64.5 * factor) < 1e-9
     assert set(bl[bl['market'] == 'rushing_yards']['line']) == {64.5, 66.5}
 
 

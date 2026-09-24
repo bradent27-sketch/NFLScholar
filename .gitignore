@@ -1,6 +1,13 @@
 # Local Python virtualenv - never a repo artifact.
 .venv/
 
+# Re-derivable pulls from a live data source (nflreadpy etc.) - unlike
+# data/ledger/ (a durable record of a real board build that CANNOT be
+# rebuilt once the market/FP side is gone) or external_data/props_archive/
+# (someone else's board), this is only ever OUR OWN re-fetch of a public
+# feed, cheap to regenerate, and would just bloat the repo growing forever.
+data/cache/
+
 # Scratch space for separate clones/checkouts of this same repo (used to
 # work on multiple branches side by side). These have accidentally ended up
 # committed as opaque gitlinks before (no .gitmodules, so `git add` on a

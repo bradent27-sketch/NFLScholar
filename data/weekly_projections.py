@@ -137,6 +137,7 @@ from data.availability_overrides import (
 from data.pass_capacity_allocator import apply_pass_capacity_conservation
 from data.qb_volume_blend import blend_qb1_volume
 from data.fantasypros_availability import load_fantasypros_availability
+from data.historical_availability import historical_injury_profiles
 from data.matchup_signals import defense_stat_rank
 from data.weekly_distribution import player_distribution
 from data.pff_alignment import (
@@ -1095,6 +1096,24 @@ MODEL_FEATURES = (
                              # 2026-09-23.md item 4. NOT YET BACKTESTED /
                              # SHIPPED - a sweep on weeks 2-6 is the next step;
                              # see that plan's item 4 for the protocol.
+    'v2_historical_injury_replay',  # BACKTEST-ONLY (mirrors v2_historical_
+                             # ourlads): feeds a time-valid week-by-week
+                             # injury report (data.historical_availability,
+                             # nflreadpy.load_injuries - NOT
+                             # fetch_injury_report, which only ever returns a
+                             # player's LATEST designation for the season) as
+                             # raw_injury_profiles and runs the SAME
+                             # availability resolver / vacancy path a live
+                             # board uses. Built 2026-09-24 for item 3 of
+                             # docs/model_improvement_plan_2026-09-23.md - the
+                             # whole injury/vacancy layer (VACANCY_ABSORB,
+                             # VACANCY_MAX_GROWTH, the pecking order, the
+                             # returning-player restoration) has never been
+                             # measured against a real outcome because every
+                             # backtest runs apply_injury=False. Has no effect
+                             # live or outside historical_target - a
+                             # misconfigured flag on a live board is a no-op,
+                             # not a silent behavior change.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -6524,8 +6543,18 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # roster pool.  Availability data frequently has a display-name variant;
     # resolving it directly onto the live pool prevents a source spelling
     # from silently missing (or being confused with a same-name player).
+    #
+    # historical_replay is independent of `apply_injury` on purpose: the
+    # backtest harness always calls with apply_injury=False (the ordinary
+    # live sources have no time-correct history), and this flag is precisely
+    # the opt-in that says "use a time-valid source instead, for this one
+    # backtest experiment" - see v2_historical_injury_replay's own comment.
     raw_injury_profiles = {}
-    if apply_injury and not (use_v2_guard and historical_target):
+    historical_replay = (use_v2_guard and historical_target
+                         and 'v2_historical_injury_replay' in feats)
+    if historical_replay:
+        raw_injury_profiles = historical_injury_profiles(year, week, schedule_df)
+    elif apply_injury and not (use_v2_guard and historical_target):
         if 'v2_fantasypros_availability' in feats:
             # FantasyPros-sourced, healthy by default: an empty dict here
             # (no file uploaded yet, or nothing filed for this year/week) is
@@ -6926,9 +6955,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # its established direct injury-map behavior as a control.
     manual_availability = pd.DataFrame()
     manual_availability_problem = None
-    if (apply_injury and not (use_v2_guard and historical_target)
-            and ('v2_availability' in feats or 'v2_fantasypros_availability' in feats)):
-        manual_availability, manual_availability_problem = load_availability_overrides(year, week)
+    if historical_replay or (apply_injury and not (use_v2_guard and historical_target)
+                             and ('v2_availability' in feats or 'v2_fantasypros_availability' in feats)):
+        # No manual-override file for a historical replay - there is no
+        # "current week" a human would have filed one for.
+        if not historical_replay:
+            manual_availability, manual_availability_problem = load_availability_overrides(year, week)
         availability_roster = (cold_pool if cold_start and not cold_pool.empty
                                else stats_df.loc[:, ~stats_df.columns.duplicated()].copy())
         injury_profiles, availability_resolution_warnings = resolve_target_week_availability(
@@ -6936,11 +6968,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if manual_availability_problem:
             availability_resolution_warnings.append(manual_availability_problem)
         source_contract['availability'] = {
-            'policy': ('manual target-week override > target-season injury report; '
-                       'Ourlads status is warning-only'),
-            'injury_source': ('FantasyPros injury report; healthy by default until uploaded'
-                              if 'v2_fantasypros_availability' in feats
-                              else 'nflverse live report (most recent designation)'),
+            'policy': ('historical injury replay (nflreadpy.load_injuries, time-valid; '
+                       'see data.historical_availability)' if historical_replay
+                      else 'manual target-week override > target-season injury report; '
+                           'Ourlads status is warning-only'),
+            'injury_source': ('historical week-by-week report' if historical_replay
+                              else ('FantasyPros injury report; healthy by default until uploaded'
+                                    if 'v2_fantasypros_availability' in feats
+                                    else 'nflverse live report (most recent designation)')),
             'resolved_profiles': len(injury_profiles),
             'manual_overrides': len(manual_availability),
             'warnings': list(availability_resolution_warnings),

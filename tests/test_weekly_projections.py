@@ -1881,6 +1881,88 @@ def test_returning_wr_role_restored_from_prior_season_with_room_conservation():
     assert incumbent_with['targets'] < incumbent_without['targets']
 
 
+def test_v2_historical_injury_replay_zeroes_the_out_player_and_feeds_vacancy():
+    """docs/model_improvement_plan_2026-09-23.md item 3. Every backtest to
+    date runs apply_injury=False, so the whole injury/vacancy layer has
+    never fired in a historical build - this is the first test that
+    actually exercises it, via a mocked time-valid injury profile instead of
+    a real nflreadpy pull (data.historical_availability has its own tests
+    against real data). Weeks 1-3 are all present in `current` (not just
+    1-2, unlike the returning-player fixture above) so the target week
+    itself has data and the build is genuinely HISTORICAL
+    (latest_observed_week >= as_of_week) - the flag is a no-op on a live
+    (non-historical) board by design, so this couldn't be tested any other
+    way.
+    """
+    week_rows = []
+    for week in (1, 2, 3):
+        week_rows.append({'name': 'Incumbent', 'team': 'BAL', 'opponent_team': 'DEN', 'week': week,
+                          'position': 'WR', 'weekly_snap_pct': 85.0, 'has_snap_match': True,
+                          'targets': 9.0, 'receptions': 6.0, 'receiving_yards': 80.0, 'receiving_tds': 0.5})
+        week_rows.append({'name': 'Teammate', 'team': 'BAL', 'opponent_team': 'DEN', 'week': week,
+                          'position': 'WR', 'weekly_snap_pct': 60.0, 'has_snap_match': True,
+                          'targets': 5.0, 'receptions': 3.0, 'receiving_yards': 40.0, 'receiving_tds': 0.2})
+    filler_teams = ('DAL', 'KC', 'SF', 'GB', 'MIA', 'NYJ', 'LAC', 'CHI', 'SEA')
+    for team, share in zip(filler_teams, (0.05, 0.08, 0.10, 0.15, 0.20, 0.30, 0.45, 0.60, 0.70)):
+        for week in (1, 2, 3):
+            week_rows.append({'name': f'Filler {team}', 'team': team, 'opponent_team': 'DEN', 'week': week,
+                              'position': 'WR', 'weekly_snap_pct': share * 100.0, 'has_snap_match': True,
+                              'targets': share * 10.0, 'receptions': share * 7.0,
+                              'receiving_yards': share * 80.0, 'receiving_tds': share * 0.5})
+    current = weekly(week_rows)
+    schedule = pd.DataFrame(
+        [{'week': 3, 'home_team': 'BAL', 'away_team': 'DEN', 'home_score': 24, 'away_score': 17}]
+        + [{'week': 3, 'home_team': team, 'away_team': 'ARI', 'home_score': 20, 'away_score': 13}
+           for team in filler_teams])
+    out_profile = {'Incumbent': {'status': 'out', 'plays_probability': 0.0, 'workload_if_active': 1.0,
+                                 'source_year': 2026, 'source': 'test', 'gsis_id': '', 'team': 'BAL'}}
+
+    def _build(feats):
+        original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+                   wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team,
+                   wp.historical_injury_profiles)
+        try:
+            wp.load_and_merge_data = lambda year, scoring: (current.copy(), 'team', 'name', None)
+            wp.load_schedule = lambda year: schedule.copy()
+            wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+            wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+            wp.load_qb1_overrides = lambda _year: (pd.DataFrame(columns=['year', 'team', 'player']), None)
+            wp._target_margins_by_team = lambda year, week: {}
+            wp.historical_injury_profiles = lambda season, week, schedule_df: dict(out_profile)
+            out, meta = wp.build_weekly_projections(
+                2026, 3, 'Full PPR', as_of_week=3, apply_injury=False, features=feats,
+                availability_fingerprint=f'test_historical_injury_replay_{feats}')
+        finally:
+            (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+             wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team,
+             wp.historical_injury_profiles) = original
+        assert meta.get('source_contract', {}).get('historical_target') is True, \
+            "fixture must build a genuinely historical board"
+        return out
+
+    without_replay = _build(None)   # plain DEFAULT_FEATURES - flag absent, apply_injury=False as ever
+    with_replay = _build(frozenset(wp.DEFAULT_FEATURES | {'v2_historical_injury_replay'}))
+
+    inc_without = without_replay.loc[without_replay['Player'].eq('Incumbent')].iloc[0]
+    inc_with = with_replay.loc[with_replay['Player'].eq('Incumbent')].iloc[0]
+    assert inc_without['Availability'] == 1.0
+    assert inc_without['Raw Model Proj Pts'] > 1.0   # normal projection - the flag was never on
+    assert inc_with['Availability'] == 0.0
+    # Raw (pre-calibration) points and every underlying stat are zeroed by
+    # the (mocked) historical report - 'Model Proj Pts' is the CALIBRATED
+    # number and carries a small nonzero intercept for every player
+    # regardless of raw production, so it is not the right column to check
+    # a zeroed player against.
+    assert inc_with['Raw Model Proj Pts'] == 0.0
+    assert inc_with['targets'] == 0.0
+    assert inc_with['receiving_yards'] == 0.0
+
+    mate_without = without_replay.loc[without_replay['Player'].eq('Teammate')].iloc[0]
+    mate_with = with_replay.loc[with_replay['Player'].eq('Teammate')].iloc[0]
+    assert mate_with['targets'] > mate_without['targets'], \
+        "Incumbent's vacated targets should redistribute onto his teammate (v2_vacancy)"
+
+
 def test_nonstarter_qb_has_zero_projected_volume_not_a_relief_rate_projection():
     rows = []
     for week in (1, 2, 3):

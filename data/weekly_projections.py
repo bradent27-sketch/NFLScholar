@@ -248,25 +248,23 @@ STAT_K = {
 }
 
 # Per-(position, stat) override of STAT_K, gated behind 'v2_stat_k_by_pos'
-# (see MODEL_FEATURES). STAT_K above has only ever been swept as ONE uniform
-# scale factor across every position, and only on weeks 4-15
-# (.sweeps/const_stat_k.txt) - weeks 2-4, where this matters most, were
-# never part of that sweep. Seed values below are the K implied by fitting,
-# per (position, stat, games-played G in 1-3), the empirically optimal
-# current-vs-prior blend weight against real 2020-2025 nflverse weekly data
-# (docs/model_improvement_plan_2026-09-23.md, item 4 / evidence E4) - they
-# are SEED values for a sweep, not a ship decision on their own: real volume
-# should shrink FASTER for RB and QB rushing (K well under the shared
-# default of 3), and TD rates should shrink far MORE SLOWLY, especially WR
-# receiving_tds (K=15 vs the shared default of 6 - the single largest gap
-# E4 found). A (position, stat) pair missing here falls back to STAT_K.
+# (see MODEL_FEATURES). docs/model_improvement_plan_2026-09-23.md item 4
+# seeded four candidate groups from an empirical current-vs-prior blend-
+# weight fit (evidence E4) and swept each on real backtests
+# (scripts/sweep_stat_k_groups.py, fit years 2019-2022 + confirm years
+# 2023-2025, weeks 2-6 and 7-17). Three of the four seeds were WRONG once
+# tested - faster RB volume and slower QB rushing both made RMSE
+# significantly WORSE, and WR/TE yardage showed no measurable effect either
+# direction - so none of those are here. Only WR/TE receiving_tds held up:
+# a slower blend (this table's values, 2x the original seed) is a real,
+# CI-excludes-0 win on the combined 2019-2025 sample (n=10,704: ALL RMSE
+# -0.002 [-0.004,-0.001], START-WR -0.010 [-0.017,-0.004], START-ALL -0.005
+# [-0.009,-0.002], no position worse). A (position, stat) pair missing here
+# falls back to the shared STAT_K above - this table is deliberately just
+# the one confirmed change, not a parking lot for the rejected seeds.
 STAT_K_BY_POS = {
-    'RB': {'rushing_attempts': 1.2, 'rushing_yards': 2.0, 'targets': 2.2, 'receptions': 2.2,
-           'receiving_yards': 3.0, 'rushing_tds': 6, 'receiving_tds': 8},
-    'QB': {'passing_attempts': 3, 'passing_yards': 3, 'rushing_attempts': 5, 'rushing_yards': 5,
-           'passing_tds': 5, 'passing_interceptions': 8},
-    'WR': {'targets': 3, 'receptions': 3, 'receiving_yards': 5, 'receiving_tds': 15},
-    'TE': {'targets': 2.4, 'receptions': 3, 'receiving_yards': 4, 'receiving_tds': 8},
+    'WR': {'receiving_tds': 30},
+    'TE': {'receiving_tds': 16},
 }
 
 # role_confidence in [0, 1] scales K by this range - a confident every-down

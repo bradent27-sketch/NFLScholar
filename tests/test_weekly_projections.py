@@ -857,22 +857,26 @@ def test_stat_k_by_pos_is_ignored_unless_pos_is_passed():
 
 
 def test_stat_k_by_pos_uses_the_per_position_k_when_given():
-    # RB rushing_attempts K (1.2) is far below the shared STAT_K (3) - at
-    # the same games-played count, passing pos='RB' should lean noticeably
-    # more on the player's own current rate than the shared default does.
-    shared = wp._blended_rate(np.array([20.0]), np.array([2.0]), np.array([5.0]),
-                              np.array([5.0]), 'rushing_attempts', np.array([0.5]))
-    rb_k = wp._blended_rate(np.array([20.0]), np.array([2.0]), np.array([5.0]),
-                            np.array([5.0]), 'rushing_attempts', np.array([0.5]), pos='RB')
-    assert rb_k[0] > shared[0]
-
-    # WR receiving_tds K (15) is far above the shared STAT_K (6) - the
-    # opposite direction, leaning MORE on the prior at the same sample size.
+    # WR/TE receiving_tds is the one confirmed override (K=30/16, far above
+    # the shared STAT_K of 6 - a slower blend, leaning MORE on the prior at
+    # the same sample size). Every other (position, stat) pair was tested
+    # and rejected (item 4), so STAT_K_BY_POS deliberately has no entry for
+    # them - passing pos='RB' for rushing_attempts must fall back to shared.
     shared_td = wp._blended_rate(np.array([0.30]), np.array([3.0]), np.array([0.10]),
                                  np.array([0.10]), 'receiving_tds', np.array([0.5]))
     wr_td = wp._blended_rate(np.array([0.30]), np.array([3.0]), np.array([0.10]),
                              np.array([0.10]), 'receiving_tds', np.array([0.5]), pos='WR')
+    te_td = wp._blended_rate(np.array([0.30]), np.array([3.0]), np.array([0.10]),
+                             np.array([0.10]), 'receiving_tds', np.array([0.5]), pos='TE')
     assert wr_td[0] < shared_td[0]
+    assert te_td[0] < shared_td[0]
+    assert wr_td[0] < te_td[0]   # WR's K (30) is higher than TE's (16) -> leans even more on the prior
+
+    rushing_shared = wp._blended_rate(np.array([20.0]), np.array([2.0]), np.array([5.0]),
+                                      np.array([5.0]), 'rushing_attempts', np.array([0.5]))
+    rushing_rb_pos = wp._blended_rate(np.array([20.0]), np.array([2.0]), np.array([5.0]),
+                                      np.array([5.0]), 'rushing_attempts', np.array([0.5]), pos='RB')
+    assert rushing_rb_pos[0] == rushing_shared[0]   # no RB override anymore - falls back to shared
 
 
 def test_stat_k_by_pos_falls_back_to_shared_stat_k_for_an_unlisted_stat():

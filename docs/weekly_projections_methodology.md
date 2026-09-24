@@ -2069,7 +2069,8 @@ default of 6) holds up: scale 1.5 gives ALL RMSE 6.752->6.750
 8.238->8.234 (CI[-0.007,-0.001]) - all excluding 0 in the improving
 direction. Scale 2.0 is similar or slightly better (START-ALL
 CI[-0.012,-0.002]); scale 3.0 keeps the direction but the `ALL` CI
-loosens back to touching 0. **Scale 2.0 (K~12 for WR, ~16 for TE) is the
+loosens back to touching 0. **Scale 2.0 (K=30 for WR, K=16 for TE - scale
+is relative to the SEED of 15/8, not the shared default of 6) is the
 best candidate** - real, small (~0.05-0.1% RMSE), but a genuine dose-
 response across three tested values, unlike the other three groups.
 Confirm run on 2023-2025 queued (see below).
@@ -2181,6 +2182,53 @@ groups' seeds. `v2_stat_k_by_pos` stays out of `DEFAULT_FEATURES`.
 window (all of 2019-2025, weeks 2-6) would settle whether the fit-window
 result was itself the noisy read, but that reruns work already done rather
 than adding new evidence at a different design point.
+
+## 2026-09-24 — WR/TE receiving_tds: combined 7-season re-check clears the bar, but a real gap in every prior test found and fixed first
+
+Per the user's own read of the two prior results (fit years pointed one way,
+confirm years pointed the same way just short of significance, mid-season
+flat as expected since K matters less there) - re-ran the same test on all
+seven seasons combined (2019-2025, weeks 2-6) in one pool instead of two
+smaller separate ones. Full output:
+`.sweeps/stat_k_wr_te_tds_combined_2019-2025_wk2-6.log`.
+
+| scope | n=10,704 | RMSE Δ (CI) |
+|---|---|---|
+| ALL | | -0.002 [-0.004,-0.001] |
+| WR | | -0.004 [-0.007,-0.000] |
+| START-WR | | -0.010 [-0.017,-0.004] |
+| START-ALL | | -0.005 [-0.009,-0.002] |
+
+Every one of those excludes 0 in the improving direction; bias growth
++0.002 (essentially flat); no position significantly worse. **This clears
+the §1 ship bar.**
+
+**But finding this cleanly forced a real correction first.** Every sweep in
+this item (fit, confirm, and this combined run) compared `STAT_K_BY_POS`'s
+SEED values (`v2_stat_k_by_pos` forced on for BOTH arms via
+`--add-features`) against that same seed SCALED - never against the actual
+live model (`v2_stat_k_by_pos` off, the shared `STAT_K` of 6 for
+`receiving_tds` on every position). Reading the "shipped" value the sweep
+itself printed - `{'WR': {..., 'receiving_tds': 15}, 'TE': {...,
+'receiving_tds': 8}}` - makes this obvious in hindsight: "scale 2.0" is 2x
+**15/8** (K=30/16), not 2x the shared default of 6 (which would be 12).
+Nothing in the four fit-window/confirm results above is wrong on its own
+terms (seed vs. 2x-seed is exactly what was measured, correctly), but none
+of them had actually validated shipping the change against what the model
+does TODAY.
+
+**Fixed:** `STAT_K_BY_POS` in `data/weekly_projections.py` now holds only
+the one confirmed entry - `{'WR': {'receiving_tds': 30}, 'TE':
+{'receiving_tds': 16}}` - the three rejected groups' seed values are
+deleted rather than left as inert clutter. `tests/test_weekly_projections.py`
+updated to match (an RB `pos` argument now correctly falls back to shared
+`STAT_K` - there is no RB override left to test against).
+
+**Queued:** the test that actually answers "should this ship" -
+`backtest_component.py --add v2_stat_k_by_pos` (true `DEFAULT_FEATURES`
+baseline vs. `DEFAULT_FEATURES + v2_stat_k_by_pos` with the corrected
+table), 2022-2025, weeks 2-6 and 7-17 - behind the vacancy sub-component
+ablation already running (one heavy job at a time).
 
 ## Known limitations
 

@@ -148,7 +148,7 @@ def _one_sided_worse_p(variant_wins, losses):
     return sum(math.comb(n, i) for i in range(0, variant_wins + 1)) / (2 ** n)
 
 
-def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR'):
+def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_feats=None):
     """Same shape as evaluate_components (flag_rows[label][scope] = list of
     (metrics_base, metrics_variant) weekly pairs, plus the outlier ledger),
     built on scripts.harness_v2's paired-pool + pairwise_acc/RMSE metrics
@@ -158,6 +158,7 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR'):
     scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
     flag_rows = {label: {} for label in variant_defs}
     outliers = []
+    base_feats = base_feats if base_feats is not None else DEFAULT_FEATURES
 
     for year in years:
         stats_df, _team_col, name_col, _ = load_and_merge_data(year, scoring)
@@ -169,7 +170,7 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR'):
             if actual.empty:
                 continue
             base_proj, base_meta = build_weekly_projections(
-                year, week, scoring, as_of_week=week, apply_injury=False, features=DEFAULT_FEATURES)
+                year, week, scoring, as_of_week=week, apply_injury=False, features=base_feats)
             if base_proj.empty:
                 print(f"{year} w{week} base: nothing ({base_meta.get('reason')})")
                 continue
@@ -399,6 +400,12 @@ def main():
                     "(variant = DEFAULT_FEATURES minus this flag)")
     ap.add_argument('--add', default='', help="comma-separated MODEL_FEATURES names to ADD as an unproven "
                     "candidate (variant = DEFAULT_FEATURES plus this flag) - for a component NOT yet shipped")
+    ap.add_argument('--add-features', default='',
+                    help="comma-separated MODEL_FEATURES names OR'd into BOTH arms (base AND every "
+                    "variant) - a precondition for the test, not the thing being tested. E.g. "
+                    "--flags v2_vacancy --add-features v2_historical_injury_replay tests v2_vacancy "
+                    "with a time-valid historical injury feed active in both arms, since v2_vacancy "
+                    "is otherwise inert with apply_injury=False (every backtest).")
     ap.add_argument('--years', default='2024,2025')
     ap.add_argument('--weeks', default='2-18')
     ap.add_argument('--scoring', default='Full PPR')
@@ -419,6 +426,7 @@ def main():
 
     ablate_flags = [f.strip() for f in args.flags.split(',') if f.strip()]
     add_flags = [f.strip() for f in args.add.split(',') if f.strip()]
+    add_features = frozenset(f.strip() for f in getattr(args, 'add_features').split(',') if f.strip())
     if not ablate_flags and not add_flags:
         raise SystemExit("pass --flags (ablate) and/or --add (candidate addition)")
     unknown_ablate = set(ablate_flags) - set(DEFAULT_FEATURES)
@@ -430,23 +438,32 @@ def main():
     already_shipped = set(add_flags) & set(DEFAULT_FEATURES)
     if already_shipped:
         raise SystemExit(f"--add flag(s) already in DEFAULT_FEATURES, use --flags to ablate instead: {sorted(already_shipped)}")
+    unknown_add_features = add_features - set(MODEL_FEATURES)
+    if unknown_add_features:
+        raise SystemExit(f"--add-features not in MODEL_FEATURES: {sorted(unknown_add_features)}")
+    if add_features and args.harness == 'v1':
+        raise SystemExit("--add-features only applies to --harness v2 (v1's evaluate_components "
+                         "does not thread it through - it would silently be ignored)")
 
+    base_feats = frozenset(DEFAULT_FEATURES | add_features)
     variant_defs = {}
     modes = {}
     for flag in ablate_flags:
-        variant_defs[flag] = frozenset(DEFAULT_FEATURES - {flag})
+        variant_defs[flag] = frozenset((DEFAULT_FEATURES - {flag}) | add_features)
         modes[flag] = 'ablate'
     for flag in add_flags:
-        variant_defs[flag] = frozenset(DEFAULT_FEATURES | {flag})
+        variant_defs[flag] = frozenset(DEFAULT_FEATURES | {flag} | add_features)
         modes[flag] = 'add'
 
     print(f"years={years} weeks={weeks[0]}-{weeks[-1]} scoring={args.scoring} harness={args.harness}")
     print(f"ablating: {ablate_flags}")
     print(f"adding as candidate: {add_flags}")
+    print(f"add-features (forced on in both arms): {sorted(add_features)}")
     print(f"DEFAULT_FEATURES size: {len(DEFAULT_FEATURES)}")
 
     if args.harness == 'v2':
-        flag_rows, outliers = evaluate_components_v2(years, weeks, variant_defs, args.scoring)
+        flag_rows, outliers = evaluate_components_v2(years, weeks, variant_defs, args.scoring,
+                                                      base_feats=base_feats)
         for label in variant_defs:
             print_flag_report_v2(label, flag_rows[label], mode=modes[label])
     else:

@@ -1955,15 +1955,87 @@ per position and per stat. The model side of a ledger row can always be
 rebuilt after the fact (`as_of_week` has no leakage); the market/FP side
 cannot, which is the entire reason this exists.
 
-**Not done in this pass (explicitly out of scope, flagged for later):**
-the overnight re-ablation itself (item 1's real payoff - every shipped flag
-in this file re-scored under `--harness v2`, with reverts where it comes
-back REJECT); porting `sweep_model_constant.py`/`eval_weekly_model.py` to
-v2; backfilling the 2026 ledger for weeks 1-3 (model side only - market
-lines for weeks 1-2 are unrecoverable, per 2b above); items 3-7 of the plan
-(historical injury replay, per-position early-season `STAT_K`,
-script-neutral QB volume, an opportunity/red-zone TD model, a model+market
-blend).
+**Backfilled the 2026 ledger for weeks 1-3** (model side only - market/FP
+lines for weeks 1-2 are unrecoverable, per 2b above): `data/ledger/2026_wk01_*.parquet`
+through `wk03`. `scripts/score_ledger.py --year 2026 --weeks 1-2` scores
+model-only pairwise accuracy of 0.43-0.78 by position/scope against real
+results - a real baseline to compare against once market/FP data starts
+accumulating in the ledger from Week 3 forward.
+
+**Not done in this pass:** porting `sweep_model_constant.py`/
+`eval_weekly_model.py` to harness v2 (needed for the three CONSTANT sweeps
+in the re-ablation below - `WEEKLY_CALIBRATION_ONE_SIDED`,
+`DEFENSE_PRIOR_GAMES`, `MATCHUP_CLIP`); items 3-7 of the plan (historical
+injury replay, per-position early-season `STAT_K`, script-neutral QB
+volume, an opportunity/red-zone TD model, a model+market blend).
+
+## 2026-09-23/24 — harness v2 re-ablation of every priority shipped/rejected flag
+
+Item 1's real payoff, run overnight per the plan: `backtest_component.py
+--harness v2` re-scored the 7 priority `DEFAULT_FEATURES` flags (ablated)
+plus the 2 previously-rejected TD flags (`--add`, re-scored under the new
+metrics) on **2023-2025, weeks 3-17** (45 week-instances, ~14,000 paired
+player-weeks per flag). Full output: `.sweeps/reablation_2026-09-23.log`,
+outlier ledger `.sweeps/reablation_2026-09-23_outliers.csv`.
+
+**Bug found and fixed mid-run:** the first `print_flag_report_v2` version
+printed a bare `VERDICT (ablate): SHIP-ELIGIBLE`/`REJECT` label without
+translating what that means for an ABLATION - `decide()`'s "ship the
+variant" always refers to the thing being tested (here, DEFAULT_FEATURES
+**minus** the flag), so `SHIP-ELIGIBLE` on an ablation actually means "the
+flag looks like it's HURTING, remove it" - the opposite of how the label
+reads at a glance. Added a `RECOMMENDATION:` line that spells the actual
+action out in plain English for both ablate and add mode; every result
+below is stated in the corrected, plain-English direction.
+
+**Results (START-ALL is primary; §1 rule):**
+
+| flag | mode | START-ALL RMSE Δ (CI) | verdict | recommendation |
+|---|---|---|---|---|
+| `v2_pff_alignment_matchup` | ablate | -0.011 [-0.019,-0.002] | SHIP-ELIGIBLE | **looks like it's hurting - candidate to remove** |
+| `v2_pass_capacity_matchup_flex` | ablate | +0.027 [+0.009,+0.043] | REJECT | confirmed helping - keep shipped |
+| `v2_defense_blowout_discount` | ablate | +0.001 [-0.000,+0.002] | INCONCLUSIVE | keep shipped, no significant effect at this pooled scope |
+| `v2_offense_prior_blend` | ablate | -0.000 [-0.001,+0.001] | INCONCLUSIVE | keep shipped (see note below - shipped RB-only for weeks 2-4 specifically) |
+| `v2_vacancy_bump_cap` | ablate | ~0.000 (1 week scored) | INCONCLUSIVE | unmeasurable here - lives in the injury/vacancy path, inert under `apply_injury=False` (see item 3) |
+| `v2_receiver_cold_start_vacancy` | ablate | ~0.000 (1 week scored) | INCONCLUSIVE | unmeasurable here - cold-start (Week 1) only, needs the separate Week-1 run |
+| `v2_td_prior_credibility` | ablate | ~0.000 (1 week scored) | INCONCLUSIVE | unmeasurable here - cold-start only, needs the separate Week-1 run |
+| `v2_td_volume_shrink` | add | ~0.000 (1 week scored) | INCONCLUSIVE | rejection stands; points RMSE isn't the right metric for a TD-only change anyway (item 6's `td_metrics` is) |
+| `v2_td_career_regress` | add | ~0.000 (1 week scored) | INCONCLUSIVE | rejection stands; same note |
+
+**The one real finding: `v2_pff_alignment_matchup` may be net negative.**
+Removing it improved START-ALL RMSE (7.980 -> 7.969) and pairwise accuracy
+(0.630 -> 0.631) with a bootstrap CI that excludes 0 on RMSE, no
+START-position scope significantly worse (Holm-adjusted p = 1.0 at all
+four), and bias moved slightly toward 0. The effect is small in absolute
+terms (~0.14% RMSE) but consistent across 45 week-instances and 3 seasons -
+this is exactly the kind of small, real, previously invisible effect
+harness v2 was built to catch. **USER DECISION**: whether to remove
+`v2_pff_alignment_matchup` from `DEFAULT_FEATURES`. Not reverted yet.
+
+**Five flags came back unmeasurable, not "no effect."** `v2_vacancy_bump_cap`,
+`v2_receiver_cold_start_vacancy`, and `v2_td_prior_credibility` are gated to
+either cold start (Week 1) or the injury/vacancy path (`apply_injury=False`
+in every backtest, per item 3's own rationale) - neither condition ever
+fires across weeks 3-17, so an identical-zero delta here means "this run
+couldn't see it," not "it doesn't matter." `v2_td_volume_shrink`/
+`v2_td_career_regress` likewise showed no points-RMSE signal, consistent
+with their original MAE-based rejection but not a stronger confirmation -
+item 6's Poisson deviance/Brier metrics are the right tool for a TD-only
+mechanism, not aggregate points RMSE, which dilutes a small per-player
+effect across an entire position's pool.
+
+**`v2_offense_prior_blend` note.** Shipped RB-only in 2026-09-16 specifically
+for weeks 2-4 (the early-season regime it targets); pooling it across weeks
+3-17 here dilutes that window 4x over (only weeks 3-4 of the 15 tested
+actually exercise the credibility blend's intended effect). Flat here is
+expected, not a reversal of the earlier ship decision.
+
+**Not run this pass:** the Week-1-only confirm (2022-2025, with
+`v2_historical_ourlads`) the plan calls for to properly score the
+cold-start-gated flags above; the three CONSTANT sweeps
+(`WEEKLY_CALIBRATION_ONE_SIDED`, `DEFENSE_PRIOR_GAMES`, `MATCHUP_CLIP`),
+which need `sweep_model_constant.py` ported to `--harness v2` first; the
+calibration re-fit that follows once the flag set is settled.
 
 ## Known limitations
 

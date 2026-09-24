@@ -267,9 +267,37 @@ def print_flag_report_v2(label, rows, mode='ablate'):
         verdict = harness_v2.decide(primary['rmse_ci'], primary['pw_ci'], position_p_holm, bias_growth)
         print(f"  VERDICT ({mode}): {verdict}   [bias growth {bias_growth:+.3f}, "
               f"Holm-adjusted per-position p {[round(p, 3) for p in position_p_holm]}]")
+        print(f"  RECOMMENDATION: {_recommendation(label, mode, verdict)}")
     else:
         print("  VERDICT: (not enough scopes to apply the §1 rule - need START-ALL and all four "
               "START-position scopes)")
+
+
+def _recommendation(label, mode, verdict):
+    """VERDICT is phrased in terms of 'the variant' (ablate mode: DEFAULT
+    minus the flag; add mode: DEFAULT plus the flag) - a SHIP-ELIGIBLE
+    ablation means the variant WITHOUT the flag won, i.e. the flag looks
+    like it's hurting and should be REMOVED, the opposite of what
+    'SHIP-ELIGIBLE' reads as at a glance. Spell the actual action out so
+    nobody has to re-derive the sign convention from the mode word alone."""
+    if mode == 'ablate':
+        return {
+            'SHIP-ELIGIBLE': f"'{label}' looks like it's HURTING (removing it measurably improved "
+                             f"START-ALL) - candidate to REMOVE from DEFAULT_FEATURES.",
+            'REJECT': f"'{label}' is CONFIRMED HELPING (removing it measurably hurt START-ALL) - "
+                      f"keep it shipped.",
+            'INCONCLUSIVE': f"no significant effect from removing '{label}' at this scope/window - "
+                            f"keep it shipped as-is (status quo); a narrower or position-specific "
+                            f"test may still find one.",
+        }[verdict]
+    return {
+        'SHIP-ELIGIBLE': f"candidate '{label}' measurably HELPED when added - consider promoting it "
+                         f"into DEFAULT_FEATURES.",
+        'REJECT': f"candidate '{label}' measurably HURT when added - stays unshipped, rejection "
+                  f"confirmed under harness v2.",
+        'INCONCLUSIVE': f"no significant effect from adding '{label}' - stays unshipped, no evidence "
+                        f"to promote it.",
+    }[verdict]
 
 
 def _bootstrap_ci(deltas, weights, n_boot=3000, seed=0):

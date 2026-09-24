@@ -2148,6 +2148,40 @@ which have been run yet. `sweep_model_constant.py` also still needs a
 `--module` argument before `RECEIVER_VACANCY_RANK_DECAY` (lives in
 `data.rb_role_allocator`, not `data.weekly_projections`) can be swept.
 
+## 2026-09-24 — WR/TE receiving_tds confirm: directionally consistent, does NOT clear the ship bar
+
+`sweep_model_constant.py --target STAT_K_BY_POS --mode scale_keys --keys WR:receiving_tds,TE:receiving_tds --values 2.0`,
+2023-2025 (the confirm years, held out from the fit). Full output:
+`.sweeps/stat_k_wr_te_tds_confirm_2023-2025_wk2-6.log` and `..._wk7-17.log`.
+
+**Fit-window confirm (weeks 2-6, n=4602):** every scope moved the SAME
+direction as the fit-years result (ALL -0.002, WR -0.002, TE -0.007,
+START-WR -0.007, START-TE -0.010, START-ALL -0.004) - but none clear the
+§1 bar this time; every CI straddles 0 (e.g. ALL CI[-0.005,+0.001], TE
+CI[-0.021,+0.006]). Smaller confirm sample (3 years vs. 4 fit years) widens
+the CI, so this is consistent with a real but smaller/noisier effect - not
+a contradiction, but not an independent confirmation either.
+
+**Mid-season check (weeks 7-17, n=10334):** the direction PARTLY REVERSES -
+ALL +0.002, WR +0.005, START-WR +0.004, START-ALL +0.002 (all tiny, all CI
+straddling 0); only TE stays improved (-0.002). This is the exact check
+the plan's protocol calls for ("make sure it doesn't hurt mid-season"), and
+it did its job: K matters less by mid-season regardless (more games have
+accumulated), so a flat-to-slightly-worse mid-season read on top of a
+weakened confirm-window read is not a "ship it" result.
+
+**Verdict: do not ship.** The fit-years finding (2019-2022) was real by its
+own bootstrap CI, but does not independently replicate on held-out years at
+the same statistical bar - the honest read is that receiving_tds shrinkage
+speed is directionally worth a slower blend, but the effect size is smaller
+and noisier than the initial fit suggested, likely inflated by the same
+kind of small-sample variation across NFL eras that sank the other three
+groups' seeds. `v2_stat_k_by_pos` stays out of `DEFAULT_FEATURES`.
+**USER DECISION** if this is worth pursuing further: a wider combined
+window (all of 2019-2025, weeks 2-6) would settle whether the fit-window
+result was itself the noisy read, but that reruns work already done rather
+than adding new evidence at a different design point.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

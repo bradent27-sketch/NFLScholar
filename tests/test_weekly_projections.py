@@ -1722,6 +1722,127 @@ def test_qb1_manual_override_wins_for_a_new_starter_with_zero_current_season_sna
         assert old_starter[stat] == 0.0
 
 
+def test_add_missing_returning_player_rows_synthesizes_a_zero_games_row():
+    cur = pd.DataFrame([{'name': 'Incumbent', 'team': 'BAL', 'Games': 2, 'targets': 14.0}])
+    roster_source = weekly([
+        {'name': 'Incumbent', 'team': 'BAL', 'opponent_team': 'DEN', 'week': 2,
+         'position': 'WR', 'weekly_snap_pct': 80.0},
+        {'name': 'Returner', 'team': 'BAL', 'opponent_team': 'DEN', 'week': np.nan,
+         'position': 'WR', 'weekly_snap_pct': 0.0, 'has_snap_match': False},
+        # No prior-season history at all (an undrafted rookie/call-up) -
+        # must NOT get a manufactured row, unlike Returner below.
+        {'name': 'UDFA Rookie', 'team': 'BAL', 'opponent_team': 'DEN', 'week': np.nan,
+         'position': 'WR', 'weekly_snap_pct': 0.0, 'has_snap_match': False},
+    ])
+    player_prior = weekly([
+        {'name': 'Returner', 'team': 'BAL', 'opponent_team': 'DEN', 'week': week,
+         'position': 'WR', 'weekly_snap_pct': 85.0}
+        for week in range(10, 18)
+    ])
+    out = wp._add_missing_returning_player_rows(
+        cur, roster_source, player_prior, 'name', 'name', 'team', ['targets'], 'WR')
+    assert len(out) == 2
+    added = out.loc[out['name'].eq('Returner')].iloc[0]
+    assert added['Games'] == 0
+    assert added['targets'] == 0.0
+    assert added['Team'] == 'BAL'
+    assert pd.notna(added['_identity_key'])
+    assert 'UDFA Rookie' not in out['name'].to_numpy()
+    # Idempotent - a player already present in `cur` is never duplicated.
+    again = wp._add_missing_returning_player_rows(
+        out, roster_source, player_prior, 'name', 'name', 'team', ['targets'], 'WR')
+    assert len(again) == 2
+
+
+def test_returning_wr_role_restored_from_prior_season_with_room_conservation():
+    # A Sean Tucker / Alvin Kamara / Devontez Walker - style repro: Returner
+    # missed the season's opening week(s) so his only 2026 row is the
+    # roster-only NaN-week placeholder load_and_merge_data emits for a
+    # healthy player with no tracked game, but he had a clear real 2025 role
+    # on the same team. Before this fix he had no row anywhere in the
+    # in-season WR pool - not even the ordinary deep-bench percentile
+    # fallback everyone else with thin evidence gets - so he had no
+    # projection at all. Building the SAME board with vs. without his prior-
+    # season history isolates two things at once: (1) he only gets restored
+    # when real prior evidence exists, and (2) his restored share is blended
+    # in WITH his current-season teammate rather than added on top of him.
+    def _build(give_returner_prior_history):
+        current_rows = [
+            {'name': 'Incumbent', 'team': 'BAL', 'opponent_team': 'DEN', 'week': week,
+             'position': 'WR', 'weekly_snap_pct': 85.0, 'has_snap_match': True,
+             'targets': 9.0, 'receptions': 6.0, 'receiving_yards': 80.0, 'receiving_tds': 0.5}
+            for week in (1, 2)
+        ]
+        # Filler WRs on OTHER teams spanning a realistic range of shares.
+        # The "no measured role anywhere" default a synthesized zero-game
+        # row falls back to before restoration is the 15th percentile of
+        # every WR's measured share (see player_share's own comment) - with
+        # only Incumbent's 85% in the population that percentile degenerates
+        # to exactly 85% too, which masks eligibility (restoration requires
+        # clearing the default by a margin) and masks the room-conservation
+        # trim (nothing is ever injected). A real board has dozens of WRs;
+        # these fillers keep the fixture's percentile realistic instead of
+        # accidentally exercising a single-player edge case.
+        filler_teams = ('DAL', 'KC', 'SF', 'GB', 'MIA', 'NYJ', 'LAC', 'CHI', 'SEA')
+        for team, share in zip(filler_teams, (0.05, 0.08, 0.10, 0.15, 0.20, 0.30, 0.45, 0.60, 0.70)):
+            current_rows.extend([
+                {'name': f'Filler {team}', 'team': team, 'opponent_team': 'DEN', 'week': week,
+                 'position': 'WR', 'weekly_snap_pct': share * 100.0, 'has_snap_match': True,
+                 'targets': share * 10.0, 'receptions': share * 7.0,
+                 'receiving_yards': share * 80.0, 'receiving_tds': share * 0.5}
+                for week in (1, 2)
+            ])
+        current_rows.append({
+            'name': 'Returner', 'team': 'BAL', 'opponent_team': 'DEN', 'week': np.nan,
+            'position': 'WR', 'weekly_snap_pct': 0.0, 'has_snap_match': False,
+        })
+        current = weekly(current_rows)
+        prior_rows = [
+            {'name': 'Returner', 'team': 'BAL', 'opponent_team': 'DEN', 'week': week,
+             'position': 'WR', 'weekly_snap_pct': 88.0, 'has_snap_match': True,
+             'targets': 9.5, 'receptions': 6.5, 'receiving_yards': 90.0, 'receiving_tds': 0.6}
+            for week in range(9, 18)
+        ] if give_returner_prior_history else []
+        prior = weekly(prior_rows)
+        # The board only includes players whose team has a scheduled game
+        # the target week, so every filler team needs a week-3 matchup too -
+        # each paired against a shared placeholder opponent that has no
+        # players of its own on the board.
+        schedule = pd.DataFrame(
+            [{'week': 3, 'home_team': 'BAL', 'away_team': 'DEN'}]
+            + [{'week': 3, 'home_team': team, 'away_team': 'ARI'} for team in filler_teams])
+        original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+                    wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team)
+        try:
+            wp.load_and_merge_data = lambda year, scoring: (
+                (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+            wp.load_schedule = lambda year: schedule.copy()
+            wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+            wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+            wp.load_qb1_overrides = lambda _year: (pd.DataFrame(columns=['year', 'team', 'player']), None)
+            wp._target_margins_by_team = lambda year, week: {}
+            out, meta = wp.build_weekly_projections(
+                2026, 3, 'Full PPR', as_of_week=3, apply_injury=False,
+                availability_fingerprint=f'test_returning_wr_room_conservation_{give_returner_prior_history}')
+        finally:
+            (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+             wp.load_team_pace, wp.load_qb1_overrides, wp._target_margins_by_team) = original
+        return out
+
+    without_history = _build(False)
+    with_history = _build(True)
+
+    assert 'Returner' not in without_history['Player'].to_numpy()
+    assert 'Returner' in with_history['Player'].to_numpy()
+    returner = with_history.loc[with_history['Player'].eq('Returner')].iloc[0]
+    assert returner['Games This Season'] == 0
+    assert returner['targets'] > 1.0
+
+    incumbent_with = with_history.loc[with_history['Player'].eq('Incumbent')].iloc[0]
+    incumbent_without = without_history.loc[without_history['Player'].eq('Incumbent')].iloc[0]
+    assert incumbent_with['targets'] < incumbent_without['targets']
+
+
 def test_nonstarter_qb_has_zero_projected_volume_not_a_relief_rate_projection():
     rows = []
     for week in (1, 2, 3):

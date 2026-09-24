@@ -4948,6 +4948,72 @@ def _add_missing_manual_qb1_rows(cur, qb1_resolution, roster_source, name_col, t
     return pd.concat([cur, added], ignore_index=True) if not cur.empty else added
 
 
+def _add_missing_returning_player_rows(cur, roster_source, player_prior, prior_name_col,
+                                        name_col, team_col, stats, pos):
+    """Give a rostered RB/WR/TE a Games=0 placeholder row, cold-start style,
+    when he has a real prior-season role at this position but has not
+    played a single game yet this season - a Sean Tucker / Alvin Kamara /
+    Devontez Walker who missed the season's opening week(s) and is back on
+    the roster with a real committee role, per the user's own framing.
+
+    Same structural gap as _add_missing_manual_qb1_rows: the in-season pool
+    (`cur`, built by the caller from _season_totals(player_hist, ...)) only
+    ever contains players with at least one played game this season, so a
+    player who simply hasn't debuted yet is invisible to it and gets no
+    projection at all - not even the deep-bench percentile fallback everyone
+    else with thin evidence receives. Adding this row lets the ordinary
+    depth-chart-floor and returning-role-restoration machinery run for him
+    exactly like it already does for anyone else in the frame.
+
+    Gated on real PRIOR-SEASON games at this position (not merely being
+    rostered) so this never manufactures a role for a true unknown - an
+    undrafted rookie or practice-squad call-up with no history still gets
+    nothing here and falls through to the ordinary percentile default,
+    unchanged. `roster_source` must be the RAW, unfiltered season frame
+    (build_weekly_projections' own `stats_df`); `player_prior` the RAW,
+    unfiltered prior-season frame - never `hist`/`player_hist`/`prior_played`,
+    all of which are gated through _played_weeks_before/its prior-season
+    analogue and so cannot carry a missed player's roster-only row either.
+    """
+    if (roster_source is None or roster_source.empty or name_col not in roster_source.columns
+            or player_prior is None or player_prior.empty or prior_name_col not in player_prior.columns):
+        return cur
+    present_keys = (set(clean_name_exact(cur[name_col]))
+                    if not cur.empty and name_col in cur.columns else set())
+    roster = roster_source[roster_source['position'].astype(str).str.upper().eq(pos)].copy()
+    if roster.empty:
+        return cur
+    roster['_key'] = clean_name_exact(roster[name_col])
+    roster = roster[~roster['_key'].isin(present_keys)]
+    if 'status' in roster.columns:
+        roster = roster[~roster['status'].astype(str).str.upper().isin(INELIGIBLE_ROSTER_STATUSES)]
+    if roster.empty:
+        return cur
+    roster = roster.drop_duplicates(subset=['_key'], keep='last')
+    prior_pos = player_prior[player_prior['position'].astype(str).str.upper().eq(pos)]
+    if prior_pos.empty:
+        return cur
+    prior_games_by_identity = (
+        pd.DataFrame({'_identity_key': player_identity_keys(prior_pos, prior_name_col),
+                      'week': prior_pos.get('week', pd.Series(np.nan, index=prior_pos.index))})
+        .groupby('_identity_key')['week'].nunique())
+    roster_identity = player_identity_keys(roster, name_col)
+    has_prior_role = roster_identity.map(prior_games_by_identity).fillna(0) > 0
+    added_source = roster[has_prior_role.to_numpy()]
+    if added_source.empty:
+        return cur
+    carry_cols = [name_col, team_col] + [c for c in (
+        'player_id', 'gsis_id', 'pff_id', 'depth_chart_position', 'status',
+        'draft_number', 'is_rookie_flag', 'years_exp', 'ourlads_position',
+        'functional_position', 'projection_position') if c in added_source.columns]
+    added = added_source[carry_cols].rename(columns={team_col: 'Team'}).copy()
+    added['Games'] = 0
+    for stat in stats:
+        added[stat] = 0.0
+    added['_identity_key'] = player_identity_keys(added, name_col)
+    return pd.concat([cur, added], ignore_index=True) if not cur.empty else added
+
+
 # How far a prior-season per-game rate may be scaled by a role change. A
 # player whose snap share doubled really is a different player this year,
 # but the rate being scaled was measured in a different offense with
@@ -7265,6 +7331,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 _season_totals(player_hist, name_col, team_col, pos, stats), player_hist, name_col)
             if pos == 'QB' and 'qb1_override' in feats:
                 cur = _add_missing_manual_qb1_rows(cur, qb1_resolution, stats_df, name_col, team_col, stats)
+            elif pos in COLD_START_RETURNING_ROLE_MIN_GAMES:
+                cur = _add_missing_returning_player_rows(
+                    cur, stats_df, player_prior, prior_name_col, name_col, team_col, stats, pos)
             if cur.empty:
                 continue
         # Keep a non-display functional-position flag through the assembled
@@ -8007,7 +8076,11 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             player_interrupted_season = (identity_keys_rv.map(prior_interrupted_identity).fillna(0.0)
                                          .to_numpy(dtype=float) > 0.5
                                          if not prior_interrupted_identity.empty else np.zeros(len(cur), dtype=bool))
-            if cold_start and not prior_role_reference.empty:
+            # Computed regardless of cold_start (not just for the preseason
+            # role-rank input below): the in-season returning-role
+            # restoration branch further down needs prior_games/
+            # player_prior_teams too, for a zero-current-season-games row.
+            if not prior_role_reference.empty:
                 prior_role_keyed = prior_role_reference.copy()
                 prior_role_keyed = prior_role_keyed.drop_duplicates('_identity_key', keep='last').set_index('_identity_key')
                 prior_games = pd.to_numeric(
@@ -8152,6 +8225,61 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 )
             elif not cold_start:
                 preseason_role_source = np.full(len(cur), 'observed current-season role', dtype=object)
+                # A player with zero played games so far this season (see
+                # _add_missing_returning_player_rows) has no "observed
+                # current-season role" to fall back on above - he is
+                # invisible to the ordinary in-season share read the same
+                # way he was invisible to `cur` before that helper ran. Run
+                # the SAME evidence-weighted restoration cold start uses,
+                # gated to only players still sitting at zero games so an
+                # established player's real (possibly reduced) current role
+                # is never touched. Not time-limited by depth_chart_decay:
+                # that fade is about trusting an established player's own
+                # snaps over a stale chart, which has nothing to say about a
+                # player who has no snaps of his own yet, whether he returns
+                # in week 2 or week 10.
+                zero_games_mask = cur['Games'].fillna(0).to_numpy(dtype=float) <= 0
+                if (pos in COLD_START_RETURNING_ROLE_MIN_GAMES and zero_games_mask.any()
+                        and not prior_role_reference.empty):
+                    restored_share, restored_eligible, restored_reason = restore_cold_start_returning_role_share(
+                        player_share, player_prior_share, prior_games, player_prior_teams,
+                        team_keys_rv.to_numpy(dtype=object), pos,
+                        pre_absence_share=player_pre_absence_share,
+                        depth_rank=np.where(player_availability > 0.01, ourlads_role_rank, np.nan),
+                        terminal_gap_weeks=player_terminal_gap_weeks,
+                        prior2_games=player_prior2_games,
+                        prior2_active_share=player_prior2_active_share,
+                        role_confidence=cur['role_confidence'].to_numpy(dtype=float),
+                        allow_new_team_starter='v2_new_team_starter_restoration' in feats,
+                        return_details=True,
+                    )
+                    apply_mask = zero_games_mask & restored_eligible
+                    if apply_mask.any():
+                        injected = np.where(apply_mask, restored_share - player_share, 0.0)
+                        player_share = np.where(apply_mask, restored_share, player_share)
+                        returning_role_restored = np.where(apply_mask, True, returning_role_restored)
+                        returning_role_reason = np.where(apply_mask, restored_reason, returning_role_reason)
+                        preseason_role_source = np.where(
+                            apply_mask,
+                            'returning from a missed start to the season (' + restored_reason.astype(str) + ')',
+                            preseason_role_source)
+                        # Room conservation, per the user's own framing -
+                        # "blend" the returning player's role in WITH the
+                        # season evidence for his current-season teammates,
+                        # rather than adding his share on top of a backfield/
+                        # receiver room that already summed to what it
+                        # actually played. His restored share comes out of
+                        # his teammates at the same team+position,
+                        # distributed in proportion to their own shares.
+                        team_arr = team_keys_rv.to_numpy(dtype=object)
+                        for team in np.unique(team_arr[apply_mask]):
+                            team_mask = team_arr == team
+                            added_share = injected[team_mask].sum()
+                            other_mask = team_mask & ~apply_mask
+                            other_total = player_share[other_mask].sum()
+                            if added_share > 0.0 and other_total > 0.0:
+                                shrink = max(0.0, 1.0 - added_share / other_total)
+                                player_share[other_mask] *= shrink
             if ourlads_role_floor_applied.any():
                 role_messages = np.asarray([
                     (f'Ourlads {label} listed role floor (depth {int(rank)})'

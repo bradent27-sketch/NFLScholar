@@ -2099,6 +2099,55 @@ WR/TE `receiving_tds` against `DEFAULT_FEATURES`, on 2023-2025 weeks 2-6
 "make sure it doesn't hurt mid-season" instruction) - queued behind item 3's
 injury-replay backtest (one heavy job at a time on this box).
 
+## 2026-09-24 — item 3, experiment 1: historical injury replay confirmed real (RECIPIENT + ALL both improve)
+
+`scripts/backtest_injury_replay.py`, `default` vs
+`default + v2_historical_injury_replay`, harness v2, 2022-2025 weeks 3-17
+(60 week-instances). Full output:
+`.sweeps/injury_replay_2022-2025_wk3-17.log`. Per the plan's own
+pre-registered check ("should improve RECIPIENT a lot, ALL a little; if it
+doesn't, stop and debug before going further") - it did, on both counts:
+
+| scope | n | RMSE Δ (CI) | bias before -> after | pairwiseAcc Δ (CI) |
+|---|---|---|---|---|
+| RECIPIENT | 12,695 | -0.038 [-0.076,-0.001] | -0.816 -> -0.257 | +0.001 [-0.000,+0.002] |
+| ALL | 18,577 | -0.030 [-0.056,-0.005] | -0.732 -> -0.312 | +0.001 [-0.000,+0.002] |
+| RB | 4,910 | -0.052 [-0.097,-0.008] | -0.447 -> -0.122 | +0.002 [+0.000,+0.004] |
+| START-RB | 2,187 | -0.082 [-0.159,-0.009] | -0.781 -> -0.187 | +0.006 [-0.000,+0.012] |
+
+RMSE improves with a CI that excludes 0 for RECIPIENT, ALL, RB and
+START-RB. The bias swing is the real story: teammates of a significant-out
+player were underprojected by nearly a full point on average
+(RECIPIENT bias -0.816) with the whole layer switched off in every
+backtest to date - that's now down to -0.257. 20,203 recipient
+player-weeks contributed across 60 of the 60 tested weeks - a significantly-
+out player (>=0.5 own recent snap share) is the norm, not the exception,
+most weeks.
+
+**One caveat, not a blocker.** START-WR pairwise accuracy got measurably
+WORSE (0.612->0.603, CI[-0.015,-0.001], excludes 0 in the wrong direction) -
+RMSE there is flat, so this reads as the redistribution occasionally
+reshuffling which of two similar receivers ranks higher without fixing the
+level error. START-TE trends the same way but doesn't clear significance
+(CI[-0.025,+0.001]). Worth watching once the finer ablations below are run,
+not a reason to hold this back - QB/WR/TE/START-QB/START-WR/START-TE/
+START-ALL RMSE all point the same (improving) direction even where the CI
+doesn't yet clear 0 at this sample.
+
+**Ship status: infrastructure only, per the plan's own rule** ("replay
+itself is backtest-only and 'ships' as harness infrastructure... the
+constants ship on their own results"). `v2_historical_injury_replay` stays
+a backtest-only flag - it has no live effect and isn't a candidate for
+`DEFAULT_FEATURES` on its own. What this result licenses is running the
+plan's remaining item-3 experiments with confidence the base mechanism is
+sound: ablating `v2_vacancy`/`v2_receiver_vacancy_pecking_order`/the RB
+allocator vacancy path with replay on in both arms, sweeping
+`VACANCY_ABSORB`/`VACANCY_MAX_GROWTH`/`RECEIVER_VACANCY_RANK_DECAY`, and
+re-testing the in-season returning-player restoration's `alpha` - none of
+which have been run yet. `sweep_model_constant.py` also still needs a
+`--module` argument before `RECEIVER_VACANCY_RANK_DECAY` (lives in
+`data.rb_role_allocator`, not `data.weekly_projections`) can be swept.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

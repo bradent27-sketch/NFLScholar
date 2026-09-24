@@ -2037,6 +2037,68 @@ cold-start-gated flags above; the three CONSTANT sweeps
 which need `sweep_model_constant.py` ported to `--harness v2` first; the
 calibration re-fit that follows once the flag set is settled.
 
+## 2026-09-24 — item 4 fit-window sweep: three of four early-season K seeds were wrong, one confirmed
+
+`scripts/sweep_stat_k_groups.py`, fit years 2019-2022, weeks 2-6 (the actual
+early-season regime item 4 targets - never swept before), all four groups
+from the plan's protocol, each holding every other `STAT_K_BY_POS` leaf at
+seed. Full output: `.sweeps/stat_k_by_pos_fit_2019-2022_wk2-6.log`.
+
+**RB volume (rushing_attempts/rushing_yards/targets/receptions) - seed was
+WRONG, reject the faster-blend direction.** The audit's implied K (~1.2-2.2,
+i.e. scale ~0.4-0.7 vs the shared default of 3) predicted a FASTER blend
+would help. Measured: scale 0.33 makes START-RB RMSE significantly WORSE
+(8.131->8.200, CI[+0.030,+0.109]) and `rushing_yards` stat RMSE worse by
++0.718; scale 0.5 and 0.75 show the same direction at smaller, still-mostly-
+significant magnitude. Scale 1.5 (SLOWER, the opposite direction) trends
+slightly better (RB RMSE -0.006, `rushing_yards` stat -0.142) but the CI
+still includes 0. **Do not ship a faster RB volume blend.** Slower is the
+more promising remaining direction if this is revisited (untested past 1.5;
+the plan's own swept range stopped there).
+
+**WR/TE yardage - inconclusive, no seed change justified.** Every CI at
+every tested scale (0.75, 1.5, 2.0) includes 0 on both RMSE and pairwise
+accuracy, `ALL` and every position/START scope. No measurable effect either
+direction at this sample - leave `receiving_yards`/`receiving_yards` K at
+the shared default.
+
+**WR/TE TDs - seed CONFIRMED, the one real finding.** The audit's largest
+single implied gap (WR `receiving_tds` K~15, i.e. scale ~2.5 vs the shared
+default of 6) holds up: scale 1.5 gives ALL RMSE 6.752->6.750
+(CI[-0.003,-0.000]), START-WR 8.683->8.675 (CI[-0.014,-0.002]), START-ALL
+8.238->8.234 (CI[-0.007,-0.001]) - all excluding 0 in the improving
+direction. Scale 2.0 is similar or slightly better (START-ALL
+CI[-0.012,-0.002]); scale 3.0 keeps the direction but the `ALL` CI
+loosens back to touching 0. **Scale 2.0 (K~12 for WR, ~16 for TE) is the
+best candidate** - real, small (~0.05-0.1% RMSE), but a genuine dose-
+response across three tested values, unlike the other three groups.
+Confirm run on 2023-2025 queued (see below).
+
+**QB rushing - seed was WRONG, reject.** The audit predicted a SLOWER blend
+would help (K~5 vs default 3, i.e. scale ~1.67). Measured the opposite:
+scale 1.5 makes QB RMSE significantly worse (8.016->8.023,
+CI[+0.001,+0.013]), scale 2.0 worse again and more so (8.016->8.032,
+CI[+0.006,+0.028], `rushing_attempts`/`rushing_yards` stat RMSE both up).
+**Do not ship a slower QB rushing blend.** The plan's own swept range didn't
+test faster (this group's seed pointed the wrong way from the start), so
+whether QB rushing should shrink faster than default remains untested.
+
+**Why three of four seeds failed.** E4's seed values came from fitting the
+empirically "optimal" blend weight against REALIZED outcomes in the fit
+sample itself (2020-2025 games) - a fit that can chase noise, especially at
+G=1-3 for a volatile per-game stat like RB/QB rushing volume, without
+accounting for what the model's OWN recency-weighting and role_confidence
+machinery already does. WR/TE TDs held up because touchdown rate has a much
+larger true-shrinkage gap (a rate stat pulled from a handful of scores) that
+survives being re-measured out of sample; volume stats did not have that
+same margin.
+
+**Queued, not yet run:** the confirm of `STAT_K_BY_POS` scale 2.0 on
+WR/TE `receiving_tds` against `DEFAULT_FEATURES`, on 2023-2025 weeks 2-6
+(fit-window confirm) and weeks 7-17 (mid-season check, per the plan's
+"make sure it doesn't hurt mid-season" instruction) - queued behind item 3's
+injury-replay backtest (one heavy job at a time on this box).
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

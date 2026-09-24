@@ -845,6 +845,44 @@ def test_blended_rate_falls_back_to_position_rate_with_no_prior_season():
     assert abs(out[0] - 8.0) < 1e-9
 
 
+def test_stat_k_by_pos_is_ignored_unless_pos_is_passed():
+    # No `pos` (the default) -> identical to the shared STAT_K, exactly the
+    # pre-2026-09-24 behavior - this is what makes v2_stat_k_by_pos an
+    # opt-in flag rather than a silent behavior change.
+    shared = wp._blended_rate(np.array([20.0]), np.array([2.0]), np.array([5.0]),
+                              np.array([5.0]), 'rushing_attempts', np.array([0.5]))
+    same_no_pos = wp._blended_rate(np.array([20.0]), np.array([2.0]), np.array([5.0]),
+                                   np.array([5.0]), 'rushing_attempts', np.array([0.5]), pos=None)
+    assert abs(shared[0] - same_no_pos[0]) < 1e-9
+
+
+def test_stat_k_by_pos_uses_the_per_position_k_when_given():
+    # RB rushing_attempts K (1.2) is far below the shared STAT_K (3) - at
+    # the same games-played count, passing pos='RB' should lean noticeably
+    # more on the player's own current rate than the shared default does.
+    shared = wp._blended_rate(np.array([20.0]), np.array([2.0]), np.array([5.0]),
+                              np.array([5.0]), 'rushing_attempts', np.array([0.5]))
+    rb_k = wp._blended_rate(np.array([20.0]), np.array([2.0]), np.array([5.0]),
+                            np.array([5.0]), 'rushing_attempts', np.array([0.5]), pos='RB')
+    assert rb_k[0] > shared[0]
+
+    # WR receiving_tds K (15) is far above the shared STAT_K (6) - the
+    # opposite direction, leaning MORE on the prior at the same sample size.
+    shared_td = wp._blended_rate(np.array([0.30]), np.array([3.0]), np.array([0.10]),
+                                 np.array([0.10]), 'receiving_tds', np.array([0.5]))
+    wr_td = wp._blended_rate(np.array([0.30]), np.array([3.0]), np.array([0.10]),
+                             np.array([0.10]), 'receiving_tds', np.array([0.5]), pos='WR')
+    assert wr_td[0] < shared_td[0]
+
+
+def test_stat_k_by_pos_falls_back_to_shared_stat_k_for_an_unlisted_stat():
+    # passing_completions has no STAT_K_BY_POS entry for any position -
+    # falls back to the shared STAT_K exactly like an unrecognized position.
+    shared = wp._current_blend_weight(np.array([2.0]), 'passing_completions', np.array([0.5]))
+    with_pos = wp._current_blend_weight(np.array([2.0]), 'passing_completions', np.array([0.5]), pos='QB')
+    assert abs(shared[0] - with_pos[0]) < 1e-9
+
+
 # --- game script -----------------------------------------------------------
 
 def test_team_week_margins_sign_convention():

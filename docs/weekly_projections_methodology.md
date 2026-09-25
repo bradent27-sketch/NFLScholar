@@ -2289,6 +2289,92 @@ silently patched nothing); values 0.40/0.50/0.75/0.85 vs. shipped 0.62,
 2022-2025 weeks 3-17, queued behind the `v2_stat_k_by_pos` real validation
 (one heavy job at a time).
 
+## 2026-09-24 — three live-model bug reports: a rookie's own role capped by a same-team share rank, target volume double-counted between capacity conservation and vacancy, and an ultra-low-probability Questionable playing at full strength
+
+Three issues reported from a real live board (2026 week 3/4). Fixed the
+first and third directly (real, low-risk bugs); built the second as a
+backtestable flag rather than shipping it outright, since the fix is a
+genuine tradeoff against the reason the current order was chosen, not a
+straightforward correction.
+
+**Antonio Williams (WAS WR) projected under 10% expected snap share despite
+a real, growing 37%/49% role across his first two career games.** NOT a
+depth-chart pulldown (his `ourlads_role_available_rank` was `None` - no
+chart entry to pull from at all). The real chain: Treylon Burks (an
+established WAS WR) had an apparent in-game injury exit in week 2 (30%
+snaps against an ~83-91% established reference), which correctly excludes
+BURKS' own week-2 line from his rate stats - but the same "partial
+replacement after teammate exit" screen also excluded Williams' week-2
+game from HIS OWN role evidence, leaving only his week-1 number (37%) as
+his sole eligible sample. That 37% then hit `WR_DEPTH_RANK_SMALL_ROLE`
+(`data/weekly_projections.py`): ranked 5th on WAS's own share list, capped
+to exactly 5% regardless of the fact that number came from two real played
+games, not a stale guess. The cutoff's own documented purpose (killing a
+should-be-negligible WR6+/TE4+ tail's stale, thin-evidence noise, added
+2026-08-25) never applied to Williams - he'd actually played.
+
+**Fixed:** the WR/TE depth-rank share cap (`data/weekly_projections.py`,
+the `pos in ('WR', 'TE')` block) now fades out as the player's own ELIGIBLE
+current-season game count grows, via new `RECEIVER_DEPTH_RANK_CUTOFF_
+EVIDENCE_GAMES = 2` - 0 eligible games gets the full cap (preseason/cold-
+start behavior is completely unchanged, since nobody has eligible games
+yet), 1 gets it half-relaxed, 2+ exempts the player from the cap entirely.
+Verified on the real case: Antonio Williams' Expected Snap Share moved
+0.05 -> 0.183 (his `Games This Season` is currently 1; it will reach the
+full exemption once a second clean game is eligible). `tests/test_
+weekly_projections.py` and the full suite (626 tests) still pass.
+
+**Target volume double-counted between pass-capacity conservation and
+vacancy redistribution when a player is ruled OUT.** Real case: Rico
+Dowdle (PIT RB) marked OUT zeroed his own row via the ordinary per-player
+injury discount BEFORE `apply_pass_capacity_conservation` runs. That
+function reads PIT's RB room as now under its own pass-attempt-derived
+budget (since Dowdle's own claim vanished) and scales Jaylen Warren UP to
+refill it (+2 targets) - then vacancy redistribution runs SEPARATELY right
+after and ALSO reassigns Dowdle's specific vacated targets to Warren
+(+2.2) - the same missing volume credited twice under two different
+mechanism names. The current capacity-then-vacancy order has its own real
+justification (a comment in `build_weekly_projections` explains it:
+vacancy should redistribute a departing player's share of an ALREADY-
+REALISTIC team total, not add on top of one that still needs fitting) -
+reversing it protects against the double-count found here but reopens the
+door to the problem the current order exists to prevent (vacancy
+redistributing off a team total that hasn't been fitted to reality yet for
+some OTHER reason). Neither order is a free lunch.
+
+**Built, not shipped:** a new `v2_vacancy_before_capacity` flag (not in
+`DEFAULT_FEATURES`) reorders the two passes - `build_weekly_projections`
+now has `_run_pass_capacity()`/`_run_vacancy()` as swappable steps with a
+mid-pipeline snapshot for the popup's per-mechanism delta attribution
+(`pass_capacity_delta`/`vacancy_delta`), which now correctly follows
+whichever mechanism actually ran first instead of assuming the shipped
+order. Full suite (626 tests) passes with the flag off (the default path
+is unchanged code-for-code in effect, just restructured into named
+functions). **Queued as the next thing to backtest** once compute frees up
+(`scripts/backtest_component.py --add v2_vacancy_before_capacity`) -
+this is a real tradeoff, not an obvious win, and should ship or not on
+real numbers the same as everything else in this doc.
+
+**A "Questionable" listing with a reported plays-probability under 10% was
+projected at full strength.** The standing rule (2026-08-29, user's
+explicit request) is that a FantasyPros-reported probability is DISPLAY
+ONLY - only the Out/Doubtful designation itself changes the projection,
+specifically because a probability-scaled haircut was worse than trusting
+the binary designation. That rule is still right for an ordinary
+Questionable (a genuine game-time call), but a "Questionable (7%)" is
+functionally an Out in practice (often a team's procedural reason for not
+listing him Out outright), and was still getting a full, undiscounted
+projection.
+
+**Fixed:** `data/availability_overrides.py`'s `resolve_target_week_
+availability` now treats a FantasyPros-sourced Questionable with a
+reported probability below `LOW_QUESTIONABLE_PLAYS_PROBABILITY = 0.10` as
+an Out for the projection (`plays_probability = 0.0`) - the displayed
+status and percentage ("Questionable (7%)") are untouched, only the model
+input changes. Every Questionable at or above 10% keeps the existing
+display-only rule exactly as before. New tests in `tests/test_
+availability_overrides.py` cover both sides of the threshold.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

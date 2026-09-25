@@ -34,6 +34,18 @@ _OUT_STATUSES = frozenset({"out", "ir", "suspended", "inactive", "nfi", "pup"})
 # only (see _probability's honor_supplied and fantasypros_availability).
 _ASSUME_OUT_STATUSES = _OUT_STATUSES | {"doubtful"}
 _STATUS_PROBABILITY: dict[str, float] = {}
+# One narrow exception to "a reported probability is display only" above,
+# added 2026-09-24 per explicit request: a "Questionable" listing with a
+# reported plays-probability this low is functionally an Out/Doubtful in
+# practice (a team's procedural/cap reason for not just marking him Out
+# outright), not a genuine 50/50 game-time call - treating it the same as
+# an ordinary Questionable was projecting real snaps for a player who was
+# never going to play. Deliberately not a full probability-scaled haircut
+# (the standing rule above stays for every Questionable at or above this
+# bar) - see resolve_target_week_availability's own use of this constant
+# for where the projection actually gets zeroed while the displayed
+# "Questionable (7%)" label is left untouched.
+LOW_QUESTIONABLE_PLAYS_PROBABILITY = 0.10
 
 
 def _text(values: Any) -> pd.Series:
@@ -323,11 +335,22 @@ def resolve_target_week_availability(raw_profiles: dict[str, dict[str, Any]] | N
         # model input - status alone decides. A manual override still wins.
         honor_supplied = not source_label.lower().startswith("fantasypros")
         reported = pd.to_numeric(pd.Series([profile.get("plays_probability")]), errors="coerce").iloc[0]
+        resolved_probability = _probability(status, profile.get("plays_probability"),
+                                            honor_supplied=honor_supplied)
+        # See LOW_QUESTIONABLE_PLAYS_PROBABILITY's own comment: a
+        # Questionable listing this low is treated as an Out for the
+        # projection even though the status-alone rule above would
+        # otherwise read it as healthy. The reported number and the
+        # "Questionable" label are still carried through unchanged for
+        # display (reported_probability/status below) - only the model
+        # input changes.
+        if (not honor_supplied and status == "questionable"
+                and pd.notna(reported) and reported < LOW_QUESTIONABLE_PLAYS_PROBABILITY):
+            resolved_probability = 0.0
         profiles[roster_name] = {
             **profile,
             "status": status,
-            "plays_probability": _probability(status, profile.get("plays_probability"),
-                                              honor_supplied=honor_supplied),
+            "plays_probability": resolved_probability,
             "reported_probability": (float(reported) if pd.notna(reported) else None),
             "workload_if_active": _workload(profile.get("workload_if_active")),
             "source": source_label,

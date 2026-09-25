@@ -47,6 +47,29 @@ class AvailabilityOverrideTests(unittest.TestCase):
         )
         self.assertEqual(resolved, {})
 
+    def test_fantasypros_questionable_under_ten_percent_is_treated_as_out(self):
+        resolved, _ = resolve_target_week_availability(
+            {'Malik Nabers': {'status': 'questionable', 'plays_probability': 0.07,
+                              'source': 'FantasyPros injury report'}},
+            pd.DataFrame(), self.roster, 'player_display_name', 'team',
+        )
+        self.assertEqual(resolved['Malik Nabers']['plays_probability'], 0.0)
+        # The label/percentage themselves are untouched - only the model
+        # input changes.
+        self.assertEqual(resolved['Malik Nabers']['status'], 'questionable')
+        self.assertEqual(resolved['Malik Nabers']['reported_probability'], 0.07)
+
+    def test_fantasypros_questionable_at_or_above_ten_percent_stays_healthy(self):
+        # The standing rule (a FantasyPros probability is display-only)
+        # still applies once it's not this extreme - only the < 10% case is
+        # an exception.
+        resolved, _ = resolve_target_week_availability(
+            {'Malik Nabers': {'status': 'questionable', 'plays_probability': 0.10,
+                              'source': 'FantasyPros injury report'}},
+            pd.DataFrame(), self.roster, 'player_display_name', 'team',
+        )
+        self.assertEqual(resolved['Malik Nabers']['plays_probability'], 1.0)
+
     def test_manual_current_override_wins_and_is_auditable(self):
         manual = pd.DataFrame([
             {'year': 2026, 'week': 1, 'team': 'NYG', 'player': 'Malik Nabers',

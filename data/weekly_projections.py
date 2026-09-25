@@ -479,6 +479,30 @@ WR_DEPTH_RANK_SMALL_ROLE_SHARE_CAP = 0.05
 WR_DEPTH_RANK_CUTOFF = 6                  # rank 6 and deeper - cut off
 TE_DEPTH_RANK_CUTOFF = 4                  # rank 4 and deeper - cut off
 RECEIVER_DEPTH_CUTOFF_SHARE_CAP = 0.01
+# How many of the player's own ELIGIBLE current-season games (cur['Games'] -
+# already excludes a partial/replacement game, see annotate_player_history_
+# participation) it takes to fade this cap out entirely, once he has any.
+# Added 2026-09-24: found on Antonio Williams (WAS WR, 2026 week 3 build) -
+# a real, legitimate 37%/49% snap share across his first two career games
+# (targets, receptions and yards to match) got capped all the way down to
+# 5% because he ranked 5th on WAS's own current-share depth rank. That rank
+# was itself distorted: his week-2 game got excluded from his own role
+# evidence as a "partial replacement" for Treylon Burks' in-game injury
+# exit that same week (correct call for BURKS' rate stats - his 30% snap
+# share that game is not his real role - but it left Williams' current
+# expected share reading only his week-1 number). The rank-cutoff above
+# exists to zero out a team's should-be-negligible WR6+/TE4+ tail, whose
+# small shares were nothing but stale/thin-evidence noise (see that block's
+# own comment) - it was never meant to override a player's OWN measured,
+# played-in-real-games role just because a temporary teammate injury
+# happened to cost him one game of role evidence and a same-team share rank
+# that goes with it. Gating the cap's bite on his own eligible-game count
+# (not lifting it outright, which would let a truly negligible player's one
+# fluky big game override the tail-cutoff this exists for) reproduces the
+# user's own prescription: let the cap fade out as real season data comes
+# in, rather than either a permanent hard floor or an immediate full
+# exemption off a single game.
+RECEIVER_DEPTH_RANK_CUTOFF_EVIDENCE_GAMES = 2
 # v2_rookie_backup_wr_dampen (2026-09-08): a NO-PRIOR-ROLE (rookie / practice-
 # squad callup) WR the Ourlads chart lists as a per-alignment BACKUP (slot
 # rank 2, i.e. behind LWR-1/RWR-1/SWR-1) currently keeps the ordinary rank-2
@@ -1112,6 +1136,22 @@ MODEL_FEATURES = (
                              # live or outside historical_target - a
                              # misconfigured flag on a live board is a no-op,
                              # not a silent behavior change.
+    'v2_vacancy_before_capacity',  # run vacancy redistribution BEFORE pass-
+                             # capacity conservation instead of after (see
+                             # the ordering comment above _run_pass_capacity/
+                             # _run_vacancy in build_weekly_projections).
+                             # Built 2026-09-24 on a real reported case (Rico
+                             # Dowdle OUT, PIT, Jaylen Warren double-counted:
+                             # +2 targets from capacity conservation reading
+                             # the RB room as under-budget once Dowdle's own
+                             # row zeroed, ANOTHER +2.2 from vacancy
+                             # separately reassigning Dowdle's own vacated
+                             # targets). NOT YET BACKTESTED - queue a
+                             # backtest_component.py --add run before
+                             # shipping; the shipped order has its own real
+                             # justification (see the comment above) so this
+                             # is a genuine tradeoff to measure, not a
+                             # straightforward bug fix.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -8453,7 +8493,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 else:
                     share_cap = np.where(
                         depth_rank_within_team >= TE_DEPTH_RANK_CUTOFF, RECEIVER_DEPTH_CUTOFF_SHARE_CAP, np.inf)
-                player_share = np.minimum(player_share, share_cap)
+                capped_share = np.minimum(player_share, share_cap)
+                # Fade the cap out as the player's own ELIGIBLE current-season
+                # sample grows - see RECEIVER_DEPTH_CUTOFF_SHARE_CAP's own
+                # comment (the Antonio Williams case) for why a same-team
+                # share-rank cutoff has no business overriding a role that's
+                # already backed by his own played games, and why that's a
+                # fade rather than an outright exemption at game 1.
+                _evidence_games = cur['Games'].fillna(0).to_numpy(dtype=float)
+                _evidence_weight = np.clip(
+                    _evidence_games / RECEIVER_DEPTH_RANK_CUTOFF_EVIDENCE_GAMES, 0.0, 1.0)
+                player_share = capped_share + _evidence_weight * (player_share - capped_share)
                 # Room-level ceiling: the sum of this team's WR (or TE) shares
                 # cannot exceed what the team actually ran at the position last
                 # year (+ tolerance). Nothing upstream bounds the room sum, so
@@ -10093,101 +10143,158 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         return pd.DataFrame(), {'reason': f'No projectable players found for week {week}.'}
     result = pd.concat(all_rows, ignore_index=True).sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
-    # Team-level target conservation, BEFORE vacancy: fits every team's
-    # RB/WR/TE targets (and receptions/yards/TDs, rescaled by the same
-    # factor) to that team's own projected pass attempts. Runs on the
-    # ASSEMBLED board because a team's QB attempts and its receivers are
-    # computed in separate position passes above - see
-    # data/pass_capacity_allocator.py for why this specific defect (targets
-    # running 1.19x-1.56x attempts, entirely in the tail beyond a team's
-    # real 6-8 pass catchers) never shows up in a star-player spot check.
-    # Deliberately BEFORE the vacancy pass below: vacancy should redistribute
-    # a departing player's share of an already-realistic team total, not add
-    # on top of one that still needs fitting to reality.
-    pass_capacity_ledger, pass_capacity_adjusted, pass_capacity_room = [], False, []
-    if 'v2_pass_capacity' in feats:
-        # WR/TE split (data.pass_capacity_allocator.TE_MARGINAL_TARGET_WEIGHT)
-        # only for a cold start / weeks 1-2: that is when a team's WR/TE claim
-        # is off its pass-attempt budget almost entirely because of an
-        # offseason WR-room change the model hasn't fully re-primed, and the
-        # tight end should not take a WR-driven swing at full proportion
-        # (LAC Gadsden / GB Kraft / TB Otton scaled up after a WR left; IND
-        # Warren docked after Keenan Allen arrived). In-season, real target
-        # data has re-separated the rooms and the uniform fit is fine.
-        _wr_te_split = ('v2_wr_te_capacity_split' in feats
-                        and (cold_start or int(as_of_week) <= 2))
-        result, pass_capacity_ledger_df = apply_pass_capacity_conservation(
-            result, prior_history=prior_stats, team_col=prior_team_col,
-            wr_te_split=_wr_te_split,
-            matchup_flex=('v2_pass_capacity_matchup_flex' in feats))
-        pass_capacity_ledger = pass_capacity_ledger_df.to_dict('records')
-        pass_capacity_adjusted = bool(
-            not pass_capacity_ledger_df.empty
-            and (pass_capacity_ledger_df['capacity_source'] != 'no capacity signal').any())
-        # Per-player room detail (see apply_pass_capacity_conservation's own
-        # comment for why this rides on .attrs instead of a return value) -
-        # who else is in this player's team+group and what the same
-        # conservation pass did to each of them, not just the team totals.
-        _room_detail_df = pass_capacity_ledger_df.attrs.get('player_detail')
-        if _room_detail_df is not None and not _room_detail_df.empty:
-            pass_capacity_room = _room_detail_df.to_dict('records')
+    # Team-level target conservation fits every team's RB/WR/TE targets (and
+    # receptions/yards/TDs, rescaled by the same factor) to that team's own
+    # projected pass attempts. Runs on the ASSEMBLED board because a team's
+    # QB attempts and its receivers are computed in separate position passes
+    # above - see data/pass_capacity_allocator.py for why this specific
+    # defect (targets running 1.19x-1.56x attempts, entirely in the tail
+    # beyond a team's real 6-8 pass catchers) never shows up in a
+    # star-player spot check.
+    #
+    # ORDER relative to vacancy is a genuine tradeoff, not a settled
+    # question - each order protects against a different double-count:
+    #
+    #   capacity-then-vacancy (shipped default): vacancy redistributes a
+    #   departing player's share of an already-realistic team total, not on
+    #   top of one that still needs fitting to reality.
+    #
+    #   vacancy-then-capacity ('v2_vacancy_before_capacity'): capacity
+    #   conservation's OWN "current team claim" input is computed AFTER an
+    #   OUT player's individual injury discount has already zeroed his row -
+    #   which reads as the WHOLE GROUP under-claiming its budget and scales
+    #   every healthy teammate up to fill that gap, even though vacancy is
+    #   about to independently redistribute that exact same player's exact
+    #   same vacated volume right afterward. Confirmed on a real case
+    #   2026-09-24 (Rico Dowdle OUT, PIT): Jaylen Warren picked up +2
+    #   targets from capacity conservation reading PIT's RB room as
+    #   under-budget with Dowdle zeroed, THEN another +2.2 from vacancy
+    #   explicitly reassigning Dowdle's own vacated targets to him - the
+    #   same missing volume credited twice under two different names.
+    #   Running vacancy first means capacity conservation's "current claim"
+    #   already reflects Dowdle's volume having a new, named home, so it
+    #   only fits whatever GENUINE team-wide mismatch remains - but it also
+    #   means capacity conservation can no longer rescue a vacancy pass that
+    #   left the team total genuinely unrealistic, which is exactly the
+    #   failure the shipped order was built to prevent (see above).
+    #
+    # Neither order is a free lunch, which is why this is a backtestable
+    # flag (not a swap of the default) - see scripts/backtest_component.py.
+    # Both orders share the exact same two calls; only the ORDER (and which
+    # snapshot sits in the middle, for the popup's per-mechanism delta
+    # attribution just below) differs.
+    _vacancy_before_capacity = 'v2_vacancy_before_capacity' in feats
 
-    # Snapshot the board right here, AFTER pass-capacity conservation but
-    # BEFORE the vacancy pass below, keyed by (Player, Pos, Team) rather than
-    # positional index - both this pass and the vacancy functions below can
-    # precede a sort/reset_index further down, so an index-aligned snapshot
-    # would silently misattribute rows once that happens. Without this, the
-    # 'vacancy_delta' reported in the popup below conflated TWO unrelated
-    # mechanisms into one number: apply_pass_capacity_conservation shrinking
-    # a team's tail pass-catchers toward a realistic team target budget (runs
-    # on every board with 'v2_pass_capacity' on, whether or not anyone is
-    # hurt) and the actual OUT-teammate vacancy redistribution below. A
-    # low-usage receiving back (e.g. a bruiser RB whose team's WR/TE corps
-    # already claims the trusted tier) could get his already-small target
-    # share visibly squeezed by capacity conservation alone and have the UI
-    # blame "vacancy" for it - a real mislabeling bug, confirmed 2026-08-24.
-    _capacity_snapshot_stats = ('targets', 'receptions', 'receiving_yards', 'receiving_tds')
-    post_capacity_snapshot = {}
-    if any(c in result.columns for c in _capacity_snapshot_stats):
-        for _, _snap_row in result.iterrows():
-            post_capacity_snapshot[(_snap_row['Player'], _snap_row['Pos'], _snap_row['Team'])] = {
-                stat: float(_snap_row[stat]) for stat in _capacity_snapshot_stats
-                if stat in result.columns and pd.notna(_snap_row[stat])
-            }
+    def _run_pass_capacity():
+        nonlocal result
+        ledger, adjusted, room = [], False, []
+        if 'v2_pass_capacity' in feats:
+            # WR/TE split (data.pass_capacity_allocator.TE_MARGINAL_TARGET_
+            # WEIGHT) only for a cold start / weeks 1-2: that is when a
+            # team's WR/TE claim is off its pass-attempt budget almost
+            # entirely because of an offseason WR-room change the model
+            # hasn't fully re-primed, and the tight end should not take a
+            # WR-driven swing at full proportion (LAC Gadsden / GB Kraft /
+            # TB Otton scaled up after a WR left; IND Warren docked after
+            # Keenan Allen arrived). In-season, real target data has
+            # re-separated the rooms and the uniform fit is fine.
+            _wr_te_split = ('v2_wr_te_capacity_split' in feats
+                            and (cold_start or int(as_of_week) <= 2))
+            result, ledger_df = apply_pass_capacity_conservation(
+                result, prior_history=prior_stats, team_col=prior_team_col,
+                wr_te_split=_wr_te_split,
+                matchup_flex=('v2_pass_capacity_matchup_flex' in feats))
+            ledger = ledger_df.to_dict('records')
+            adjusted = bool(not ledger_df.empty
+                            and (ledger_df['capacity_source'] != 'no capacity signal').any())
+            # Per-player room detail (see apply_pass_capacity_conservation's
+            # own comment for why this rides on .attrs instead of a return
+            # value) - who else is in this player's team+group and what the
+            # same conservation pass did to each of them, not just the team
+            # totals.
+            _room_detail_df = ledger_df.attrs.get('player_detail')
+            if _room_detail_df is not None and not _room_detail_df.empty:
+                room = _room_detail_df.to_dict('records')
+        return ledger, adjusted, room
 
-    vacancy_adjusted, vacancy_ledger = 0, []
-    if 'v2_vacancy' in feats and injury_profiles:
-        if 'v2_preseason_rb_allocator' in feats:
-            # The V2 allocator owns all RB carry/target vacancy, and owns
-            # WR/TE target vacancy so a departed pass catcher cannot leak
-            # into a running back.  Keep the old helper only for the QB
-            # handoff, where a single named replacement remains the right
-            # football rule.
-            injury_provenance = {
-                player: {
-                    'year': profile.get('source_year'),
-                    'source': profile.get('source', 'target-season injury report'),
+    def _run_vacancy():
+        nonlocal result
+        adjusted, ledger = 0, []
+        if 'v2_vacancy' in feats and injury_profiles:
+            if 'v2_preseason_rb_allocator' in feats:
+                # The V2 allocator owns all RB carry/target vacancy, and
+                # owns WR/TE target vacancy so a departed pass catcher
+                # cannot leak into a running back. Keep the old helper only
+                # for the QB handoff, where a single named replacement
+                # remains the right football rule.
+                injury_provenance = {
+                    player: {
+                        'year': profile.get('source_year'),
+                        'source': profile.get('source', 'target-season injury report'),
+                    }
+                    for player, profile in injury_profiles.items()
                 }
-                for player, profile in injury_profiles.items()
-            }
-            result, rb_vacancy_frame = redistribute_rb_vacancy_with_allocator(
-                result, injury_profiles, as_of_year=year,
-                injury_provenance=injury_provenance,
-                receiver_pecking_order='v2_receiver_vacancy_pecking_order' in feats,
-            )
-            rb_vacancy_ledger = (rb_vacancy_frame.to_dict('records')
-                                 if rb_vacancy_frame is not None and not rb_vacancy_frame.empty else [])
-            result, qb_vacancy_adjusted, qb_vacancy_ledger = redistribute_v2_vacated_usage(
-                result, injury_profiles, skip_rb=True, skip_receivers=True)
-            vacancy_ledger = rb_vacancy_ledger + qb_vacancy_ledger
-            vacancy_adjusted = int(any(float(entry.get('allocated', 0.0) or 0.0) > 0
-                                        for entry in rb_vacancy_ledger)) + int(qb_vacancy_adjusted)
-        else:
-            result, vacancy_adjusted, vacancy_ledger = redistribute_v2_vacated_usage(result, injury_profiles)
-    elif 'teammate_vacancy' in feats and injury_mult:
-        # V1 behavior remains available for its existing measured baseline.
-        result, vacancy_adjusted = redistribute_vacated_usage(result, injury_mult)
-    result = result.drop(columns=[c for c in result.columns if c.startswith('_full_')])
+                result, rb_vacancy_frame = redistribute_rb_vacancy_with_allocator(
+                    result, injury_profiles, as_of_year=year,
+                    injury_provenance=injury_provenance,
+                    receiver_pecking_order='v2_receiver_vacancy_pecking_order' in feats,
+                )
+                rb_vacancy_ledger = (rb_vacancy_frame.to_dict('records')
+                                     if rb_vacancy_frame is not None and not rb_vacancy_frame.empty else [])
+                result, qb_vacancy_adjusted, qb_vacancy_ledger = redistribute_v2_vacated_usage(
+                    result, injury_profiles, skip_rb=True, skip_receivers=True)
+                ledger = rb_vacancy_ledger + qb_vacancy_ledger
+                adjusted = int(any(float(entry.get('allocated', 0.0) or 0.0) > 0
+                                    for entry in rb_vacancy_ledger)) + int(qb_vacancy_adjusted)
+            else:
+                result, adjusted, ledger = redistribute_v2_vacated_usage(result, injury_profiles)
+        elif 'teammate_vacancy' in feats and injury_mult:
+            # V1 behavior remains available for its existing measured baseline.
+            result, adjusted = redistribute_vacated_usage(result, injury_mult)
+        result = result.drop(columns=[c for c in result.columns if c.startswith('_full_')])
+        return adjusted, ledger
+
+    # Snapshot the board between the two passes, keyed by (Player, Pos,
+    # Team) rather than positional index - both passes can precede a
+    # sort/reset_index further down, so an index-aligned snapshot would
+    # silently misattribute rows once that happens. Without this, the
+    # popup's per-stat delta conflated TWO unrelated mechanisms into one
+    # number attributed entirely to whichever ran second - a real
+    # mislabeling bug, confirmed 2026-08-24 (a low-usage receiving back
+    # could get squeezed by capacity conservation alone and have the UI
+    # blame "vacancy" for it).
+    _capacity_snapshot_stats = ('targets', 'receptions', 'receiving_yards', 'receiving_tds')
+
+    def _snapshot():
+        snap = {}
+        if any(c in result.columns for c in _capacity_snapshot_stats):
+            for _, _snap_row in result.iterrows():
+                snap[(_snap_row['Player'], _snap_row['Pos'], _snap_row['Team'])] = {
+                    stat: float(_snap_row[stat]) for stat in _capacity_snapshot_stats
+                    if stat in result.columns and pd.notna(_snap_row[stat])
+                }
+        return snap
+
+    if _vacancy_before_capacity:
+        vacancy_adjusted, vacancy_ledger = _run_vacancy()
+        mid_snapshot = _snapshot()
+        pass_capacity_ledger, pass_capacity_adjusted, pass_capacity_room = _run_pass_capacity()
+    else:
+        pass_capacity_ledger, pass_capacity_adjusted, pass_capacity_room = _run_pass_capacity()
+        mid_snapshot = _snapshot()
+        vacancy_adjusted, vacancy_ledger = _run_vacancy()
+    # Whichever mechanism produced `mid_snapshot` is the one the popup's
+    # delta-attribution block below (post_capacity_snapshot lookup) should
+    # credit for the FIRST half of any change - see that block for the
+    # actual pre/post split, which reads _vacancy_before_capacity to know
+    # which delta ('pass_capacity_delta' or 'vacancy_delta') the snapshot
+    # boundary belongs to.
+    post_capacity_snapshot = mid_snapshot
+    # Run once, on the truly FINAL board, regardless of which pass ran
+    # last - it's an idempotent, no-op-when-already-consistent safety net
+    # (receptions<=targets, TDs<=catches/carries), not itself order-
+    # sensitive, so it belongs after BOTH mechanisms rather than tucked
+    # inside either one's own function.
     if 'v2_pass_capacity' in feats:
         result = clamp_dependent_stats(result)
     # Re-score whenever EITHER pass moved a stat line, not vacancy alone:
@@ -10349,16 +10456,22 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             final_value = float(final_value)
             pre_vacancy = values.get('pre_vacancy_projection')
             pre_vacancy = float(pre_vacancy) if pre_vacancy is not None else final_value
-            # Split at the post-capacity-conservation snapshot above so each
-            # mechanism's own effect is reported separately instead of one
-            # number blaming "vacancy" for both. Falls back to the old
-            # combined behavior (all of it attributed to vacancy_delta) for a
-            # stat the snapshot didn't cover (passing stats - conservation
-            # only touches RB/WR/TE receiving volume).
+            # Split at the mid-pass snapshot above so each mechanism's own
+            # effect is reported separately instead of one number blaming
+            # "vacancy" for both. Which delta the snapshot boundary belongs
+            # to depends on which mechanism ran FIRST (_vacancy_before_
+            # capacity) - see that flag's own comment above. Falls back to
+            # the old combined behavior (all of it attributed to
+            # vacancy_delta) for a stat the snapshot didn't cover (passing
+            # stats - conservation only touches RB/WR/TE receiving volume).
             if stat in row_capacity_snapshot:
-                post_capacity = row_capacity_snapshot[stat]
-                values['pass_capacity_delta'] = round(post_capacity - pre_vacancy, 3)
-                values['vacancy_delta'] = round(final_value - post_capacity, 3)
+                mid_value = row_capacity_snapshot[stat]
+                if _vacancy_before_capacity:
+                    values['vacancy_delta'] = round(mid_value - pre_vacancy, 3)
+                    values['pass_capacity_delta'] = round(final_value - mid_value, 3)
+                else:
+                    values['pass_capacity_delta'] = round(mid_value - pre_vacancy, 3)
+                    values['vacancy_delta'] = round(final_value - mid_value, 3)
             else:
                 values['pass_capacity_delta'] = 0.0
                 values['vacancy_delta'] = round(final_value - pre_vacancy, 3)

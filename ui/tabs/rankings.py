@@ -18,6 +18,8 @@ upload are four INDEPENDENT sources shown side by side, never blended into
 one number - same "show market lines next to this board, don't merge them"
 convention Draft HQ already uses.
 """
+import datetime
+
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -80,13 +82,13 @@ _RANK_PROJ_SHORT_LABELS = {
 # these wide, not the cell content.
 _NARROW_COLS = ('Rank', 'FantasyPros Rank', 'Model Rank', 'Market Rank',
                 'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts', 'Market Coverage',
-                'Pts Allowed', 'Wind', 'Temp', 'Precip', 'Season Snap %')
+                'Def Rank', 'Wind', 'Temp', 'Precip', 'Season Snap %')
 
 # Wind/Temp/Precip bucket thresholds for the weather columns - icon-only
 # (explicit request, 2026-09-23: the bucket is the useful at-a-glance
 # signal, not the exact mph/degrees), so the column stays compact and
 # consistent with Precip's own already-icon-first labels. Deliberately
-# uncolored (unlike Pts Allowed right next to it): that column already
+# uncolored (unlike Def Rank right next to it): that column already
 # carries this row's one heavy background color, and three more colored
 # cells beside it would read as noisy rather than informative for what's
 # meant to be a quick glance.
@@ -2427,20 +2429,32 @@ def _limit_rows(df, key):
     return df if choice == "All" or len(df) <= choice else df.head(choice)
 
 
-def _week_matchups(df, team_col='Team', opponent_col='Opponent'):
-    """This week's real games as [(label, {team_a, team_b}), ...].
+def _week_matchups(df, season, week, team_col='Team', opponent_col='Opponent'):
+    """This week's real games as [(label, {team_a, team_b}), ...], sorted
+    chronologically by actual kickoff - explicit request, so the filter
+    reads top-to-bottom as the slate actually plays out (Thursday first,
+    early Sunday, late Sunday, Sunday night, Monday) rather than
+    alphabetically by team name.
 
-    Built off the board's OWN Team/Opponent columns rather than a second
-    schedule source (e.g. data.game_slate, which reads a separately-sourced
-    CSV) - so a label's teams are guaranteed to match what's actually on the
-    board, with no cross-source team-abbreviation mismatch possible. Only
-    the unordered pair is trustworthy this way (a row's own Team/Opponent
-    doesn't say which side is home), so the label is deliberately "A vs B",
-    not "A @ B".
+    The unordered team pair still comes off the board's OWN Team/Opponent
+    columns rather than a second schedule source - so a label's teams are
+    guaranteed to match what's actually on the board, with no cross-source
+    team-abbreviation mismatch possible; only the pair is trustworthy this
+    way (a row's own Team/Opponent doesn't say which side is home), so the
+    label is deliberately "A vs B", not "A @ B". The kickoff TIME and an
+    explicit TNF/SNF/MNF/SAT tag for a non-standard-window game (also
+    explicit request, Central time) come from data.game_slate.week_kickoffs,
+    which IS keyed off the real schedule - that mismatch risk doesn't apply
+    to a kickoff time the way it would to which teams are playing.
     """
     if df.empty or team_col not in df.columns or opponent_col not in df.columns:
         return []
     pairs = df[[team_col, opponent_col]].dropna()
+    try:
+        from data.game_slate import week_kickoffs
+        kickoffs = week_kickoffs(season, week)
+    except Exception:
+        kickoffs = {}
     seen = set()
     matchups = []
     for team, opp in zip(pairs[team_col].astype(str), pairs[opponent_col].astype(str)):
@@ -2448,8 +2462,20 @@ def _week_matchups(df, team_col='Team', opponent_col='Opponent'):
         if game in seen:
             continue
         seen.add(game)
-        matchups.append((f"{game[0]} vs {game[1]}", {game[0], game[1]}))
-    return sorted(matchups, key=lambda m: m[0])
+        info = kickoffs.get(game)
+        if info:
+            sort_key, time_label, day_type = info
+            suffix = f" — {time_label}" + (f" ({day_type})" if day_type else "")
+        else:
+            sort_key, suffix = None, ""
+        matchups.append((f"{game[0]} vs {game[1]}{suffix}", {game[0], game[1]}, sort_key))
+    # Chronological first; a game the schedule feed has no kickoff for
+    # (sort_key None - feed unreachable, or a team code that didn't match)
+    # sorts after every real kickoff, then alphabetically among itself,
+    # rather than landing wherever the board's own row order happened to
+    # put it.
+    matchups.sort(key=lambda m: (m[2] is None, m[2] or datetime.datetime.min, m[0]))
+    return [(label, teams) for label, teams, _ in matchups]
 
 
 def _apply_matchup_filter(df, selected_labels, matchups, team_col='Team'):
@@ -2943,13 +2969,20 @@ _RANK_SLOTS = 10
 
 
 def _matchup_difficulty_by_pos_opponent(model_meta):
-    """{(position, opponent_team): (fantasy pts/game allowed, percentile)}
-    for the 'Pts Allowed' column. Percentile is 0-100 where 100 = the easiest
-    matchup a player at that position can draw this week (this defense
-    allows MORE fantasy points to the position than everyone else's) and
-    0 = the hardest; the points-allowed figure is what's actually shown in
-    the cell, since a bare percentile means nothing without a legend but
-    "24.3 pts/game allowed" is self-describing next to its own color.
+    """{(position, opponent_team): (fantasy pts/game allowed, percentile, rank, of)}
+    for the 'Def Rank' column. rank/of is data.matchup_signals.defense_stat_
+    rank's own literal rank among all `of` (normally 32) defenses, where
+    rank 1 = allows the MOST fantasy points to the position (the softest
+    matchup a player at that position can draw this week) and rank `of` =
+    the hardest - same "1 = softest" convention positional_vulnerability
+    already uses elsewhere in that module, stated explicitly here too since
+    it inverts the naive "rank 1 = best defense" reading. percentile (0-100,
+    100 = softest) is unchanged and still drives the cell's color; the
+    points-allowed value is kept in the tuple for anything that still wants
+    the raw number, but "12/32" is what's actually shown in the cell now -
+    a bare percentile or raw points figure doesn't say where a matchup
+    ranks the way an explicit "X/32" does, and this app's positional
+    vulnerability read already uses the same rank framing elsewhere.
 
     Deliberately reuses data.matchup_signals.defense_stat_rank's own
     numbers - the SAME ones the decomposition dialog's "toughest matchup"
@@ -2982,8 +3015,9 @@ def _matchup_difficulty_by_pos_opponent(model_meta):
         if not matchup:
             continue
         value, pct = matchup.get('value'), matchup.get('pct')
-        if value is not None and pct is not None:
-            lookup[key] = (float(value), float(pct))
+        rank, of = matchup.get('rank'), matchup.get('of')
+        if value is not None and pct is not None and rank is not None and of is not None:
+            lookup[key] = (float(value), float(pct), int(rank), int(of))
     return lookup
 
 
@@ -3342,7 +3376,7 @@ def render():
             the two ways of doing this that looked right and were not.
             """
             merged_model = model_df.copy()
-            # 'Pts Allowed' - directly right of Opponent per explicit request -
+            # 'Def Rank' - directly right of Opponent per explicit request -
             # a single combined difficulty read for this position against
             # this opponent (see _matchup_difficulty_by_pos_opponent's own
             # docstring for what it actually measures and why). Named for
@@ -3354,15 +3388,41 @@ def render():
             # dict lookup off matchup_difficulty, itself computed once per
             # real board build, above. '_matchup_pct' is a hidden column that
             # drives the color only, same pattern as '_tier' below - dropped
-            # before the frame is ever displayed.
+            # before the frame is ever displayed. The cell shows the literal
+            # "rank/of" (e.g. "3/32") rather than the raw points-allowed
+            # number - 1 = allows the MOST fantasy points to the position
+            # (softest matchup), `of` = the least (hardest) - per explicit
+            # request, 2026-09-24.
             _matchup_lookups = [
                 matchup_difficulty.get((str(p).upper(), str(o)))
                 for p, o in zip(merged_model['Pos'], merged_model['Opponent'])
             ]
-            merged_model['Pts Allowed'] = [m[0] if m else None for m in _matchup_lookups]
+            # Encoded exactly like _woven_rank below (a real, sortable number
+            # per row + a separate {value: label} dict for display) rather
+            # than a pre-formatted string column - a string "12/32" sorts
+            # lexicographically ("12/32" < "3/32"), which would make this
+            # column's own header-click sort wrong. `rank * 100 + of` keeps
+            # ascending-number order equal to ascending-rank order (of is
+            # always <= 32) and stays unique per (rank, of) pair; missing
+            # (no matchup data yet) gets a sentinel worse than every real
+            # value, same "sorts last either direction" convention _woven_
+            # rank uses for an unranked player.
+            _DEF_RANK_MISSING = 999999
+            def_rank_labels = {}
+            def_rank_values = []
+            for m in _matchup_lookups:
+                if m:
+                    _, _, _rank, _of = m
+                    encoded = int(_rank) * 100 + int(_of)
+                    def_rank_labels[encoded] = f"{_rank}/{_of}"
+                else:
+                    encoded = _DEF_RANK_MISSING
+                    def_rank_labels[encoded] = '—'
+                def_rank_values.append(encoded)
+            merged_model['Def Rank'] = def_rank_values
             merged_model['_matchup_pct'] = [m[1] if m else None for m in _matchup_lookups]
 
-            # Wind/Temp/Precip - grouped with Pts Allowed as pre-game context,
+            # Wind/Temp/Precip - grouped with Def Rank as pre-game context,
             # right after Opponent, rather than off at the end of the table.
             # Keyed by the player's own Team; resolve_game_weather already
             # keys by EITHER side of a game (see its own docstring), so both
@@ -3500,7 +3560,7 @@ def render():
             # produced a points column to rank. Computed on the FULL pool, before
             # the position filter and row limit below, so "RB4" always means
             # fourth among every RB rather than fourth among what's on screen.
-            rank_labels = {}
+            rank_labels = {'Def Rank': def_rank_labels}
             for rank_col, points_col in (('Model Rank', 'Model Proj Pts'),
                                          ('Market Rank', 'Market Proj Pts'),
                                          ('FantasyPros Rank', 'FantasyPros Proj Pts')):
@@ -3597,7 +3657,7 @@ def render():
             # columns are now colored by position too (position_values/
             # position_cols below) so the same at-a-glance signal the Position
             # column gave survives without spending a column on it.
-            display_cols = ['Rank', 'Player', 'Team', 'Opponent', 'Pts Allowed', 'Wind', 'Temp', 'Precip',
+            display_cols = ['Rank', 'Player', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip',
                             'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks']
             display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
             display_cols += ['Injury Status', 'Season Snap %', 'Last 5 Snaps',
@@ -3620,7 +3680,7 @@ def render():
             # from "all games" rather than carrying over a selection whose teams
             # may not even play this week (a stale value Streamlit would refuse
             # to render against a changed options list).
-            week_matchups = _week_matchups(merged_model[keep_cols])
+            week_matchups = _week_matchups(merged_model[keep_cols], wk_year, wk_week)
             selected_matchups = st.multiselect(
                 "Matchup", [label for label, _teams in week_matchups],
                 key=f"weekly_rank_matchup_filter_{wk_year}_{wk_week}_{wk_scoring}",
@@ -3689,7 +3749,7 @@ def render():
             for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
                 if c in indexed.columns and indexed[c].notna().any():
                     pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
-            # 'Pts Allowed' colors off the percentile ALREADY computed for it
+            # 'Def Rank' colors off the percentile ALREADY computed for it
             # (matchup_pct_values, from model_meta - see
             # _matchup_difficulty_by_pos_opponent), not a fresh percentile of
             # the displayed rows the way pct_cols above is - a percentile
@@ -3701,7 +3761,7 @@ def render():
             # fading to a muted neutral at a genuinely average (50th
             # percentile) matchup, rather than matchup_pct_cols' fixed-alpha
             # ramp through every color at the same intensity.
-            centered_pct_cols = ({'Pts Allowed': matchup_pct_values} if 'Pts Allowed' in indexed.columns else {})
+            centered_pct_cols = ({'Def Rank': matchup_pct_values} if 'Def Rank' in indexed.columns else {})
             # Pre-formatted AFTER percentile calc (which needs the real
             # numeric NaN) for the same reason _STAT_DISPLAY_COLS are -
             # a player with zero market coverage (no book posted anything)
@@ -3713,9 +3773,6 @@ def render():
             for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
                 if c in indexed.columns:
                     indexed[c] = indexed[c].map(lambda v: f"{v:.1f}" if pd.notna(v) else '—')
-            if 'Pts Allowed' in indexed.columns:
-                indexed['Pts Allowed'] = indexed['Pts Allowed'].map(
-                    lambda v: f"{v:.1f}" if pd.notna(v) else '—')
             column_config = build_column_help_config(
                 indexed, pinned_cols=['Rank', 'Team', 'Opponent'],
                 short_labels=_RANK_PROJ_SHORT_LABELS, narrow_cols=_NARROW_COLS,
@@ -3822,10 +3879,11 @@ def render():
                 "**FantasyPros Rank** / **Model Rank** / **Market Rank** at the right are each source's "
                 "own positional rank, side by side, unblended — Model Rank is shaded by tier, a cluster "
                 "break in Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
-                "**Pts Allowed**, right after Opponent, is this defense's fantasy points allowed per "
-                "game to this position this season, colored by percentile among all 32 teams (bright "
-                "green = easiest matchup at the position, bright red = hardest, muted near league-"
-                "average) — the same number the projection decomposition's own \"toughest matchup\" "
+                "**Def Rank**, right after Opponent, is this defense's rank (1-32) in fantasy points "
+                "allowed per game to this position this season — 1 allows the MOST (softest matchup), "
+                "32 the least (hardest) — colored by percentile (bright green = easiest matchup at the "
+                "position, bright red = hardest, muted near league-average), off the same number the "
+                "projection decomposition's own \"toughest matchup\" "
                 "line uses. **Wind** / **Temp** / **Precip** just after it are this game's conditions, "
                 "icon-only (recorded once played, forecast otherwise): 🍃 calm / 💨 windy / 💨💨 very "
                 "windy, 🥶 freezing / ❄️ cold / ☀️ mild / 🥵 hot, and Dry / 🌦️ Light Rain / 🌧️ Heavy "

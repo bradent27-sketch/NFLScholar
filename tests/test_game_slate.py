@@ -25,7 +25,7 @@ pd.options.mode.string_storage = "python"
 
 from data.game_slate import (  # noqa: E402
     SLATE_COLUMNS, _hex_color, format_kickoff, slate_team_bridge, team_color,
-    team_logo, default_week_index, ROUND_LABELS,
+    team_logo, default_week_index, ROUND_LABELS, week_kickoffs,
 )
 from ui.tabs.game_slate import card_html  # noqa: E402
 
@@ -379,6 +379,72 @@ def test_each_button_seeds_its_own_team_and_an_unbridged_team_is_disabled():
     finally:
         st.button, st.container = real_button, real_container
         st.columns, st.markdown = real_columns, real_markdown
+
+
+# --- week_kickoffs (Weekly Rankings matchup filter) -------------------------
+
+def _slate_fixture():
+    return pd.DataFrame([
+        # Thursday night, 8:15 PM ET -> 7:15 PM CT, tagged TNF.
+        {'season': 2026, 'week': 4, 'game_type': 'REG', 'away_team': 'KC', 'home_team': 'BUF',
+         'gameday': '2026-09-24', 'gametime': '20:15'},
+        # Ordinary Sunday 1:00 PM ET slot - no tag.
+        {'season': 2026, 'week': 4, 'game_type': 'REG', 'away_team': 'SF', 'home_team': 'DAL',
+         'gameday': '2026-09-27', 'gametime': '13:00'},
+        # Sunday night, 8:20 PM ET -> tagged SNF.
+        {'season': 2026, 'week': 4, 'game_type': 'REG', 'away_team': 'GB', 'home_team': 'DET',
+         'gameday': '2026-09-27', 'gametime': '20:20'},
+        # Monday night -> tagged MNF.
+        {'season': 2026, 'week': 4, 'game_type': 'REG', 'away_team': 'NYJ', 'home_team': 'MIA',
+         'gameday': '2026-09-28', 'gametime': '19:30'},
+        # A different week - must not leak into week 4's result.
+        {'season': 2026, 'week': 5, 'game_type': 'REG', 'away_team': 'LAC', 'home_team': 'DEN',
+         'gameday': '2026-10-04', 'gametime': '16:05'},
+    ])
+
+
+def test_week_kickoffs_tags_the_non_sunday_afternoon_games():
+    from unittest.mock import patch
+    with patch('data.game_slate._raw_slate', return_value=(_slate_fixture(), None)):
+        kickoffs = week_kickoffs(2026, 4)
+    assert set(kickoffs) == {('BUF', 'KC'), ('DAL', 'SF'), ('DET', 'GB'), ('MIA', 'NYJ')}
+    _, _, thu_type = kickoffs[('BUF', 'KC')]
+    _, _, sun_type = kickoffs[('DAL', 'SF')]
+    _, _, snf_type = kickoffs[('DET', 'GB')]
+    _, _, mon_type = kickoffs[('MIA', 'NYJ')]
+    assert thu_type == 'TNF'
+    assert sun_type is None, "an ordinary Sunday-afternoon game needs no tag"
+    assert snf_type == 'SNF'
+    assert mon_type == 'MNF'
+
+
+def test_week_kickoffs_converts_eastern_to_central():
+    from unittest.mock import patch
+    with patch('data.game_slate._raw_slate', return_value=(_slate_fixture(), None)):
+        kickoffs = week_kickoffs(2026, 4)
+    _, label, _ = kickoffs[('BUF', 'KC')]
+    assert label == '7:15 PM CT', label
+
+
+def test_week_kickoffs_sort_key_orders_chronologically():
+    from unittest.mock import patch
+    with patch('data.game_slate._raw_slate', return_value=(_slate_fixture(), None)):
+        kickoffs = week_kickoffs(2026, 4)
+    ordered = sorted(kickoffs, key=lambda k: kickoffs[k][0])
+    assert ordered == [('BUF', 'KC'), ('DAL', 'SF'), ('DET', 'GB'), ('MIA', 'NYJ')]
+
+
+def test_week_kickoffs_is_scoped_to_the_requested_week():
+    from unittest.mock import patch
+    with patch('data.game_slate._raw_slate', return_value=(_slate_fixture(), None)):
+        kickoffs = week_kickoffs(2026, 5)
+    assert set(kickoffs) == {('DEN', 'LAC')}
+
+
+def test_week_kickoffs_degrades_to_empty_on_no_data():
+    from unittest.mock import patch
+    with patch('data.game_slate._raw_slate', return_value=(pd.DataFrame(), 'unreachable')):
+        assert week_kickoffs(2026, 4) == {}
 
 
 def test_seeded_team_filter_is_a_valid_option_in_the_destination():

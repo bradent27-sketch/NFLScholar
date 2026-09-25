@@ -49,6 +49,13 @@ from config import TEAM_CONFIG
 # kickoff needs no conversion at all and cannot drift by an hour.
 SLATE_DISPLAY_TZ = 'America/New_York'
 
+# Central - explicit request for the Weekly Rankings matchup filter
+# specifically (week_kickoffs below), which is a props/start-sit workflow
+# rather than the Game Slate tab's own display. Kept separate from
+# SLATE_DISPLAY_TZ rather than replacing it, so the Game Slate tab's
+# Eastern convention (see that constant's own comment) is untouched.
+CENTRAL_DISPLAY_TZ = 'America/Chicago'
+
 SLATE_CSV = 'https://raw.githubusercontent.com/nflverse/nfldata/master/data/games.csv'
 
 # ESPN keys NFL marks by LOWERCASE ABBREVIATION, not by the numeric id the
@@ -193,6 +200,68 @@ def _parse_clock(value):
         except ValueError:
             continue
     return None
+
+
+def week_kickoffs(season, week):
+    """{sorted (team_a, team_b): (sort_key, central_time_label, day_type)}
+    for one REG week - built for the Weekly Rankings matchup filter
+    specifically (explicit request, 2026-09-24: show each game's kickoff
+    time and flag the ones off the ordinary Sunday-afternoon slate), kept
+    separate from season_slate's own Eastern/'Kickoff' convention rather
+    than extending it, since that field is Game-Slate-tab display and this
+    one is deliberately Central (CENTRAL_DISPLAY_TZ, not SLATE_DISPLAY_TZ).
+
+    day_type is 'TNF' / 'SNF' / 'MNF' / 'SAT' for a Thursday, Sunday-night
+    (6 PM ET or later), Monday or Saturday game, and None for an ordinary
+    Sunday-afternoon window - the caller decides whether/how to render a
+    None tag, since a ordinary-window game's own time already reads as
+    normal without one. sort_key is a real (naive, Central-clock) datetime
+    so a chronological sort of the filter's own labels never has to parse
+    the display string back apart; a game with no posted time yet sorts by
+    date alone (noon placeholder) with a 'time TBD' label.
+    """
+    raw, err = _raw_slate()
+    if raw is None or raw.empty:
+        return {}
+    mask = ((_col(raw, 'season') == int(season))
+            & (pd.to_numeric(_col(raw, 'week'), errors='coerce') == int(week))
+            & (_col(raw, 'game_type').astype(str) == 'REG'))
+    df = raw[mask]
+    if df.empty:
+        return {}
+    try:
+        from zoneinfo import ZoneInfo
+        eastern, central = ZoneInfo(SLATE_DISPLAY_TZ), ZoneInfo(CENTRAL_DISPLAY_TZ)
+    except Exception:
+        eastern = central = None
+    out = {}
+    for _, src in df.iterrows():
+        day_raw = pd.to_datetime(src.get('gameday'), errors='coerce')
+        day = day_raw.date() if pd.notna(day_raw) else None
+        away, home = str(src.get('away_team') or ''), str(src.get('home_team') or '')
+        if not away or not home or day is None:
+            continue
+        key = tuple(sorted((away, home)))
+        clock = _parse_clock(src.get('gametime'))
+        weekday = day.strftime('%A')
+        if weekday == 'Thursday':
+            day_type = 'TNF'
+        elif weekday == 'Monday':
+            day_type = 'MNF'
+        elif weekday == 'Saturday':
+            day_type = 'SAT'
+        elif weekday == 'Sunday' and clock is not None and clock >= datetime.time(18, 0):
+            day_type = 'SNF'
+        else:
+            day_type = None
+        if clock is None or eastern is None:
+            out[key] = (datetime.datetime.combine(day, datetime.time(12, 0)), 'time TBD', day_type)
+            continue
+        eastern_stamp = datetime.datetime.combine(day, clock, tzinfo=eastern)
+        central_stamp = eastern_stamp.astimezone(central)
+        label = central_stamp.strftime('%I:%M %p').lstrip('0') + ' CT'
+        out[key] = (central_stamp.replace(tzinfo=None), label, day_type)
+    return out
 
 
 @st.cache_data(ttl=86400, show_spinner=False)

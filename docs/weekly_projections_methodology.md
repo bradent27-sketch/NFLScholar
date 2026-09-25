@@ -2375,6 +2375,49 @@ input changes. Every Questionable at or above 10% keeps the existing
 display-only rule exactly as before. New tests in `tests/test_
 availability_overrides.py` cover both sides of the threshold.
 
+## 2026-09-25 — `v2_stat_k_by_pos` SHIPPED: the real, corrected validation clears the bar early-season, comes back null (not negative) mid/late-season
+
+The test queued at the end of the previous entry (the corrected
+seed-vs-shared-default comparison, `backtest_component.py --add
+v2_stat_k_by_pos`, true `DEFAULT_FEATURES` baseline vs. `DEFAULT_FEATURES +
+v2_stat_k_by_pos`, 2022-2025, harness v2) has finished, and it's a clean
+answer:
+
+**Weeks 2-6 (the early-season window this is meant for) — SHIP-ELIGIBLE.**
+n=6126 (ALL) / 2557 (START-ALL). ALL RMSE 6.498→6.486 (Δ-0.012,
+CI[-0.019,-0.005]), WR -0.024 CI[-0.038,-0.010], TE -0.008 CI[-0.024,+0.008]
+(directionally consistent, not itself CI-significant), START-WR -0.049
+CI[-0.076,-0.021], START-ALL -0.021 CI[-0.034,-0.008]. Bias growth +0.005 -
+essentially nothing, nowhere near the 0.3 cap. This is a real, board-level
+win, not just a stat-level one: pairwise accuracy also improves at every
+scope it moves (ALL +0.001, WR +0.001, TE +0.002, START-WR +0.005).
+
+**Weeks 7-17 — INCONCLUSIVE, exactly as predicted.** n=13674 (ALL) / 5352
+(START-ALL). ALL RMSE flat (Δ+0.001, CI[-0.004,+0.006] spans 0), no scope
+moved in either direction with any real signal. This is precisely what the
+user called before seeing this result: "not in week 7 to 17, where the
+effect would be much smaller." A null result here isn't a wash against the
+early-season win - it means the mechanism correctly stops mattering once
+there's enough current-season data that the blend weight barely depends on
+`STAT_K` at all regardless of its value, which is exactly the behavior the
+formula (`w_current = games/(games+k_eff)`) predicts on its own terms.
+
+**Shipped:** `'v2_stat_k_by_pos'` added to `DEFAULT_FEATURES`
+unconditionally (not week-gated) - a genuine early-season win with a
+measured NULL result later doesn't need a gate, since the mechanism's own
+math already fades its influence on the same schedule the mid-season
+result confirms. `MODEL_FEATURES`' own comment on this flag updated to
+point here instead of the old "not yet backtested" note. Full suite (633
+tests) passes with the flag now live by default.
+
+This closes out item 4 of `docs/model_improvement_plan_2026-09-23.md`: of
+the four original seed hypotheses (RB volume faster blend, QB rushing
+slower blend, WR/TE yardage either direction, WR/TE receiving_tds slower
+blend), three were tested and rejected on real data, and the fourth is now
+shipped on a real, corrected, two-window validation - after finding and
+fixing a genuine methodological bug in every earlier version of this test
+(see the two entries above this one).
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

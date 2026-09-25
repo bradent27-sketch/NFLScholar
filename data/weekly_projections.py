@@ -1115,9 +1115,10 @@ MODEL_FEATURES = (
     'v2_stat_k_by_pos',      # per-(position, stat) STAT_K (see STAT_K_BY_POS)
                              # instead of one shared STAT_K for every position -
                              # built 2026-09-24 for docs/model_improvement_plan_
-                             # 2026-09-23.md item 4. NOT YET BACKTESTED /
-                             # SHIPPED - a sweep on weeks 2-6 is the next step;
-                             # see that plan's item 4 for the protocol.
+                             # 2026-09-23.md item 4. SHIPPED in DEFAULT_FEATURES
+                             # 2026-09-25 (WR/TE receiving_tds only) - see
+                             # DEFAULT_FEATURES' own comment on this flag for
+                             # the real backtest numbers.
     'v2_historical_injury_replay',  # BACKTEST-ONLY (mirrors v2_historical_
                              # ourlads): feeds a time-valid week-by-week
                              # injury report (data.historical_availability,
@@ -1440,6 +1441,30 @@ DEFAULT_FEATURES = frozenset({
     # with a wider window if that judgement needs re-checking. See the dated
     # methodology-doc entry.
     'v2_offense_prior_blend',
+    # SHIPPED 2026-09-25, item 4 of docs/model_improvement_plan_2026-09-23.md.
+    # Slower current-vs-prior blend for WR/TE receiving_tds only (STAT_K_BY_
+    # POS: WR 30, TE 16, vs. shared STAT_K=6) - three of four seed hypotheses
+    # from the original fit sweep (RB volume faster, QB rushing slower, WR/TE
+    # yardage either direction) were tested and REJECTED first; this is the
+    # one that held up. The validation that actually decided this (--add
+    # v2_stat_k_by_pos, true DEFAULT_FEATURES baseline vs. +flag, 2022-2025,
+    # harness v2) came only after finding and fixing a real bug in every
+    # earlier version of this test: each one compared the seed table against
+    # that SAME seed scaled by a multiplier, never against the shared live
+    # default - see the dated methodology-doc entries for the full trail.
+    # Weeks 2-6 (the early-season window this is meant for): SHIP-ELIGIBLE,
+    # ALL RMSE -0.012 CI[-0.019,-0.005], WR -0.024 CI[-0.038,-0.010],
+    # START-WR -0.049 CI[-0.076,-0.021], START-ALL -0.021 CI[-0.034,-0.008],
+    # n=6126 (ALL); bias growth +0.005, well under the 0.3 cap. Weeks 7-17:
+    # INCONCLUSIVE - ALL RMSE flat (Δ+0.001, CI spans 0), no scope moved
+    # either direction - exactly the "much smaller effect" the user
+    # predicted for mid/late season. Shipped unconditionally (not week-
+    # gated): a genuine early-season win with a measured NULL (not negative)
+    # result later needs no gate - the underlying blend-weight formula
+    # already fades STAT_K's own influence toward 0 as a player's own
+    # current-season game count grows, so the flag naturally stops mattering
+    # on the same schedule the mid-season result shows.
+    'v2_stat_k_by_pos',
 })
 
 

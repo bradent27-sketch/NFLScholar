@@ -276,6 +276,92 @@ def test_thin_room_under_its_budget_is_scaled_up_symmetrically():
     assert _approx(entry['unallocated'], 0.0)
 
 
+def test_injury_neutral_claim_stops_a_healthy_teammate_absorbing_an_out_players_own_discount():
+    # Reproduces the real Rico Dowdle (OUT, PIT) / Jaylen Warren case
+    # (docs/weekly_projections_methodology.md, 2026-09-24/25): Dowdle's own
+    # injury discount has already zeroed his `targets` row by the time this
+    # pass runs, but `_full_targets` (the PRE-injury snapshot
+    # build_weekly_projections stashes for the vacancy pass - see
+    # `vacancy_volume` in that module) still carries his normal share.
+    # passing_attempts is chosen so the RB sub-budget (FALLBACK_RB_CATCHER_
+    # SHARE, since there's no prior history) lands exactly on Dowdle+
+    # Warren's combined HEALTHY claim (3.0 + 4.0 = 7.0) - landing this room
+    # in the no-op deadband once the fix is applied.
+    attempts = 7.0 / (pca.FALLBACK_RB_CATCHER_SHARE * pca.FALLBACK_TARGET_PER_ATTEMPT)
+    rows = [
+        _board_row('PIT', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=attempts),
+        {**_board_row('PIT', 'Rico Dowdle', 'RB', 0.0, 0.0, 0.0, 0.0), '_full_targets': 3.0},
+        {**_board_row('PIT', 'Jaylen Warren', 'RB', 4.0), '_full_targets': 4.0},
+        _board_row('PIT', 'WR1', 'WR', 6.0),
+    ]
+    board = pd.DataFrame(rows)
+
+    out_default, _ = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=8)
+    out_neutral, _ = pca.apply_pass_capacity_conservation(
+        board, prior_history=None, tier_size=8, injury_neutral_claim=True)
+
+    warren_default = out_default.loc[out_default['Player'].eq('Jaylen Warren'), 'targets'].iloc[0]
+    warren_neutral = out_neutral.loc[out_neutral['Player'].eq('Jaylen Warren'), 'targets'].iloc[0]
+    dowdle_neutral = out_neutral.loc[out_neutral['Player'].eq('Rico Dowdle'), 'targets'].iloc[0]
+
+    # The bug: with Dowdle's row already at 0, the RB room's claim (4.0)
+    # looks well under its 7.0 budget, so Warren alone absorbs the entire
+    # gap - a targets bump that has nothing to do with his own role.
+    assert warren_default > 6.0, warren_default
+    # The fix: Dowdle's healthy 3.0 still counts toward the room's claim
+    # (7.0, exactly the budget), so this room is within the deadband and
+    # nobody's own number moves - vacancy redistribution is left as the
+    # only mechanism that reassigns Dowdle's specific vacated share.
+    assert _approx(warren_neutral, 4.0)
+    # Dowdle's own row - already zeroed by his individual injury discount -
+    # is completely unaffected either way, exactly as it should be: he
+    # doesn't need more volume, he's out.
+    assert _approx(dowdle_neutral, 0.0)
+
+
+def test_injury_neutral_claim_is_a_no_op_when_nobody_is_hurt():
+    # A healthy player's `_full_targets` always equals his `targets` - the
+    # injury discount is a no-op multiplier of 1.0 - so this flag must
+    # change NOTHING for an ordinary board with no injuries.
+    rows = [
+        _board_row('MIA', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=30.0),
+        {**_board_row('MIA', 'RB1', 'RB', 12.0), '_full_targets': 12.0},
+        {**_board_row('MIA', 'RB2', 'RB', 10.0), '_full_targets': 10.0},
+        _board_row('MIA', 'WR1', 'WR', 6.0),
+        _board_row('MIA', 'WR2', 'WR', 5.0),
+    ]
+    board = pd.DataFrame(rows)
+
+    out_default, _ = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=8)
+    out_neutral, _ = pca.apply_pass_capacity_conservation(
+        board, prior_history=None, tier_size=8, injury_neutral_claim=True)
+
+    pd.testing.assert_series_equal(
+        out_default['targets'].reset_index(drop=True),
+        out_neutral['targets'].reset_index(drop=True))
+
+
+def test_injury_neutral_claim_falls_back_to_the_ordinary_claim_without_a_full_targets_column():
+    # A board that never ran build_weekly_projections' vacancy-volume
+    # snapshot (every other test fixture in this file, and any real caller
+    # that doesn't have 'v2_vacancy' on) has no `_full_targets` column at
+    # all - injury_neutral_claim must degrade to the ordinary behavior
+    # rather than crash or silently zero everyone's claim.
+    rows = [_board_row('KC', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=34.0)]
+    top_targets = [8.5, 7.0, 5.5, 4.0, 2.5, 1.8]
+    for i, t in enumerate(top_targets):
+        rows.append(_board_row('KC', f'Top{i}', 'WR' if i % 2 == 0 else 'TE', t))
+    board = pd.DataFrame(rows)
+
+    out_default, _ = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=6)
+    out_neutral, _ = pca.apply_pass_capacity_conservation(
+        board, prior_history=None, tier_size=6, injury_neutral_claim=True)
+
+    pd.testing.assert_series_equal(
+        out_default['targets'].reset_index(drop=True),
+        out_neutral['targets'].reset_index(drop=True))
+
+
 def test_wr_te_split_is_off_by_default_and_keeps_the_uniform_wr_te_factor():
     """The default call signature must be byte-for-byte the old behavior:
     one uniform factor across every WR and TE alike. Under-budget room,

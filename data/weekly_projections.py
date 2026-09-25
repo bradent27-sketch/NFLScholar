@@ -1161,6 +1161,24 @@ MODEL_FEATURES = (
                              # confirmed, but this specific fix trades it for
                              # a worse one. See the dated methodology-doc
                              # entry.
+    'v2_pass_capacity_injury_neutral_claim',  # the narrower fix attempted
+                             # after v2_vacancy_before_capacity's bias
+                             # regression above: instead of reordering the
+                             # two passes, exclude JUST an OUT/Doubtful
+                             # player's own injury discount from pass-
+                             # capacity conservation's group-claim math (see
+                             # apply_pass_capacity_conservation's
+                             # injury_neutral_claim docstring), using the
+                             # PRE-injury `_full_targets` snapshot
+                             # build_weekly_projections already stashes for
+                             # the vacancy pass. A healthy player's
+                             # `_full_targets` equals his `targets`, so this
+                             # is a no-op for a team with nobody hurt -
+                             # capacity conservation's general symmetric
+                             # budget correction (the thing the reorder flag
+                             # broke) is untouched. NOT YET BACKTESTED -
+                             # queue a backtest_component.py --add run
+                             # before shipping.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -10236,7 +10254,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             result, ledger_df = apply_pass_capacity_conservation(
                 result, prior_history=prior_stats, team_col=prior_team_col,
                 wr_te_split=_wr_te_split,
-                matchup_flex=('v2_pass_capacity_matchup_flex' in feats))
+                matchup_flex=('v2_pass_capacity_matchup_flex' in feats),
+                injury_neutral_claim=('v2_pass_capacity_injury_neutral_claim' in feats))
             ledger = ledger_df.to_dict('records')
             adjusted = bool(not ledger_df.empty
                             and (ledger_df['capacity_source'] != 'no capacity signal').any())

@@ -302,6 +302,7 @@ def apply_pass_capacity_conservation(
         matchup_flex: bool = False,
         rb_share_band: float | None = None,
         factor_deadband: float | None = None,
+        injury_neutral_claim: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit one team's RB/WR/TE targets (and dependents) to a real pass budget.
 
@@ -332,6 +333,30 @@ def apply_pass_capacity_conservation(
     within a +-``factor_deadband`` MULTIPLICATIVE band of its budget is left
     unadjusted. Both dial args left at None read the module globals at call
     time (so an env override / monkeypatch takes effect).
+
+    ``injury_neutral_claim`` (default off; 'v2_pass_capacity_injury_neutral_
+    claim'): when a player's own OUT/Doubtful discount has already zeroed
+    (or shrunk) his row, this group's CLAIM looks artificially under its
+    budget and every healthy teammate gets scaled up to fill a gap that is
+    really just one player's absence - which then double-counts once
+    vacancy redistribution separately reassigns that same player's own
+    vacated volume right after this pass runs (confirmed on a real case,
+    Rico Dowdle OUT/PIT - see docs/weekly_projections_methodology.md,
+    2026-09-24/25 entries). When ``result`` carries a ``_full_<stat>``
+    column (data.weekly_projections stashes the PRE-injury-discount volume
+    there for the vacancy pass to read - see build_weekly_projections'
+    ``vacancy_volume``), this flag uses THAT value instead of the
+    injury-discounted ``targets`` for the purposes of deciding each group's
+    fit factor only - every player's own OUTPUT row is still scaled off his
+    own real current value, so an OUT player's already-near-zero row stays
+    near zero either way. A healthy player's `_full_targets` always equals
+    his `targets` (the discount is a no-op at 1.0), so this changes nothing
+    for a team with nobody hurt - it only stops one player's injury from
+    reading as the whole room being under-budget. Falls back to the
+    ordinary (injury-affected) claim when `_full_targets` isn't present
+    (e.g. a caller that never ran the vacancy volume snapshot, or every
+    existing test fixture in tests/test_pass_capacity_allocator.py), so
+    this is a strict no-op unless both the flag AND the column are present.
     """
     if te_marginal_target_weight is None:
         te_marginal_target_weight = TE_MARGINAL_TARGET_WEIGHT
@@ -353,6 +378,12 @@ def apply_pass_capacity_conservation(
     pass_attempts = pd.to_numeric(
         out['passing_attempts'], errors='coerce').fillna(0.0) if 'passing_attempts' in out.columns \
         else pd.Series(0.0, index=out.index)
+    # See injury_neutral_claim's own docstring above. None (not an all-equal-
+    # to-`targets` Series) when the flag is off or the column is absent, so
+    # _fit_group's `fit_claim is None` check is the single source of truth
+    # for "use the ordinary claim" - no separate on/off flag to keep in sync.
+    fit_claim = (pd.to_numeric(out['_full_targets'], errors='coerce')
+                if injury_neutral_claim and '_full_targets' in out.columns else None)
 
     team_capacity = derive_team_target_capacity(prior_history, team_col=team_col)
     capacity_by_team = (team_capacity.set_index('team')['team_target_capacity'].to_dict()
@@ -381,7 +412,16 @@ def apply_pass_capacity_conservation(
         job of the role model upstream (depth-chart caps, the buried-veteran
         dock), leaving this pass to do only a small, even, symmetric budget
         reconciliation. ``group_tier`` is kept only to label trusted/tail
-        counts in the ledger; it no longer changes the math."""
+        counts in the ledger; it no longer changes the math.
+
+        The group's FIT factor is computed against ``fit_total`` (the
+        enclosing closure's ``fit_claim``, when set - see
+        injury_neutral_claim's docstring), which can differ from this
+        group's real, currently-projected ``current_total`` by exactly one
+        OUT/Doubtful player's own vacated volume. The factor is still
+        applied to each player's own REAL ``current`` value below, so an
+        injured player's already-discounted row is untouched either way -
+        only the group-wide "are we under or over budget" read changes."""
         current = out.loc[idx, 'targets']
         order = current.sort_values(ascending=False)
         trusted_idx = order.index[:group_tier]
@@ -389,31 +429,33 @@ def apply_pass_capacity_conservation(
         trusted_claim = float(current.loc[trusted_idx].sum())
         tail_claim = float(current.loc[tail_idx].sum())
         current_total = float(current.sum())
+        fit_total = (float(fit_claim.reindex(idx).fillna(current).sum())
+                    if fit_claim is not None else current_total)
 
         allocated = current.copy()
-        _raw_factor = group_capacity / current_total if current_total > 0 else 1.0
+        _raw_factor = group_capacity / fit_total if fit_total > 0 else 1.0
         # v2_pass_capacity_matchup_flex: also leave a group alone when its fit
         # factor is within a +-factor_deadband MULTIPLICATIVE band - the whole
         # room is only ~M off budget (every catcher nudged a few percent by a
         # soft matchup), not a structural over-claim.
-        _in_factor_band = (matchup_flex and factor_deadband > 0.0 and current_total > 0
+        _in_factor_band = (matchup_flex and factor_deadband > 0.0 and fit_total > 0
                            and (1.0 / (1.0 + factor_deadband)) <= _raw_factor <= (1.0 + factor_deadband))
-        if current_total <= 0:
+        if fit_total <= 0:
             reason = 'No projected volume in this group; nothing to fit.'
-        elif abs(current_total - group_capacity) <= PASS_CAPACITY_DEADBAND:
+        elif abs(fit_total - group_capacity) <= PASS_CAPACITY_DEADBAND:
             # Close enough to a realistic budget that a refit would only add
             # noise - leave every player's own number exactly as projected.
-            reason = (f"Claim {current_total:.1f} is within {PASS_CAPACITY_DEADBAND:.1f} of the "
+            reason = (f"Claim {fit_total:.1f} is within {PASS_CAPACITY_DEADBAND:.1f} of the "
                       f"{group_capacity:.1f} budget; left unadjusted.")
         elif _in_factor_band:
-            reason = (f"Claim {current_total:.1f} vs {group_capacity:.1f} budget is within the "
+            reason = (f"Claim {fit_total:.1f} vs {group_capacity:.1f} budget is within the "
                       f"+-{factor_deadband:.0%} factor band (x{_raw_factor:.3f}); left unadjusted.")
         else:
             # One uniform factor, applied to every player - symmetric for
             # over- and under-budget rooms alike.
-            factor = group_capacity / current_total
+            factor = group_capacity / fit_total
             allocated.loc[:] = current.loc[:] * factor
-            reason = (f"Claim {current_total:.1f} vs {group_capacity:.1f} budget; every player "
+            reason = (f"Claim {fit_total:.1f} vs {group_capacity:.1f} budget; every player "
                       f"scaled {'up' if factor > 1.0 else 'down'} proportionally (x{factor:.3f}).")
         ledger_row = {
             'capacity': round(group_capacity, 2), 'trusted_claim': round(trusted_claim, 2),

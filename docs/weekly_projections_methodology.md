@@ -2517,6 +2517,48 @@ excluding an OUT player's own pre-injury claim from capacity conservation's
 "current claim" computation for his team, rather than reordering the two
 passes wholesale.
 
+## 2026-09-25 — `RECEIVER_VACANCY_RANK_DECAY` extended sweep: the RMSE gain plateaus around 0.85-0.90, bias keeps climbing past it
+
+The extension queued after the first sweep (0.40/0.50/0.75/0.85 vs. shipped
+0.62), now adding 0.80/0.90/0.95/1.0 on the same window (2022-2025 weeks
+3-17, `v2_historical_injury_replay` forced on, n=18,577 ALL). This finds
+where the curve actually goes, and it stops improving well before the
+tested range runs out:
+
+| value | ALL RMSE Δ | CI | START-ALL RMSE Δ | CI | START-ALL bias growth |
+|---|---|---|---|---|---|
+| 0.75 | -0.004 | [-0.006,-0.001] | -0.007 | [-0.012,-0.002] | +0.051 |
+| 0.80 | -0.004 | [-0.008,-0.001] | -0.008 | [-0.016,-0.002] | +0.070 |
+| 0.85 | -0.005 | [-0.010,-0.001] | -0.010 | [-0.019,-0.002] | +0.090 |
+| 0.90 | -0.006 | [-0.011,-0.001] | -0.012 | [-0.022,-0.002] | +0.106 |
+| 0.95 | -0.006 | [-0.012,+0.000] | -0.013 | [-0.024,-0.001] | +0.123 |
+| 1.00 | -0.006 | [-0.013,+0.001] | -0.013 | [-0.026,-0.000] | +0.138 |
+
+**The RMSE gain is flat from 0.85 through 1.0** - ALL moves from -0.005 to
+only -0.006 across that whole range, and by 0.95-1.0 the ALL-scope CI
+starts touching (0.95) or including (1.0) zero, i.e. no longer
+distinguishable from the shipped 0.62 at this sample size on that scope.
+START-ALL stays significant through 1.0, but its own improvement is also
+basically flat past 0.90 (-0.012 to -0.013). **Bias growth keeps climbing
+the whole way, with no plateau of its own** - +0.070 at 0.80 up to +0.138
+at 1.00, a steady, undiminished cost for a return that stopped growing
+around 0.85-0.90. Nothing here breaches the 0.3 bias-growth cap even at
+1.0, but the trade past ~0.90 is strictly worse: more bias cost for
+statistically the same RMSE.
+
+**Read: the practical optimum in this combined sample sits around
+0.85-0.90**, not at the naive "keep pushing until it stops helping"
+endpoint of 1.0. 0.85 is the more conservative pick of the two (bias growth
++0.090 vs. +0.106 at 0.90) for a nearly identical RMSE gain.
+
+**Still not shipped.** This is one combined multi-season sweep, not a
+fit/confirm pair - per this file's own standing discipline (see the
+STAT_K_BY_POS entries), a specific tuned value should clear a genuine
+held-out confirm, not just the window it was found on, before going into
+DEFAULT_FEATURES. Queued: a fit/confirm split for the 0.85 candidate (fit
+2022-2023, confirm 2024-2025), behind the currently-running
+`v2_pass_capacity_injury_neutral_claim` backtest.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

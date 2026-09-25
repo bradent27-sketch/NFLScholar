@@ -2610,6 +2610,29 @@ WEEKLY_CALIBRATION refit specifically scoped to vacancy-affected player-
 weeks - rather than anything touching how capacity conservation and
 vacancy talk to each other.
 
+## 2026-09-25 — `RECEIVER_VACANCY_RANK_DECAY` 0.85 fit/confirm: wins the fit window, does NOT confirm held-out - 0.62 stays
+
+The fit/confirm split queued above, same setup (`v2_historical_injury_
+replay` forced on, weeks 3-17, harness v2), 0.85 vs. shipped 0.62:
+
+| window | START-ALL RMSE Δ | CI | START-WR RMSE Δ | CI | weeks better | START-ALL bias growth |
+|---|---|---|---|---|---|---|
+| FIT 2022-2023 | -0.023 | [-0.036,-0.012] | -0.047 | [-0.076,-0.021] | 20-10 | +0.089 |
+| CONFIRM 2024-2025 | +0.002 | [-0.008,+0.012] | -0.002 | [-0.025,+0.020] | 12-18 | +0.090 |
+
+The fit window is a clean, CI-confirmed win (WR, TE and every START scope
+improve). The held-out window is null at every scope - START-ALL RMSE a hair
+WORSE, losing 18 of 30 weeks, pairwise accuracy flat - while the bias cost
+arrives in full (+0.090, identical to the fit window). A gain that lives
+only in the seasons it was found on, paired with a cost that shows up
+everywhere, is the overfit signature this file's fit/confirm discipline
+exists to catch. The combined 2022-2025 sweep's modest -0.010 at 0.85 was
+the 2022-2023 win averaged with a 2024-2025 nothing.
+
+**Not shipped. `RECEIVER_VACANCY_RANK_DECAY` stays at 0.62.** Logs:
+`.sweeps/rank_decay_085_fit_2022-2023_wk3-17.log`,
+`.sweeps/rank_decay_085_confirm_2024-2025_wk3-17.log`.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

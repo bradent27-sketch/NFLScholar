@@ -134,6 +134,10 @@ RB_CHART_VACANCY_EXTENSION_MAX = 1
 # ABS_GROWTH_FLOOR lets a low-projected backup actually step into a vacated
 # role: the multiplicative VACANCY_MAX_GROWTH cap alone limits a 2-target WR
 # to +2 no matter how much room opened up.
+# RANK_DECAY swept 2026-09-25 (0.40-1.00): a combined 2022-2025 window
+# favoured ~0.85, but a fit(2022-23)/confirm(2024-25) split did NOT hold
+# held-out (confirm START-ALL RMSE +0.002, CI straddling 0, bias +0.090) -
+# 0.62 stays. See docs/weekly_projections_methodology.md, 2026-09-25.
 RECEIVER_VACANCY_RANK_DECAY = 0.62
 RECEIVER_VACANCY_LEAD_SHARE = 0.24
 RECEIVER_VACANCY_CROSS_POS_WEIGHT = 0.30

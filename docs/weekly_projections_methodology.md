@@ -2559,6 +2559,57 @@ DEFAULT_FEATURES. Queued: a fit/confirm split for the 0.85 candidate (fit
 2022-2023, confirm 2024-2025), behind the currently-running
 `v2_pass_capacity_injury_neutral_claim` backtest.
 
+## 2026-09-25 — `v2_pass_capacity_injury_neutral_claim` backtested: the narrower fix hits the SAME wall as the reorder
+
+The backtest for the narrower fix (`--add v2_pass_capacity_injury_neutral_
+claim`, `v2_historical_injury_replay` forced on, 2022-2025 weeks 3-17,
+harness v2, n=18,577) is in, and it is a striking near-repeat of the
+`v2_vacancy_before_capacity` result two entries above - which is itself the
+useful finding here.
+
+**Same shape of real, CI-confirmed local wins:** WR RMSE 6.311→6.284
+(Δ-0.027, CI[-0.048,-0.005]), START-WR RMSE 8.148→8.103 (Δ-0.045,
+CI[-0.087,-0.003]), pairwise accuracy gains at START-ALL (+0.003), START-WR
+(+0.006) and START-TE (+0.010, CI[+0.002,+0.018]).
+
+**Same size bias blowout:** START-ALL bias -0.342 → -0.695, growth +0.354 -
+statistically indistinguishable from the reorder flag's own +0.359. VERDICT:
+INCONCLUSIVE on the bias-growth rule, same as before.
+
+**Why this result matters more than a second rejection would suggest:**
+these two fixes work through COMPLETELY DIFFERENT mechanisms.
+`v2_vacancy_before_capacity` reorders which pass runs last. `v2_pass_
+capacity_injury_neutral_claim` changes nothing about ordering - it only
+changes what capacity conservation measures as a team's "current claim,"
+still running in the exact same shipped position. If the reorder's bias
+growth were really caused by "capacity conservation's symmetric top-up no
+longer running last" (the theory in that entry), this fix - which leaves
+capacity conservation running last, unchanged - should NOT have reproduced
+nearly the identical bias number. It did. That rules the ordering theory
+out as the real explanation and points somewhere more fundamental: **the
+double-count's extra volume was apparently doing real, accidental work
+offsetting this model's separate, well-documented general under-projection
+tendency** (every backtest log's own "TOP 25 LARGEST MISSES" table in this
+file is almost entirely UNDERPROJECTED booms), and that offsetting effect
+is concentrated specifically in vacancy-affected team situations - exactly
+where an opportunity for a boom game (someone stepping into a larger role)
+is most likely. Fix the double-count by any mechanism, and that accidental
+correction goes with it, surfacing the model's pre-existing under-
+projection bias more starkly in precisely the cases this correction had
+been masking.
+
+**Not shipped**, same as `v2_vacancy_before_capacity` - kept in the
+codebase as a second, independently-tested, explicitly-rejected attempt at
+the same real bug. **The double-count itself remains real and confirmed**
+(Dowdle/Warren, live board and both backtests agree on the direction and
+rough magnitude), but two independent fix mechanisms both trading it for
+the same size bias regression is strong evidence that patching THIS
+interaction isn't the actual fix. A real fix likely has to address the
+under-projection bias directly - a dedicated boom/upside correction, or a
+WEEKLY_CALIBRATION refit specifically scoped to vacancy-affected player-
+weeks - rather than anything touching how capacity conservation and
+vacancy talk to each other.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

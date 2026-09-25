@@ -1171,14 +1171,27 @@ MODEL_FEATURES = (
                              # injury_neutral_claim docstring), using the
                              # PRE-injury `_full_targets` snapshot
                              # build_weekly_projections already stashes for
-                             # the vacancy pass. A healthy player's
-                             # `_full_targets` equals his `targets`, so this
-                             # is a no-op for a team with nobody hurt -
-                             # capacity conservation's general symmetric
-                             # budget correction (the thing the reorder flag
-                             # broke) is untouched. NOT YET BACKTESTED -
-                             # queue a backtest_component.py --add run
-                             # before shipping.
+                             # the vacancy pass. BACKTESTED 2026-09-25, NOT
+                             # SHIPPED: bias growth +0.354 trips the 0.3 cap
+                             # (START-ALL bias -0.342 -> -0.695) - nearly
+                             # identical to v2_vacancy_before_capacity's
+                             # +0.359 above, despite fixing the double-count
+                             # through a completely different mechanism (no
+                             # reordering at all here). That both independent
+                             # fixes hit the SAME wall rules out "which pass
+                             # runs last" as the explanation and points
+                             # somewhere more fundamental: the double-count's
+                             # extra volume was apparently offsetting this
+                             # model's separate, well-documented general
+                             # under-projection tendency (see every backtest
+                             # log's "TOP 25 LARGEST MISSES" table - nearly
+                             # all UNDERPROJECTED), concentrated specifically
+                             # in vacancy-affected situations. Removing the
+                             # double-count removes that accidental
+                             # correction along with the bug. See the dated
+                             # methodology-doc entry - a real fix likely
+                             # needs to address the under-projection bias
+                             # directly, not this interaction.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released

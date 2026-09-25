@@ -2230,6 +2230,65 @@ baseline vs. `DEFAULT_FEATURES + v2_stat_k_by_pos` with the corrected
 table), 2022-2025, weeks 2-6 and 7-17 - behind the vacancy sub-component
 ablation already running (one heavy job at a time).
 
+## 2026-09-24 — item 3, next experiments: vacancy sub-component ablation (one confirmed helping, one confirmed neutral, one genuinely mixed)
+
+Per the plan's item-3 protocol, once the injury-replay mechanism itself was
+confirmed real (see the experiment-1 entry above), the next step is to
+ablate each of its three sub-components individually — same discipline as
+every other flag: does removing THIS ONE PIECE, with the others held fixed,
+measurably help or hurt. `v2_historical_injury_replay` was forced on for
+both arms of all three (that's the precondition that makes any of this
+machinery run at all in a backtest — `scripts/backtest_component.py
+--add-features`). 2022-2025, weeks 3-17, harness v2, n≈18,577 (ALL) /
+7,856 (START-ALL).
+
+**`v2_vacancy`** (the general "a healthy teammate absorbs a sidelined
+player's volume" mechanism) — **VERDICT: INCONCLUSIVE.** Point estimates
+lean toward removing it helping RMSE at WR (Δ-0.028, CI[-0.053,-0.003],
+excludes 0) and START-WR (Δ-0.063, CI[-0.113,-0.013]), with ALL and
+START-ALL flat-to-slightly-better (CI includes 0). But bias got
+substantially worse without it — START-ALL bias magnitude nearly
+quadrupled (-0.173 → -0.578, growth +0.405) — which trips harness v2's
+0.3 bias-growth safety cap regardless of the RMSE signal. Read plainly:
+there's a real, interesting WR-specific signal here, but the mechanism's
+job is explicitly to fix bias (a vacancy that goes un-reallocated
+understates the healthy teammates left standing), so a result that
+improves RMSE by making bias much worse is not a green light — it's a sign
+the two are trading off in a way this test can't cleanly arbitrate.
+**No change** — stays shipped as-is; a position-specific follow-up (WR-only
+ablation, or a version that keeps the bias correction but tempers the
+absorbed share) could resolve this later but isn't queued now.
+
+**`v2_preseason_rb_allocator`** — **VERDICT: REJECT (i.e. confirmed
+helping).** ALL RMSE 6.302→6.313 removed (Δ+0.011, CI[+0.002,+0.021],
+excludes 0 — worse without it), START-ALL 7.822→7.840 (Δ+0.018,
+CI[+0.000,+0.037]), bias essentially unchanged (growth -0.015, well under
+cap). Removing it measurably hurts. **No change** — keep shipped.
+
+**`v2_receiver_vacancy_pecking_order`** (the WR/TE "next man up" reshape —
+rank-decay-weighted allocation instead of a flat vacancy split) —
+**VERDICT: SHIP-ELIGIBLE (i.e. candidate to remove), but the two primary
+metrics disagree.** RMSE says keep it: ALL 6.302→6.311 removed (Δ+0.009,
+CI[-0.000,+0.019] — removing it trends worse, i.e. it's trending helpful),
+START-ALL 7.824→7.839 (Δ+0.014, CI[-0.003,+0.033], includes 0). Pairwise
+accuracy says cut it: START-ALL 0.637→0.638 removed (Δ+0.002,
+CI[+0.000,+0.003], barely excludes 0 — removing it trends better). Bias
+barely moves either way (growth -0.023). This is a genuine split-decision
+result, not a clear win or loss in either direction, and both CIs sit right
+at the zero boundary — reading it as a confident verdict either way would
+be overclaiming. **No change to `DEFAULT_FEATURES` from this ablation
+alone.** Instead of ripping out a shipped mechanism on a boundary result,
+queued the more targeted follow-up the plan already called for: a
+dose-response sweep of the pecking order's own shipped constant,
+`RECEIVER_VACANCY_RANK_DECAY` (0.62, in `data.rb_role_allocator` — governs
+how sharply the reshape favors the top backup over the rest of the bench).
+`scripts/sweep_model_constant.py` gained a `--module` flag for this (the
+constant lives entirely in `rb_role_allocator`, never imported into
+`weekly_projections`'s own namespace, so the existing sweep tool would have
+silently patched nothing); values 0.40/0.50/0.75/0.85 vs. shipped 0.62,
+2022-2025 weeks 3-17, queued behind the `v2_stat_k_by_pos` real validation
+(one heavy job at a time).
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

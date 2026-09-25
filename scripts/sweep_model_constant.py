@@ -37,9 +37,17 @@ change when a constant does - skipping the clear would serve a stale board).
     unpaired-START-pool harness is the wrong tool for judging a real
     accuracy change). --harness v1 keeps the original MAE-only report for
     reproducing old numbers.
+
+--module          : which data module the --target constant actually lives
+                    in (default weekly_projections). Needed for constants
+                    like RECEIVER_VACANCY_RANK_DECAY that live and are read
+                    entirely inside data.rb_role_allocator - weekly_projections
+                    never imports that name, so patching wp's own attribute
+                    would silently do nothing.
 """
 import argparse
 import copy
+import importlib
 import sys
 import os
 
@@ -61,9 +69,9 @@ def _scope_metrics(df, actual, pos, startable):
     return _metrics(pd.Series(d['Model Proj Pts'].to_numpy(), index=d['Player']), actual)
 
 
-def _apply(target, mode, value, keys=None):
-    """Return (old_value, new_value). Mutates wp.<target> to new_value."""
-    old = getattr(wp, target)
+def _apply(target, mode, value, keys=None, module=wp):
+    """Return (old_value, new_value). Mutates module.<target> to new_value."""
+    old = getattr(module, target)
     if mode == 'set':
         new = type(old)(value) if isinstance(old, (int, float)) else value
     elif mode == 'scale':
@@ -91,13 +99,13 @@ def _apply(target, mode, value, keys=None):
         new = (lo, hi)
     else:
         raise SystemExit(f"unknown --mode {mode}")
-    setattr(wp, target, new)
+    setattr(module, target, new)
     return old, new
 
 
-def _run_sweep_v1(target, mode, values, keys, years, weeks, scoring, add_features):
+def _run_sweep_v1(target, mode, values, keys, years, weeks, scoring, add_features, module=wp):
     scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
-    shipped = copy.deepcopy(getattr(wp, target))
+    shipped = copy.deepcopy(getattr(module, target))
     feats = frozenset(DEFAULT_FEATURES | add_features)
     rows = {str(v): {} for v in values}
 
@@ -109,7 +117,7 @@ def _run_sweep_v1(target, mode, values, keys, years, weeks, scoring, add_feature
             actual = _actual_points(stats_df, name_col, week, scoring_col)
             if actual.empty:
                 continue
-            setattr(wp, target, copy.deepcopy(shipped))
+            setattr(module, target, copy.deepcopy(shipped))
             build_weekly_projections.clear()
             base_proj, base_meta = build_weekly_projections(
                 year, week, scoring, as_of_week=week, apply_injury=False, features=feats)
@@ -118,11 +126,11 @@ def _run_sweep_v1(target, mode, values, keys, years, weeks, scoring, add_feature
                 continue
 
             for v in values:
-                _apply(target, mode, v, keys)
+                _apply(target, mode, v, keys, module=module)
                 build_weekly_projections.clear()
                 var_proj, _vm = build_weekly_projections(
                     year, week, scoring, as_of_week=week, apply_injury=False, features=feats)
-                setattr(wp, target, copy.deepcopy(shipped))
+                setattr(module, target, copy.deepcopy(shipped))
                 build_weekly_projections.clear()
                 if var_proj.empty:
                     continue
@@ -138,7 +146,7 @@ def _run_sweep_v1(target, mode, values, keys, years, weeks, scoring, add_feature
                         rows[str(v)].setdefault(scope, []).append((mb, mv))
             print(f"{year} w{week} done", flush=True)
 
-    print(f"\n{'=' * 78}\n{target}  ({mode})  vs shipped {shipped}  [harness v1]\n{'=' * 78}")
+    print(f"\n{'=' * 78}\n{module.__name__}.{target}  ({mode})  vs shipped {shipped}  [harness v1]\n{'=' * 78}")
     for v in values:
         label = str(v)
         print(f"\n--- value {label} ---")
@@ -162,14 +170,14 @@ def _run_sweep_v1(target, mode, values, keys, years, weeks, scoring, add_feature
             print(f"  {scope:<10} n={n:<6} MAE {mae_b:.3f}->{mae_v:.3f}  dMAE {d:+.3f}  "
                   f"w-l {wins}-{losses} (p={p:.2f})  CI[{clo:+.3f},{chi:+.3f}]{flag}")
 
-    setattr(wp, target, shipped)
+    setattr(module, target, shipped)
     print("\n(dMAE negative = the swept value beats the shipped constant. "
           "* = 95% CI excludes 0.)")
 
 
-def _run_sweep_v2(target, mode, values, keys, years, weeks, scoring, add_features):
+def _run_sweep_v2(target, mode, values, keys, years, weeks, scoring, add_features, module=wp):
     scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
-    shipped = copy.deepcopy(getattr(wp, target))
+    shipped = copy.deepcopy(getattr(module, target))
     feats = frozenset(DEFAULT_FEATURES | add_features)
     # rows[value][scope] = list of (metrics_base, metrics_variant) weekly pairs
     rows = {str(v): {} for v in values}
@@ -188,7 +196,7 @@ def _run_sweep_v2(target, mode, values, keys, years, weeks, scoring, add_feature
             actual = _actual_points(stats_df, name_col, week, scoring_col)
             if actual.empty:
                 continue
-            setattr(wp, target, copy.deepcopy(shipped))
+            setattr(module, target, copy.deepcopy(shipped))
             build_weekly_projections.clear()
             base_proj, base_meta = build_weekly_projections(
                 year, week, scoring, as_of_week=week, apply_injury=False, features=feats)
@@ -198,11 +206,11 @@ def _run_sweep_v2(target, mode, values, keys, years, weeks, scoring, add_feature
             base_idx = base_proj.set_index('Player')['Model Proj Pts']
 
             for v in values:
-                _apply(target, mode, v, keys)
+                _apply(target, mode, v, keys, module=module)
                 build_weekly_projections.clear()
                 var_proj, _vm = build_weekly_projections(
                     year, week, scoring, as_of_week=week, apply_injury=False, features=feats)
-                setattr(wp, target, copy.deepcopy(shipped))
+                setattr(module, target, copy.deepcopy(shipped))
                 build_weekly_projections.clear()
                 if var_proj.empty:
                     continue
@@ -235,7 +243,7 @@ def _run_sweep_v2(target, mode, values, keys, years, weeks, scoring, add_feature
                             stat_rows[str(v)].setdefault(stat, []).append((msb[stat], msv[stat]))
             print(f"{year} w{week} done", flush=True)
 
-    print(f"\n{'=' * 78}\n{target}  ({mode})  vs shipped {shipped}  [harness v2]\n{'=' * 78}")
+    print(f"\n{'=' * 78}\n{module.__name__}.{target}  ({mode})  vs shipped {shipped}  [harness v2]\n{'=' * 78}")
     for v in values:
         label = str(v)
         print(f"\n--- value {label} ---")
@@ -286,14 +294,17 @@ def _run_sweep_v2(target, mode, values, keys, years, weeks, scoring, add_feature
             rmse_b, rmse_v = _weighted(mb_list, 'rmse'), _weighted(mv_list, 'rmse')
             print(f"  stat:{stat:<20} n={n:<6} RMSE {rmse_b:.3f}->{rmse_v:.3f} (Δ{rmse_v-rmse_b:+.3f})")
 
-    setattr(wp, target, shipped)
+    setattr(module, target, shipped)
     print("\n(RMSE/pairwiseAcc CI excluding 0 = distinguishable from noise at this sample. "
           "MAE is secondary/informational only - see scripts/harness_v2.py.)")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--target', required=True, help="module-level name in data.weekly_projections")
+    ap.add_argument('--target', required=True, help="module-level name in --module")
+    ap.add_argument('--module', default='weekly_projections',
+                    help="data.<module> the --target constant lives in (default weekly_projections; "
+                    "e.g. rb_role_allocator for RECEIVER_VACANCY_RANK_DECAY)")
     ap.add_argument('--mode', default='set', choices=['set', 'scale', 'scale_keys', 'tuple2'])
     ap.add_argument('--keys', default=None,
                     help="comma-separated pos:stat leaves to scale, for --mode scale_keys "
@@ -320,19 +331,20 @@ def main():
     keys = [k.strip() for k in args.keys.split(',')] if args.keys else None
     add_features = frozenset(f.strip() for f in args.add_features.split(',') if f.strip())
 
-    if not hasattr(wp, args.target):
-        raise SystemExit(f"data.weekly_projections has no attribute {args.target}")
+    module = importlib.import_module(f'data.{args.module}')
+    if not hasattr(module, args.target):
+        raise SystemExit(f"data.{args.module} has no attribute {args.target}")
     from data.weekly_projections import MODEL_FEATURES
     unknown = add_features - set(MODEL_FEATURES)
     if unknown:
         raise SystemExit(f"--add-features not in MODEL_FEATURES: {sorted(unknown)}")
 
-    print(f"target={args.target}  shipped={getattr(wp, args.target)}")
+    print(f"target={module.__name__}.{args.target}  shipped={getattr(module, args.target)}")
     print(f"mode={args.mode}  keys={keys}  values={values}  add_features={sorted(add_features)}")
     print(f"years={years} weeks={weeks[0]}-{weeks[-1]} scoring={args.scoring} harness={args.harness}\n")
 
     runner = _run_sweep_v2 if args.harness == 'v2' else _run_sweep_v1
-    runner(args.target, args.mode, values, keys, years, weeks, args.scoring, add_features)
+    runner(args.target, args.mode, values, keys, years, weeks, args.scoring, add_features, module=module)
 
 
 if __name__ == '__main__':

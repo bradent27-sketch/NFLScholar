@@ -2418,6 +2418,56 @@ shipped on a real, corrected, two-window validation - after finding and
 fixing a genuine methodological bug in every earlier version of this test
 (see the two entries above this one).
 
+## 2026-09-25 — `RECEIVER_VACANCY_RANK_DECAY` dose-response sweep: the shipped 0.62 is measurably under-decayed, a clean monotonic trend not yet peaked
+
+The follow-up queued after the vacancy sub-component ablation (that
+ablation found `v2_receiver_vacancy_pecking_order` genuinely mixed - RMSE
+said keep, pairwise accuracy said cut, both at the significance boundary).
+Rather than a binary keep/cut call on the whole mechanism, this sweeps its
+own shipped constant - how sharply the WR/TE "next man up" reshape favors
+the top backup over the rest of the bench - across 0.40/0.50/0.75/0.85
+against the shipped 0.62, 2022-2025 weeks 3-17, `v2_historical_injury_
+replay` forced on (same precondition as the ablation), n=18,577 (ALL).
+
+**A clean, monotonic dose-response, not noise:**
+
+| value | ALL RMSE Δ | CI | START-ALL RMSE Δ | CI | START-ALL bias growth |
+|---|---|---|---|---|---|
+| 0.40 | +0.007 | [+0.003,+0.012] | +0.015 | [+0.006,+0.024] | -0.074 |
+| 0.50 | +0.004 | [+0.002,+0.007] | +0.008 | [+0.003,+0.013] | -0.044 |
+| 0.62 (shipped) | — | — | — | — | — |
+| 0.75 | -0.004 | [-0.006,-0.001] | -0.007 | [-0.012,-0.002] | +0.051 |
+| 0.85 | -0.005 | [-0.010,-0.001] | -0.010 | [-0.019,-0.002] | +0.090 |
+
+Every one of these four CIs excludes 0. Below the shipped value, RMSE gets
+measurably WORSE the further down you go (0.40 worse than 0.50). Above it,
+RMSE gets measurably BETTER the further up you go, and the improvement is
+still GROWING at 0.85 (the largest value tested), not flattening out - the
+sweep hasn't found where this actually peaks yet. WR and START-WR move the
+same direction as ALL/START-ALL at every value; QB/RB are exactly flat
+throughout (expected - this constant only touches the WR/TE pecking-order
+branch). The real cost, also monotonic: bias magnitude grows as decay
+increases (+0.051 at 0.75, +0.090 at 0.85) - still nowhere near the 0.3
+cap, but a genuine, worsening tradeoff, not free.
+
+**Read on the earlier mixed ablation result:** this explains it. The
+ablation's conflicting RMSE-says-keep/pairwise-says-cut signal wasn't the
+mechanism being genuinely uncertain - it was the shipped TUNING (0.62)
+sitting in a worse spot than either a full removal (implicitly a decay of
+1.0 - completely flat, no rank preference at all) or the better-tuned
+values found here. 0.85 already beats the ablation's implicit "remove it
+entirely" comparison on every metric that showed significance there.
+
+**Not shipped yet.** No value has been confirmed as a peak - the sweep
+needs to extend further right (0.90/0.95/1.0) to find where RMSE stops
+improving or bias growth becomes the binding constraint, and per this
+file's own standing discipline (see the STAT_K_BY_POS entries above), a
+value found on one combined sweep should get a genuine held-out confirm
+before shipping, not just the fit window it was found on. **Queued**:
+`scripts/sweep_model_constant.py --module rb_role_allocator --target
+RECEIVER_VACANCY_RANK_DECAY --values 0.80,0.90,0.95,1.0`, same window,
+behind the `v2_vacancy_before_capacity` backtest.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

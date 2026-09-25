@@ -1147,12 +1147,20 @@ MODEL_FEATURES = (
                              # the RB room as under-budget once Dowdle's own
                              # row zeroed, ANOTHER +2.2 from vacancy
                              # separately reassigning Dowdle's own vacated
-                             # targets). NOT YET BACKTESTED - queue a
-                             # backtest_component.py --add run before
-                             # shipping; the shipped order has its own real
-                             # justification (see the comment above) so this
-                             # is a genuine tradeoff to measure, not a
-                             # straightforward bug fix.
+                             # targets). BACKTESTED 2026-09-25, NOT SHIPPED:
+                             # INCONCLUSIVE, bias growth +0.359 trips the 0.3
+                             # cap (START-ALL bias -0.337 -> -0.696) despite
+                             # real WR/START-WR RMSE gains (CI excludes 0
+                             # both). Capacity conservation's SYMMETRIC
+                             # budget top-up (pass_capacity_allocator.py) is
+                             # apparently doing real work correcting this
+                             # model's general under-projection tendency
+                             # whenever it runs LAST - running it after an
+                             # already-vacancy-adjusted board loses that. The
+                             # double-count this flag fixes is real and
+                             # confirmed, but this specific fix trades it for
+                             # a worse one. See the dated methodology-doc
+                             # entry.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released

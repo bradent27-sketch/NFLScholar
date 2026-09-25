@@ -2468,6 +2468,55 @@ before shipping, not just the fit window it was found on. **Queued**:
 RECEIVER_VACANCY_RANK_DECAY --values 0.80,0.90,0.95,1.0`, same window,
 behind the `v2_vacancy_before_capacity` backtest.
 
+## 2026-09-25 — `v2_vacancy_before_capacity` backtested: the double-count is real, but this fix trades it for a worse bias problem
+
+The backtest queued after building the flag (`--add v2_vacancy_before_
+capacity`, `v2_historical_injury_replay` forced on, 2022-2025 weeks 3-17,
+harness v2, n=18,577) is in, and it's a genuinely mixed result that the
+harness correctly refuses to call a win.
+
+**Real, CI-confirmed improvements at the scopes most exposed to the
+double-count:** WR RMSE 6.311→6.285 (Δ-0.026, CI[-0.047,-0.006]), START-WR
+RMSE 8.113→8.069 (Δ-0.045, CI[-0.084,-0.005]), plus pairwise accuracy gains
+at START-ALL (+0.003, CI[+0.002,+0.005]), START-WR (+0.006,
+CI[+0.003,+0.010]) and START-TE (+0.010, CI[+0.003,+0.018]). ALL/START-ALL
+RMSE also point the right direction (-0.008 / -0.015) but their own CIs
+still span 0.
+
+**But bias blew well past the safety cap:** START-ALL bias -0.337 →
+-0.696, a growth of +0.359 against the 0.3 cap - the whole board got
+substantially MORE under-projecting with this flag on (ALL -0.321 → -0.521,
+WR -0.238 → -0.531, TE -0.415 → -0.627, every position moved the same
+direction). **VERDICT: INCONCLUSIVE** on the bias-growth rule alone,
+regardless of the real RMSE wins above.
+
+**Why:** `data/pass_capacity_allocator.py`'s own docstring already says the
+fit is SYMMETRIC - a team's pass-catcher group whose claim falls UNDER
+budget gets scaled UP, not just OVER-budget groups scaled down. That
+symmetric top-up runs on every board (not just an injury week) and is
+apparently doing real, load-bearing work correcting this model's
+well-documented general under-projection tendency (see this file's own
+"TOP 25 LARGEST MISSES" tables, above and in every backtest log - boom
+weeks are systematically under-called leaguewide). Capacity conservation
+running LAST (the shipped order) lets it apply that correction to the
+FINAL board. Running vacancy first removes that: capacity conservation now
+corrects an already-vacancy-adjusted board instead of the model's raw
+output, and whatever it was compensating for elsewhere goes uncorrected.
+
+**Conclusion: the double-count this flag targets is real and was
+confirmed on a live case (Rico Dowdle/Jaylen Warren, PIT, see the entry
+above) - but this specific fix (a wholesale pass reorder) trades a
+localized double-count for a much larger, board-wide bias regression. Not
+shipped.** The flag stays in the codebase as a documented, tested, and
+explicitly rejected option (not deleted - the underlying bug and the
+reasoning for why THIS fix doesn't work are both worth keeping visible). A
+better fix, if one is worth pursuing later, would need to preserve capacity
+conservation's general budget-correction role while still avoiding
+double-crediting the SPECIFIC player vacancy already reassigned - e.g.
+excluding an OUT player's own pre-injury claim from capacity conservation's
+"current claim" computation for his team, rather than reordering the two
+passes wholesale.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

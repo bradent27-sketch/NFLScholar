@@ -2633,6 +2633,80 @@ the 2022-2023 win averaged with a 2024-2025 nothing.
 `.sweeps/rank_decay_085_fit_2022-2023_wk3-17.log`,
 `.sweeps/rank_decay_085_confirm_2024-2025_wk3-17.log`.
 
+## 2026-09-25 — double-count FIXED: `v2_pass_capacity_injury_neutral_claim` shipped, the bias veto was two errors cancelling
+
+The user's direction after the two rejections above: the double-count "is a
+pretty obvious error in our model and it needs to be removed", accepting
+some under-projection of players stepping into a bigger role. Before
+choosing a fix, `scripts/diag_vacancy_double_count.py` measured where the
+volume actually belongs - the harness's aggregate bias cannot. Same window
+and arms as the harness run (2022-2025 wk3-17, replay on; base = shipped,
+fix = + the flag), log `.sweeps/diag_vacancy_double_count_2022-2025_wk3-17.log`.
+
+**Team-room target totals, projected minus actual, per team-week:**
+
+| room | season | nobody out | OUT room, shipped | OUT room, fix |
+|---|---|---|---|---|
+| WR/TE | 2022 | -0.40 | **+5.18** | +1.59 |
+| WR/TE | 2023 | -0.57 | **+2.66** | -0.55 |
+| WR/TE | 2024 | -0.37 | **+3.05** | -0.52 |
+| WR/TE | 2025 | +0.15 | **+4.19** | +0.75 |
+| RB | 2022-2025 | -0.12 to +0.12 | **+0.81 to +1.82** | -0.91 to -0.02 |
+
+(Actual = targets to the board's own players; a player who didn't play
+counts 0.) Every season, the shipped board threw 2.7-5.2 phantom targets
+into each WR/TE room with an OUT player - volume no team ever threw. The
+fix puts those rooms back within ~1 target of reality, the same accuracy
+as rooms with nobody out. The capacity budget itself is close to right
+(clean rooms 1-4% under actual).
+
+**Player level (whole pool, players who played):**
+
+| group | shipped bias | fix bias | shipped RMSE | fix RMSE |
+|---|---|---|---|---|
+| OUT room, top vacancy recipient, WR/TE (n=667) | +1.06 | -0.15 | 7.665 | 7.515 |
+| OUT room, top vacancy recipient, RB (n=191) | +0.85 | -0.89 | 8.519 | 8.412 |
+| OUT room, other teammate, WR/TE (n=3566) | +0.19 | -0.46 | 5.641 | 5.631 |
+| clean room, WR/TE (n=7564) | -0.65 | -0.65 | 5.947 | 5.947 |
+
+RMSE improves in every OUT-room group. The Warren-type recipient was
+genuinely over-projected at scale, which confirms the user's read of the
+live case.
+
+**Why the harness said "bias growth":** clean rooms were already
+under-projected, and the OUT rooms' surplus was cancelling that out in the
+START-ALL average. Removing the surplus leaves OUT rooms at about the same
+bias as clean rooms (startable WR/TE: clean -1.20, OUT-room other
+teammates -1.01 with the fix, top recipient +0.02). The |bias| gets bigger
+because two errors stop offsetting each other, not because the fix adds a
+new one. The underlying under-projection is real and separate. In clean
+rooms the room TOTAL is nearly right, but it's split too flat: ranks 1-3
+are -1.2 targets combined, ranks 6-8 +0.7. That's the uniform capacity
+factor spreading a correct total evenly over a tail that over-claims (the
+top-protecting alternatives were reverted at the user's request
+2026-08-30, see `_fit_group`). It's left as a known, separate issue.
+
+**Shipped** into DEFAULT_FEATURES, overriding the harness's bias-growth
+rule at the user's direction, on this decomposition. Refinement for live
+use: the neutral claim applies to SIDELINED rows only (Availability <=
+0.01, the line vacancy uses to pick a source). A live Questionable player
+at, say, 0.6 is never redistributed by vacancy, so capacity still tops up
+his room for the missing 0.4. The replay feed is binary 0/1, so the
+backtest numbers above apply unchanged. No calibration refit:
+CALIBRATION_INPUT_FEATURES boards have no injury replay, nobody is
+sidelined, and the flag is a strict no-op there. Live 2026 wk3: Jaylen
+Warren 7.92 → 5.59 targets, 23.25 → 19.80 pts.
+
+**Found while verifying live: every Out player projected the calibration
+INTERCEPT, not 0.** The calibration line is `intercept + slope*raw`, and a
+sidelined player's raw is 0, so every Out QB showed 4.15, WR 1.29 (cold
+line) and RB 1.03 - including the <10% Questionables resolved to Out by
+the 2026-09-24 rule (Zay Flowers Q 4% at 1.29). Fixed by
+`_uncalibrate_sidelined`, applied at both calibration sites: a sidelined
+row shows its raw total. Live wk3: all 25 sidelined rows now 0.0.
+Backtests are unaffected, since a sidelined player has no game and never
+enters a scored pool.
+
 ## Known limitations
 
 - **Week 1 is a cold start, not a blank** — it falls back entirely to

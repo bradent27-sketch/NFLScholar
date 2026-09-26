@@ -66,6 +66,13 @@ PASS_CAPACITY_TRUSTED_TIER = 8
 # than a silent zero budget that would wipe out a team's receivers).
 FALLBACK_TARGET_PER_ATTEMPT = 0.95
 
+# A row at or below this Availability is "sidelined" - the exact line both
+# vacancy paths (data.rb_role_allocator / weekly_projections'
+# redistribute_v2_vacated_usage) use to pick a player whose volume they
+# redistribute. injury_neutral_claim restores the full claim for these rows
+# only, so capacity conservation and vacancy never both own the same volume.
+SIDELINED_AVAILABILITY = 0.01
+
 # Deadband (in targets) around a position group's own budget within which
 # NO adjustment is made at all - the claim is close enough to realistic that
 # refitting would just add noise. Added 2026-08-29 per explicit request
@@ -357,6 +364,15 @@ def apply_pass_capacity_conservation(
     (e.g. a caller that never ran the vacancy volume snapshot, or every
     existing test fixture in tests/test_pass_capacity_allocator.py), so
     this is a strict no-op unless both the flag AND the column are present.
+
+    Only SIDELINED rows (``Availability`` <= ``SIDELINED_AVAILABILITY``, the
+    same 0.01 line both vacancy paths use to pick a source) get their full
+    claim back (2026-09-25). A live Questionable player at, say, 0.6 is
+    never redistributed by vacancy - his expected missing 0.4 has no other
+    owner - so capacity conservation must keep topping his room up for it,
+    exactly as before. Without an ``Availability`` column every row's
+    ``_full_targets`` is used (the original behaviour; the backtest's
+    historical replay is binary 0/1, so it can't tell the two apart).
     """
     if te_marginal_target_weight is None:
         te_marginal_target_weight = TE_MARGINAL_TARGET_WEIGHT
@@ -384,6 +400,9 @@ def apply_pass_capacity_conservation(
     # for "use the ordinary claim" - no separate on/off flag to keep in sync.
     fit_claim = (pd.to_numeric(out['_full_targets'], errors='coerce')
                 if injury_neutral_claim and '_full_targets' in out.columns else None)
+    if fit_claim is not None and 'Availability' in out.columns:
+        sidelined = pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0) <= SIDELINED_AVAILABILITY
+        fit_claim = fit_claim.where(sidelined, out['targets'])
 
     team_capacity = derive_team_target_capacity(prior_history, team_col=team_col)
     capacity_by_team = (team_capacity.set_index('team')['team_target_capacity'].to_dict()

@@ -2821,3 +2821,23 @@ def main():
 
 if __name__ == '__main__':
     sys.exit(main())
+
+
+def test_uncalibrate_sidelined_keeps_an_out_players_calibrated_total_at_raw():
+    # The calibration line is intercept + slope*raw, so an Out player whose
+    # raw total is correctly 0 used to display the intercept (live 2026 wk3:
+    # Rico Dowdle Out at 1.03, every Out WR at 1.29). A sidelined row must
+    # show its raw value; everyone else keeps the calibrated one.
+    frame = pd.DataFrame({
+        'Player': ['Out WR', 'Q 4% WR', 'Healthy WR', 'Q 60% WR'],
+        'Availability': [0.0, 0.0, 1.0, 0.6],
+        'Raw Model Proj Pts': [0.0, 0.0, 10.0, 6.0],
+        'Model Proj Pts': [1.29, 1.29, 9.92, 6.47],
+        'Calibrated Model Proj Pts': [1.29, 1.29, 9.92, 6.47],
+    })
+    out = wp._uncalibrate_sidelined(frame.copy())
+    assert out['Model Proj Pts'].tolist() == [0.0, 0.0, 9.92, 6.47]
+    assert out['Calibrated Model Proj Pts'].tolist() == [0.0, 0.0, 9.92, 6.47]
+    # No Availability column (a caller that never resolved injuries): no-op.
+    bare = frame.drop(columns=['Availability'])
+    pd.testing.assert_frame_equal(wp._uncalibrate_sidelined(bare.copy()), bare)

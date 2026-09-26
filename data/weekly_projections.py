@@ -134,7 +134,7 @@ from data.player_aliases import canonical_player_key, stable_roster_identity_key
 from data.availability_overrides import (
     load_availability_overrides, resolve_target_week_availability,
 )
-from data.pass_capacity_allocator import apply_pass_capacity_conservation
+from data.pass_capacity_allocator import apply_pass_capacity_conservation, SIDELINED_AVAILABILITY
 from data.qb_volume_blend import blend_qb1_volume
 from data.fantasypros_availability import load_fantasypros_availability
 from data.historical_availability import historical_injury_profiles
@@ -1171,27 +1171,13 @@ MODEL_FEATURES = (
                              # injury_neutral_claim docstring), using the
                              # PRE-injury `_full_targets` snapshot
                              # build_weekly_projections already stashes for
-                             # the vacancy pass. BACKTESTED 2026-09-25, NOT
-                             # SHIPPED: bias growth +0.354 trips the 0.3 cap
-                             # (START-ALL bias -0.342 -> -0.695) - nearly
-                             # identical to v2_vacancy_before_capacity's
-                             # +0.359 above, despite fixing the double-count
-                             # through a completely different mechanism (no
-                             # reordering at all here). That both independent
-                             # fixes hit the SAME wall rules out "which pass
-                             # runs last" as the explanation and points
-                             # somewhere more fundamental: the double-count's
-                             # extra volume was apparently offsetting this
-                             # model's separate, well-documented general
-                             # under-projection tendency (see every backtest
-                             # log's "TOP 25 LARGEST MISSES" table - nearly
-                             # all UNDERPROJECTED), concentrated specifically
-                             # in vacancy-affected situations. Removing the
-                             # double-count removes that accidental
-                             # correction along with the bug. See the dated
-                             # methodology-doc entry - a real fix likely
-                             # needs to address the under-projection bias
-                             # directly, not this interaction.
+                             # the vacancy pass - SIDELINED rows only
+                             # (Availability <= 0.01, vacancy's own source
+                             # line), so a Questionable player's partial gap
+                             # still gets capacity's top-up. SHIPPED
+                             # 2026-09-25 - see DEFAULT_FEATURES' note for
+                             # why the harness's bias-growth flag (+0.354)
+                             # was overridden.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -1504,6 +1490,29 @@ DEFAULT_FEATURES = frozenset({
     # current-season game count grows, so the flag naturally stops mattering
     # on the same schedule the mid-season result shows.
     'v2_stat_k_by_pos',
+    # SHIPPED 2026-09-25 at the user's direction, OVERRIDING the harness's
+    # bias-growth rule. Fixes the pass-capacity / vacancy double-count: with
+    # an OUT player's row zeroed, capacity conservation read his room as
+    # under budget and scaled every healthy teammate up to fill it, then
+    # vacancy handed out the same player's vacated volume again (Dowdle OUT
+    # / Warren +2 capacity +2.2 vacancy). Harness (2022-2025 wk3-17, replay
+    # on): WR RMSE -0.027 CI[-0.048,-0.005], START-WR -0.045
+    # CI[-0.087,-0.003], START-ALL pairwise +0.003 CI[+0.001,+0.005], no
+    # position worse - but START-ALL bias -0.342 -> -0.695 (+0.354 > 0.3).
+    # scripts/diag_vacancy_double_count.py shows that bias growth is two
+    # errors no longer cancelling, not a new one: the shipped board put
+    # +2.7 to +5.2 phantom targets into every WR/TE room with an OUT
+    # player, every season 2022-2025 (+0.8 to +1.8 per RB room); with the
+    # fix those rooms land within ~1 target of actual, same as rooms with
+    # nobody out. That surplus had been hiding a separate, pre-existing
+    # under-projection of each room's TOP receivers (clean rooms: ranks 1-3
+    # -1.2 targets combined, ranks 6-8 +0.7 - the uniform capacity trim
+    # spreads a correct room total too flat). The top vacancy recipient
+    # goes from +1.06 pts over-projected to -0.15 (WR/TE). No calibration
+    # refit needed: CALIBRATION_INPUT_FEATURES boards are fit without
+    # injury replay, where nobody is sidelined and this flag is a strict
+    # no-op. See docs/weekly_projections_methodology.md, 2026-09-25.
+    'v2_pass_capacity_injury_neutral_claim',
 })
 
 
@@ -1798,6 +1807,30 @@ def _weekly_calibration_for(pos, week):
         return base
     bucket = 'cold' if week <= WEEKLY_CALIBRATION_COLD_MAX_WEEK else 'rest'
     return WEEKLY_CALIBRATION_BY_BUCKET.get(bucket, {}).get(pos, base)
+
+
+def _uncalibrate_sidelined(frame):
+    """Put a SIDELINED row's (Availability <= SIDELINED_AVAILABILITY) point
+    total back to its raw, uncalibrated value - in place, returns ``frame``.
+
+    The calibration line is ``intercept + slope * raw``, so a player whose
+    raw total is correctly 0 because he is Out still displayed the
+    intercept: every Out QB 4.15, WR 1.29 (cold line), RB 1.03 - found on
+    the live 2026 week-3 board, 2026-09-25 (Rico Dowdle Out at 1.03; Zay
+    Flowers, Questionable 4% and therefore resolved to Out, at 1.29). The
+    line describes how this model's projections for players who PLAY
+    disperse; it has nothing to say about a player who isn't playing.
+    Backtests are unaffected in practice: a sidelined player has no actual
+    game, so he never enters a scored pool."""
+    if frame is None or frame.empty or 'Availability' not in frame.columns \
+            or 'Raw Model Proj Pts' not in frame.columns:
+        return frame
+    sidelined = pd.to_numeric(frame['Availability'], errors='coerce').fillna(1.0) <= SIDELINED_AVAILABILITY
+    if sidelined.any():
+        for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
+            if col in frame.columns:
+                frame.loc[sidelined, col] = frame.loc[sidelined, 'Raw Model Proj Pts']
+    return frame
 
 
 def _played_weeks_before(stats_df, as_of_week):
@@ -9792,6 +9825,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             out['_availability_source'] = 'V1 legacy injury multiplier'
             out['_availability_match_method'] = 'legacy'
             out['_availability_note'] = ''
+        _uncalibrate_sidelined(out)
 
         # Keep the explanation payload outside the visible dataframe.  This
         # preserves a compact table while giving the dialog every input it
@@ -10244,6 +10278,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     #
     # Neither order is a free lunch, which is why this is a backtestable
     # flag (not a swap of the default) - see scripts/backtest_component.py.
+    # The double-count itself is fixed WITHOUT reordering, by
+    # 'v2_pass_capacity_injury_neutral_claim' (shipped 2026-09-25): capacity
+    # conservation sizes a room as if its sidelined player were still in it,
+    # so vacancy is the only pass that hands his volume out.
     # Both orders share the exact same two calls; only the ORDER (and which
     # snapshot sits in the middle, for the popup's per-mechanism delta
     # attribution just below) differs.
@@ -10406,6 +10444,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     for v, (sl, ic) in zip(recomputed, slopes)]
             result['Model Proj Pts'] = np.round(np.clip(recomputed, 0.0, None), 2)
             result['Calibrated Model Proj Pts'] = result['Model Proj Pts']
+            _uncalibrate_sidelined(result)
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
     # Raw per-week slot/wide/inline defense-allowed evidence, grouped for

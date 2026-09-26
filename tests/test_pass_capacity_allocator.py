@@ -319,6 +319,38 @@ def test_injury_neutral_claim_stops_a_healthy_teammate_absorbing_an_out_players_
     assert _approx(dowdle_neutral, 0.0)
 
 
+def test_injury_neutral_claim_leaves_a_questionable_players_gap_to_capacity():
+    # Vacancy only redistributes a SIDELINED player (Availability <= 0.01).
+    # A Questionable player at 0.5 keeps half his volume and vacancy never
+    # touches the other half - capacity conservation is the only thing that
+    # hands it to his teammates, so the neutral claim must NOT take his full
+    # claim back. Same room as the Dowdle test, but Dowdle is 50/50 instead
+    # of out: the flag must change nothing.
+    attempts = 7.0 / (pca.FALLBACK_RB_CATCHER_SHARE * pca.FALLBACK_TARGET_PER_ATTEMPT)
+    rows = [
+        {**_board_row('PIT', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=attempts), 'Availability': 1.0},
+        {**_board_row('PIT', 'Rico Dowdle', 'RB', 1.5), '_full_targets': 3.0, 'Availability': 0.5},
+        {**_board_row('PIT', 'Jaylen Warren', 'RB', 4.0), '_full_targets': 4.0, 'Availability': 1.0},
+        {**_board_row('PIT', 'WR1', 'WR', 6.0), 'Availability': 1.0},
+    ]
+    board = pd.DataFrame(rows)
+
+    out_default, _ = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=8)
+    out_neutral, _ = pca.apply_pass_capacity_conservation(
+        board, prior_history=None, tier_size=8, injury_neutral_claim=True)
+
+    pd.testing.assert_series_equal(
+        out_default['targets'].reset_index(drop=True),
+        out_neutral['targets'].reset_index(drop=True))
+
+    # ...while the same player at Availability 0.0 (OUT) does get his full
+    # claim back, exactly as in the Dowdle test above.
+    board.loc[board['Player'].eq('Rico Dowdle'), ['targets', 'Availability']] = [0.0, 0.0]
+    out_out, _ = pca.apply_pass_capacity_conservation(
+        board, prior_history=None, tier_size=8, injury_neutral_claim=True)
+    assert _approx(out_out.loc[out_out['Player'].eq('Jaylen Warren'), 'targets'].iloc[0], 4.0)
+
+
 def test_injury_neutral_claim_is_a_no_op_when_nobody_is_hurt():
     # A healthy player's `_full_targets` always equals his `targets` - the
     # injury discount is a no-op multiplier of 1.0 - so this flag must

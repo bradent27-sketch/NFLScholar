@@ -94,10 +94,12 @@ external_data/props_archive/
 # of silently vanishing on every fresh clone/branch/worktree.
 
 
-# Weekly PFF alignment exports are locally licensed source material.  Keep
-# the small manifest/provenance record reviewable if desired, but never stage
-# the raw subscription reports by accident when preparing a public push.
-pff_imports/*/weekly/
+# Weekly PFF alignment exports were previously excluded here as locally
+# licensed subscription source material, to guard against staging them by
+# accident when preparing a PUBLIC push. Tracking restored 2026-09-27 at the
+# user's explicit request (repo confirmed public) - 2022-2025's own weekly
+# archives (differently named: "Weekly Data" / "weekly") were already
+# tracked, so this was only ever excluding the current 2026 season's.
 
 # Optional manual Week-1 availability decisions. This is personal runtime
 # state, not a public source file; the code supplies an empty-safe loader.

@@ -108,6 +108,7 @@ known before week N, then compare to what actually happened.
 """
 import json
 import os
+import warnings
 from functools import lru_cache
 from pathlib import Path
 
@@ -118,7 +119,7 @@ import streamlit as st
 from data.transforms import (load_and_merge_data, OFFENSE_PROJECTION_STATS,
                              score_projected_stats)
 from data.loaders import (load_team_pace, load_team_weekly_plays, load_schedule, CACHE_TTL_SECONDS,
-                          _progressive_blowout_team_weeks)
+                          _progressive_blowout_team_weeks, realized_script_by_team_week)
 from data.utils import clean_name_exact
 from data.ourlads_depth_charts import (
     load_ourlads_snapshot, build_ourlads_projection_signal,
@@ -128,7 +129,7 @@ from data.rb_role_allocator import (
     classify_functional_position, derive_preseason_rb_capacities,
     allocate_preseason_rb_roles, redistribute_rb_vacancy_with_allocator,
     analyze_rb_role_segments, derive_rb_allocator_segment_fields,
-    INELIGIBLE_ROSTER_STATUSES,
+    INELIGIBLE_ROSTER_STATUSES, RB_TEAM_SNAP_SHARE_MAX,
 )
 from data.player_aliases import canonical_player_key, stable_roster_identity_keys
 from data.availability_overrides import (
@@ -137,7 +138,8 @@ from data.availability_overrides import (
 from data.pass_capacity_allocator import apply_pass_capacity_conservation, SIDELINED_AVAILABILITY
 from data.qb_volume_blend import blend_qb1_volume
 from data.fantasypros_availability import load_fantasypros_availability
-from data.historical_availability import historical_injury_profiles
+from data.historical_availability import (
+    historical_injury_profiles, historical_reserve_profiles, merge_reserve_profiles)
 from data.matchup_signals import defense_stat_rank
 from data.weekly_distribution import player_distribution
 from data.pff_alignment import (
@@ -670,6 +672,243 @@ SCRIPT_ELIGIBLE_STATS = {'targets', 'receptions', 'receiving_yards', 'rushing_at
 # this is the same measurement, not a different one (see module docstring).
 SCRIPT_BUCKETS = [(-999, -7.5, -12.5), (-7.5, 0, -3.75), (0, 7.5, 3.75), (7.5, 999, 12.5)]
 
+# --- v2_offense_script_pool_blend --------------------------------------------
+# CANDIDATE, built 2026-09-28. `passing_attempts` was left out of
+# SCRIPT_ELIGIBLE_STATS above alongside completion%/rate stats, but attempts
+# is a pure VOLUME stat exactly like rushing_attempts (which IS in that set)
+# - "the passing_yards figure already carries most of the same information"
+# does not actually apply to raw attempt COUNT, only to the rate/quality
+# stats that comment was really about. Gated behind this flag rather than
+# added to SCRIPT_ELIGIBLE_STATS directly since that constant is read
+# unconditionally (unflagged, already-shipped) elsewhere - this extends the
+# stat list only when the flag is on.
+SCRIPT_POOL_BLEND_EXTRA_STATS = frozenset({'passing_attempts'})
+# Found live 2026-09-27/28 on C.J. Stroud: even with passing_attempts added,
+# _vectorized_game_script_multiplier's own `counts >= 4` eligibility floor
+# still leaves EVERY player with no game-script correction at all before
+# his 4th game of the season - weeks 2-4 get a flat 1.0 no matter what, the
+# exact window this was found on (his week-2 55-attempt game, a 6-20
+# blowout loss, dominated his week-3 recency-weighted rate into a
+# 41.61-attempt projection against a real 27; HOU's whole-team play count
+# read ~68, matching the user's own estimate, for the identical reason).
+# `v2_offense_script_pool_blend` makes that floor a continuous evidence
+# blend instead of a hard wall: a player short on his own games is blended
+# toward a POSITION-POOLED version of the exact same bucket/margin read
+# (every player at his position, pooled instead of per-player) rather than
+# left at neutral. SCRIPT_POOL_BLEND_K=4 keeps the blend's midpoint at the
+# same game count the old hard cutoff used, so a player AT the old
+# threshold is already ~50/50 personal/pool, drifting to fully personal as
+# his own sample grows past it - not a new number to justify, the same one
+# reinterpreted as a curve instead of a step. NOT in DEFAULT_FEATURES -
+# backtest before shipping.
+SCRIPT_POOL_BLEND_K = 4.0
+# The pool curve needs enough independent players at a position/bucket to
+# be a real average rather than 1-2 players' own noise standing in for the
+# whole position - a plain sample-size floor, not a tuned constant.
+SCRIPT_POOL_MIN_PLAYERS = 5
+
+# --- v2_script_neutral_volume ------------------------------------------------
+# docs/model_improvement_plan_2026-09-23.md item 5, Steps B/C. Built
+# 2026-09-28/29 alongside 'v2_offense_script_pool_blend' above, but a
+# genuinely different mechanism, per the plan's own distinction: that flag
+# reads a PLAYER'S OWN bucketed history (or a position pool of the same, for
+# a thin sample); this one divides a past game's raw volume by a
+# LEAGUE-WIDE fitted curve (scripts/fit_script_curves.py, 2016-2021,
+# data/script_curves.json) BEFORE it ever enters an average, then scales
+# the result back up by a second, flatter curve for the upcoming week's own
+# expected script - de-scripting the mechanism itself rather than
+# re-weighting or pooling its symptoms. Only the 6 (position, stat) pairs
+# the fit script covers get their OWN curve; every other stat this flag
+# touches (receptions, receiving_yards, passing_completions) inherits its
+# volume driver's curve - see SCRIPT_NEUTRAL_DEPENDENT_DRIVER below.
+SCRIPT_NEUTRAL_VOLUME_CURVES = frozenset({
+    ('QB', 'passing_attempts'), ('QB', 'passing_yards'),
+    ('RB', 'rushing_attempts'), ('RB', 'targets'),
+    ('WR', 'targets'), ('TE', 'targets'),
+})
+# "Receptions and yards follow their volume stat" (the plan's own words):
+# receptions/receiving_yards are proportional to targets, so they reuse
+# targets' curve rather than needing (and diluting the sample fitting) one
+# of their own. passing_completions similarly follows passing_attempts.
+# NOTE: the plan's Step C bullet also lists "passing_yards ... by the
+# attempts factor", which conflicts with Step B explicitly fitting
+# passing_yards its OWN curve two paragraphs earlier - resolved here in
+# favor of Step B's explicit fit (passing_yards gets its own curve, not
+# attempts'), since a stat the fit script deliberately measures is a
+# stronger signal than a one-line aside about a stat family it groups it
+# into. passing_yards is therefore in SCRIPT_NEUTRAL_VOLUME_CURVES above,
+# not here.
+SCRIPT_NEUTRAL_DEPENDENT_DRIVER = {
+    ('QB', 'passing_completions'): 'passing_attempts',
+    ('RB', 'receptions'): 'targets', ('RB', 'receiving_yards'): 'targets',
+    ('WR', 'receptions'): 'targets', ('WR', 'receiving_yards'): 'targets',
+    ('TE', 'receptions'): 'targets', ('TE', 'receiving_yards'): 'targets',
+}
+# Safety clips on the per-game de-scripting divisor (REAL, wider - a single
+# past game's own realized script can be extreme) and the forward multiplier
+# (EXPECTED, narrower - a pregame spread is flatter by construction, same
+# reasoning scripts/fit_script_curves.py's own docstring gives for why
+# f_exp's fitted slopes are themselves smaller than f_real's).
+SCRIPT_NEUTRAL_REAL_CLIP = (0.5, 2.0)
+SCRIPT_NEUTRAL_EXP_CLIP = (0.85, 1.15)
+SCRIPT_CURVES_PATH = os.path.join('data', 'script_curves.json')
+
+
+def _script_neutral_driver_stat(pos, stat):
+    """The (pos, stat) pair whose OWN fitted curve governs `stat` at this
+    position under 'v2_script_neutral_volume' - itself if it has one,
+    its named driver if it's a dependent, or None if this flag does not
+    touch this (pos, stat) at all."""
+    if (pos, stat) in SCRIPT_NEUTRAL_VOLUME_CURVES:
+        return stat
+    return SCRIPT_NEUTRAL_DEPENDENT_DRIVER.get((pos, stat))
+
+
+@lru_cache(maxsize=1)
+def _load_script_curves():
+    """{(pos, stat): {'beta_lead', 'beta_trail', 'beta_exp'}} from
+    data/script_curves.json (scripts/fit_script_curves.py's output).
+    Cached for the process - the file is a development artifact rebuilt by
+    re-running that script, not something that changes under a running
+    app. {} (the flag degrades to a clean no-op everywhere) if the file is
+    missing or malformed.
+    """
+    try:
+        with open(SCRIPT_CURVES_PATH, encoding='utf-8') as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for pos, stats in (payload.get('curves') or {}).items():
+        if not isinstance(stats, dict):
+            continue
+        for stat, coefs in stats.items():
+            if not isinstance(coefs, dict):
+                continue
+            try:
+                out[(pos, stat)] = {
+                    'beta_lead': float(coefs.get('beta_lead', 0.0)),
+                    'beta_trail': float(coefs.get('beta_trail', 0.0)),
+                    'beta_exp': float(coefs.get('beta_exp', 0.0)),
+                }
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _script_real_factor(curve, script):
+    """f_real(script): the per-game divisor 'v2_script_neutral_volume'
+    applies to a PAST game's raw stat value before it enters any average -
+    de-scripting it to what it would have looked like in a neutral game
+    state. 1.0 (a clean no-op) wherever `script` is NaN (no realized-script
+    entry for that game - data.loaders.realized_script_by_team_week's own
+    fallback note) or `curve` is None (nothing fitted for this stat)."""
+    script = np.asarray(script, dtype=float)
+    if curve is None:
+        return np.ones(len(script))
+    lead = np.clip(script, 0.0, None)
+    trail = np.clip(script, None, 0.0)
+    factor = np.clip(np.exp(curve['beta_lead'] * lead + curve['beta_trail'] * trail),
+                     *SCRIPT_NEUTRAL_REAL_CLIP)
+    return np.where(np.isfinite(script), factor, 1.0)
+
+
+def _script_exp_factor(curve, own_margin):
+    """f_exp(own_margin): the FORWARD multiplier 'v2_script_neutral_volume'
+    applies to the blended rate, for the UPCOMING week's own market-implied
+    margin (the same sign convention scripts/fit_script_curves.py's
+    own_spread used at fit time: positive means favored). 1.0 wherever no
+    line is posted yet or `curve` is None."""
+    own_margin = np.asarray(own_margin, dtype=float)
+    if curve is None:
+        return np.ones(len(own_margin))
+    factor = np.clip(np.exp(curve['beta_exp'] * (-own_margin)), *SCRIPT_NEUTRAL_EXP_CLIP)
+    return np.where(np.isfinite(own_margin), factor, 1.0)
+
+
+# 'v2_wrte_participation': a WR/TE's expected snap share is his share WHEN
+# ACTIVE (expected_snap_share's docstring), so a depth receiver - a healthy
+# scratch some weeks, an active body with no offensive snap in others, never
+# on an injury report either way - projects as if he'll play every week. The
+# room's claim runs over budget and the uniform pass-capacity trim takes that
+# surplus out of the starters (clean rooms 2022-2025 wk3-17: share slope
+# 1.09, ranks 1-3 -1.2 targets, ranks 6-8 +0.7; scripts/diag_target_flatness.py).
+# The curve is P(box-score row | active share) relative to a starter (s >=
+# 0.70), fit on 2019-2021 raw stats (scripts/fit_participation_curve.py), so
+# the injury-miss rate everyone shares - the live injury feed's job - cancels.
+# Half strength: the model's depth rates already sit BELOW what those players
+# get when they do play, so the full discount overshoots (fit window 2022-2023
+# target RMSE best at 0.4-0.5, share slope 1.071 -> 1.004 at 0.5).
+PARTICIPATION_CURVE_PATH = os.path.join('data', 'participation_curve.json')
+WRTE_PARTICIPATION_STRENGTH = float(np.clip(float(os.environ.get('WRTE_PARTICIPATION_STRENGTH', 0.5)), 0.0, 1.0))
+
+
+@lru_cache(maxsize=1)
+def _load_participation_curve():
+    """(share_knots, relative_knots) from data/participation_curve.json, or
+    None (the flag degrades to a no-op) if the file is missing or malformed."""
+    try:
+        with open(PARTICIPATION_CURVE_PATH, encoding='utf-8') as fh:
+            knots = json.load(fh).get('knots') or []
+        xs = np.array([float(k[0]) for k in knots])
+        ys = np.array([float(k[1]) for k in knots])
+    except (OSError, ValueError, TypeError, IndexError, AttributeError):
+        return None
+    if len(xs) < 2 or np.any(np.diff(xs) <= 0):
+        return None
+    return xs, ys
+
+
+def wrte_participation_multiplier(expected_share, strength=None):
+    """1 - strength*(1 - g(s)): g is the fitted relative participation at
+    active snap share s, flat at 1.0 for a starter. NaN share reads as the
+    curve's lowest point (a player with no measured role is a depth body)."""
+    share = np.asarray(expected_share, dtype=float)
+    curve = _load_participation_curve()
+    if curve is None:
+        return np.ones(len(share))
+    strength = WRTE_PARTICIPATION_STRENGTH if strength is None else float(np.clip(strength, 0.0, 1.0))
+    xs, ys = curve
+    g = np.interp(np.clip(np.nan_to_num(share, nan=0.0), 0.0, 1.0), xs, ys, left=ys[0], right=1.0)
+    return 1.0 - strength * (1.0 - np.minimum(g, 1.0))
+
+
+def _script_neutralize_history(df, team_col, pos, year):
+    """A COPY of `df` with every 'v2_script_neutral_volume'-covered stat
+    column (for THIS position) divided by f_real(that row's own team's
+    realized script that week) - the per-game de-scripting step, applied
+    BEFORE any per-game averaging. Only rewrites the covered columns;
+    every other column (snap share, role confidence, matchup profiles,
+    team capacity, ...) must keep reading the real, undistorted history -
+    this is why the caller passes a fresh slice in at the two specific
+    RATE call sites, never `player_hist`/`player_prior` themselves, which
+    feed many OTHER consumers that must not see a de-scripted history.
+    Returns `df` unchanged (not even copied) if nothing here applies, so a
+    caller can call this unconditionally without a separate empty/flag
+    check of its own.
+    """
+    covered = {stat: _script_neutral_driver_stat(pos, stat) for stat in df.columns}
+    covered = {stat: driver for stat, driver in covered.items() if driver is not None}
+    if not covered or df.empty or team_col not in df.columns or 'week' not in df.columns:
+        return df
+    lookup = realized_script_by_team_week(year)
+    if not lookup:
+        return df
+    curves = _load_script_curves()
+    out = df.copy()
+    team = _historical_game_team(out, team_col).astype(str).str.strip().str.upper()
+    week = pd.to_numeric(out['week'], errors='coerce').to_numpy(dtype=float)
+    keys = list(zip(team, week))
+    script = np.array([lookup.get(k, np.nan) for k in keys], dtype=float)
+    for stat, driver in covered.items():
+        curve = curves.get((pos, driver))
+        if curve is None:
+            continue
+        factor = _script_real_factor(curve, script)
+        out[stat] = pd.to_numeric(out[stat], errors='coerce').fillna(0.0) / factor
+    return out
+
+
 INJURY_MULTIPLIER = {'out': 0.0, 'ir': 0.0, 'doubtful': 0.4, 'questionable': 0.85, 'suspended': 0.0}
 
 # ---------------------------------------------------------------------------
@@ -758,6 +997,90 @@ MODEL_FEATURES = (
                              # window regardless of the anchor. Kept for the
                              # machinery. See career_regressed_td_prior and the
                              # dated section in docs/weekly_projections_methodology.md.
+    'v2_xtd',              # SHIPPED 2026-09-29 (follow-up), built 2026-09-29 -
+                             # docs/model_improvement_plan_2026-09-23.md item
+                             # 6. Replaces the standard blend above for
+                             # receiving_tds/rushing_tds (passing_tds
+                             # untouched) with an opportunity-based model:
+                             # c*own_rate + (1-c)*xTD, xTD = sum over red-
+                             # zone distance bands of (this team's own
+                             # projected zone opportunities that week) x
+                             # (this player's own share of them) x (the
+                             # league's TD-per-opportunity rate for that
+                             # band/position, data/xtd_rates.json,
+                             # scripts/fit_xtd_rates.py, fit on 2016-2021
+                             # play-by-play). See XTD_ZONE_STATS' own
+                             # comment block for the full mechanism and
+                             # xtd_blended_rate for the exact formula.
+                             # Supersedes v2_td_prior_credibility/
+                             # v2_td_volume_shrink/v2_td_career_regress for
+                             # the stats it covers when both are on (this
+                             # flag's own blended-rate override runs AFTER
+                             # theirs and replaces `blended` outright) -
+                             # not mutually exclusive at the flag level, but
+                             # redundant to combine in practice. Backtest
+                             # protocol before shipping was: (harness v2
+                             # with td_metrics as PRIMARY -
+                             # Poisson deviance and Brier, not MAE, per the
+                             # plan's own point that MAE rewards a mostly-
+                             # zero count for staying low - weeks 1
+                             # (with v2_historical_ourlads), 2-6, and 7-17,
+                             # 2022-2025; also score v2_td_volume_shrink/
+                             # v2_td_career_regress under the same metrics
+                             # as comparators, since both were originally
+                             # rejected on MAE alone).
+                             #
+                             # BACKTESTED 2026-09-29 (scripts/backtest_xtd.py,
+                             # 2022-2025 weeks 2-6, td_metrics as primary):
+                             # receiving_tds Poisson deviance/obs 0.5688 ->
+                             # 0.5608 (d-0.0081, CI[-0.0272,+0.0121] - trends
+                             # right, not significant), Brier flat
+                             # (d-0.0002); rushing_tds deviance 0.7807 ->
+                             # 0.7913 (d+0.0107, CI[-0.0397,+0.0646] - wide,
+                             # includes 0, trends slightly wrong way), Brier
+                             # flat. Exact-zero rate fell as designed for
+                             # receiving_tds (0.309 -> 0.225) but ticked UP
+                             # for rushing_tds (0.174 -> 0.183, opposite of
+                             # point 7's intent, within a noisy sample).
+                             # Points RMSE roughly flat (d-0.007, secondary
+                             # only per the plan). INCONCLUSIVE on its own -
+                             # neither stat cleared a real ship bar on this
+                             # window alone (see the weeks 7-17 follow-up
+                             # below for how this resolved). Things worth
+                             # trying before writing it off: the weeks 7-17
+                             # window (not yet run), a K_td sweep ({4,8,12,20} per the
+                             # plan - the seed values (6/8) are untuned
+                             # guesses), and checking whether rushing_tds'
+                             # weaker result traces to QB rush zone-share
+                             # (QB scrambles are a much less zone-concentrated,
+                             # less as-of-predictable opportunity than a
+                             # true RB carry). See
+                             # docs/weekly_projections_methodology.md,
+                             # 2026-09-29.
+                             #
+                             # FOLLOW-UP BACKTEST 2026-09-29 (weeks 7-17,
+                             # 2022-2025): REVERSES to a clear, significant
+                             # win on both stats. receiving_tds (n=13719)
+                             # deviance 0.6205 -> 0.5372 (d-0.0833,
+                             # CI[-0.1238,-0.0491]), Brier 0.1012 -> 0.0984
+                             # (d-0.0028, CI[-0.0043,-0.0015]); rushing_tds
+                             # (n=5050) deviance 0.9077 -> 0.8644 (d-0.0432,
+                             # CI[-0.0785,-0.0128]), Brier 0.1400 -> 0.1372
+                             # (d-0.0027, CI[-0.0042,-0.0013]). Both CIs
+                             # exclude 0 on both primary metrics; exact-zero
+                             # rate falls as designed for both stats this
+                             # time (0.322->0.210, 0.269->0.233). Likely
+                             # explanation: the zone-share blend (G/(G+K),
+                             # K=4) leans on noisy prior-season shares in
+                             # weeks 2-6 and on trustworthy current-season
+                             # shares by week 7+ - see the dated follow-up
+                             # entry in docs/weekly_projections_methodology.md
+                             # for the full writeup. SHIPPED into
+                             # DEFAULT_FEATURES (see that frozenset's own
+                             # comment) at the user's explicit decision on
+                             # this weeks 7-17 result; weeks-1-cold-start and
+                             # old-flag-comparator protocol items were not
+                             # run before shipping.
     'v2_defense_prior',    # defense rating prior/shrinkage revision
     'v2_continuous_roles', # continuous (not tiered) role-share read; see role_matchup above
     'v2_channel_matchups', # per-route-channel matchup read
@@ -772,6 +1095,49 @@ MODEL_FEATURES = (
     'v2_availability',     # availability/injury resolver revision; see v2_fantasypros_availability
     'v2_vacancy',           # see teammate_vacancy above
     'v2_preseason_rb_allocator',  # team-constrained cold-start RB roles
+    'v2_rb_in_season_share_conservation',  # SHIPPED 2026-09-28 at the user's
+                             # explicit direction (see DEFAULT_FEATURES'
+                             # own comment for the harness numbers and the
+                             # accepted trade-off). The allocator above is
+                             # "deliberately not reapplied
+                             # after games have been observed" (see the
+                             # comment at build_weekly_projections' non-cold-
+                             # start RB branch) - once week 1 is behind, each
+                             # RB's 'Expected Snap Share' instead comes from
+                             # season_snap_share's "mean share across games
+                             # HE appeared in", independently per player, with
+                             # no team-total reconciliation. Invisible for a
+                             # stable backfield (both backs' own eligible-game
+                             # windows are the same games), but an absence-
+                             # and-return splits those windows apart:
+                             # annotate_player_history_participation correctly
+                             # excludes the backup's replacement game from HIS
+                             # OWN rate evidence, while the returning starter's
+                             # evidence is only his post-return games - two
+                             # different, non-overlapping denominators that no
+                             # longer have to sum to 1. Reported live
+                             # 2026-09-27 (NE week 3): TreVeyon Henderson (out
+                             # week 1, returned week 2) at 0.60 + Rhamondre
+                             # Stevenson (workhorse week 1, more even week 2)
+                             # at 0.85 = 1.45 combined for a two-man backfield
+                             # - both individually plausible, jointly
+                             # impossible. Not just a display bug: role_scale
+                             # (a few lines below the flag's own gate) reads
+                             # this same player_share against each player's
+                             # PRIOR-season share to rescale his prior-rate
+                             # contribution to _blended_rate, so the
+                             # unconserved share inflates both players' final
+                             # projected volume at once. This rescales
+                             # player_share back toward RB_TEAM_SNAP_SHARE_MAX
+                             # (the same ceiling the cold-start allocator
+                             # already enforces) PROPORTIONALLY across a
+                             # team's eligible core RBs when their sum exceeds
+                             # it - preserves the room's relative split, only
+                             # corrects the total. Also moves real points for
+                             # OTHER same-shape pairs, not just the reported
+                             # one (Gibbs/Montgomery DET, Bijan Robinson ATL
+                             # confirmed in a 2023 diff) - see this flag's
+                             # DEFAULT_FEATURES entry for the harness numbers.
     'v2_rb_snap_anchored_volume',  # cold-start RB: (1) carry/target split =
                              # snap allocation + bounded per-snap tilt, not a
                              # raw prior per-GAME rate; (2) when a charted
@@ -1089,6 +1455,147 @@ MODEL_FEATURES = (
                              # 'v2_defense_blowout_discount' (this one wins if
                              # both are set - see _blowout_weeks_for_matchup).
                              # NOT in DEFAULT_FEATURES; stays OFF.
+    'v2_offense_blowout_discount',  # CANDIDATE - the same DEFENSE_BLOWOUT_
+                             # MARGIN/WEIGHT_DISCOUNT test as the flags above,
+                             # applied to a player's OWN team's blowout games
+                             # instead of his opponent's, inside
+                             # _weighted_player_rates - see
+                             # OFFENSE_BLOWOUT_DISCOUNT_POSITIONS' own comment
+                             # for the full rationale. CHECKED LIVE 2026-09-28
+                             # against the CJ Stroud case it was built for -
+                             # measured EXACTLY INERT: his week-2 game (6-20
+                             # loss to CIN) was only a 14-point margin, under
+                             # DEFENSE_BLOWOUT_MARGIN's 28-point bar (tuned
+                             # for a different, more extreme purpose on the
+                             # defense side), so nothing fired. Kept - not
+                             # wrong, just insufficient on its own for the
+                             # graded, sub-28-point script effect that
+                             # actually drives everyday pass-volume swings;
+                             # see 'v2_offense_script_pool_blend' below for
+                             # the mechanism that actually reaches this case.
+                             # NOT in DEFAULT_FEATURES - backtest before
+                             # shipping, if ever (a real 28+ point game is
+                             # still worth discounting on its own merits).
+    'v2_offense_script_pool_blend',  # SHIPPED - see SCRIPT_POOL_BLEND_K's
+                             # own comment for the full rationale: extends
+                             # the ALREADY-SHIPPED, forward-looking game-
+                             # script curve (SCRIPT_BUCKETS /
+                             # _vectorized_game_script_multiplier, unflagged
+                             # for targets/receptions/receiving_yards/
+                             # rushing_attempts/rushing_yards) to (1) also
+                             # cover passing_attempts and (2) fall back to a
+                             # position-pooled version of the same curve,
+                             # evidence-blended in (SCRIPT_POOL_BLEND_K),
+                             # for a player who does not yet have his own
+                             # 4 games - the exact gap that left weeks 2-4
+                             # with zero game-script correction on any stat.
+                             # This is the mechanism that actually reaches
+                             # the CJ Stroud / HOU-total-plays case (see
+                             # 'v2_offense_blowout_discount' above for the
+                             # narrower attempt that didn't).
+                             #
+                             # BACKTESTED 2026-09-28 (2022-2025 wk2-6, after
+                             # fixing the harness's own historical-market
+                             # blind spot - see _historical_target_margins):
+                             # every scope but RB trends the right direction
+                             # (bias toward 0 on QB/WR/TE/START-WR/START-TE/
+                             # START-ALL; RMSE improves too on WR/TE/
+                             # START-WR/START-TE), but no scope's CI excludes
+                             # 0 at this window size - not a confirmed win by
+                             # this project's usual bar. Live-verified on the
+                             # case it was built for regardless (Stroud
+                             # 41.61 -> 40.03 attempts, real wk3 was 27).
+                             # First kept as an available opt-in on that
+                             # basis; moved to always-on the same day at the
+                             # user's further explicit direction, verbatim:
+                             # "it's not quite a win, but it's important for
+                             # this case that we saw" - the Stroud-shaped
+                             # failure mode is judged worth having always-on
+                             # given it's harmless everywhere it was
+                             # measured, even without a CI-excludes-zero
+                             # confirmation. Revisit with a larger backtest
+                             # window if a confirmed number is ever needed.
+                             # See docs/weekly_projections_methodology.md,
+                             # 2026-09-28.
+    'v2_script_neutral_volume',  # SHIPPED 2026-09-29 -
+                             # docs/model_improvement_plan_2026-09-23.md
+                             # item 5, Steps B/C. A genuinely different
+                             # mechanism from 'v2_offense_script_pool_blend'
+                             # above, not a replacement for it: that flag
+                             # reads a player's own (or a position pool's)
+                             # bucketed history; this one divides a PAST
+                             # game's raw volume by a LEAGUE-WIDE fitted
+                             # curve (scripts/fit_script_curves.py, fit on
+                             # 2016-2021 play-by-play, data/script_curves.json)
+                             # BEFORE it ever enters an average - de-scripting
+                             # the mechanism itself instead of re-weighting
+                             # its symptoms - then scales the blended rate
+                             # back up by a second, flatter curve fit
+                             # against the UPCOMING week's own pregame
+                             # spread. See SCRIPT_NEUTRAL_VOLUME_CURVES'
+                             # own comment for the exact (position, stat)
+                             # coverage and _script_neutralize_history for
+                             # where it's applied (current AND prior season
+                             # history, both BEFORE _weighted_player_rates /
+                             # the prior-season season-total, never by
+                             # rebinding player_hist/player_prior
+                             # themselves - every other consumer of those
+                             # two frames must keep seeing the real,
+                             # undistorted history). Skips
+                             # _vectorized_game_script_multiplier /
+                             # 'v2_offense_script_pool_blend' for exactly
+                             # the stats it covers, so script is never
+                             # counted twice.
+                             #
+                             # BACKTESTED 2026-09-29 (harness v2, 2022-2025
+                             # weeks 2-8, add mode - the exact early-season
+                             # window this mechanism targets, held out from
+                             # the 2016-2021 fit window it was FIT on, so
+                             # this is a real train/test split, not the
+                             # same-window overfit risk RECEIVER_VACANCY_
+                             # RANK_DECAY's rejected 0.85 sweep had):
+                             # VERDICT SHIP-ELIGIBLE. START-ALL pairwise
+                             # +0.003 CI[+0.001,+0.005] (excludes 0), bias
+                             # growth +0.019 (well under the 0.3 cap), Holm-
+                             # adjusted per-position p all 1.0 (no scope
+                             # significantly worse). START-WR pairwise
+                             # +0.007 CI[+0.001,+0.013]; RB whole-pool RMSE
+                             # -0.014 CI[-0.029,+0.002]; START-RB RMSE
+                             # -0.027 CI[-0.058,+0.003]; QB bias moved
+                             # toward zero (-0.808 -> -0.640) even though
+                             # QB's own RMSE ticked up slightly (+0.008, CI
+                             # includes 0, not significant). SHIPPED into
+                             # DEFAULT_FEATURES on this result.
+                             #
+                             # CONFIRMED on the plan's second window too
+                             # (weeks 5-17, 2022-2025, ablation since it was
+                             # already shipped): removing it measurably HURT
+                             # - START-ALL RMSE +0.040 CI[+0.025,+0.055]
+                             # (excludes 0) when ablated, pairwise -0.005
+                             # CI[-0.007,-0.004] (excludes 0), RMSE worse in
+                             # every position but QB (flat, consistent with
+                             # QB's effect being mostly bias, not RMSE, on
+                             # both windows). Holds across the full season,
+                             # not just early. See
+                             # docs/weekly_projections_methodology.md,
+                             # 2026-09-29.
+    'v2_wrte_participation',  # CANDIDATE 2026-09-29. In-season WR/TE: scale a
+                             # depth receiver's whole stat line by how often a
+                             # player with his active snap share actually
+                             # plays (fitted curve, half strength - see
+                             # WRTE_PARTICIPATION_STRENGTH). Fixes the
+                             # clean-room target flatness (ranks 1-3 short,
+                             # ranks 6-8 long) at its source: the pass-capacity
+                             # trim is uniform and can't move shares.
+                             # Harness v2, 2024-2025 wk3-17 (held out from the
+                             # 2019-2021 curve fit and the 2022-2023 strength
+                             # tune), replay on: SHIP-ELIGIBLE. START-ALL RMSE
+                             # -0.031 CI[-0.045,-0.017], pairwise +0.002
+                             # CI[+0.001,+0.003], bias -0.779 -> -0.590;
+                             # START-WR -0.062, START-TE -0.042 (pairwise
+                             # +0.010), START-RB +0.004 n.s. Clean-room share
+                             # slope 1.080 -> 1.020. See
+                             # docs/weekly_projections_methodology.md, 2026-09-29.
     'v2_offense_prior_blend',  # credibility-blend a thin CURRENT-SEASON
                              # offense's own baseline (the "expected" side of
                              # every defense-game ratio in
@@ -1137,6 +1644,28 @@ MODEL_FEATURES = (
                              # live or outside historical_target - a
                              # misconfigured flag on a live board is a no-op,
                              # not a silent behavior change.
+    'v2_historical_reserve_replay',  # BACKTEST-ONLY, rides on the flag above
+                             # (no effect without it). Adds every player on a
+                             # reserve/exempt/retired list in that week's
+                             # nflverse weekly roster (IR, PUP, NFI,
+                             # suspension) as OUT. Those players are off the
+                             # 53 and never on the weekly injury report, so
+                             # the report-only replay left them fully
+                             # projected: ~2,000 board player-weeks 2022-2025
+                             # wk3-17, 252 projected >= 10 pts (Jefferson on
+                             # IR at 21.6). The live injury feed already
+                             # treats IR/PUP/SUS/NFI as out, so this makes
+                             # the backtest match live. See
+                             # data.historical_availability.RESERVE_ROSTER_STATUSES.
+    'v2_vacancy_absence_decay',  # CANDIDATE 2026-09-29. Vacancy hands out an
+                             # OUT player's FULL projected volume, but once he
+                             # has missed games his teammates' own recency-
+                             # weighted rates already contain part of it.
+                             # Scales his stashed _full_ volume (read by both
+                             # vacancy and the injury-neutral capacity claim)
+                             # by the share his teammates haven't absorbed -
+                             # see vacancy_absence_retention. Live-relevant:
+                             # the live injury feed marks IR players OUT too.
     'v2_vacancy_before_capacity',  # run vacancy redistribution BEFORE pass-
                              # capacity conservation instead of after (see
                              # the ordering comment above _run_pass_capacity/
@@ -1513,6 +2042,57 @@ DEFAULT_FEATURES = frozenset({
     # injury replay, where nobody is sidelined and this flag is a strict
     # no-op. See docs/weekly_projections_methodology.md, 2026-09-25.
     'v2_pass_capacity_injury_neutral_claim',
+    # SHIPPED 2026-09-28 at the user's explicit direction, accepting a
+    # measured cost with the SAME shape as the double-count fix just above:
+    # removing a confirmed, obvious error (a two-man backfield's own
+    # 'Expected Snap Share' summing to 1.45+ - see this flag's own comment
+    # a few hundred lines up for the full NE Henderson/Stevenson mechanism)
+    # costs some under-projection on a role-expansion week where the OLD,
+    # unconserved share happened to already resemble what developed.
+    # Harness (2023-2025 wk2-17, replay on): RB whole-pool RMSE flat
+    # (Δ+0.000, CI incl. 0); START-RB RMSE +0.014 CI[+0.004,+0.024] (Holm
+    # p=0.019, the one CI-excludes-zero cost), bias -0.418 -> -0.464. Not
+    # just the reported NE case: a real-2023 diff found the correction also
+    # moves Model Proj Pts for Gibbs/Montgomery (DET), Bijan Robinson (ATL),
+    # and others sharing the same absence-and-return shape - the NE
+    # example itself happened to be invisible on rushing_attempts/targets
+    # only because ROLE_VOLUME_CLIP was already saturated there. See
+    # docs/weekly_projections_methodology.md, 2026-09-28.
+    'v2_rb_in_season_share_conservation',
+    # SHIPPED 2026-09-28 at the user's explicit direction, OVERRIDING the
+    # harness's own "no significant effect - stays unshipped" verdict.
+    # Verbatim: "it's not quite a win, but it's important for this case
+    # that we saw" - i.e. the CJ Stroud pass-volume outlier this flag fixes
+    # (41.61 -> 40.03 projected attempts against a real 27) is judged worth
+    # having always-on even without a CI-excludes-zero confirmation, since
+    # every scope but RB trended the theoretically-right direction (bias
+    # toward 0 on QB/WR/TE/START-WR/START-TE/START-ALL, RMSE improving too
+    # on WR/TE/START-WR/START-TE) and none regressed outside a CI that
+    # includes 0. See SCRIPT_POOL_BLEND_K's own comment for the mechanism
+    # and docs/weekly_projections_methodology.md, 2026-09-28 for the full
+    # backtest table.
+    'v2_offense_script_pool_blend',
+    # SHIPPED 2026-09-29 - docs/model_improvement_plan_2026-09-23.md item 5,
+    # Steps B/C. A genuine, harness-CONFIRMED win (not an override): START-
+    # ALL pairwise +0.003 CI[+0.001,+0.005] excludes 0, bias growth +0.019
+    # (well under the 0.3 cap), no position significantly worse. See this
+    # flag's own MODEL_FEATURES comment for the full backtest table and
+    # docs/weekly_projections_methodology.md, 2026-09-29.
+    'v2_script_neutral_volume',
+    # SHIPPED 2026-09-29 (follow-up) - docs/model_improvement_plan_2026-09-23.md
+    # item 6. Weeks 2-6, 2022-2025 was INCONCLUSIVE (neither stat's CI
+    # excluded 0), but weeks 7-17 REVERSED to a clear win on both
+    # receiving_tds and rushing_tds - both Poisson deviance and Brier CIs
+    # exclude 0 in the helpful direction, on n=13719/5050. Shipped at the
+    # user's explicit decision on that weeks 7-17 result rather than a full
+    # harness_v2.decide() confirmation (this flag is scored by
+    # scripts/backtest_xtd.py's td_metrics, which doesn't do the position-
+    # level/Holm-correction/bias-growth breakdown decide() does, and the
+    # plan's week-1-cold-start and old-flag-comparator protocol items were
+    # not run). See this flag's own MODEL_FEATURES comment for both
+    # windows' full numbers and docs/weekly_projections_methodology.md,
+    # 2026-09-29 (follow-up entry) for the writeup.
+    'v2_xtd',
 })
 
 
@@ -1869,6 +2449,52 @@ def _season_totals(stats_df, name_col, team_col, pos, stats):
     last_team = rows.sort_values('week').groupby(name_col)[team_col].last()
     grouped = grouped.merge(last_team.rename('Team'), left_on=name_col, right_index=True, how='left')
     return grouped
+
+
+def vacancy_absence_retention(player_hist, name_col, team_col, player_names, player_teams, as_of_week):
+    """'v2_vacancy_absence_decay': the fraction of an OUT player's projected
+    volume his teammates' own rates DON'T already contain.
+
+    Teammates' rates are recency-weighted in-season rates (RECENCY_DECAY per
+    week) blended with the prior season at G/(G+K). Every game the OUT
+    player already missed is in that in-season sample, with his volume
+    spread over whoever played - so handing them his full volume again
+    double-counts (2024-2025 wk3-17, reserve-list replay on: RB room carries
+    over-projected +2.0 on a fresh absence rising to +10.0 at 4+ games gone,
+    WR/TE targets -0.1 -> +1.6). The absorbed share is the recency weight of
+    the team's games since his last appearance, over all its games so far,
+    times the in-season blend weight G/(G+K). No fitted parameters.
+
+    Returns an array aligned to player_names: 1.0 for anyone who played his
+    team's most recent game or has no current-season team games to read.
+    """
+    names = np.asarray(player_names, dtype=object)
+    retention = np.ones(len(names))
+    if player_hist is None or player_hist.empty or 'week' not in player_hist.columns:
+        return retention
+    weeks = pd.to_numeric(player_hist['week'], errors='coerce')
+    hist = player_hist.assign(
+        _w=weeks, _team=_historical_game_team(player_hist, team_col).astype(str).str.strip().str.upper())
+    hist = hist[hist['_w'] < as_of_week].dropna(subset=['_w'])
+    if hist.empty:
+        return retention
+    team_weeks = hist[hist['_team'] != ''].groupby('_team')['_w'].apply(lambda w: np.unique(w.to_numpy()))
+    last_seen = hist.groupby(name_col)['_w'].max()
+    k = float(STAT_K['targets'])
+    teams = pd.Series(player_teams).astype(str).str.strip().str.upper().to_numpy()
+    for i, (name, team) in enumerate(zip(names, teams)):
+        tw = team_weeks.get(team)
+        if tw is None or not len(tw):
+            continue
+        weight = RECENCY_DECAY ** (np.clip(as_of_week - tw, 1, None) - 1)
+        last = last_seen.get(name, -np.inf)
+        missed = tw > last
+        if not missed.any():
+            continue
+        absorbed_in_season = float(weight[missed].sum() / weight.sum())
+        games = float(len(tw))
+        retention[i] = 1.0 - absorbed_in_season * games / (games + k)
+    return retention
 
 
 def player_identity_keys(frame, name_col):
@@ -2699,6 +3325,46 @@ DEFENSE_BLOWOUT_DISCOUNT_POSITIONS = frozenset({'RB', 'QB', 'TE'})
 # scripts/sweep_defense_blowout_wr_stats.py.
 DEFENSE_BLOWOUT_DISCOUNT_STATS = {}
 
+# --- v2_offense_blowout_discount ---------------------------------------------
+# CANDIDATE, built 2026-09-28. The defense side above already discounts a
+# blowout's OWN opponent-allowed evidence; nothing discounts a player's OWN
+# past game the same way when his OWN team's game was the blowout, even
+# though that is exactly the game-script distortion volume stats are most
+# exposed to - a huge pass-attempt game in a blowout LOSS (garbage-time
+# catch-up passing) or a suppressed one in a blowout WIN (clock-killing
+# rushing) is a real event, but not a normal, repeatable rate.
+#
+# This is a DIFFERENT mechanism from _vectorized_game_script_multiplier /
+# SCRIPT_BUCKETS (the market-implied-margin read-off applied AFTER the
+# blended rate, forward-looking to the upcoming week): that one requires
+# >= 4 of the player's OWN games (`eligible = counts >= 4` in
+# _vectorized_game_script_multiplier) and is a no-op for exactly the weeks
+# this was found on - weeks 2-3, before any player has 4 games this
+# season. This instead discounts the CONTRIBUTION of an extreme-script past
+# game to _weighted_player_rates' own recency-weighted season-to-date
+# average, which needs no personal sample-size floor because it reuses the
+# SAME plain final-margin blowout test already shipped for defenses
+# (DEFENSE_BLOWOUT_MARGIN / _defense_blowout_team_weeks) - just applied to
+# the player's OWN team's game that week instead of his opponent's.
+#
+# Found live 2026-09-27/28 on C.J. Stroud: 38 attempts (wk1, a competitive
+# 31-36 loss) then 55 attempts (wk2, a 6-20 blowout loss to CIN, trailing
+# most of the game) - recency weighting already favors the more recent,
+# heavier game, and nothing discounted it for being a score-state artifact
+# rather than a role signal. The model projected 41.61 attempts for week 3;
+# the real week-3 game (a competitive 17-19 loss) came in at 27. Same root
+# cause flagged for team-total PLAYS (HOU projected ~68 offensive plays
+# that week, matching the user's own estimate) - a team's total pass+rush
+# volume is the sum of exactly these same per-player volume stats.
+#
+# Reuses DEFENSE_BLOWOUT_MARGIN's 28-point threshold and
+# DEFENSE_BLOWOUT_WEIGHT_DISCOUNT's 0.5x discount as a starting point (both
+# already validated on the defense side) rather than inventing new
+# constants to tune blind; a sweep can split these once a backtest shows
+# whether the offense side wants a different number. NOT YET IN
+# DEFAULT_FEATURES - backtest before shipping.
+OFFENSE_BLOWOUT_DISCOUNT_POSITIONS = frozenset({'QB', 'RB', 'TE'})
+
 
 def _defense_game_evidence(hist_pos, game_universe=None, team_col=None):
     """Effective defense-game count indexed by opponent team.
@@ -3175,7 +3841,9 @@ def _continuous_role_adjusted_multiplier(overall, role_tables, role_sizes, oppon
     return np.clip(np.where(used > 0, result, base), *MATCHUP_CLIP)
 
 
-def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent):
+def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent,
+                           team_col=None, blowout_team_weeks=None,
+                           blowout_discount=DEFENSE_BLOWOUT_WEIGHT_DISCOUNT):
     """
     Per player, per stat: a recency-weighted, opponent-quality-adjusted rate
     - the WITHIN-season half of the cross-season blend (see _blended_rate),
@@ -3189,6 +3857,17 @@ def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix
     retroactively to the player's own past games instead of only forward.
     `upcoming_opponent` is {player: this week's opponent}, for the rematch
     weight bump.
+
+    `blowout_team_weeks` (optional, 'v2_offense_blowout_discount' - see that
+    flag's own comment) is a {(team, week)} set of the PLAYER'S OWN team's
+    blowout games (either direction) - same shape _defense_blowout_team_weeks
+    / data.loaders._progressive_blowout_team_weeks already build for the
+    defense side, just read here off `team_col` (the row's own offense)
+    instead of the opponent. A matching row's weight is multiplied by
+    `blowout_discount` alongside recency/rematch, so an extreme-script game
+    still counts, just less - the same down-weight-don't-drop treatment the
+    defense side uses. `team_col` is required for this to do anything; both
+    default to inert (no discount) so every existing caller is unaffected.
 
     Returns a DataFrame indexed by name_col: one '{stat}' rate column per
     stat, plus 'weight_sum' - NOT plugged into _blended_rate's games-played
@@ -3213,6 +3892,13 @@ def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix
                else pd.Series('', index=df.index))
     is_rematch = opponent.eq(df[name_col].map(upcoming_opponent))
     w = w * np.where(is_rematch, REMATCH_WEIGHT_MULT, 1.0)
+
+    if blowout_team_weeks and team_col and team_col in df.columns:
+        own_team = _historical_game_team(df, team_col).astype(str).str.strip().str.upper()
+        own_key = pd.Series(list(zip(own_team, weeks.to_numpy(dtype=float))), index=df.index)
+        is_own_blowout = own_key.isin(blowout_team_weeks)
+        w = w * np.where(is_own_blowout, blowout_discount, 1.0)
+
     df['_w'] = w
 
     num_cols = []
@@ -3405,6 +4091,167 @@ TD_OPPORTUNITY_STAT = {
     'rushing_tds': 'rushing_attempts',
     'receiving_tds': 'targets',
 }
+
+# --- v2_xtd -------------------------------------------------------------
+# docs/model_improvement_plan_2026-09-23.md item 6. Replaces the standard
+# in-season TD blend for receiving_tds/rushing_tds (passing_tds untouched,
+# per the plan) with an opportunity-based expected-TD model: how many
+# rush/target opportunities does this player get in each red-zone distance
+# band (data.transforms.REDZONE_RUSH_ZONES/REDZONE_TARGET_ZONES), and how
+# often does a league-average opportunity from that band actually score
+# (data/xtd_rates.json, scripts/fit_xtd_rates.py, fit on 2016-2021 pbp).
+# c*own_rate + (1-c)*xTD, c growing with the player's own TD EVENT count -
+# per the plan's own point 7, xTD can never be exactly 0 for a player with
+# real projected opportunities, unlike a pure own-rate blend which a
+# 0-for-many-targets start (a real, if unlucky, outcome) can drive to zero.
+XTD_ZONE_STATS = {
+    'rushing_tds': {'type': 'rush', 'zones': ('rz5', 'rz10', 'rz20'), 'zone_suffix': 'carries'},
+    'receiving_tds': {'type': 'target', 'zones': ('rz10', 'rz20', 'oz20'), 'zone_suffix': 'targets'},
+}
+# Seed K values from the plan (6 rushing, 8 receiving) - TD events counted
+# over current AND prior season, prior weighted 0.7 (a year-old TD is
+# real but slightly less current evidence than this season's own).
+XTD_TD_EVENT_K = {'rushing_tds': 6.0, 'receiving_tds': 8.0}
+XTD_PRIOR_TD_WEIGHT = 0.7
+# Team-GAMES evidence for the player's own zone-SHARE blend (current-season
+# as-of vs. prior-season) - same G/(G+K) shape as every other blend in this
+# file, K~4 per the plan.
+XTD_SHARE_BLEND_K = 4.0
+XTD_RATES_PATH = os.path.join('data', 'xtd_rates.json')
+
+
+@lru_cache(maxsize=1)
+def _load_xtd_rates():
+    """{'td_rate': {type: {pos: {zone: {'rate':...}}}}, 'zone_elasticity':
+    {type: {zone: beta}}} from data/xtd_rates.json
+    (scripts/fit_xtd_rates.py's output). Cached for the process - a
+    development artifact rebuilt by re-running that script. {} (the flag
+    degrades to leaving own_rate untouched everywhere) if missing/malformed.
+    """
+    try:
+        with open(XTD_RATES_PATH, encoding='utf-8') as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def _xtd_zone_context(year, as_of_week, prior_year):
+    """Whole-league zone opportunity context for 'v2_xtd', built ONCE per
+    (year, as_of_week, prior_year) - not per player or per position, since
+    data.transforms.build_redzone_usage/team_zone_opportunities each do
+    their own full play-by-play pass. Returns dict-of-dicts, not
+    DataFrames, so the per-player read-off in xtd_blended_rate is a plain
+    dict .get() chain rather than a DataFrame filter per player (the
+    "never reload pbp inside the per-position loop" pitfall the plan warns
+    about for this item applies just as much to re-filtering a whole
+    league's play-by-play once per player).
+
+    Returns {'cur_player': {name_key: {col: value}}, 'cur_team': {team: {col: value}},
+             'prior_player': {...}, 'prior_team': {...}}. Any sub-dict can be
+    empty (PBP/stats unavailable for that year) - the caller degrades
+    gracefully, same convention as every other best-effort signal here.
+    """
+    from data.transforms import build_redzone_usage, team_zone_opportunities
+
+    def _player_dict(stats_year, source_as_of_week):
+        stats_df, _, name_col, _ = load_and_merge_data(stats_year, 'Full PPR')
+        if stats_df.empty:
+            return {}
+        usage = build_redzone_usage(stats_df, name_col, stats_year, as_of_week=source_as_of_week)
+        if usage.empty or name_col not in usage.columns:
+            return {}
+        usage = usage.copy()
+        usage['_key'] = clean_name_exact(usage[name_col])
+        zone_cols = [c for c in usage.columns if c.endswith('_carries') or c.endswith('_targets')]
+        return {row['_key']: {c: float(row[c]) for c in zone_cols} for _, row in usage.iterrows()}
+
+    def _team_dict(stats_year, source_as_of_week):
+        team_df = team_zone_opportunities(stats_year, as_of_week=source_as_of_week)
+        if team_df.empty:
+            return {}
+        return {team: row.to_dict() for team, row in team_df.iterrows()}
+
+    return {
+        'cur_player': _player_dict(year, as_of_week),
+        'cur_team': _team_dict(year, as_of_week),
+        # as_of_week=100: the WHOLE prior season, comfortably past any real
+        # week number, but still triggers build_redzone_usage's zone-column
+        # computation (only built when as_of_week is given at all - see
+        # its own docstring).
+        'prior_player': _player_dict(prior_year, 100),
+        'prior_team': _team_dict(prior_year, 100),
+    }
+
+
+def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_total,
+                     player_names, player_teams, env, league_implied, year, as_of_week):
+    """c*own_rate + (1-c)*xTD for `stat` in XTD_ZONE_STATS - see this
+    module's 'v2_xtd' comment block above. All array args are aligned to
+    the caller's `cur` frame. Returns `own_rate` unchanged (a strict no-op)
+    if data/xtd_rates.json is missing or `stat` isn't covered.
+    """
+    cfg = XTD_ZONE_STATS.get(stat)
+    rates = _load_xtd_rates()
+    own_rate = np.nan_to_num(np.asarray(own_rate, dtype=float), nan=0.0)
+    if cfg is None or not rates:
+        return own_rate
+    play_type, zones, suffix = cfg['type'], cfg['zones'], cfg['zone_suffix']
+    td_rate_table = rates.get('td_rate', {}).get(play_type, {}).get(pos, {})
+    elasticity_table = rates.get('zone_elasticity', {}).get(play_type, {})
+    if not td_rate_table:
+        return own_rate
+
+    ctx = _xtd_zone_context(year, as_of_week, year - 1)
+    n = len(own_rate)
+    xtd = np.zeros(n)
+    cur_games = np.asarray(cur_games, dtype=float)
+    names = clean_name_exact(pd.Series(player_names)).to_numpy(dtype=object)
+    teams = pd.Series(player_teams).astype(str).str.strip().str.upper().to_numpy(dtype=object)
+
+    for i in range(n):
+        team = teams[i]
+        name_key = names[i]
+        team_prior = ctx['prior_team'].get(team, {})
+        prior_games = float(team_prior.get('games', 0.0))
+        implied = env.get(team, {}).get('implied') if env else None
+        implied_ratio = (implied / league_implied) if (implied and league_implied and league_implied > 0) else 1.0
+
+        w_share = cur_games[i] / (cur_games[i] + XTD_SHARE_BLEND_K)
+        cur_player_row = ctx['cur_player'].get(name_key, {})
+        prior_player_row = ctx['prior_player'].get(name_key, {})
+        cur_team_row = ctx['cur_team'].get(team, {})
+
+        for zone in zones:
+            col = f'{zone}_{suffix}'
+            beta = elasticity_table.get(zone, 0.0)
+            prior_team_zone_pg = (team_prior.get(col, 0.0) / prior_games) if prior_games > 0 else 0.0
+            team_zone_opps = prior_team_zone_pg * (implied_ratio ** beta)
+            if team_zone_opps <= 0:
+                continue
+
+            cur_team_zone = cur_team_row.get(col, 0.0)
+            cur_share = (cur_player_row.get(col, 0.0) / cur_team_zone) if cur_team_zone > 0 else np.nan
+            prior_team_zone = team_prior.get(col, 0.0)
+            prior_share = (prior_player_row.get(col, 0.0) / prior_team_zone) if prior_team_zone > 0 else np.nan
+
+            if np.isfinite(cur_share) and np.isfinite(prior_share):
+                share = w_share * cur_share + (1.0 - w_share) * prior_share
+            elif np.isfinite(cur_share):
+                share = cur_share
+            elif np.isfinite(prior_share):
+                share = prior_share
+            else:
+                continue  # no zone evidence anywhere for this player/zone - contributes 0, not a fabricated guess
+            rate = td_rate_table.get(zone, {}).get('rate', 0.0)
+            xtd[i] += team_zone_opps * share * rate
+
+    td_events = np.nan_to_num(np.asarray(cur_td_total, dtype=float), nan=0.0) \
+        + XTD_PRIOR_TD_WEIGHT * np.nan_to_num(np.asarray(prior_td_total, dtype=float), nan=0.0)
+    k_td = XTD_TD_EVENT_K.get(stat, 8.0)
+    c = td_events / (td_events + k_td)
+    return c * own_rate + (1.0 - c) * xtd
+
 
 # --- v2_td_prior_credibility -------------------------------------------------
 # A cold-start TD-rate projection is 100% the player's prior-season rate (see
@@ -5560,7 +6407,7 @@ def _player_history_exclusion_summary(annotated, name_col):
 
 
 def _vectorized_game_script_multiplier(stats_df, name_col, team_col, as_of_week, schedule_df,
-                                       target_margins, stat):
+                                       target_margins, stat, position_col=None, pool_blend=False):
     """
     Whole-pool version of data.matchup_signals.game_script_sensitivity_curve
     for one stat: bucket every player's PLAYED games by that game's real
@@ -5578,6 +6425,21 @@ def _vectorized_game_script_multiplier(stats_df, name_col, team_col, as_of_week,
     Same interpolation, same output (asserted equal on real 2025 data when
     this was changed), ~20x less time - which is what makes iterating on
     the model's own components affordable at all.
+
+    `position_col`/`pool_blend` (optional, 'v2_offense_script_pool_blend' -
+    see SCRIPT_POOL_BLEND_K's own comment): with `pool_blend=False` (every
+    existing caller, unchanged), a player under the historical `counts >= 4`
+    floor is dropped exactly as before - this branch is untouched, bit for
+    bit. With `pool_blend=True` and a usable `position_col`, that hard floor
+    is replaced by a continuous evidence blend: a player's own (possibly
+    thin) personal read - if he has at least 2 distinct game-script buckets
+    of his own, same bar as before - is blended with a POSITION-POOLED
+    version of the identical bucket/margin read (every player at his
+    position, pooled instead of per-player) by
+    ``w_personal = games / (games + SCRIPT_POOL_BLEND_K)``. A player with
+    literally zero games this season, or too few distinct buckets for a
+    personal read at all, gets the pool curve alone (w_personal=0) instead
+    of the flat neutral 1.0 this function used to return for him.
     """
     hist = _played_weeks_before(stats_df, as_of_week)
     if hist.empty or stat not in hist.columns or target_margins is None or len(target_margins) == 0:
@@ -5609,13 +6471,81 @@ def _vectorized_game_script_multiplier(stats_df, name_col, team_col, as_of_week,
     targets = pd.Series(players).map(target_margins).to_numpy(dtype=float)
     counts = game_counts.reindex(players).to_numpy(dtype=float)
     avgs = season_avg.reindex(players).to_numpy(dtype=float)
+    # >= 2 distinct buckets and a real own average - eligible to be POOLED
+    # (contribute a personal curve toward the position average), regardless
+    # of whether THIS player even has a target margin of his own. Narrower
+    # `shape_ok` below additionally requires a target margin - needed to
+    # actually PROJECT this player's own personal_ratio, which pool
+    # membership does not.
+    has_shape = (valid.sum(axis=1) >= 2) & (avgs > 0)
+    shape_ok = has_shape & np.isfinite(targets)
 
-    eligible = (counts >= 4) & (valid.sum(axis=1) >= 2) & np.isfinite(targets) & (avgs > 0)
-    out = {}
-    for i in np.flatnonzero(eligible):
+    personal_ratio = np.full(len(players), np.nan)
+    for i in np.flatnonzero(shape_ok):
         mask = valid[i]
         projected = float(np.interp(targets[i], mids[mask], values[i][mask]))
-        out[players[i]] = float(np.clip(projected / avgs[i], *SCRIPT_CLIP))
+        personal_ratio[i] = float(np.clip(projected / avgs[i], *SCRIPT_CLIP))
+
+    if not pool_blend:
+        out = {players[i]: personal_ratio[i] for i in np.flatnonzero(shape_ok & (counts >= 4))}
+        return pd.Series(out, dtype=float)
+
+    pool_ratio = np.full(len(players), np.nan)
+    if position_col and position_col in merged.columns:
+        merged['_position'] = merged[position_col].astype(str).str.upper()
+        player_pos = (merged.drop_duplicates(subset=[name_col]).set_index(name_col)['_position']
+                     .reindex(players)).to_numpy(dtype=object)
+        # Per-player, per-bucket ratio to HIS OWN season average - the SAME
+        # normalization `personal_ratio` uses - averaged across every
+        # player at the position, bucket by bucket. A pool built from raw
+        # STAT VALUES instead would conflate "does a player's own volume
+        # move with script" with "which players happen to sit in which
+        # margin buckets" (a good offense is both more often favored and
+        # simply throws/runs more in general, at every margin) - normalizing
+        # each player onto his own scale first removes that confound before
+        # pooling, so this measures the same relative-movement quantity
+        # `personal_ratio` does, just averaged over many more players.
+        with np.errstate(divide='ignore', invalid='ignore'):
+            player_bucket_ratio = np.where(avgs[:, None] > 0, values / avgs[:, None], np.nan)
+        # Pool membership is restricted to players who already pass
+        # `has_shape` (a real personal curve of their own, >= 2 buckets) -
+        # this is a fallback FOR a thin player, so it must not let that same
+        # thin player's own single-bucket point quietly count toward the
+        # average he is about to be blended against. Deliberately NOT
+        # `shape_ok`: a pool member needs no target margin of his own to be
+        # worth pooling, only a real personal history.
+        for pos_val in pd.unique(player_pos[has_shape]):
+            contributor_mask = (player_pos == pos_val) & has_shape
+            if contributor_mask.sum() < SCRIPT_POOL_MIN_PLAYERS:
+                continue
+            with np.errstate(invalid='ignore'), warnings.catch_warnings():
+                # An early-season, rarely-hit bucket (e.g. a 12.5-point
+                # blowout in week 2) can have zero players at a position in
+                # it yet - an expected, handled case (row_valid below drops
+                # it), not a real warning.
+                warnings.simplefilter('ignore', category=RuntimeWarning)
+                pool_curve = np.nanmean(player_bucket_ratio[contributor_mask], axis=0)
+            row_valid = ~np.isnan(pool_curve)
+            if row_valid.sum() < 2:
+                continue
+            # RECEIVERS of this pool curve are every player at the
+            # position with a real target margin - including a thin player
+            # who could not contribute to it above (that is the whole
+            # point) and a well-established one too (he still gets a
+            # pool_ratio computed; w_personal below just gives it almost no
+            # weight against his own, much more trusted, personal_ratio).
+            pos_rows = np.flatnonzero((player_pos == pos_val) & np.isfinite(targets))
+            for i in pos_rows:
+                projected = float(np.interp(targets[i], mids[row_valid], pool_curve[row_valid]))
+                pool_ratio[i] = float(np.clip(projected, *SCRIPT_CLIP))
+
+    has_personal = np.isfinite(personal_ratio)
+    has_pool = np.isfinite(pool_ratio)
+    w_personal = np.where(has_personal, counts / (counts + SCRIPT_POOL_BLEND_K), 0.0)
+    blended = np.where(
+        has_personal & has_pool, w_personal * personal_ratio + (1.0 - w_personal) * pool_ratio,
+        np.where(has_personal, personal_ratio, pool_ratio))
+    out = {players[i]: float(blended[i]) for i in np.flatnonzero(np.isfinite(blended) & np.isfinite(targets))}
     return pd.Series(out, dtype=float)
 
 
@@ -5640,6 +6570,45 @@ def _target_margins_by_team(year, week):
         return dict(zip(per_team['team'], per_team['implied_points'] - per_team['implied_allowed']))
     except Exception:
         return {}
+
+
+def _historical_target_margins(schedule_df, week, opponents):
+    """Market-implied margin (positive = favored) for a HISTORICAL target
+    week - built 2026-09-28 after finding _target_margins_by_team's own
+    output was unconditionally zeroed for every backtest (see the
+    'historical_target' branch at its call site in build_weekly_projections),
+    which meant the whole game-script mechanism (SCRIPT_ELIGIBLE_STATS,
+    already shipped and unflagged, plus any candidate built on the same
+    ``target_margins`` input) had literally never been exercised by a
+    backtest - a real effect and a broken one look identical (0.000) when
+    the harness can't even turn the mechanism on. That gate existed because
+    _target_margins_by_team's own odds-API fetch is genuinely LIVE-only and
+    was correctly bucketed with the live injury feed - but the closing line
+    for an ALREADY-PLAYED week is not a live-only fact, it is real history,
+    and ``game_environment`` a few hundred lines below already reads the
+    IDENTICAL nflverse closing-line archive (schedule_df's own
+    spread_line/total_line) for played weeks with no such guard, confirmed
+    live: fetch_game_lines(2023) returns real spread/total lines for all
+    272/272 games, every week. This reuses that already-correct, already-
+    computed path instead of adding a second odds source: each team's
+    margin is just its own game_environment implied points minus its
+    opponent's (the identical arithmetic _target_margins_by_team's own
+    ``implied_points - implied_allowed`` does, off the schedule instead of
+    the separate live odds-API call).
+
+    `opponents` is the caller's own _week_opponents(schedule_df, week) -
+    already computed once per build, reused here rather than rebuilt.
+    """
+    env = game_environment(schedule_df, week)
+    if not env:
+        return {}
+    out = {}
+    for team, opp in opponents.items():
+        own = env.get(team, {}).get('implied')
+        theirs = env.get(opp, {}).get('implied')
+        if own is not None and theirs is not None:
+            out[team] = float(own) - float(theirs)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -6607,16 +7576,19 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     schedule_df = load_schedule(year)
     # If the loaded season includes the target week or a later one, this is
     # necessarily a historical evaluation.  Sources that only expose a
-    # season total (PFF alignment, full-season pace) and live injury/odds
-    # feeds cannot be treated as known then.
+    # season total (PFF alignment, full-season pace) and a live-only injury
+    # feed cannot be treated as known then. Market/odds data is DIFFERENT -
+    # a played week's closing line is real history, not a live-only fact -
+    # see _historical_target_margins' own comment for the 2026-09-28 fix
+    # that stopped conflating the two under this same guard.
     #
     # EXCEPT a target week that is only PARTIALLY played - the Thursday
     # opener is final, the Sunday slate is not. That is still a LIVE
     # projection. Treated as historical it would (a) collapse
     # _cold_start_pool to just the two rosters that have already played and
-    # (b) switch off every live path below (injury feed, market script,
-    # Ourlads preseason role floors) - so one TNF box score would rewrite
-    # the entire Week-1 board. Require the target week to be genuinely
+    # (b) switch off every live-only path below (injury feed, Ourlads
+    # preseason role floors) - so one TNF box score would rewrite the
+    # entire Week-1 board. Require the target week to be genuinely
     # finished: a strictly later observed week (only a backtest against a
     # completed season has one) OR every game of as_of_week already final.
     historical_target = (
@@ -6632,7 +7604,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         'pff_season_totals': 'eligible_live_only',
         'pace': 'weekly_box_score_proxy' if use_v2_guard and historical_target else 'season_loader',
         'injury': 'disabled_historical' if use_v2_guard and historical_target else 'live_report',
-        'market_script': 'disabled_historical' if use_v2_guard and historical_target else 'live_market',
+        # Fixed 2026-09-28 (see _historical_target_margins' own comment): a
+        # historical target now reads the closing line straight off the
+        # schedule, same as game_environment already does - not disabled,
+        # just a different (equally real) source than the live odds-API
+        # path a LIVE target still uses.
+        'market_script': 'historical_schedule_closing_line' if use_v2_guard and historical_target
+                         else 'live_market',
         'prior_defense_recency': (
             f'{int(PRIOR_SEASON_DEFENSE_RECENCY_FLOOR * 100)}% full-season baseline + '
             f'{int((1.0 - PRIOR_SEASON_DEFENSE_RECENCY_FLOOR) * 100)}% late-season tilt'
@@ -6664,6 +7642,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     env = game_environment(schedule_df, week) if (
         'game_env' in feats or 'v2_game_total_elasticity' in feats
         or 'v2_game_total_elasticity_perstat' in feats or 'v2_venue_mult' in feats
+        or 'v2_xtd' in feats
     ) else {}
     league_implied = None
     if env:
@@ -6673,7 +7652,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # supposed to say "richer than a typical game", not "richer than 2019".
         league_implied = float(np.mean(implied_vals)) if implied_vals else None
     target_margins = (_target_margins_by_team(year, week)
-                      if not (use_v2_guard and historical_target) else {})
+                      if not (use_v2_guard and historical_target)
+                      else _historical_target_margins(schedule_df, week, opponents))
     # Keep the raw target-season feed separate until we have the current
     # roster pool.  Availability data frequently has a display-name variant;
     # resolving it directly onto the live pool prevents a source spelling
@@ -6689,6 +7669,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                          and 'v2_historical_injury_replay' in feats)
     if historical_replay:
         raw_injury_profiles = historical_injury_profiles(year, week, schedule_df)
+        if 'v2_historical_reserve_replay' in feats:
+            raw_injury_profiles = merge_reserve_profiles(
+                raw_injury_profiles, historical_reserve_profiles(year, week))
     elif apply_injury and not (use_v2_guard and historical_target):
         if 'v2_fantasypros_availability' in feats:
             # FantasyPros-sourced, healthy by default: an empty dict here
@@ -7315,9 +8298,19 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     if all_target_margins and 'week' in stats_df.columns:
         player_margins = player_hist.drop_duplicates(subset=[name_col]).set_index(name_col)[team_col] \
             .astype(str).map(all_target_margins)
-        for _stat in SCRIPT_ELIGIBLE_STATS:
+        # v2_offense_script_pool_blend (see MODEL_FEATURES): extends the
+        # stat list to passing_attempts and turns on the position-pooled
+        # fallback inside _vectorized_game_script_multiplier - see that
+        # function's own comment for why (a whole-pool read now DOES look
+        # at position for the fallback curve specifically, not for the
+        # personal one).
+        _pool_blend = 'v2_offense_script_pool_blend' in feats
+        _script_stats = (SCRIPT_ELIGIBLE_STATS | SCRIPT_POOL_BLEND_EXTRA_STATS) if _pool_blend \
+            else SCRIPT_ELIGIBLE_STATS
+        for _stat in _script_stats:
             script_by_stat[_stat] = _vectorized_game_script_multiplier(
-                player_hist, name_col, team_col, as_of_week, schedule_df, player_margins, _stat)
+                player_hist, name_col, team_col, as_of_week, schedule_df, player_margins, _stat,
+                position_col=('position' if _pool_blend else None), pool_blend=_pool_blend)
 
     # Expected snap share for the upcoming game, and the prior season's own
     # share to scale a prior-season per-game rate against - see
@@ -7557,8 +8550,11 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 and not current_functional_position_by_identity.empty):
             mapped_functional = cur['_identity_key'].map(current_functional_position_by_identity)
             cur['_functional_position'] = mapped_functional.fillna(cur['_functional_position']).astype(str).str.upper()
+        _prior_source_for_totals = (
+            _script_neutralize_history(player_prior, prior_team_col, pos, year - 1)
+            if 'v2_script_neutral_volume' in feats else player_prior)
         prior = (attach_player_identity(
-                    _season_totals(player_prior, prior_name_col, prior_team_col, pos, stats),
+                    _season_totals(_prior_source_for_totals, prior_name_col, prior_team_col, pos, stats),
                     player_prior, prior_name_col)
                  if not prior_stats.empty else pd.DataFrame())
         prior_rates = pd.DataFrame({s: prior[s] / prior['Games'].replace(0, 1) for s in stats}) if not prior.empty else pd.DataFrame()
@@ -8008,6 +9004,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             pos_rows = hist[hist['position'].astype(str).str.upper() == pos]
             player_pos_rows = player_hist[
                 player_hist['position'].astype(str).str.upper() == pos]
+            if 'v2_script_neutral_volume' in feats:
+                # De-script THIS season's own game log before it feeds
+                # _weighted_player_rates below - pos_rows (the DEFENSE-side
+                # matchup profile a few lines down) is deliberately left
+                # untouched, same "raw team-game history" principle as
+                # every other defense-facing consumer in this file.
+                player_pos_rows = _script_neutralize_history(player_pos_rows, team_col, pos, year)
             defense_current_evidence = _defense_game_evidence(
                 pos_rows, game_universe=hist, team_col=team_col)
             upcoming_opponent_map = dict(zip(cur[name_col], cur['Opponent']))
@@ -8115,8 +9118,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior2_pos_rows, prior2_team_col, stats, prior2_played, as_of_week)
             opponent_defense_log_prior2 = cur['Opponent'].astype(str).map(defense_log_by_team_prior2).to_numpy()
 
+            _offense_blowout_weeks = (
+                _defense_blowout_team_weeks(schedule_df)
+                if ('v2_offense_blowout_discount' in feats and pos in OFFENSE_BLOWOUT_DISCOUNT_POSITIONS)
+                else None)
             weighted_rates, weighted_totals = _weighted_player_rates(
-                player_pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map)
+                player_pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map,
+                team_col=team_col, blowout_team_weeks=_offense_blowout_weeks)
             if 'role_matchup' in feats or 'v2_continuous_roles' in feats:
                 player_roles = build_player_roles(player_pos_rows, name_col, pos)
                 role_tables, role_sizes = build_role_matchup(
@@ -8685,6 +9693,20 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'in-season observed-role core-RB recipient pool',
                 'not an in-season eligible core-RB recipient',
             )
+            if 'v2_rb_in_season_share_conservation' in feats:
+                # See 'v2_rb_in_season_share_conservation' in MODEL_FEATURES
+                # for the bug this closes. Proportional, not a per-player
+                # cap: only brings the room's TOTAL back to a real
+                # backfield's ceiling, without disturbing the allocator's
+                # own read of each player's RELATIVE share of it.
+                team_arr = team_keys_rv.to_numpy(dtype=object)
+                core_share = np.where(rb_core, np.asarray(player_share, dtype=float), 0.0)
+                team_total = (pd.Series(core_share, index=cur.index)
+                             .groupby(team_arr).transform('sum').to_numpy(dtype=float))
+                over = rb_core & (team_total > RB_TEAM_SNAP_SHARE_MAX)
+                if over.any():
+                    scale = np.where(over, RB_TEAM_SNAP_SHARE_MAX / team_total, 1.0)
+                    player_share = np.where(rb_core, np.asarray(player_share, dtype=float) * scale, player_share)
 
         if (pos == 'RB' and cold_start and use_role_volume
                 and 'v2_preseason_rb_allocator' in feats):
@@ -8943,6 +9965,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # aligned one-per-row to `cur`.
         defense_adjusted_prior = _defense_adjusted_prior_average(player_game_log_prior, stats)
 
+        # v2_wrte_participation (see WRTE_PARTICIPATION_STRENGTH). In-season
+        # only: a cold start's share is already the WHOLE-season share with
+        # missed weeks counted as zero (season_snap_share's team_col branch).
+        participation_mult = np.ones(len(cur))
+        if ('v2_wrte_participation' in feats and pos in ('WR', 'TE') and use_role_volume
+                and not cold_start):
+            participation_mult = wrte_participation_multiplier(player_share)
+
         proj_cols, stat_trace = {}, {}
         # v2_td_volume_shrink: the projected target rate from the 'targets'
         # iteration is reused as the volume the TD-per-target regression
@@ -9168,6 +10198,18 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                      if 'v2_adaptive_volume' in feats else None),
                                     role_change_reduction,
                                     pos=(pos if 'v2_stat_k_by_pos' in feats else None))
+            if 'v2_xtd' in feats and stat in XTD_ZONE_STATS:
+                # Replaces the standard blend above for exactly these two
+                # stats (see 'v2_xtd''s own comment block) - passing_tds is
+                # deliberately untouched, per the plan.
+                _prior_td_total = np.zeros(len(cur))
+                if not prior.empty and stat in prior.columns and '_identity_key' in prior.columns:
+                    _prior_td_map = pd.Series(prior[stat].to_numpy(dtype=float), index=prior['_identity_key'])
+                    _prior_td_total = identity_keys_rv.map(_prior_td_map).fillna(0.0).to_numpy(dtype=float)
+                blended = xtd_blended_rate(
+                    stat, pos, blended, cur_games, cur_total, _prior_td_total,
+                    cur[name_col].to_numpy(dtype=object), cur['Team'].to_numpy(dtype=object),
+                    env, league_implied, year, as_of_week)
             if stat == 'targets':
                 # Kept for v2_td_volume_shrink's regression target (the TD-per-
                 # target rate rides on this projected volume). Pre matchup/pace
@@ -9446,19 +10488,51 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'td_prior_credibility': td_prior_credibility,
             }
 
-            script_series = script_by_stat.get(stat)
-            script_mult = np.ones(len(cur))
-            if script_series is not None and not script_series.empty:
-                script_mult = cur[name_col].map(script_series).fillna(1.0).to_numpy(dtype=float)
-            if cold_start and 'v2_cold_start_regression' in feats:
-                script_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (script_mult - 1.0)
+            # 'v2_script_neutral_volume': for a (pos, stat) it covers, the
+            # OLD backward-looking curve (script_by_stat, built off raw,
+            # still-script-contaminated history) would double-count the
+            # correction its own de-scripted inputs (see
+            # _script_neutralize_history at both _weighted_player_rates
+            # call sites) already applied - skipped here, not just zeroed
+            # after the fact, exactly the way this flag's own comment in
+            # MODEL_FEATURES documents.
+            _script_neutral_driver = _script_neutral_driver_stat(pos, stat)
+            script_neutral_active = 'v2_script_neutral_volume' in feats and _script_neutral_driver is not None
+            if script_neutral_active:
+                script_series = None
+                script_mult = np.ones(len(cur))
+                _stat_script_eligible = False
+            else:
+                script_series = script_by_stat.get(stat)
+                script_mult = np.ones(len(cur))
+                if script_series is not None and not script_series.empty:
+                    script_mult = cur[name_col].map(script_series).fillna(1.0).to_numpy(dtype=float)
+                if cold_start and 'v2_cold_start_regression' in feats:
+                    script_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (script_mult - 1.0)
+                _stat_script_eligible = stat in SCRIPT_ELIGIBLE_STATS or (
+                    'v2_offense_script_pool_blend' in feats and stat in SCRIPT_POOL_BLEND_EXTRA_STATS)
             stat_trace[stat]['script_multiplier'] = script_mult
             stat_trace[stat]['script_status'] = (
-                'modeled' if stat in SCRIPT_ELIGIBLE_STATS and script_series is not None and not script_series.empty
-                else ('not modeled for this stat' if stat not in SCRIPT_ELIGIBLE_STATS else 'no usable market/history')
+                'script-neutral-volume (forward f_exp)' if script_neutral_active
+                else ('modeled' if _stat_script_eligible and script_series is not None and not script_series.empty
+                      else ('not modeled for this stat' if not _stat_script_eligible else 'no usable market/history'))
             )
 
-            proj_cols[stat] = blended * matchup_mult * script_mult
+            # The FORWARD half of the same flag: scale the (already
+            # de-scripted, blended) rate by f_exp for the UPCOMING week's
+            # own market-implied margin (cur['target_margin'] - the same
+            # sign convention scripts/fit_script_curves.py's own_spread
+            # used: positive means favored). 1.0 (a clean no-op) for every
+            # stat this flag doesn't cover, or with no line posted yet.
+            script_neutral_mult = np.ones(len(cur))
+            if script_neutral_active:
+                script_neutral_mult = _script_exp_factor(
+                    _load_script_curves().get((pos, _script_neutral_driver)),
+                    cur['target_margin'].to_numpy(dtype=float))
+            stat_trace[stat]['script_neutral_multiplier'] = script_neutral_mult
+
+            stat_trace[stat]['participation_multiplier'] = participation_mult
+            proj_cols[stat] = blended * matchup_mult * script_mult * script_neutral_mult * participation_mult
 
         pace_mult = pd.Series(1.0, index=cur.index)
         opp_pace = pd.Series(np.nan, index=cur.index)
@@ -9756,8 +10830,22 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     out[f'_scheme_profile_{profile_col}'] = pff_scheme_for_cur[profile_col].to_numpy()
         for stat, values in proj_cols.items():
             out[stat] = np.round(values, 2)
+        # v2_vacancy_absence_decay: a sidelined player's stashed full volume
+        # is what both vacancy (vacated) and pass capacity's injury-neutral
+        # claim read, so shrinking it here removes the long-absence double
+        # count from both at once. Healthy rows are never read from _full_.
+        absence_retention = np.ones(len(cur))
+        if vacancy_volume and 'v2_vacancy_absence_decay' in feats and not cold_start:
+            sidelined_rows = inj_mult.to_numpy(dtype=float) <= 0.01
+            if sidelined_rows.any():
+                absence_retention = np.where(
+                    sidelined_rows,
+                    vacancy_absence_retention(player_hist, name_col, team_col,
+                                              cur[name_col].to_numpy(dtype=object),
+                                              cur['Team'].to_numpy(dtype=object), as_of_week),
+                    1.0)
         for stat, values in vacancy_volume.items():
-            out[f'_full_{stat}'] = np.round(values, 2)
+            out[f'_full_{stat}'] = np.round(values * absence_retention, 2)
         proj_dicts = out[[s for s in stats if s in out.columns]].to_dict('records')
         # Floored at zero, same reasoning as the raw per-stat floor above -
         # a projection is an expectation, and no real player has a negative
@@ -9999,6 +11087,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'current_weight': _trace_number(trace, 'current_weight', i),
                     'blended_rate': _trace_number(trace, 'blended_rate', i),
                     'matchup_multiplier': _trace_number(trace, 'matchup_multiplier', i, 1.0),
+                    'participation_multiplier': _trace_number(trace, 'participation_multiplier', i, 1.0),
                     'alignment_residual_multiplier': _trace_number(
                         trace, 'alignment_residual_multiplier', i, 1.0),
                     'alignment_residual_available': bool(_trace_value(

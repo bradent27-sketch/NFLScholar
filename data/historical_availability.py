@@ -64,6 +64,91 @@ def load_injury_reports(season):
     return df
 
 
+# Weekly-roster statuses that mean "not eligible to play this week", known
+# before kickoff: the reserve lists (IR, IR-designated-to-return, PUP, NFI,
+# suspension - every RES/R0x code), the exempt list, and retired. A player
+# on one of these is OFF the 53 and never appears on the weekly injury
+# report, which is why the report-only replay missed them (2024 wk8:
+# Collins R01, Hockenson R04, Jameson Williams R40). Deliberately NOT INA:
+# a gameday inactive is announced ~90 minutes before kickoff, later than the
+# live board's injury feed, so replaying it would leak. Measured 2022-2025
+# wk3-17: of ~2,000 board player-weeks carrying one of these statuses, zero
+# recorded a stat that week (the status is a pre-game snapshot).
+RESERVE_ROSTER_STATUSES = frozenset({'RES', 'EXE', 'RET'})
+
+
+def load_weekly_rosters(season):
+    """nflverse weekly rosters for one season (REG only, the columns the
+    reserve replay needs), cached to data/cache/rosters_weekly_{season}.parquet.
+    Never raises - an unreachable source returns an empty frame."""
+    cache_path = os.path.join(CACHE_DIR, f'rosters_weekly_{season}.parquet')
+    if os.path.exists(cache_path):
+        try:
+            return pd.read_parquet(cache_path)
+        except Exception:
+            pass
+    try:
+        import nflreadpy
+        df = nflreadpy.load_rosters_weekly([season]).to_pandas()
+    except Exception:
+        return pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if 'game_type' in df.columns:
+        df = df[df['game_type'].astype(str).str.upper() == 'REG']
+    keep = [c for c in ('season', 'week', 'team', 'full_name', 'gsis_id', 'position', 'status',
+                        'status_description_abbr') if c in df.columns]
+    df = df[keep].copy()
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        df.to_parquet(cache_path, index=False)
+    except Exception:
+        pass
+    return df
+
+
+def historical_reserve_profiles(season, week):
+    """{player_name: profile} for every player on a reserve/exempt/retired
+    list in this (season, week)'s weekly roster - same shape as
+    historical_injury_profiles, plays_probability 0.0. Empty on any failure."""
+    try:
+        rosters = load_weekly_rosters(season)
+        if rosters is None or rosters.empty or 'week' not in rosters.columns:
+            return {}
+        wk = rosters[(pd.to_numeric(rosters['week'], errors='coerce') == int(week))
+                     & rosters['status'].astype(str).str.upper().isin(RESERVE_ROSTER_STATUSES)]
+        out = {}
+        for _, row in wk.iterrows():
+            name = row.get('full_name')
+            if not name or pd.isna(name):
+                continue
+            code = str(row.get('status_description_abbr') or '').strip()
+            out[str(name)] = {
+                'status': f"reserve list ({str(row.get('status')).upper()}{'/' + code if code else ''})",
+                'plays_probability': 0.0,
+                'workload_if_active': 1.0,
+                'source_year': int(season),
+                'source': 'historical weekly roster (reserve list)',
+                'gsis_id': row.get('gsis_id', ''),
+                'team': row.get('team', ''),
+            }
+        return out
+    except Exception:
+        return {}
+
+
+def merge_reserve_profiles(injury_profiles, reserve_profiles):
+    """Injury-report profiles plus reserve-list players. A reserve-list
+    status wins over a same-week report entry (a player can't be both
+    Questionable and on IR); an existing OUT entry is left as is."""
+    merged = dict(injury_profiles or {})
+    for name, profile in (reserve_profiles or {}).items():
+        existing = merged.get(name)
+        if existing is None or float(existing.get('plays_probability', 1.0)) > 0.0:
+            merged[name] = profile
+    return merged
+
+
 def _kickoff_by_team(week_schedule):
     """{TEAM -> kickoff timestamp (tz-aware, UTC)} for one week's games.
     nflverse `gametime` is documented as US/Eastern; a missing gametime

@@ -1116,6 +1116,61 @@ def _progressive_blowout_team_weeks(year):
     return frozenset(pairs)
 
 
+# --- v2_script_neutral_volume (docs/model_improvement_plan_2026-09-23.md
+# item 5, Step B) --------------------------------------------------------
+# A team's OFFENSIVE plays only (run/pass, not punts/kicks/penalties-only
+# rows) - score_differential is from the POSTEAM's own perspective in
+# nflfastR's schema (positive = that team is currently leading), so no sign
+# flip is needed the way a schedule-derived margin sometimes needs one.
+REALIZED_SCRIPT_PLAY_TYPES = ('run', 'pass')
+# Same cap the plan specifies: a 35-point blowout's final minutes are not
+# meaningfully "more script" than a 21-point one for how a coordinator
+# actually calls plays - both are clearly-decided-game play-calling by then.
+REALIZED_SCRIPT_CAP = 21.0
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def realized_script_by_team_week(year):
+    """{(team, week): mean score_differential, capped +/-21} over every one
+    of that team's own offensive run/pass plays that game - the "how much
+    did this team actually lead or trail, averaged over the whole game"
+    measure `scripts/fit_script_curves.py` fits a player's own volume
+    against, and `data.weekly_projections`'s `v2_script_neutral_volume`
+    reads at build time to de-script a player's past games before
+    averaging them into his rate. Kept here (not in weekly_projections.py)
+    for the same reason `_progressive_blowout_team_weeks` is: it is a
+    whole-season, PBP-derived, per-(team, week) fact with no per-player
+    dependence, cached once per season rather than recomputed per player.
+
+    Returns an empty dict (not a frozenset - this needs the numeric mean,
+    not just membership) if play-by-play is unavailable or missing a
+    needed column, same degrade-gracefully convention as
+    `_progressive_blowout_team_weeks`. A caller with no realized-script
+    entry for a given (team, week) should fall back to that week's final
+    schedule margin (data.weekly_projections._team_week_margins) - final
+    margin is a real, if noisier, proxy for the same quantity, not a
+    different one.
+    """
+    try:
+        pbp = load_pbp(year)
+    except Exception:
+        return {}
+    needed = {'posteam', 'week', 'play_type', 'score_differential'}
+    if pbp is None or pbp.empty or not needed.issubset(pbp.columns):
+        return {}
+    frame = pbp.loc[pbp['play_type'].isin(REALIZED_SCRIPT_PLAY_TYPES), list(needed)].copy()
+    frame['score_differential'] = pd.to_numeric(frame['score_differential'], errors='coerce')
+    frame['week'] = pd.to_numeric(frame['week'], errors='coerce')
+    frame['posteam'] = frame['posteam'].astype(str).str.strip().str.upper()
+    frame = frame.dropna(subset=['score_differential', 'week'])
+    frame = frame[frame['posteam'] != '']
+    if frame.empty:
+        return {}
+    frame['score_differential'] = frame['score_differential'].clip(-REALIZED_SCRIPT_CAP, REALIZED_SCRIPT_CAP)
+    grouped = frame.groupby(['posteam', 'week'], observed=True)['score_differential'].mean()
+    return {(team, float(week)): float(value) for (team, week), value in grouped.items()}
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def load_team_logos():
     """

@@ -175,3 +175,64 @@ def test_load_injury_reports_caches_and_filters_to_regular_season(tmp_path, monk
     out2 = ha.load_injury_reports(2023)
     assert calls['n'] == 1
     assert list(out2['full_name']) == ['A Back']
+
+
+# --- reserve-list replay (weekly roster status) --------------------------------
+
+def _rosters():
+    return pd.DataFrame([
+        {'season': 2024, 'week': 8, 'team': 'HOU', 'full_name': 'Nico Collins', 'gsis_id': '00-1',
+         'position': 'WR', 'status': 'RES', 'status_description_abbr': 'R01'},
+        {'season': 2024, 'week': 8, 'team': 'MIN', 'full_name': 'T.J. Hockenson', 'gsis_id': '00-2',
+         'position': 'TE', 'status': 'RES', 'status_description_abbr': 'R04'},
+        {'season': 2024, 'week': 8, 'team': 'CIN', 'full_name': 'Tee Higgins', 'gsis_id': '00-3',
+         'position': 'WR', 'status': 'INA', 'status_description_abbr': 'I01'},
+        {'season': 2024, 'week': 8, 'team': 'KC', 'full_name': 'Healthy Guy', 'gsis_id': '00-4',
+         'position': 'WR', 'status': 'ACT', 'status_description_abbr': 'A01'},
+        {'season': 2024, 'week': 8, 'team': 'NYJ', 'full_name': 'Retired Guy', 'gsis_id': '00-5',
+         'position': 'WR', 'status': 'RET', 'status_description_abbr': 'R02'},
+        {'season': 2024, 'week': 9, 'team': 'HOU', 'full_name': 'Week Nine Only', 'gsis_id': '00-6',
+         'position': 'WR', 'status': 'RES', 'status_description_abbr': 'R01'},
+    ])
+
+
+def test_reserve_profiles_mark_reserve_and_retired_out_but_not_gameday_inactives(monkeypatch):
+    monkeypatch.setattr(ha, 'load_weekly_rosters', lambda season: _rosters())
+    out = ha.historical_reserve_profiles(2024, 8)
+    assert set(out) == {'Nico Collins', 'T.J. Hockenson', 'Retired Guy'}
+    assert out['Nico Collins']['plays_probability'] == 0.0
+    assert out['Nico Collins']['gsis_id'] == '00-1'
+    assert out['Nico Collins']['team'] == 'HOU'
+    assert 'RES/R01' in out['Nico Collins']['status']
+    # Same keys the live/injury-report profiles carry, so the shared resolver
+    # consumes it unchanged.
+    assert {'status', 'plays_probability', 'workload_if_active', 'gsis_id', 'team'} <= set(out['Nico Collins'])
+
+
+def test_reserve_profiles_never_raise_and_are_empty_without_data(monkeypatch):
+    monkeypatch.setattr(ha, 'load_weekly_rosters', lambda season: pd.DataFrame())
+    assert ha.historical_reserve_profiles(2024, 8) == {}
+
+    def boom(season):
+        raise RuntimeError('network')
+    monkeypatch.setattr(ha, 'load_weekly_rosters', boom)
+    assert ha.historical_reserve_profiles(2024, 8) == {}
+
+
+def test_merge_reserve_profiles_reserve_status_beats_a_healthy_report_entry():
+    report = {
+        'Questionable Then IR': {'plays_probability': 1.0, 'status': 'questionable'},
+        'Already Out': {'plays_probability': 0.0, 'status': 'out'},
+        'Report Only': {'plays_probability': 0.0, 'status': 'doubtful'},
+    }
+    reserve = {
+        'Questionable Then IR': {'plays_probability': 0.0, 'status': 'reserve list (RES/R01)'},
+        'Already Out': {'plays_probability': 0.0, 'status': 'reserve list (RES/R01)'},
+        'Reserve Only': {'plays_probability': 0.0, 'status': 'reserve list (RES/R04)'},
+    }
+    merged = ha.merge_reserve_profiles(report, reserve)
+    assert merged['Questionable Then IR']['status'] == 'reserve list (RES/R01)'
+    assert merged['Already Out']['status'] == 'out'
+    assert merged['Report Only']['status'] == 'doubtful'
+    assert merged['Reserve Only']['plays_probability'] == 0.0
+    assert report['Questionable Then IR']['status'] == 'questionable'  # input not mutated

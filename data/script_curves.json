@@ -1,0 +1,51 @@
+{
+  "curves": {
+    "QB": {
+      "passing_attempts": {
+        "beta_exp": 0.00145,
+        "beta_lead": -0.01815,
+        "beta_trail": -0.00024,
+        "n": 2855
+      },
+      "passing_yards": {
+        "beta_exp": -0.00159,
+        "beta_lead": -0.01023,
+        "beta_trail": 0.00947,
+        "n": 2855
+      }
+    },
+    "RB": {
+      "rushing_attempts": {
+        "beta_exp": -0.00246,
+        "beta_lead": -0.0087,
+        "beta_trail": 0.03787,
+        "n": 7356
+      },
+      "targets": {
+        "beta_exp": 0.00228,
+        "beta_lead": -0.05041,
+        "beta_trail": 0.02043,
+        "n": 7397
+      }
+    },
+    "TE": {
+      "targets": {
+        "beta_exp": 0.00081,
+        "beta_lead": -0.03,
+        "beta_trail": 0.0136,
+        "n": 5658
+      }
+    },
+    "WR": {
+      "targets": {
+        "beta_exp": 0.00138,
+        "beta_lead": -0.03527,
+        "beta_trail": 0.01131,
+        "n": 11953
+      }
+    }
+  },
+  "fit_window": "2016-2021",
+  "fitted_at": "2026-09-29T01:14:15.232804+00:00",
+  "min_games": 8
+}

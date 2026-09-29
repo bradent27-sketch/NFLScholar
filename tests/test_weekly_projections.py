@@ -924,6 +924,40 @@ def test_vectorized_game_script_multiplier_neutral_without_enough_history():
     assert out.empty
 
 
+def test_vectorized_game_script_multiplier_pool_blend_covers_a_thin_player():
+    # v2_offense_script_pool_blend: 5 pool QBs, each with a real personal
+    # curve of their own (a 14-point blowout LOSS at 50 attempts, a
+    # 14-point blowout WIN at 20 - the same shape found live on CJ Stroud),
+    # blended for a target player (A) who has only ONE game this season -
+    # too thin for a personal curve at all, dropped entirely by the old,
+    # unflagged behavior (asserted first, unchanged).
+    rows = []
+    for name in ('B', 'C', 'D', 'E', 'F'):
+        rows.append({'name': name, 'week': 1, 'team': 'KC', 'position': 'QB', 'passing_attempts': 50})
+        rows.append({'name': name, 'week': 2, 'team': 'KC', 'position': 'QB', 'passing_attempts': 20})
+    rows.append({'name': 'A', 'week': 1, 'team': 'KC', 'position': 'QB', 'passing_attempts': 50})
+    df = weekly(rows)
+    sched = pd.DataFrame([
+        {'week': 1, 'home_team': 'KC', 'away_team': 'OPP1', 'home_score': 6, 'away_score': 20},
+        {'week': 2, 'home_team': 'KC', 'away_team': 'OPP2', 'home_score': 27, 'away_score': 13},
+    ])
+    targets = pd.Series({'A': -12.5})
+
+    off = wp._vectorized_game_script_multiplier(
+        df, 'name', 'team', as_of_week=3, schedule_df=sched, target_margins=targets,
+        stat='passing_attempts')
+    assert 'A' not in off.index
+
+    on = wp._vectorized_game_script_multiplier(
+        df, 'name', 'team', as_of_week=3, schedule_df=sched, target_margins=targets,
+        stat='passing_attempts', position_col='position', pool_blend=True)
+    # A has no personal curve of his own, so he gets the position pool's
+    # curve at his own target margin - clipped at SCRIPT_CLIP's ceiling
+    # since the pool's real ratio (50/35 ~= 1.43) is far outside it.
+    assert 'A' in on.index
+    assert on['A'] == pytest.approx(wp.SCRIPT_CLIP[1])
+
+
 # --- missing-data safety ----------------------------------------------------
 
 def test_season_totals_empty_input_returns_empty_not_a_crash():
@@ -1438,6 +1472,16 @@ def test_cold_start_manual_qb1_receives_full_prior_per_game_workload():
         wp.load_qb1_overrides = lambda _year: (
             pd.DataFrame([{'year': 2026, 'team': 'KC', 'player': 'Starter'}]), None)
         wp._target_margins_by_team = lambda year, week: {}
+        # v2_script_neutral_volume (shipped 2026-09-29, always in
+        # DEFAULT_FEATURES) otherwise calls the REAL realized_script_by_
+        # team_week over the network for this fixture's real year/team -
+        # a synthetic team/week combo can coincidentally match a real
+        # historical game, making an otherwise-hermetic test's expected
+        # numbers depend on what actually happened in a real NFL game.
+        # {} (no realized-script data) is this function's own documented
+        # degrade-gracefully default, so this is a neutral no-op for every
+        # test that isn't specifically exercising that flag's mechanism.
+        wp.realized_script_by_team_week = lambda year: {}
         # availability_fingerprint is cache-key-only (see its own docstring) -
         # given a distinct value here purely so this test's mocked fixture
         # can't collide in @st.cache_data with another test's (year, week,
@@ -1749,6 +1793,16 @@ def test_qb1_manual_override_wins_for_a_new_starter_with_zero_current_season_sna
         wp.load_qb1_overrides = lambda _year: (
             pd.DataFrame([{'year': 2026, 'team': 'ATL', 'player': 'NewStarter'}]), None)
         wp._target_margins_by_team = lambda year, week: {}
+        # v2_script_neutral_volume (shipped 2026-09-29, always in
+        # DEFAULT_FEATURES) otherwise calls the REAL realized_script_by_
+        # team_week over the network for this fixture's real year/team -
+        # a synthetic team/week combo can coincidentally match a real
+        # historical game, making an otherwise-hermetic test's expected
+        # numbers depend on what actually happened in a real NFL game.
+        # {} (no realized-script data) is this function's own documented
+        # degrade-gracefully default, so this is a neutral no-op for every
+        # test that isn't specifically exercising that flag's mechanism.
+        wp.realized_script_by_team_week = lambda year: {}
         out, meta = wp.build_weekly_projections(
             2026, 3, 'Full PPR', as_of_week=3, apply_injury=False,
             availability_fingerprint='test_inseason_manual_qb1_new_starter')
@@ -1863,6 +1917,7 @@ def test_returning_wr_role_restored_from_prior_season_with_room_conservation():
             wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
             wp.load_qb1_overrides = lambda _year: (pd.DataFrame(columns=['year', 'team', 'player']), None)
             wp._target_margins_by_team = lambda year, week: {}
+            wp.realized_script_by_team_week = lambda year: {}
             out, meta = wp.build_weekly_projections(
                 2026, 3, 'Full PPR', as_of_week=3, apply_injury=False,
                 availability_fingerprint=f'test_returning_wr_room_conservation_{give_returner_prior_history}')
@@ -1932,6 +1987,7 @@ def test_v2_historical_injury_replay_zeroes_the_out_player_and_feeds_vacancy():
             wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
             wp.load_qb1_overrides = lambda _year: (pd.DataFrame(columns=['year', 'team', 'player']), None)
             wp._target_margins_by_team = lambda year, week: {}
+            wp.realized_script_by_team_week = lambda year: {}
             wp.historical_injury_profiles = lambda season, week, schedule_df: dict(out_profile)
             out, meta = wp.build_weekly_projections(
                 2026, 3, 'Full PPR', as_of_week=3, apply_injury=False, features=feats,
@@ -1995,6 +2051,16 @@ def test_nonstarter_qb_has_zero_projected_volume_not_a_relief_rate_projection():
         wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
         wp.load_qb1_overrides = lambda _year: (pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS), None)
         wp._target_margins_by_team = lambda year, week: {}
+        # v2_script_neutral_volume (shipped 2026-09-29, always in
+        # DEFAULT_FEATURES) otherwise calls the REAL realized_script_by_
+        # team_week over the network for this fixture's real year/team -
+        # a synthetic team/week combo can coincidentally match a real
+        # historical game, making an otherwise-hermetic test's expected
+        # numbers depend on what actually happened in a real NFL game.
+        # {} (no realized-script data) is this function's own documented
+        # degrade-gracefully default, so this is a neutral no-op for every
+        # test that isn't specifically exercising that flag's mechanism.
+        wp.realized_script_by_team_week = lambda year: {}
         out, meta = wp.build_weekly_projections(
             2026, 4, 'Full PPR', as_of_week=4, apply_injury=False)
     finally:
@@ -2078,6 +2144,26 @@ def test_game_environment_multiplier_is_neutral_without_a_posted_line():
     out = wp._game_env_multiplier(env, np.array(['KC']), 'QB', league_implied=22.0)
     # Venue still applies; the total does not, because there isn't one.
     assert abs(out[0] - wp.VENUE_MULT['QB']['indoor']) < 1e-9
+
+
+def test_historical_target_margins_matches_live_sign_convention():
+    # A historical target reads the SAME closing-line archive as
+    # game_environment (see _historical_target_margins' own comment for why
+    # this replaced an unconditional {} for every backtest) - same sign
+    # convention _target_margins_by_team's docstring uses: positive means
+    # favored. SEA favored by 3.5 -> SEA +3.5, NE -3.5.
+    sched = pd.DataFrame({'week': [3], 'home_team': ['SEA'], 'away_team': ['NE'],
+                          'total_line': [44.5], 'spread_line': [3.5]})
+    opponents = wp._week_opponents(sched, 3)
+    out = wp._historical_target_margins(sched, 3, opponents)
+    assert out['SEA'] == pytest.approx(3.5)
+    assert out['NE'] == pytest.approx(-3.5)
+
+
+def test_historical_target_margins_empty_without_posted_lines():
+    sched = pd.DataFrame({'week': [3], 'home_team': ['SEA'], 'away_team': ['NE']})
+    opponents = wp._week_opponents(sched, 3)
+    assert wp._historical_target_margins(sched, 3, opponents) == {}
 
 
 # --- calibration --------------------------------------------------------------
@@ -2613,6 +2699,16 @@ def test_v2_decomposition_refreshes_the_stat_line_after_vacancy_redistribution()
         wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
         wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
         wp._target_margins_by_team = lambda year, week: {}
+        # v2_script_neutral_volume (shipped 2026-09-29, always in
+        # DEFAULT_FEATURES) otherwise calls the REAL realized_script_by_
+        # team_week over the network for this fixture's real year/team -
+        # a synthetic team/week combo can coincidentally match a real
+        # historical game, making an otherwise-hermetic test's expected
+        # numbers depend on what actually happened in a real NFL game.
+        # {} (no realized-script data) is this function's own documented
+        # degrade-gracefully default, so this is a neutral no-op for every
+        # test that isn't specifically exercising that flag's mechanism.
+        wp.realized_script_by_team_week = lambda year: {}
         wp._injury_profiles = lambda year, week: {
             'Out WR': {'plays_probability': 0.0, 'workload_if_active': 1.0, 'status': 'out'},
         }
@@ -2841,3 +2937,249 @@ def test_uncalibrate_sidelined_keeps_an_out_players_calibrated_total_at_raw():
     # No Availability column (a caller that never resolved injuries): no-op.
     bare = frame.drop(columns=['Availability'])
     pd.testing.assert_frame_equal(wp._uncalibrate_sidelined(bare.copy()), bare)
+
+
+# --- v2_script_neutral_volume (item 5, Steps B/C) ----------------------------
+
+def test_script_neutral_driver_stat_covers_curves_and_dependents():
+    # Own-curve stats resolve to themselves.
+    assert wp._script_neutral_driver_stat('RB', 'rushing_attempts') == 'rushing_attempts'
+    assert wp._script_neutral_driver_stat('QB', 'passing_yards') == 'passing_yards'
+    # Dependents resolve to their named driver.
+    assert wp._script_neutral_driver_stat('WR', 'receptions') == 'targets'
+    assert wp._script_neutral_driver_stat('QB', 'passing_completions') == 'passing_attempts'
+    # Untouched stats/positions resolve to None (the flag is a no-op there).
+    assert wp._script_neutral_driver_stat('QB', 'rushing_attempts') is None
+    assert wp._script_neutral_driver_stat('RB', 'rushing_yards') is None
+
+
+def test_script_real_factor_discounts_leading_and_boosts_trailing_correctly():
+    curve = {'beta_lead': -0.02, 'beta_trail': 0.03, 'beta_exp': 0.0}
+    # Leading by 10: log(ratio) = -0.02*10 = -0.2 -> factor < 1 (fewer than average).
+    leading = wp._script_real_factor(curve, np.array([10.0]))
+    assert leading[0] == pytest.approx(np.exp(-0.2))
+    # Trailing by 10 (script=-10): log(ratio) = 0.03*-10 = -0.3 -> ALSO < 1 here
+    # because beta_trail is positive in this test fixture (a real fitted
+    # rushing_attempts curve has a positive beta_trail meaning FEWER carries
+    # when trailing - see scripts/fit_script_curves.py's own docstring on why
+    # the direction is stat-specific, not assumed).
+    trailing = wp._script_real_factor(curve, np.array([-10.0]))
+    assert trailing[0] == pytest.approx(np.exp(-0.3))
+    # No realized-script entry (NaN) -> neutral no-op.
+    missing = wp._script_real_factor(curve, np.array([np.nan]))
+    assert missing[0] == 1.0
+    # No curve at all -> neutral no-op for every row.
+    assert (wp._script_real_factor(None, np.array([10.0, -10.0])) == 1.0).all()
+
+
+def test_script_exp_factor_uses_negative_own_margin():
+    curve = {'beta_lead': 0.0, 'beta_trail': 0.0, 'beta_exp': 0.01}
+    # Favored by 5 (own_margin=+5): factor = exp(0.01 * -5) = exp(-0.05) < 1.
+    favored = wp._script_exp_factor(curve, np.array([5.0]))
+    assert favored[0] == pytest.approx(np.exp(-0.05))
+    assert wp._script_exp_factor(curve, np.array([np.nan]))[0] == 1.0
+    assert (wp._script_exp_factor(None, np.array([5.0])) == 1.0).all()
+
+
+def test_script_neutralize_history_only_rewrites_covered_columns():
+    df = weekly([
+        {'name': 'A', 'week': 1, 'team': 'KC', 'position': 'RB',
+         'rushing_attempts': 20.0, 'rushing_yards': 90.0},
+        {'name': 'A', 'week': 2, 'team': 'KC', 'position': 'RB',
+         'rushing_attempts': 20.0, 'rushing_yards': 90.0},
+    ])
+    original = wp._load_script_curves
+    try:
+        wp._load_script_curves = lambda: {('RB', 'rushing_attempts'): {
+            'beta_lead': 0.0, 'beta_trail': 0.1, 'beta_exp': 0.0}}
+        wp.realized_script_by_team_week = lambda year: {('KC', 1.0): -10.0, ('KC', 2.0): 0.0}
+        out = wp._script_neutralize_history(df, 'team', 'RB', 2099)
+        # Week 1 (trailing by 10, beta_trail=0.1): factor = exp(0.1*-10) =
+        # exp(-1) -> rushing_attempts divided by it (INCREASED, since the
+        # divisor is < 1) - the covered stat is rewritten.
+        assert out.loc[out['week'] == 1, 'rushing_attempts'].iloc[0] == pytest.approx(20.0 / 0.5)
+        # Week 2 (neutral script, factor 1.0): unchanged.
+        assert out.loc[out['week'] == 2, 'rushing_attempts'].iloc[0] == pytest.approx(20.0)
+        # rushing_yards has no fitted curve for RB - left completely alone
+        # (dependents only cover receptions/receiving_yards for RB, not yards).
+        assert out['rushing_yards'].tolist() == [90.0, 90.0]
+    finally:
+        wp._load_script_curves = original
+
+
+# --- v2_xtd (item 6) ----------------------------------------------------------
+
+def test_xtd_blended_rate_blends_own_rate_with_zone_based_expectation():
+    original_ctx, original_rates = wp._xtd_zone_context, wp._load_xtd_rates
+    try:
+        wp._load_xtd_rates = lambda: {
+            'td_rate': {'target': {'WR': {'rz10': {'rate': 0.5}}}},
+            'zone_elasticity': {'target': {'rz10': 0.0}},
+        }
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'cur_player': {'a': {'rz10_targets': 2.0}},
+            'cur_team': {'KC': {'rz10_targets': 4.0}},
+            'prior_player': {'a': {'rz10_targets': 8.0}},
+            'prior_team': {'KC': {'rz10_targets': 16.0, 'games': 16.0}},
+        }
+        # Team's own prior rz10 rate/game = 16/16 = 1.0; implied_ratio
+        # neutral (no env) -> team_zone_opps = 1.0. Player's zone share:
+        # current 2/4=0.5, prior 8/16=0.5 (agree) -> share=0.5.
+        # xTD = 1.0 * 0.5 * 0.5 = 0.25.
+        # Zero TD events -> c=0 -> result is xTD alone.
+        out = wp.xtd_blended_rate(
+            'receiving_tds', 'WR', own_rate=np.array([0.9]), cur_games=np.array([2.0]),
+            cur_td_total=np.array([0.0]), prior_td_total=np.array([0.0]),
+            player_names=['A'], player_teams=['KC'], env={}, league_implied=None,
+            year=2099, as_of_week=3)
+        assert out[0] == pytest.approx(0.25)
+        # With real TD events (own rate should now dominate).
+        out2 = wp.xtd_blended_rate(
+            'receiving_tds', 'WR', own_rate=np.array([0.9]), cur_games=np.array([2.0]),
+            cur_td_total=np.array([20.0]), prior_td_total=np.array([0.0]),
+            player_names=['A'], player_teams=['KC'], env={}, league_implied=None,
+            year=2099, as_of_week=3)
+        assert out2[0] > 0.7  # c = 20/(20+8) = 0.71, pulling most of the way to 0.9
+    finally:
+        wp._xtd_zone_context, wp._load_xtd_rates = original_ctx, original_rates
+
+
+def test_xtd_blended_rate_is_a_no_op_without_a_rates_table():
+    original_rates = wp._load_xtd_rates
+    try:
+        wp._load_xtd_rates = lambda: {}
+        out = wp.xtd_blended_rate(
+            'receiving_tds', 'WR', own_rate=np.array([0.42]), cur_games=np.array([2.0]),
+            cur_td_total=np.array([0.0]), prior_td_total=np.array([0.0]),
+            player_names=['A'], player_teams=['KC'], env={}, league_implied=None,
+            year=2099, as_of_week=3)
+        assert out[0] == pytest.approx(0.42)
+    finally:
+        wp._load_xtd_rates = original_rates
+
+
+# --- v2_wrte_participation ----------------------------------------------------
+
+def test_wrte_participation_multiplier_leaves_starters_alone_and_discounts_depth():
+    original = wp._load_participation_curve
+    try:
+        wp._load_participation_curve = lambda: (np.array([0.0, 0.3, 0.7]), np.array([0.5, 0.6, 1.0]))
+        out = wp.wrte_participation_multiplier(np.array([0.95, 0.70, 0.30, 0.0, np.nan]), strength=0.5)
+        assert out[0] == pytest.approx(1.0)
+        assert out[1] == pytest.approx(1.0)
+        assert out[2] == pytest.approx(1.0 - 0.5 * (1.0 - 0.6))
+        assert out[3] == pytest.approx(0.75)
+        # No measured role reads as the lowest point on the curve, not a starter.
+        assert out[4] == pytest.approx(out[3])
+        assert np.all(np.diff(wp.wrte_participation_multiplier(np.linspace(0, 1, 21), strength=0.5)) >= 0)
+        assert np.allclose(wp.wrte_participation_multiplier(np.array([0.1, 0.4]), strength=0.0), 1.0)
+    finally:
+        wp._load_participation_curve = original
+
+
+def test_wrte_participation_multiplier_is_a_no_op_without_a_curve():
+    original = wp._load_participation_curve
+    try:
+        wp._load_participation_curve = lambda: None
+        assert np.allclose(wp.wrte_participation_multiplier(np.array([0.1, 0.9])), 1.0)
+    finally:
+        wp._load_participation_curve = original
+
+
+def test_shipped_participation_curve_is_monotone_and_anchored_at_one():
+    xs, ys = wp._load_participation_curve()
+    assert np.all(np.diff(xs) > 0)
+    assert np.all(np.diff(ys) >= 0)
+    assert ys[-1] == pytest.approx(1.0)
+    assert 0.0 < ys[0] < 1.0
+
+
+def test_wrte_participation_discounts_only_the_depth_receiver_in_season():
+    rows = []
+    for week in (1, 2):
+        rows += [
+            {'name': 'Starter WR', 'team': 'KC', 'opponent_team': 'LAC', 'week': week,
+             'position': 'WR', 'weekly_snap_pct': 90.0, 'targets': 8.0,
+             'receptions': 5.0, 'receiving_yards': 70.0, 'receiving_tds': 0.5},
+            {'name': 'Depth WR', 'team': 'KC', 'opponent_team': 'LAC', 'week': week,
+             'position': 'WR', 'weekly_snap_pct': 20.0, 'targets': 2.0,
+             'receptions': 1.0, 'receiving_yards': 12.0, 'receiving_tds': 0.0},
+        ]
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 3, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+                wp.load_team_pace, wp._target_margins_by_team, wp.realized_script_by_team_week,
+                wp._xtd_zone_context)
+    boards = {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        for arm, feats in (('base', wp.DEFAULT_FEATURES),
+                           ('flag', wp.DEFAULT_FEATURES | {'v2_wrte_participation'})):
+            wp.build_weekly_projections.clear()
+            boards[arm] = wp.build_weekly_projections(
+                2026, 3, 'Full PPR', as_of_week=3, apply_injury=False, features=feats)
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving,
+         wp.load_team_pace, wp._target_margins_by_team, wp.realized_script_by_team_week,
+         wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+
+    def trace(arm, player):
+        return boards[arm][1]['explanations'][(player, 'WR', 'KC')]['stats']['targets']
+
+    assert trace('flag', 'Starter WR')['participation_multiplier'] == 1.0
+    assert trace('base', 'Depth WR')['participation_multiplier'] == 1.0
+    expected = float(wp.wrte_participation_multiplier(np.array([0.20]))[0])
+    assert expected < 1.0
+    assert trace('flag', 'Depth WR')['participation_multiplier'] == pytest.approx(expected, abs=1e-3)
+    ratio = trace('flag', 'Depth WR')['pre_vacancy_projection'] / trace('base', 'Depth WR')['pre_vacancy_projection']
+    assert ratio == pytest.approx(expected, abs=2e-3)
+    assert trace('flag', 'Starter WR')['pre_vacancy_projection'] == pytest.approx(
+        trace('base', 'Starter WR')['pre_vacancy_projection'])
+
+
+# --- v2_vacancy_absence_decay --------------------------------------------------
+
+def _absence_hist():
+    rows = []
+    for week in range(1, 8):
+        rows.append({'name': 'Teammate', 'team': 'MIN', 'game_team': 'MIN', 'week': week})
+        if week <= 4:
+            rows.append({'name': 'Hurt Wk5', 'team': 'MIN', 'game_team': 'MIN', 'week': week})
+        if week <= 6:
+            rows.append({'name': 'Missed One', 'team': 'MIN', 'game_team': 'MIN', 'week': week})
+    return pd.DataFrame(rows)
+
+
+def test_vacancy_absence_retention_decays_with_games_missed():
+    hist = _absence_hist()
+    names = ['Teammate', 'Missed One', 'Hurt Wk5', 'Never Played']
+    out = wp.vacancy_absence_retention(hist, 'name', 'team', names, ['MIN'] * 4, as_of_week=8)
+    d = wp.RECENCY_DECAY
+    weights = np.array([d ** (8 - w - 1) for w in range(1, 8)])  # weeks 1..7
+    blend = 7.0 / (7.0 + wp.STAT_K['targets'])
+    assert out[0] == 1.0
+    assert out[1] == pytest.approx(1.0 - weights[6] / weights.sum() * blend)
+    assert out[2] == pytest.approx(1.0 - weights[4:].sum() / weights.sum() * blend)
+    # Out all season: every in-season game already reflects his absence; only
+    # the prior-season share of the teammates' blend still expects him.
+    assert out[3] == pytest.approx(1.0 - blend)
+    assert out[0] > out[1] > out[2] > out[3]
+
+
+def test_vacancy_absence_retention_is_neutral_without_current_season_games():
+    names = ['Anyone']
+    assert wp.vacancy_absence_retention(pd.DataFrame(), 'name', 'team', names, ['MIN'], 1)[0] == 1.0
+    hist = _absence_hist()
+    # A team with no games on record (e.g. a bad team label) leaves it alone.
+    assert wp.vacancy_absence_retention(hist, 'name', 'team', ['Hurt Wk5'], ['XXX'], 8)[0] == 1.0

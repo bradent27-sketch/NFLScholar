@@ -13,7 +13,17 @@ from data.utils import calculate_percentile, calculate_percentile_qualified, cle
 from data.loaders import load_pfr_pass_block, load_pfr_def_pressure, load_team_pass_attempts_faced, load_schedule, load_pbp
 
 
-def build_redzone_usage(_stats_df, name_col, year):
+# v2_xtd (docs/model_improvement_plan_2026-09-23.md item 6). Zone edges in
+# yardline_100 (distance to the end zone) - rushing and receiving get their
+# OWN zone sets since the plan documents them separately (a rush inside the
+# 5 is a near-certain-look opportunity in a way a target inside the 5 isn't
+# quite the same shape of; a target's marginal value keeps mattering out to
+# the 20 the way a carry's mostly doesn't past the 10).
+REDZONE_RUSH_ZONES = (('rz5', 0, 5), ('rz10', 5, 10), ('rz20', 10, 20))
+REDZONE_TARGET_ZONES = (('rz10', 0, 10), ('rz20', 10, 20), ('oz20', 20, None))
+
+
+def build_redzone_usage(_stats_df, name_col, year, as_of_week=None):
     """
     Per-player red-zone (yardline_100 <= 20) target/carry share and TDs,
     built from nflreadpy's raw play-by-play (nflfastR) - no pre-aggregated
@@ -32,11 +42,27 @@ def build_redzone_usage(_stats_df, name_col, year):
     apply_scoring_and_percentiles) since load_pbp itself is already
     cached on `year` - re-running this groupby per call is cheap relative
     to hashing a wide multi-thousand-row stats frame on every rerun.
+
+    `as_of_week` (optional, added 2026-09-29 for 'v2_xtd' - see
+    REDZONE_RUSH_ZONES/REDZONE_TARGET_ZONES): filters to `week < as_of_week`
+    before aggregating, so a caller can build "this player's zone
+    opportunities SO FAR this season" without leaking the target week's own
+    result - the existing whole-season display caller
+    (_merge_redzone_share) omits it and is completely unaffected: same
+    rows, same two share columns, same values as before this parameter
+    existed. When given, the returned frame ALSO carries per-zone RAW
+    COUNTS (not shares - a caller blending current-season evidence with a
+    prior season needs the real opportunity count, not two seasons' shares
+    averaged together) in `rz5_carries`/`rz10_carries`/`rz20_carries` and
+    `rz10_targets`/`rz20_targets`/`oz20_targets`, zero-filled rather than
+    NaN for a player with plays in some zones and none in others.
     """
     pbp = load_pbp(year)
     if pbp.empty or _stats_df.empty or 'player_id' not in _stats_df.columns or name_col not in _stats_df.columns:
         return pd.DataFrame()
     required = {'yardline_100', 'play_type', 'posteam', 'receiver_player_id', 'rusher_player_id', 'complete_pass', 'pass_touchdown', 'rush_touchdown', 'play_id'}
+    if as_of_week is not None:
+        required = required | {'week'}
     if not required.issubset(pbp.columns):
         return pd.DataFrame()
     # Regular season only - load_pbp doesn't filter this itself, and this
@@ -46,6 +72,8 @@ def build_redzone_usage(_stats_df, name_col, year):
     # extended to pbp's consumers until now).
     if 'season_type' in pbp.columns:
         pbp = pbp[pbp['season_type'] == 'REG']
+    if as_of_week is not None:
+        pbp = pbp[pd.to_numeric(pbp['week'], errors='coerce') < as_of_week]
 
     rz = pbp[(pbp['yardline_100'] <= 20) & (pbp['play_type'].isin(['run', 'pass']))]
     if rz.empty:
@@ -71,9 +99,84 @@ def build_redzone_usage(_stats_df, name_col, year):
     value_cols = [c for c in usage.columns if c != 'player_id']
     usage[value_cols] = usage[value_cols].fillna(0)
 
+    if as_of_week is not None:
+        zone_frames = []
+        for zone_name, lo, hi in REDZONE_RUSH_ZONES:
+            mask = (pbp['play_type'] == 'run') & (pbp['yardline_100'] > lo) & (pbp['yardline_100'] <= (hi if hi is not None else pbp['yardline_100'].max()))
+            counts = pbp[mask & pbp['rusher_player_id'].notna()].groupby('rusher_player_id', observed=True)['play_id'] \
+                .count().rename(f'{zone_name}_carries').rename_axis('player_id')
+            zone_frames.append(counts)
+        for zone_name, lo, hi in REDZONE_TARGET_ZONES:
+            hi_bound = pbp['yardline_100'].max() if hi is None else hi
+            mask = (pbp['play_type'] == 'pass') & (pbp['yardline_100'] > lo) & (pbp['yardline_100'] <= hi_bound)
+            counts = pbp[mask & pbp['receiver_player_id'].notna()].groupby('receiver_player_id', observed=True)['play_id'] \
+                .count().rename(f'{zone_name}_targets').rename_axis('player_id')
+            zone_frames.append(counts)
+        zones = pd.concat(zone_frames, axis=1).fillna(0.0) if zone_frames else pd.DataFrame()
+        if not zones.empty:
+            usage = pd.merge(usage, zones.reset_index(), on='player_id', how='outer')
+            zone_cols = [c for c in usage.columns if c.endswith('_carries') or c.endswith('_targets')]
+            usage[zone_cols] = usage[zone_cols].fillna(0.0)
+
     id_to_name = _stats_df[['player_id', name_col]].dropna().drop_duplicates(subset=['player_id']).set_index('player_id')[name_col]
     usage[name_col] = usage['player_id'].map(id_to_name)
     return usage.dropna(subset=[name_col]).drop(columns=['player_id'])
+
+
+def team_zone_opportunities(year, as_of_week=None):
+    """TEAM-level (not per-player) zone opportunity counts and games played -
+    v2_xtd's denominator for a player's zone SHARE, and the base rate its
+    forward team-zone-volume projection scales by
+    (data/xtd_rates.json's zone_elasticity, scripts/fit_xtd_rates.py).
+
+    `build_redzone_usage` only returns a PER-PLAYER row (posteam is
+    internal to it, used for the share columns and then dropped) - this is
+    the team-level sibling, built the same way but grouped by `posteam`
+    instead of by player, and keeping `games` (nunique week) alongside the
+    counts so a caller can turn a season total into a per-game rate itself.
+
+    `as_of_week`, same convention as build_redzone_usage: None means the
+    whole season; otherwise `week < as_of_week` only.
+
+    Returns a DataFrame indexed by team (upper-cased) with one column per
+    REDZONE_RUSH_ZONES/REDZONE_TARGET_ZONES zone (`{zone}_carries`/
+    `{zone}_targets`) plus `games` - zero-filled, never NaN, so a team with
+    no play-by-play row in some zone (should not happen in practice, but a
+    partial-season fetch is possible) still has a real 0 to divide by
+    `games` rather than silently disappearing from the average.
+    """
+    pbp = load_pbp(year)
+    if pbp.empty:
+        return pd.DataFrame()
+    needed = {'posteam', 'week', 'play_type', 'yardline_100', 'play_id', 'rusher_player_id', 'receiver_player_id'}
+    if not needed.issubset(pbp.columns):
+        return pd.DataFrame()
+    if 'season_type' in pbp.columns:
+        pbp = pbp[pbp['season_type'] == 'REG']
+    if as_of_week is not None:
+        pbp = pbp[pd.to_numeric(pbp['week'], errors='coerce') < as_of_week]
+    if pbp.empty:
+        return pd.DataFrame()
+    pbp = pbp.copy()
+    pbp['posteam'] = pbp['posteam'].astype(str).str.strip().str.upper()
+    pbp = pbp[pbp['posteam'] != '']
+
+    games = pbp.groupby('posteam', observed=True)['week'].nunique().rename('games')
+    zone_frames = [games]
+    for zone_name, lo, hi in REDZONE_RUSH_ZONES:
+        hi_bound = pbp['yardline_100'].max() if hi is None else hi
+        mask = (pbp['play_type'] == 'run') & (pbp['yardline_100'] > lo) & (pbp['yardline_100'] <= hi_bound) \
+            & pbp['rusher_player_id'].notna()
+        zone_frames.append(pbp[mask].groupby('posteam', observed=True)['play_id'].count().rename(f'{zone_name}_carries'))
+    for zone_name, lo, hi in REDZONE_TARGET_ZONES:
+        hi_bound = pbp['yardline_100'].max() if hi is None else hi
+        mask = (pbp['play_type'] == 'pass') & (pbp['yardline_100'] > lo) & (pbp['yardline_100'] <= hi_bound) \
+            & pbp['receiver_player_id'].notna()
+        zone_frames.append(pbp[mask].groupby('posteam', observed=True)['play_id'].count().rename(f'{zone_name}_targets'))
+    out = pd.concat(zone_frames, axis=1)
+    zone_cols = [c for c in out.columns if c != 'games']
+    out[zone_cols] = out[zone_cols].fillna(0.0)
+    return out
 
 
 # Volume floors for the EPA/success-rate stats below - a per-PLAY efficiency

@@ -1,0 +1,122 @@
+{
+  "fit_window": "2016-2021",
+  "fitted_at": "2026-09-29T02:19:20.071751+00:00",
+  "td_rate": {
+    "rush": {
+      "QB": {
+        "rz10": {
+          "n_opportunities": 402,
+          "rate": 0.23134
+        },
+        "rz20": {
+          "n_opportunities": 770,
+          "rate": 0.07273
+        },
+        "rz5": {
+          "n_opportunities": 646,
+          "rate": 0.47988
+        }
+      },
+      "RB": {
+        "rz10": {
+          "n_opportunities": 2367,
+          "rate": 0.11027
+        },
+        "rz20": {
+          "n_opportunities": 5154,
+          "rate": 0.0423
+        },
+        "rz5": {
+          "n_opportunities": 3424,
+          "rate": 0.39749
+        }
+      },
+      "TE": {
+        "rz20": {
+          "n_opportunities": 45,
+          "rate": 0.0
+        },
+        "rz5": {
+          "n_opportunities": 46,
+          "rate": 0.5
+        }
+      },
+      "WR": {
+        "rz10": {
+          "n_opportunities": 63,
+          "rate": 0.19048
+        },
+        "rz20": {
+          "n_opportunities": 212,
+          "rate": 0.09434
+        },
+        "rz5": {
+          "n_opportunities": 59,
+          "rate": 0.42373
+        }
+      }
+    },
+    "target": {
+      "QB": {
+        "oz20": {
+          "n_opportunities": 41,
+          "rate": 0.0
+        }
+      },
+      "RB": {
+        "oz20": {
+          "n_opportunities": 17719,
+          "rate": 0.00863
+        },
+        "rz10": {
+          "n_opportunities": 969,
+          "rate": 0.30341
+        },
+        "rz20": {
+          "n_opportunities": 1674,
+          "rate": 0.09618
+        }
+      },
+      "TE": {
+        "oz20": {
+          "n_opportunities": 18557,
+          "rate": 0.01164
+        },
+        "rz10": {
+          "n_opportunities": 1809,
+          "rate": 0.39248
+        },
+        "rz20": {
+          "n_opportunities": 1781,
+          "rate": 0.16339
+        }
+      },
+      "WR": {
+        "oz20": {
+          "n_opportunities": 54068,
+          "rate": 0.02047
+        },
+        "rz10": {
+          "n_opportunities": 3681,
+          "rate": 0.34203
+        },
+        "rz20": {
+          "n_opportunities": 4120,
+          "rate": 0.15049
+        }
+      }
+    }
+  },
+  "zone_elasticity": {
+    "rush": {
+      "rz10": 0.1655,
+      "rz20": 0.2572,
+      "rz5": 0.1275
+    },
+    "target": {
+      "oz20": 0.0395,
+      "rz10": 0.3046,
+      "rz20": 0.1542
+    }
+  }
+}

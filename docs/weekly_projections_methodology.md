@@ -2749,3 +2749,503 @@ enters a scored pool.
   for the target week just means the game-script read sits out for that
   player (multiplier 1.0), same degrade-gracefully convention as every
   other best-effort signal in this app.
+
+## 2026-09-28 — three live bug reports: NE backfield share > 100%, CJ Stroud's pass-volume outlier, a blind spot in the backtest harness itself
+
+Three issues reported off the live 2026 week-3 board: (1) TreVeyon Henderson
+(out wk1, returned wk2) + Rhamondre Stevenson (workhorse wk1, more even
+wk2) projected a combined 1.45 "Expected Snap Share" for a two-man
+backfield; (2) CJ Stroud projected 41.61 pass attempts off a wk2 55-attempt
+game in a 6-20 blowout loss to CIN, and HOU's whole team read ~68 plays;
+(3) in chasing (2), the harness itself turned out to be blind to the whole
+mechanism responsible.
+
+### (1) RB share > 100%: `v2_rb_in_season_share_conservation`
+
+Root cause: `allocate_preseason_rb_roles`'s own team-capacity conservation
+(`RB_TEAM_SNAP_SHARE_MAX` = 1.05) is "deliberately not reapplied after
+games have been observed" (see the comment at `build_weekly_projections`'s
+non-cold-start RB branch). Past week 1, each RB's share instead comes from
+`season_snap_share`'s "mean share across games HE appeared in", independently
+per player - fine for a stable backfield (same game-set for both backs),
+broken the moment an absence splits that game-set apart:
+`annotate_player_history_participation` correctly excludes Stevenson's
+wk1 replacement game from HIS OWN rate evidence, while Henderson's
+evidence is only his post-return game - two non-overlapping denominators
+that no longer have to sum to 1. Confirmed live: Henderson 0.60 +
+Stevenson 0.85 + Kiner 0.09 = 1.54.
+
+Fix: rescale a team's core-RB shares proportionally back to
+`RB_TEAM_SNAP_SHARE_MAX` when their sum exceeds it - preserves the room's
+relative split, only corrects the total. Confirmed live: 1.54 -> 1.05 (+
+Larison's 0.04, correctly untouched, below the 5% core threshold).
+
+**This is not a pure display fix.** A same-week live check showed
+`rushing_attempts`/`targets` byte-identical with the flag on/off for the NE
+case specifically - `role_scale` (which reads this same share against a
+player's PRIOR-season share to rescale his prior-rate contribution) is
+computed earlier in the per-position loop than this correction runs, and
+for that one case its `ROLE_VOLUME_CLIP` bound was already saturated on
+both sides of the fix. A wider diff across real 2023 weeks (script at
+`.sweeps`-adjacent scratch, not committed) found the correction DOES move
+`Model Proj Pts` for many other real absence/return pairs the same shape
+(Jahmyr Gibbs/David Montgomery DET, Bijan Robinson ATL, 8-20 RB rows per
+week in 2023 wks 2-7) - the NE case just happened to sit at a clip
+boundary.
+
+**Backtest** (`--add v2_rb_in_season_share_conservation --add-features
+v2_historical_injury_replay`, 2023-2025 wks 2-17, harness v2):
+
+| scope | RMSE before -> after | bias before -> after | Holm p |
+|---|---|---|---|
+| RB (whole pool) | 6.862 -> 6.862 (Δ+0.000, CI incl. 0) | -0.478 -> -0.478 | 1.0 |
+| TE | 5.003 -> 5.002 (Δ-0.001, CI incl. 0) | -0.623 -> -0.618 | - |
+| START-RB | 7.858 -> 7.872 (**Δ+0.014, CI[+0.004,+0.024]**) | -0.418 -> **-0.464** | **0.019** |
+
+VERDICT: INCONCLUSIVE, bias growth +0.007 - harness recommendation is "stays
+unshipped". The real, CI-excludes-zero cost is concentrated on START-RB and
+is a bias DEEPENING (more under-projection), the same shape as the
+2026-09-25 capacity/vacancy double-count fix: removing a real, confirmed
+double-count (two RBs' shares independently reading as their own accurate
+role, jointly impossible) costs some under-projection on a role-expansion
+week where the OLD, unconserved share happened to already be closer to
+what actually developed. Not yet shipped - this is the same
+under-project-to-remove-a-confirmed-error tradeoff the user explicitly
+accepted for the double-count fix; ship/hold decision pending the same
+explicit call for this one. See [[bias-veto-error-cancellation]].
+
+### (2)/(3) CJ Stroud / team-plays: a harness blind spot, then a real (if modest, unconfirmed) fix
+
+First finding: `_vectorized_game_script_multiplier`'s personal-curve
+read-off (a) excludes `passing_attempts` from `SCRIPT_ELIGIBLE_STATS`
+entirely (grouped with rate/quality stats it was never really about - a
+raw attempt COUNT is exactly the kind of volume stat `rushing_attempts`
+already covers), and (b) requires >= 4 of the player's own games before it
+activates ANY stat, at all - a floor that cannot help in September no
+matter which stats are eligible. Stroud (wk1 38 att, wk2 55 att in a 6-20
+loss to CIN) had 2 games; nothing corrected his recency-weighted average
+for the wk2 game's score-state distortion. Model projected 41.61 wk3
+attempts; the real wk3 game (now known) came in at 27.
+
+First attempt (`v2_offense_blowout_discount`, mirroring the shipped
+DEFENSE_BLOWOUT_MARGIN/DISCOUNT onto a player's own team's blowout games):
+built, live-tested, measured EXACTLY INERT - Stroud's wk2 margin was only
+14 points, under the 28-point bar that constant was tuned for on the
+defense side. Kept (harmless, flagged off) but insufficient for this class
+of everyday script effect.
+
+Real fix (`v2_offense_script_pool_blend`): extends `SCRIPT_ELIGIBLE_STATS`
+to `passing_attempts`, and replaces the 4-game hard floor with a continuous
+evidence blend (`SCRIPT_POOL_BLEND_K` = 4, same reference point as the old
+floor) toward a POSITION-POOLED version of the identical bucket/margin
+curve - built as a "pool of ratios" (each pool player's own bucket value /
+his own season average, averaged across players), not a "ratio of pools",
+specifically to avoid conflating "does volume move with script" with
+"which players happen to sit in which margin buckets" (a good offense is
+both more often favored and simply produces more at every margin - pooling
+raw values first measured that confound on the initial pass: 1.006x,
+essentially a no-op, before the redesign). Pool membership requires >=
+`SCRIPT_POOL_MIN_PLAYERS` (5) players who already have a real 2-bucket
+personal curve of their own - excludes the very thin player being solved
+for from contaminating his own fallback.
+
+**While validating this, found the backtest harness itself could not see
+ANY version of this mechanism.** `target_margins` is unconditionally `{}`
+for every historical/backtest target
+(`if not (use_v2_guard and historical_target) else {}`) - the SAME guard
+that correctly disables the live-only injury feed for a backtest was also
+applied to market odds, which are NOT live-only: `fetch_game_lines`'s
+nflverse archive carries real closing lines for a played week
+(confirmed live: 272/272 2023 games, every week posted), and
+`game_environment` a few hundred lines below already reads the identical
+archive for a played week with NO such guard. First backtest of
+`v2_offense_script_pool_blend` (2022-2025 wks 2-6) came back at **exactly
+0.000 on every scope** - not because the mechanism doesn't work (a live
+check the same day moved Stroud 41.61 -> 40.03), but because it had never
+actually run inside a backtest, ever, including the already-shipped,
+unflagged `SCRIPT_ELIGIBLE_STATS` stats that predate this whole
+investigation.
+
+Fixed: `_historical_target_margins(schedule_df, week, opponents)` computes
+the same margin `_target_margins_by_team` would (each team's own
+`game_environment` implied points minus its opponent's), read straight off
+the already-loaded schedule instead of the separate live-odds-API call -
+no new network dependency, and LIVE (non-historical) behavior is untouched
+(only the historical branch changes). `source_contract['market_script']`
+relabeled from `'disabled_historical'` to
+`'historical_schedule_closing_line'` to match. This is a permanent harness
+fidelity fix, not itself a candidate flag - it changes what
+`DEFAULT_FEATURES` (baseline) itself does in every backtest from now on,
+since the already-shipped script-curve stats now actually fire historically
+for the first time.
+
+**Re-backtested with the harness fixed** (2022-2025 wks 2-6, harness v2):
+
+| scope | RMSE before -> after | bias before -> after |
+|---|---|---|
+| ALL | 6.506 -> 6.506 (Δ-0.000, CI[-0.015,+0.014]) | -0.698 -> -0.647 |
+| QB | 7.768 -> 7.767 (Δ-0.000) | -0.595 -> -0.580 |
+| RB | 6.874 -> 6.881 (Δ+0.007, CI[-0.020,+0.032]) | -0.464 -> -0.466 |
+| WR | 6.524 -> 6.522 (Δ-0.002) | -0.865 -> -0.777 |
+| TE | 4.976 -> 4.967 (Δ-0.009) | -0.704 -> -0.641 |
+| START-WR | 8.417 -> 8.409 (Δ-0.008) | -1.362 -> -1.203 |
+| START-TE | 6.633 -> 6.610 (Δ-0.023) | -1.196 -> -1.101 |
+| START-ALL | 7.933 -> 7.930 (Δ-0.003) | -0.754 -> -0.674 |
+
+VERDICT: INCONCLUSIVE (no Holm-adjusted scope excludes 0 at this window
+size), harness recommendation "stays unshipped". Every point estimate
+trends the theoretically-expected direction (bias moving toward zero on
+QB/WR/TE/START-WR/START-TE/START-ALL; RMSE improving, not just bias, on
+WR/TE/START-WR/START-TE) except RB, which wobbles the other way inside a
+CI that includes 0. Not a confirmed win by this project's own bar
+(CI must exclude 0), but not a rejection either - directionally consistent
+across five weeks x four years, with the live Stroud case as a concrete,
+hand-verified, hindsight-correct example of the mechanism working as
+designed. Initially kept as an available, unshipped candidate flag pending
+either a larger backtest window (this one is deliberately narrow - wks 2-6
+is the exact window the fix is designed to matter in, before real
+per-player history accumulates) or an explicit call to ship on the live
+evidence and sound design alone.
+
+**Moved to DEFAULT_FEATURES (always-on) the same day**, on that explicit
+call - the user's own words: "it's not quite a win, but it's important for
+this case that we saw." Ships without a CI-excludes-zero confirmation, on
+the strength of (a) the live, hindsight-verified Stroud case, (b) every
+scope but RB trending the right direction, and (c) no scope regressing
+outside a CI that includes 0. One open item, not yet checked: `CALIBRATION_
+INPUT_FEATURES` boards (`scripts/fit_weekly_calibration.py`) are historical-
+target boards built with `as_of_week=week`, so - now that the harness's own
+historical-market blind spot is fixed - this flag (and the already-shipped
+SCRIPT_ELIGIBLE_STATS stats generally) will actually fire during
+calibration FITTING for the first time, mildly shifting the raw `Model
+Proj Pts` distribution the current WEEKLY_CALIBRATION intercept/slope was
+fit against. Unlike the double-count fix (verified a strict no-op for
+calibration fitting, since that one is injury-replay-gated only), this one
+has no such guarantee. Likely small given the correction itself is a few
+percent on early-season volume only, but not verified - re-run
+`fit_weekly_calibration.py` and compare against the current fitted line if
+calibration drift is ever suspected.
+
+**Unrelated bug found in passing**: `stat_trace[stat]['script_status']` is
+a single scalar string, but `_trace_value` indexes it like a per-player
+array (`values[index]`) - Python string indexing then silently returns one
+CHARACTER (`'modeled'[4] == 'e'`) instead of the real status, in the Deep
+Dive panel only. No projected stat is affected. Flagged as a separate task
+rather than mixed into this fix (task_bd2ba3ef).
+
+## 2026-09-29 — item 5 (Steps B/C) SHIPPED: `v2_script_neutral_volume` confirmed on a real train/test split
+
+Built per the user's explicit direction: "build the steps B and C of 5 for
+the more complex build. Set it off with a backtest if needed."
+
+**What it is**, in one line: `scripts/fit_script_curves.py` fits, on
+2016-2021 play-by-play, how much a player's own volume (relative to his own
+season average) moves with REALIZED in-game script (`f_real`, piecewise
+around 0 - leading/trailing get separate slopes) and with the PREGAME
+spread (`f_exp`, a single flatter slope) - 6 (position, stat) pairs: QB
+passing_attempts/passing_yards, RB rushing_attempts/targets, WR/TE targets.
+`v2_script_neutral_volume` divides every one of a player's PAST games by
+`f_real` for that game's own realized script (`data.loaders.
+realized_script_by_team_week`, both current- and prior-season history)
+BEFORE it enters any average, then multiplies the blended rate by `f_exp`
+for the UPCOMING week's own market margin. Receptions/receiving_yards
+inherit their targets curve; passing_completions inherits passing_attempts'
+- only the 6 fitted pairs get their own curve. Skips
+`_vectorized_game_script_multiplier`/`v2_offense_script_pool_blend` for
+exactly the stats it covers, so nothing double-counts.
+
+**Fitted curves** (2016-2021, n=2855-11953 per row):
+
+| pos | stat | beta_lead | beta_trail | beta_exp |
+|---|---|---|---|---|
+| QB | passing_attempts | -0.0182 | -0.0002 | +0.0014 |
+| QB | passing_yards | -0.0102 | +0.0095 | -0.0016 |
+| RB | rushing_attempts | -0.0087 | +0.0379 | -0.0025 |
+| RB | targets | -0.0504 | +0.0204 | +0.0023 |
+| WR | targets | -0.0353 | +0.0113 | +0.0014 |
+| TE | targets | -0.0300 | +0.0136 | +0.0008 |
+
+Some trailing slopes are smaller than intuition predicts (QB
+passing_attempts' beta_trail is nearly 0) - a real, expected property of
+this exact method, not a bug: normalizing each game to the PLAYER'S OWN
+season mean dilutes the within-player script signal whenever that mean
+itself already carries some of his team's habitual script (a team that
+trails a lot all year has a QB whose season average is already somewhat
+inflated by garbage time). Noted as a known characteristic of the
+specified method, not redesigned without evidence a redesign would help -
+the backtest is the real arbiter here, not an intuition check on the
+coefficients alone.
+
+**First implementation bug, found before backtesting**: the pool-of-values
+version of the pool curve (an EARLIER, unrelated flag,
+`v2_offense_script_pool_blend`) had already taught the same lesson once
+this session; this build got the normalization right from the start
+because of that.
+
+**Backtest** (harness v2, 2022-2025 weeks 2-8 - the exact early-season
+window this mechanism targets, held OUT from the 2016-2021 fit window, a
+real train/test split):
+
+| scope | RMSE before -> after | pairwise before -> after | bias before -> after |
+|---|---|---|---|
+| ALL | 6.451 -> 6.448 (Δ-0.004, CI incl. 0) | 0.745 -> 0.745 | -0.686 -> -0.714 |
+| QB | 7.898 -> 7.906 (Δ+0.008, CI incl. 0) | 0.614 -> 0.614 | -0.808 -> **-0.640** |
+| RB | 6.731 -> 6.717 (Δ-0.014, CI[-0.029,+0.002]) | 0.756 -> 0.756 | -0.542 -> -0.458 |
+| START-RB | 8.112 -> 8.084 (Δ-0.027, CI[-0.058,+0.003]) | 0.631 -> 0.632 | -0.630 -> -0.483 |
+| START-WR | 8.227 -> 8.221 (Δ-0.005) | **0.579 -> 0.586 (Δ+0.007, CI[+0.001,+0.013])** | -1.168 -> -1.377 |
+| START-ALL | 7.905 -> 7.893 (Δ-0.012, CI incl. 0) | **0.626 -> 0.629 (Δ+0.003, CI[+0.001,+0.005])** | -0.823 -> -0.842 |
+
+VERDICT: **SHIP-ELIGIBLE**. START-ALL pairwise accuracy CI excludes 0 (the
+§1 primary-metric bar), bias growth +0.019 (well under the 0.3 cap),
+Holm-adjusted per-position p all 1.0 (no scope significantly worse).
+START-WR pairwise also independently clears the bar. QB's own bias moved
+meaningfully toward zero (-0.808 -> -0.640) even though QB's RMSE ticked
+up slightly (not significant). **SHIPPED into DEFAULT_FEATURES** on this
+result.
+
+**Test-suite fallout, fixed before shipping**: `realized_script_by_team_week`
+is a REAL network-backed function (nflverse play-by-play), and shipping it
+into `DEFAULT_FEATURES` meant every existing test that builds a board
+without explicitly mocking it now calls it for real. One test
+(`test_cold_start_manual_qb1_receives_full_prior_per_game_workload`) failed
+outright - its synthetic KC/DEN fixture happened to coincide with a REAL
+2025 KC-DEN game, so the test's expected number silently depended on what
+actually happened in a real NFL game. Fixed by adding
+`wp.realized_script_by_team_week = lambda year: {}` (this function's own
+documented degrade-gracefully default) alongside every existing
+`wp._target_margins_by_team` mock, in all 6 tests that use that pattern -
+not just the one that happened to fail, since the other 5 had the same
+latent fragility and simply hadn't hit a real-game coincidence yet.
+
+**Confirmed on the second window** (2026-09-29, same day): ran the plan's
+remaining weeks 5-17 protocol window as an ablation (the flag is already
+shipped, so `--flags` not `--add`) on 2022-2025. Removing it measurably
+HURT: START-ALL RMSE 8.623 -> 8.663 with it ablated (Δ+0.040,
+CI[+0.025,+0.055], excludes 0), pairwise 0.599 -> 0.594 (Δ-0.005,
+CI[-0.007,-0.004], excludes 0). RMSE got worse in every whole-pool position
+except QB (which stayed flat, Δ-0.001, not significant - consistent with
+this flag helping QB mostly through bias, not RMSE, on the earlier window
+too). RECOMMENDATION: "CONFIRMED HELPING - keep it shipped." This is not
+just an early-season effect - it holds across the full season. No further
+action needed on item 5.
+
+## 2026-09-29 — item 6 built: `v2_xtd` backtested INCONCLUSIVE, kept as an unshipped candidate
+
+Built the full pipeline per the plan's spec: `data.transforms.
+build_redzone_usage` extended with zone splits (rush: inside-5/6-10/11-20;
+targets: inside-10/11-20/outside-20) and an `as_of_week` filter (backward-
+compatible - the existing whole-season display caller is unaffected), a new
+`team_zone_opportunities` for the team-level denominator, `scripts/
+fit_xtd_rates.py` (league TD-rate-per-zone/position + team zone-volume
+elasticity vs. implied total, both fit 2016-2021), and `xtd_blended_rate`
+(`v2_xtd`): `c*own_rate + (1-c)*xTD`, replacing the standard blend for
+`receiving_tds`/`rushing_tds` only.
+
+**A real implementation bug found before backtesting**: this nflfastR
+play-by-play export carries NO `rusher_position`/`receiver_position`
+column at all (confirmed empty on a real pull) - the first version of
+`fit_xtd_rates.py` silently produced an EMPTY league TD-rate table (every
+play fell through to position 'UNK', filtered out entirely) rather than
+erroring. Fixed by sourcing position from the app's own weekly stats table
+(`player_id`, the same gsis-id format `build_redzone_usage`'s own
+docstring already documents matching pbp's rusher/receiver id columns)
+instead of a pbp column that was never there. A completely silent all-zero
+result is exactly the kind of failure worth a second look before trusting
+a fit - re-ran and got sane, monotonically-decaying-by-distance rates
+(rush inside-5 ~0.40-0.48, inside-20 ~0.04-0.07; target inside-10
+~0.30-0.39, outside-20 ~0.01-0.02).
+
+**Backtest** (`scripts/backtest_xtd.py`, built for this - `backtest_
+component.py`'s shared harness only scores fantasy points, and the plan is
+explicit that MAE/points reward a mostly-zero TD count for staying low, so
+this needed its own script scoring Poisson deviance/Brier directly against
+per-player weekly TD counts). 2022-2025 weeks 2-6:
+
+| stat | Poisson deviance/obs | Brier | exact-zero rate |
+|---|---|---|---|
+| receiving_tds (n=6126) | 0.5688 -> 0.5608 (Δ-0.0081, CI[-0.0272,+0.0121]) | 0.1000 -> 0.0999 | 0.309 -> 0.225 |
+| rushing_tds (n=2223) | 0.7807 -> 0.7913 (Δ+0.0107, CI[-0.0397,+0.0646]) | 0.1366 -> 0.1365 | 0.174 -> 0.183 |
+
+Points RMSE (secondary only, per the plan): 6.507 -> 6.501 (Δ-0.007).
+
+VERDICT: **INCONCLUSIVE**. receiving_tds trends the right direction on
+deviance but the CI includes 0; rushing_tds trends slightly the wrong way,
+also not significant (a wide CI on a smaller n). Brier is a wash for both.
+The exact-zero rate fell as designed for receiving_tds (point 7's own
+intent) but rose slightly for rushing_tds. Not shipped - kept as an
+available, off-by-default candidate rather than either promoted or
+deleted, on the same "harmless, real design, not yet confirmed" basis
+`v2_offense_script_pool_blend` sat on before ITS confirmation.
+
+**Not yet tried, worth doing before a final call**: the weeks 7-17 window
+(mid/late season - not yet run); a `K_td` sweep ({4, 8, 12, 20} per the
+plan - 6/8 are untuned seed guesses, not fitted); and checking whether
+rushing_tds' weaker number specifically traces to QB scrambles (a QB's
+own rushing zone opportunities are a much less zone-concentrated, less
+as-of-predictable quantity than a true RB carry, and `XTD_ZONE_STATS`
+currently treats them identically to RB rushing_tds).
+
+## 2026-09-29 (follow-up) — weeks 7-17 window: `v2_xtd` reverses to a clear, significant win
+
+Ran the second protocol window (`scripts/backtest_xtd.py --years 2022-2025
+--weeks 7-17`), the one piece of item 6's protocol left open above. Result
+is a sharp reversal from weeks 2-6 - both stats now clear a real ship bar:
+
+| stat | Poisson deviance/obs | Brier | exact-zero rate |
+|---|---|---|---|
+| receiving_tds (n=13719) | 0.6205 -> 0.5372 (d-0.0833, CI[-0.1238,-0.0491]) | 0.1012 -> 0.0984 (d-0.0028, CI[-0.0043,-0.0015]) | 0.322 -> 0.210 |
+| rushing_tds (n=5050) | 0.9077 -> 0.8644 (d-0.0432, CI[-0.0785,-0.0128]) | 0.1400 -> 0.1372 (d-0.0027, CI[-0.0042,-0.0013]) | 0.269 -> 0.233 |
+
+Points RMSE (secondary only): 6.597 -> 6.567 (d-0.030). Both stats now have
+CIs that exclude 0 on BOTH primary metrics, on roughly double the sample
+size of the weeks 2-6 window, and the exact-zero rate falls for rushing_tds
+here too (unlike weeks 2-6, where it ticked up).
+
+**Why weeks 2-6 read differently.** The player zone-share blend is
+`G/(G+K)` with `K=4` current-season team-games against the prior season
+(plan step 3) - in weeks 2-6 that blend is still leaning heavily on prior-
+season zone shares (at most 5 games of current signal, often fewer once
+`as_of_week` filtering is applied), which is a noisier estimate of a role
+that can shift game-to-game early in a season (injuries, depth-chart
+churn). By weeks 7-17 the current-season zone-share estimate has enough
+games to dominate the blend, and the mechanism's real edge - a
+zone/opportunity-weighted rate instead of a raw own-rate that can be
+exactly zero - shows up cleanly. This is a plausible, mechanism-consistent
+explanation, not just "noise happened to flip sign," but it hasn't been
+directly tested (e.g. by looking at the blend weight `c` player-by-player
+across the two windows).
+
+**Not done from the plan's full protocol**: the weeks-1-with-
+`v2_historical_ourlads` cold-start window, and scoring
+`v2_td_volume_shrink`/`v2_td_career_regress` as comparators under the same
+`td_metrics`. Neither is expected to overturn the weeks 7-17 result (that
+window alone is a strong, high-n, both-metric win), but both remain
+useful confirmatory follow-ups if pursued later.
+
+**VERDICT**: combined across both windows, `v2_xtd` looks like a real
+improvement that needs a few weeks of current-season data to engage -
+harmless-to-neutral early, clearly better from week 7 on. Three options
+were put to the user: ship as-is now, ship gated to `as_of_week >= 7`
+only, or hold until the remaining protocol items are run. **The user chose
+to ship as-is**: `v2_xtd` is in DEFAULT_FEATURES, ungated. Full suite
+647/647 green after the ship (no test-hermeticity regression from its
+`load_pbp`-backed zone context).
+
+## 2026-09-29 — clean-room WR/TE target flatness root-caused: depth receivers projected as if they always play (`v2_wrte_participation`, candidate)
+
+The known issue from the 2026-09-25 entry: in a WR/TE room with nobody OUT
+the room's target TOTAL is about right, but ranks 1-3 come in short and
+ranks 6-8 long. That entry put it on "the uniform capacity factor
+spreading a correct total evenly over a tail that over-claims". The
+tail over-claim part is right. But the uniform factor can't be the thing
+that flattens: one proportional factor per room leaves every player's
+SHARE of the room exactly where it was. The flattening is upstream.
+
+**Diagnosis** (`scripts/diag_target_flatness.py`, DEFAULT_FEATURES +
+injury replay, 2022-2025 wk3-17, log
+`.sweeps/diag_target_flatness_2022-2025_wk3-17.log`). Share slope = OLS
+slope of actual room share on projected room share; 1.0 is correct
+spread, above 1 is too flat.
+
+| stage | share slope (replay-clean, 1125 team-weeks) | strict-clean (414) |
+|---|---|---|
+| blended rate | 1.090 | 1.074 |
+| after matchup/script/pace/env | 1.087 | 1.070 |
+| final (after vacancy + capacity) | 1.087 | 1.070 |
+
+All of it is already there at the blend. The blend weights aren't the
+cause: the model's current-vs-prior weight sits within noise of the
+least-squares weight in every games-played bucket, with no consistent
+direction. Neither is the position-average fallback on its own (it's
+steeper, 1.22, but only 20% of rows). What is:
+
+| projected room rank | share of rows with no box score that week | proj − actual, players who played |
+|---|---|---|
+| 1 | 9% | −0.96 |
+| 4-5 | 22% | −0.59 |
+| 6-8 | **44%** | −0.39 |
+| 9+ | **66%** | −0.49 |
+
+Among players who actually played, every rank is UNDER-projected,
+including the tail. The tail only reads as over-projected because it
+often doesn't play at all - a healthy scratch, or active with no offensive
+snap - and still gets its full ~1 target. `expected_snap_share` is
+deliberately a share-WHEN-ACTIVE, leaving "is he playing" to the injury
+feed (its docstring explains why: a returning starter must not be read at
+a third of his role). A depth receiver's non-appearance never reaches the
+injury feed. So every one of them projects as if he'll suit up, the room
+over-claims its budget, and the uniform capacity trim (about ×0.74 on
+average) takes that phantom volume out of the starters too.
+
+**Side finding, not fixed here:** the historical injury replay misses
+IR/PUP/suspension absences (2024 wk8: Higgins, Collins, Hockenson and
+Jameson Williams all at Availability 1.0). Their rooms count as "clean"
+though a real contributor was gone. The diagnostic's strict-clean view
+drops any room where a player projected ≥1.5 targets didn't play
+(hindsight, diagnosis only). The same gap sits under every replay-on
+backtest.
+
+**The fix: `v2_wrte_participation`** (in-season WR/TE only). Scale the
+player's whole stat line by `1 − α·(1 − g(s))`, where `g(s)` is P(box-score
+row | active snap share s) relative to an established starter (s ≥ 0.70),
+so a starter is exactly 1.0 and the injury-miss rate everyone shares
+cancels out. Applied before vacancy and capacity, so the freed volume goes
+back through the normal uniform refit. Cold start excluded: its share is
+already a whole-season share with missed weeks counted as zero.
+
+- **Curve** fit on 2019-2021 raw weekly stats (`scripts/fit_participation_curve.py`
+  → `data/participation_curve.json`, n=13,302), isotonic-smoothed. Relative
+  participation ~0.54 at s≈0, 0.58 at 0.25, 0.68 at 0.35-0.45, 0.81 at 0.55,
+  0.89 at 0.65, 1.0 at 0.70+. The same curve measured on the model's own
+  boards (2022-2023) has the same shape.
+- **Strength α = 0.5**, tuned offline on 2022-2023 (targets, room refit to
+  the same budget). Full strength overshoots (share slope 0.93, top-3 +0.35)
+  because the model's depth rates already sit below what those players get
+  when they play. Target RMSE was best at α 0.4-0.5 over all rooms and 0.6
+  over clean rooms.
+- **Confirmed on 2024-2025**, outside both the curve's fit years and the
+  α-tuning years.
+
+**Harness v2, 2024-2025 wk3-17, add mode, injury replay in both arms**
+(log `.sweeps/harness_wrte_participation_2024-2025_wk3-17.log`). Verdict
+**SHIP-ELIGIBLE**, bias growth −0.189 (bias shrinks), Holm p all ≥ 0.40:
+
+| scope | RMSE Δ (95% CI) | pairwise Δ (95% CI) | bias |
+|---|---|---|---|
+| START-ALL | **−0.031** [−0.045, −0.017] | +0.002 [+0.001, +0.003] | −0.779 → −0.590 |
+| START-WR | **−0.062** [−0.090, −0.034] | +0.003 [−0.000, +0.007] | −1.132 → −0.837 |
+| START-TE | **−0.042** [−0.071, −0.013] | **+0.010** [+0.003, +0.017] | −1.572 → −1.406 |
+| WR (all) | −0.033 [−0.049, −0.018] | +0.001 [+0.000, +0.002] | |
+| TE (all) | −0.020 [−0.034, −0.005] | +0.003 [+0.001, +0.004] | |
+| START-RB | +0.004 [−0.013, +0.020] | +0.000 | −0.316 → −0.144 |
+| QB | 0.000 | 0.000 | |
+
+**Flatness on real boards, same window, flag on** (log
+`.sweeps/diag_target_flatness_participation_2024-2025_wk3-17.log`, both
+arms scored on the same team-weeks):
+
+| | replay-clean base → flag | strict-clean base → flag |
+|---|---|---|
+| share slope | 1.080 → **1.020** | 1.062 → **1.007** |
+| ranks 1-3, room-sum error | −0.63 → −0.23 | −1.79 → −1.40 |
+| ranks 6-8, room-sum error | +0.79 → +0.35 | +0.40 → +0.05 |
+| target RMSE | 2.246 → 2.231 | 1.968 → 1.952 |
+
+The top-3 shortfall left in strict-clean rooms is mostly a low room total
+(−1.5 to −1.7 targets). That's a selection effect of keeping only rooms
+where every contributor played, not a split problem.
+
+**Side effects.** (1) RB: with `v2_pass_capacity_matchup_flex` the RB vs
+WR/TE budget split follows this week's projected mix within ±0.08 of the
+prior share. A smaller WR/TE claim moves a little budget to the RBs: START-RB
+bias −0.316 → −0.144, RMSE +0.004 (CI includes 0), RB weeks-better 9-21.
+Net neutral, but it's a real interaction. (2) In rooms with an OUT player,
+freed depth volume also flows to the top vacancy recipient. The offline
+check had OUT-room ranks 1-3 moving further over. The START pools still
+improve overall.
+
+**Not done:** a harness run on 2022-2023 (α was tuned there, so it's
+partly in-sample) and a WR/TE calibration re-fit, which would follow a
+ship per the "re-fit whenever DEFAULT_FEATURES changes" rule.
+
+**Status: candidate, NOT in DEFAULT_FEATURES** pending the user's sign-off.

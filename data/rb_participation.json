@@ -1,0 +1,24 @@
+{
+  "boards": ".sweeps/diag_rb_carries_2022-2023/rb_players.parquet",
+  "coefs": {
+    "app": 1.33314,
+    "app3": 1.35777,
+    "last1": 1.26691,
+    "s": 3.91615
+  },
+  "features": [
+    "s",
+    "app",
+    "last1",
+    "app3"
+  ],
+  "fitted_at": "2026-09-30T12:43:53.267783+00:00",
+  "intercept": -2.15015,
+  "min_rank": 3,
+  "n": 3216,
+  "ref": 0.96593,
+  "years": [
+    2022,
+    2023
+  ]
+}

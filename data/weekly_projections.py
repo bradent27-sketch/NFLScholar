@@ -136,6 +136,7 @@ from data.availability_overrides import (
     load_availability_overrides, resolve_target_week_availability,
 )
 from data.pass_capacity_allocator import apply_pass_capacity_conservation, SIDELINED_AVAILABILITY
+from data.rb_carry_budget import team_rb_carry_budgets, apply_rb_carry_budget
 from data.qb_volume_blend import blend_qb1_volume
 from data.fantasypros_availability import load_fantasypros_availability
 from data.historical_availability import (
@@ -877,6 +878,92 @@ def wrte_participation_multiplier(expected_share, strength=None):
     xs, ys = curve
     g = np.interp(np.clip(np.nan_to_num(share, nan=0.0), 0.0, 1.0), xs, ys, left=ys[0], right=1.0)
     return 1.0 - strength * (1.0 - np.minimum(g, 1.0))
+
+
+# 'v2_rb_participation': the RB counterpart of the WR/TE flag above, for the
+# 3rd-and-lower back of a room. An RB's rate is his rate WHEN ACTIVE and the
+# injury feed owns "is he playing", but a healthy scratch or an active body
+# with no carries is not an injury. 2024-2025 clean rooms: RB3 projected 2.08
+# carries vs 2.00 actual WHEN HE PLAYS, yet only 58% of RB3s (RB4+: 39%) have
+# a box-score row, so the room over-claims ~1.2 carries; projection x P(row)
+# matches (1.21 vs 1.17). P(row) is a logistic on snap share, season
+# appearance rate and the last 1 / 3 games, fit on 2022-2023 boards as
+# deployed (scripts/fit_rb_participation.py -> data/rb_participation.json);
+# out-of-sample log loss 0.307 vs 0.421 for snap share alone. The factor is
+# min(1, P / ref), ref = the top group's actual rate, so a healthy starter is
+# ~1.0. RB1/RB2 (by snap share among non-sidelined RBs) are never touched:
+# their conditional calibration is already right.
+RB_PARTICIPATION_PATH = os.path.join('data', 'rb_participation.json')
+RB_PARTICIPATION_STRENGTH = float(np.clip(float(os.environ.get('RB_PARTICIPATION_STRENGTH', 1.0)), 0.0, 1.0))
+
+
+@lru_cache(maxsize=1)
+def _load_rb_participation():
+    """{'intercept', 'coefs': {feature: weight}, 'ref', 'min_rank'} from
+    data/rb_participation.json, or None (the flag degrades to a no-op) if the
+    file is missing or malformed."""
+    try:
+        with open(RB_PARTICIPATION_PATH, encoding='utf-8') as fh:
+            payload = json.load(fh)
+        params = {
+            'intercept': float(payload['intercept']),
+            'coefs': {str(k): float(v) for k, v in payload['coefs'].items()},
+            'ref': float(payload['ref']),
+            'min_rank': int(payload.get('min_rank', 3)),
+        }
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+    if params['ref'] <= 0 or not set(params['coefs']) <= {'s', 'app', 'last1', 'app3'}:
+        return None
+    return params
+
+
+def rb_recent_appearance(player_hist, name_col, team_col, player_names, player_teams, as_of_week):
+    """(team_games, last1, app3) per player, from the game log strictly before
+    `as_of_week`: his team's games so far, whether he appeared in its most
+    recent game, and the share of its last 3 games he appeared in. NaN where
+    the team or the player has no game on record."""
+    n = len(player_names)
+    team_games, last1, app3 = (np.full(n, np.nan) for _ in range(3))
+    if player_hist is None or player_hist.empty or 'week' not in player_hist.columns:
+        return team_games, last1, app3
+    weeks = pd.to_numeric(player_hist['week'], errors='coerce')
+    hist = player_hist.assign(
+        _w=weeks, _team=_historical_game_team(player_hist, team_col).astype(str).str.strip().str.upper())
+    hist = hist[hist['_w'] < as_of_week].dropna(subset=['_w'])
+    if hist.empty:
+        return team_games, last1, app3
+    team_weeks = {t: np.unique(w.to_numpy()) for t, w in hist[hist['_team'] != ''].groupby('_team')['_w']}
+    rb = hist[hist['position'].astype(str).str.upper() == 'RB'] if 'position' in hist.columns else hist
+    appeared = {name: set(w.to_numpy().tolist()) for name, w in rb.groupby(name_col)['_w']}
+    teams = pd.Series(player_teams).astype(str).str.strip().str.upper().to_numpy()
+    for i, (name, team) in enumerate(zip(player_names, teams)):
+        tw, played = team_weeks.get(team), appeared.get(name)
+        if tw is None or not len(tw) or played is None:
+            continue
+        team_games[i] = float(len(tw))
+        last1[i] = float(tw[-1] in played)
+        app3[i] = float(np.mean([w in played for w in tw[-3:]]))
+    return team_games, last1, app3
+
+
+def rb_participation_multiplier(share, app, last1, app3, team_rank, strength=None, params=None):
+    """1 - strength*(1 - min(1, P/ref)) for a RB whose `team_rank` (by expected
+    snap share among non-sidelined RBs, 1 = biggest role) is at or below the
+    fitted gate; 1.0 for everyone else and wherever a feature is missing."""
+    share = np.asarray(share, dtype=float)
+    params = _load_rb_participation() if params is None else params
+    if not params:
+        return np.ones(len(share))
+    strength = RB_PARTICIPATION_STRENGTH if strength is None else float(np.clip(strength, 0.0, 1.0))
+    values = {'s': np.clip(np.nan_to_num(share, nan=0.0), 0.0, 1.0), 'app': np.asarray(app, dtype=float),
+              'last1': np.asarray(last1, dtype=float), 'app3': np.asarray(app3, dtype=float)}
+    z = np.full(len(share), params['intercept'], dtype=float)
+    for feature, weight in params['coefs'].items():
+        z = z + weight * values[feature]
+    g = np.minimum(1.0 / (1.0 + np.exp(-z)) / params['ref'], 1.0)
+    usable = np.isfinite(z) & (np.asarray(team_rank, dtype=float) >= params['min_rank'])
+    return np.where(usable, 1.0 - strength * (1.0 - g), 1.0)
 
 
 def _script_neutralize_history(df, team_col, pos, year, curves_section='curves'):
@@ -1630,6 +1717,39 @@ MODEL_FEATURES = (
                              # carries 27.6 -> 24.1 vs 21.5 actual), not an
                              # accuracy gain. See scripts/fit_script_curves.py
                              # fit_v2 and docs/weekly_projections_methodology.md.
+    'v2_rb_participation',  # SHIPPED 2026-09-30. In-season RB: scale the
+                             # 3rd-and-lower back of a room by how often a
+                             # player with his appearance history actually
+                             # plays (logistic, data/rb_participation.json).
+                             # RB3 is projected right WHEN HE PLAYS (2.08 vs
+                             # 2.00 carries) but only 58% of RB3s (RB4+: 39%)
+                             # have a box-score row, so rooms over-claim ~1.2
+                             # carries. RB1/RB2 untouched. Harness v2 2022-
+                             # 2025 wk3-17: SHIP-ELIGIBLE, START-ALL RMSE
+                             # -0.003 CI[-0.006,-0.001], bias growth -0.045;
+                             # clean-room carries 1.122x -> 1.076x. See
+                             # rb_participation_multiplier.
+    'v2_rb_carry_budget',   # SHIPPED 2026-09-30 at the user's direction (with
+                             # the calibration re-fit as the follow-up). In-
+                             # season team RB carry budget (RB rush rate,
+                             # spread, opponent RB carries allowed; data/
+                             # rb_carry_budget.json): a room whose claim is
+                             # more than +-1 carry off its budget is pulled
+                             # to the nearest band edge, every back by the
+                             # same factor. Runs on the assembled board
+                             # before vacancy, injury-neutral claim. Harness
+                             # v2 2022-2025 wk3-17: INCONCLUSIVE, START-RB
+                             # RMSE -0.017 CI[-0.066,+0.030], pairwise
+                             # +0.004, bias growth +0.158 (cap 0.3) - START-
+                             # RB bias -0.18 -> -0.71 is the yards/carry
+                             # shortfall the old carry inflation had been
+                             # offsetting. Clean-room carries 1.076x ->
+                             # 1.037x. See data/rb_carry_budget.py.
+    'v2_rb_carry_budget_lead',  # CANDIDATE modifier of v2_rb_carry_budget:
+                             # split the room's change in proportion to
+                             # carries^2 so the lead back absorbs most of it
+                             # (the leftover room excess is ~all RB1). No
+                             # effect without v2_rb_carry_budget.
     'v2_offense_prior_blend',  # credibility-blend a thin CURRENT-SEASON
                              # offense's own baseline (the "expected" side of
                              # every defense-game ratio in
@@ -2176,6 +2296,23 @@ DEFAULT_FEATURES = frozenset({
     # and v2_wrte_participation. See docs/weekly_projections_methodology.md,
     # 2026-09-30.
     'v2_script_neutral_level_fix',
+    # SHIPPED 2026-09-30 at the user's direction. In-season: the 3rd-and-lower
+    # healthy RB of a room is discounted by P(he plays) from a board-fit
+    # logistic on snap share and recent appearance. Harness v2 2022-2025
+    # wk3-17: SHIP-ELIGIBLE (START-ALL RMSE -0.003 CI[-0.006,-0.001], bias
+    # growth -0.045). Acts on every in-season RB room, so the RB calibration
+    # line is due a re-fit. See docs/weekly_projections_methodology.md,
+    # 2026-09-30.
+    'v2_rb_participation',
+    # SHIPPED 2026-09-30 at the user's direction. In-season team RB carry
+    # budget, +-1 carry buffer, uniform trim/raise. Harness v2 2022-2025
+    # wk3-17: INCONCLUSIVE on accuracy with RB bias growth (START-RB -0.18 ->
+    # -0.71, all-start bias growth +0.158 under the 0.3 cap): carries are now
+    # right, yards/carry (4.30 vs 4.57) is not, and the calibration re-fit and
+    # a yards/carry audit are the follow-ups. Not a calibration no-op.
+    # v2_rb_carry_budget_lead (lead-weighted split) stays an unshipped
+    # modifier.
+    'v2_rb_carry_budget',
 })
 
 
@@ -10057,6 +10194,25 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if ('v2_wrte_participation' in feats and pos in ('WR', 'TE') and use_role_volume
                 and not cold_start):
             participation_mult = wrte_participation_multiplier(player_share)
+        elif ('v2_rb_participation' in feats and pos == 'RB' and use_role_volume
+                and not cold_start):
+            # Rank by snap share among the team's NON-sidelined RBs, so an OUT
+            # starter promotes the next back instead of leaving him at RB3.
+            _rb_live = cur[name_col].map(injury_mult).fillna(1.0).to_numpy(dtype=float) > 0.01
+            _rb_share = np.asarray(player_share, dtype=float)
+            _rb_rank = (pd.Series(np.where(_rb_live, _rb_share, np.nan))
+                        .groupby(cur['Team'].to_numpy(dtype=object))
+                        .rank(ascending=False, method='first').to_numpy(dtype=float))
+            _rb_team_games, _rb_last1, _rb_app3 = rb_recent_appearance(
+                player_hist, name_col, team_col, cur[name_col].to_numpy(dtype=object),
+                cur['Team'].to_numpy(dtype=object), as_of_week)
+            with np.errstate(divide='ignore', invalid='ignore'):
+                _rb_app = np.clip(cur['Games'].to_numpy(dtype=float) / _rb_team_games, 0.0, 1.0)
+            # A player with no games yet is handled by the returning-player
+            # restoration, not by this discount.
+            _rb_app = np.where(cur['Games'].to_numpy(dtype=float) >= 1, _rb_app, np.nan)
+            participation_mult = rb_participation_multiplier(
+                _rb_share, _rb_app, _rb_last1, _rb_app3, _rb_rank)
 
         proj_cols, stat_trace = {}, {}
         # v2_td_volume_shrink: the projected target rate from the 'targets'
@@ -11553,6 +11709,27 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 }
         return snap
 
+    # v2_rb_carry_budget: fit each RB room's carries to a team budget BEFORE
+    # vacancy, reading a sidelined back at his stashed full volume (the same
+    # injury-neutral claim pass capacity uses) and scaling that stash too, so
+    # vacancy hands out budget-consistent carries. Independent of pass
+    # capacity (carries vs targets), so its order relative to that pass does
+    # not matter. See data/rb_carry_budget.py.
+    carry_budget_ledger, carry_budget_adjusted, carry_budget_snapshot = [], False, {}
+    if 'v2_rb_carry_budget' in feats and not cold_start and 'rushing_attempts' in result.columns:
+        _budgets = team_rb_carry_budgets(hist, prior_stats, schedule_df, week,
+                                         team_col=team_col, prior_team_col=prior_team_col)
+        _pre_carries = pd.to_numeric(result['rushing_attempts'], errors='coerce').fillna(0.0)
+        result, _cb_ledger = apply_rb_carry_budget(
+            result, _budgets, lead_weighted=('v2_rb_carry_budget_lead' in feats))
+        carry_budget_ledger = _cb_ledger.to_dict('records')
+        _moved = (pd.to_numeric(result['rushing_attempts'], errors='coerce').fillna(0.0) - _pre_carries).abs() > 1e-6
+        carry_budget_adjusted = bool(_moved.any())
+        for _, _cb_row in result[result['Pos'].eq('RB')].iterrows():
+            carry_budget_snapshot[(_cb_row['Player'], _cb_row['Pos'], _cb_row['Team'])] = {
+                stat: float(_cb_row[stat]) for stat in ('rushing_attempts', 'rushing_yards', 'rushing_tds')
+                if stat in result.columns and pd.notna(_cb_row[stat])}
+
     if _vacancy_before_capacity:
         vacancy_adjusted, vacancy_ledger = _run_vacancy()
         mid_snapshot = _snapshot()
@@ -11582,7 +11759,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # keep pre-conservation points sitting next to a post-conservation stat
     # line, the same displayed-vs-real mismatch class of bug HANDOFF gotcha
     # #40 (the cross-position NaN fix) already documents one instance of.
-    if vacancy_adjusted or pass_capacity_adjusted:
+    if vacancy_adjusted or pass_capacity_adjusted or carry_budget_adjusted:
             # .fillna(0.0) IS THE LOAD-BEARING PART OF THIS LINE. Re-scoring
             # happens on the ASSEMBLED frame, whose columns are the union of
             # four positions' stat lists - so a receiver's row carries NaN
@@ -11730,6 +11907,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # row the user selected, not a pre-vacancy approximation.
         final_stat_line = {}
         row_capacity_snapshot = post_capacity_snapshot.get(key, {})
+        row_carry_budget_snapshot = carry_budget_snapshot.get(key, {})
         for stat, values in detail.get('stats', {}).items():
             final_value = pd.to_numeric(pd.Series([row.get(stat, 0.0)]), errors='coerce').fillna(0.0).iloc[0]
             final_value = float(final_value)
@@ -11751,6 +11929,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 else:
                     values['pass_capacity_delta'] = round(mid_value - pre_vacancy, 3)
                     values['vacancy_delta'] = round(final_value - mid_value, 3)
+            elif stat in row_carry_budget_snapshot:
+                # v2_rb_carry_budget ran before vacancy on the rushing stats.
+                mid_value = row_carry_budget_snapshot[stat]
+                values['pass_capacity_delta'] = 0.0
+                values['carry_budget_delta'] = round(mid_value - pre_vacancy, 3)
+                values['vacancy_delta'] = round(final_value - mid_value, 3)
             else:
                 values['pass_capacity_delta'] = 0.0
                 values['vacancy_delta'] = round(final_value - pre_vacancy, 3)
@@ -11775,6 +11959,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         ]
         detail['pass_capacity_ledger'] = [
             entry for entry in pass_capacity_ledger if entry.get('team') == str(row['Team'])
+        ]
+        detail['rb_carry_budget_ledger'] = [
+            entry for entry in carry_budget_ledger if entry.get('team') == str(row['Team']).upper()
         ]
         _own_group = 'WR/TE' if row['Pos'] in ('WR', 'TE') else row['Pos']
         detail['pass_capacity_room'] = sorted(
@@ -11820,5 +12007,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             'source_contract': source_contract, 'explanations': explanations,
             'vacancy_ledger': vacancy_ledger,
             'rb_allocation_ledger': rb_allocation_ledger,
-            'pass_capacity_ledger': pass_capacity_ledger}
+            'pass_capacity_ledger': pass_capacity_ledger,
+            'rb_carry_budget_ledger': carry_budget_ledger}
     return result, meta

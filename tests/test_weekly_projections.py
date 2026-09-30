@@ -3234,3 +3234,179 @@ def test_script_neutralize_history_uses_the_requested_curve_section(monkeypatch)
     assert fixed['rushing_attempts'].iloc[0] < 20.0           # fixed: a lead is scaled down
     assert fixed['rushing_attempts'].iloc[1] > 20.0           # a deficit is scaled up
     assert df['rushing_attempts'].tolist() == [20.0, 20.0]    # input never mutated
+
+
+# --- v2_rb_participation ---------------------------------------------------------
+
+_RB_PARAMS = {'intercept': -2.0, 'coefs': {'s': 4.0, 'app': 1.0, 'last1': 1.0, 'app3': 1.0}, 'ref': 0.95, 'min_rank': 3}
+
+
+def test_rb_participation_multiplier_only_touches_depth_backs():
+    share = np.array([0.8, 0.4, 0.1, 0.1])
+    ones = np.ones(4)
+    out = wp.rb_participation_multiplier(share, ones, ones, ones, np.array([1, 2, 3, 4]), strength=1.0, params=_RB_PARAMS)
+    assert out[0] == 1.0 and out[1] == 1.0            # RB1 / RB2: never touched
+    assert 0.0 < out[2] < 1.0 and 0.0 < out[3] < 1.0  # RB3 / RB4: discounted
+    # A back who has not appeared lately is discounted harder than one who has.
+    lively = wp.rb_participation_multiplier(np.array([0.1]), np.array([1.0]), np.array([1.0]), np.array([1.0]),
+                                            np.array([3]), strength=1.0, params=_RB_PARAMS)
+    absent = wp.rb_participation_multiplier(np.array([0.1]), np.array([0.3]), np.array([0.0]), np.array([0.0]),
+                                            np.array([3]), strength=1.0, params=_RB_PARAMS)
+    assert absent[0] < lively[0] <= 1.0
+    # Never above 1, and strength 0 is a no-op.
+    assert (out <= 1.0).all()
+    assert np.allclose(wp.rb_participation_multiplier(share, ones, ones, ones, np.array([1, 2, 3, 4]),
+                                                      strength=0.0, params=_RB_PARAMS), 1.0)
+
+
+def test_rb_participation_multiplier_is_neutral_when_features_or_params_are_missing():
+    share = np.array([0.1, 0.1])
+    out = wp.rb_participation_multiplier(share, np.array([np.nan, 0.5]), np.array([1.0, 1.0]), np.array([1.0, 1.0]),
+                                         np.array([3, np.nan]), strength=1.0, params=_RB_PARAMS)
+    assert out[0] == 1.0      # missing appearance data
+    assert out[1] == 1.0      # sidelined (no rank)
+    original = wp._load_rb_participation
+    try:
+        wp._load_rb_participation = lambda: None
+        assert (wp.rb_participation_multiplier(share, share, share, share, np.array([3, 4])) == 1.0).all()
+    finally:
+        wp._load_rb_participation = original
+
+
+def test_shipped_rb_participation_params_are_sane():
+    params = wp._load_rb_participation()
+    assert params is not None and params['min_rank'] == 3 and 0.8 < params['ref'] <= 1.0
+    # More appearance history can only raise the play probability.
+    assert all(params['coefs'][f] > 0 for f in ('s', 'app', 'last1', 'app3'))
+
+
+def test_rb_recent_appearance_reads_the_game_log_before_the_target_week():
+    rows = []
+    for week in range(1, 6):
+        rows.append({'name': 'Lead', 'team': 'KC', 'game_team': 'KC', 'week': week, 'position': 'RB'})
+        rows.append({'name': 'QB', 'team': 'KC', 'game_team': 'KC', 'week': week, 'position': 'QB'})
+    rows += [{'name': 'Depth', 'team': 'KC', 'game_team': 'KC', 'week': w, 'position': 'RB'} for w in (1, 2, 5)]
+    hist = pd.DataFrame(rows)
+    team_games, last1, app3 = wp.rb_recent_appearance(hist, 'name', 'team', ['Lead', 'Depth', 'Nobody'], ['KC'] * 3, 6)
+    assert team_games[0] == 5 and team_games[1] == 5
+    assert last1[0] == 1.0 and last1[1] == 1.0         # Depth appeared in week 5
+    assert app3[0] == 1.0 and app3[1] == pytest.approx(1 / 3)   # weeks 3,4,5 -> only 5
+    assert np.isnan(team_games[2])                      # never appeared: no features
+    # Weeks at or after the target week never leak in.
+    tg, l1, a3 = wp.rb_recent_appearance(hist, 'name', 'team', ['Depth'], ['KC'], 5)
+    assert tg[0] == 4 and l1[0] == 0.0 and a3[0] == pytest.approx(1 / 3)
+
+
+def test_rb_participation_discounts_only_the_depth_back_in_season():
+    rows = []
+    for week in range(1, 6):
+        rows += [
+            {'name': 'Lead RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+             'weekly_snap_pct': 70.0, 'rushing_attempts': 16.0, 'rushing_yards': 70.0, 'rushing_tds': 0.4,
+             'targets': 3.0, 'receptions': 2.0, 'receiving_yards': 15.0, 'receiving_tds': 0.1},
+            {'name': 'Second RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+             'weekly_snap_pct': 30.0, 'rushing_attempts': 6.0, 'rushing_yards': 26.0, 'rushing_tds': 0.1,
+             'targets': 2.0, 'receptions': 1.0, 'receiving_yards': 9.0, 'receiving_tds': 0.0},
+        ]
+    for week in (1, 2):
+        rows.append({'name': 'Depth RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+                     'weekly_snap_pct': 12.0, 'rushing_attempts': 3.0, 'rushing_yards': 11.0, 'rushing_tds': 0.0,
+                     'targets': 0.5, 'receptions': 0.5, 'receiving_yards': 3.0, 'receiving_tds': 0.0})
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 6, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+    boards = {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_rb_participation'}),
+                           ('flag', wp.DEFAULT_FEATURES | {'v2_rb_participation'})):
+            wp.build_weekly_projections.clear()
+            boards[arm] = wp.build_weekly_projections(
+                2026, 6, 'Full PPR', as_of_week=6, apply_injury=False, features=feats)
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+
+    def trace(arm, player):
+        return boards[arm][1]['explanations'][(player, 'RB', 'KC')]['stats']['rushing_attempts']
+
+    for player in ('Lead RB', 'Second RB'):
+        assert trace('flag', player)['participation_multiplier'] == 1.0
+        assert trace('flag', player)['pre_vacancy_projection'] == pytest.approx(
+            trace('base', player)['pre_vacancy_projection'])
+    depth = trace('flag', 'Depth RB')['participation_multiplier']
+    assert 0.0 < depth < 0.9          # appeared in 2 of 5 games, not in the last 3
+    assert trace('base', 'Depth RB')['participation_multiplier'] == 1.0
+    ratio = trace('flag', 'Depth RB')['pre_vacancy_projection'] / trace('base', 'Depth RB')['pre_vacancy_projection']
+    assert ratio == pytest.approx(depth, abs=3e-3)
+
+
+# --- v2_rb_carry_budget ------------------------------------------------------------
+
+def test_rb_carry_budget_fits_the_room_on_the_real_board_and_rescores():
+    rows = []
+    for week in range(1, 6):
+        rows += [
+            {'name': 'Lead RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+             'weekly_snap_pct': 70.0, 'rushing_attempts': 16.0, 'rushing_yards': 70.0, 'rushing_tds': 0.4,
+             'targets': 3.0, 'receptions': 2.0, 'receiving_yards': 15.0, 'receiving_tds': 0.1},
+            {'name': 'Second RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+             'weekly_snap_pct': 30.0, 'rushing_attempts': 6.0, 'rushing_yards': 26.0, 'rushing_tds': 0.1,
+             'targets': 2.0, 'receptions': 1.0, 'receiving_yards': 9.0, 'receiving_tds': 0.0},
+        ]
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 6, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context,
+                wp.team_rb_carry_budgets)
+    boards = {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        wp.team_rb_carry_budgets = lambda *a, **k: pd.DataFrame({'budget': {'KC': 12.0}}).rename_axis('team')
+        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_rb_carry_budget'}),
+                           ('flag', wp.DEFAULT_FEATURES | {'v2_rb_carry_budget'})):
+            wp.build_weekly_projections.clear()
+            boards[arm] = wp.build_weekly_projections(
+                2026, 6, 'Full PPR', as_of_week=6, apply_injury=False, features=feats)
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context,
+         wp.team_rb_carry_budgets) = original
+        wp.build_weekly_projections.clear()
+
+    base, flag = (boards[a][0].set_index('Player') for a in ('base', 'flag'))
+    base_room = base.loc[['Lead RB', 'Second RB'], 'rushing_attempts'].sum()
+    flag_room = flag.loc[['Lead RB', 'Second RB'], 'rushing_attempts'].sum()
+    assert base_room > 14.0                               # well over the 12 +- 1 band
+    assert flag_room == pytest.approx(13.0, abs=0.02)     # pulled to the band edge
+    ratio = flag.loc['Lead RB', 'rushing_attempts'] / base.loc['Lead RB', 'rushing_attempts']
+    assert flag.loc['Lead RB', 'rushing_yards'] / base.loc['Lead RB', 'rushing_yards'] == pytest.approx(ratio, abs=2e-3)
+    assert flag.loc['Lead RB', 'Raw Model Proj Pts'] < base.loc['Lead RB', 'Raw Model Proj Pts']   # re-scored
+    ledger = boards['flag'][1]['rb_carry_budget_ledger']
+    assert ledger and ledger[0]['team'] == 'KC' and ledger[0]['budget'] == 12.0
+    trace = boards['flag'][1]['explanations'][('Lead RB', 'RB', 'KC')]['stats']['rushing_attempts']
+    assert trace['carry_budget_delta'] < 0
+    assert trace['final_projection'] == pytest.approx(flag.loc['Lead RB', 'rushing_attempts'], abs=1e-3)
+    assert boards['base'][1]['rb_carry_budget_ledger'] == []

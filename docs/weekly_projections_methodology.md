@@ -3446,3 +3446,154 @@ obvious-error removal (accuracy-neutral, bias growth +0.166 under the 0.3 cap).
 The calibration re-fit now owed covers this flag and `v2_wrte_participation`
 together. RB3/RB4 phantom depth and the missing in-season carry budget are the
 next items, in that order.
+
+## 2026-09-30 - `v2_rb_participation` (CANDIDATE): RB3/RB4 phantom depth
+
+**Problem.** After the level fix, clean RB rooms (2024-2025, 7 weeks, 283
+team-weeks) still projected 24.10 carries against 21.48 actual (1.122x). By
+rank: RB1 +1.29, RB2 +0.11, RB3 +0.90, RB4+ +0.31 carries per room. RB3 is
+projected about right WHEN HE PLAYS (2.08 vs 2.00), but only 58% of RB3s and
+39% of RB4+ have a box-score row. Healthy scratches and active-but-unused backs
+never reach the injury feed, so the model claims their carries every week.
+
+**Mechanism.** A logistic P(box-score row) from four features known entering the
+week: expected snap share, season appearance rate (games / team games), appeared
+in the team's last game, and fraction of the last 3 team games appeared. It is
+fit on 2022-2023 boards as deployed (injured/reserve players already removed by
+the replay, so the injury feed is not double counted); `scripts/fit_rb_participation.py`,
+parameters in `data/rb_participation.json` (n=3216). Out-of-sample log loss on
+2024-2025: 0.307 (snap share alone 0.421, constant 0.542). The factor is
+g = min(1, P / ref) with ref = 0.966 (actual rate of the P >= 0.9 group), applied
+only to the 3rd-and-lower healthy RB of a room by snap share, in-season only.
+Discounting every RB was rejected: it reaches 1.05x but pushes RB2 to -0.35 and
+worsens played-row error, because season appearance rate carries past injuries.
+
+**Real boards (same 7 weeks, level-fix arm vs flag on):**
+
+| | level fix | + rb participation |
+|---|---|---|
+| room carries (actual 21.48) | 24.10 (1.122x) | 23.12 (1.076x) |
+| gap RB1 / RB2 | +1.29 / +0.11 | +1.29 / +0.01 |
+| gap RB3 / RB4+ | +0.90 / +0.31 | +0.22 / +0.12 |
+| points RMSE, all rows (DNP = 0) | 5.615 | 5.573 |
+| points RMSE, played rows | 6.343 | 6.332 |
+| carry RMSE, all rows | 4.210 | 4.148 |
+
+The team rush-attempt budget now closes (projected 26.66 vs 26.82 actual; RB
++1.15, QB -0.40, WR/TE -0.85). What remains is RB1 (+1.29, ratio 1.09), which
+is not a participation problem (RB1s play 96-100%); it is selection plus the
+missing in-season carry budget.
+
+**Harness v2** (2022-2025 wk3-17, `--add v2_rb_participation`, replay flags on
+both arms): **SHIP-ELIGIBLE**, bias growth -0.045 (bias moves toward 0).
+
+| scope | RMSE | bias |
+|---|---|---|
+| START-ALL | 7.695 -> 7.691 (-0.003, CI [-0.006, -0.001]) | -0.331 -> -0.286 |
+| START-RB | 7.729 -> 7.725 (-0.004, CI [-0.009, +0.001]) | -0.185 -> -0.156 |
+| START-WR | 7.945 -> 7.941 (-0.004, n.s.) | -0.350 -> -0.279 |
+| START-TE | 6.704 -> 6.702 (-0.003, n.s.) | -0.779 -> -0.718 |
+| START-QB | unchanged | unchanged |
+| ALL | 6.232 -> 6.230 (-0.002, n.s.) | unchanged |
+
+Pairwise accuracy unchanged everywhere. The harness scores only players with
+actuals, so it cannot see the main benefit (carries no longer claimed by backs
+who do not play); the small WR/TE gain is a knock-on through pass capacity's
+RB/(WR/TE) share band (a smaller RB target claim leaves more of the team
+budget to the receivers).
+
+## 2026-09-30 - `v2_rb_carry_budget` (CANDIDATE): in-season team RB carry budget
+
+**Why.** With the level fix and `v2_rb_participation`, clean RB rooms still ran
+1.076x actual carries, almost all at RB1 (+1.29). More important, the board's
+room SUM was a poor predictor of what a team actually gives its backs: on 408
+team-weeks (2024-2025, 7 weeks) it averaged 22.98 vs 21.87 actual with RMSE
+7.62 and correlation 0.135. Nothing in the model ever checked it.
+
+**What predicts team RB carries** (`scripts/diag_rb_carry_budget.py`, fit
+2019-2022, scored out of sample on 2023-2025 team-games, weeks 3-17):
+
+| budget form | OOS RMSE | corr |
+|---|---|---|
+| raw season-to-date RB carries/game | 7.044 | - |
+| shrunk RB carries/game (K=4 prior games) | 6.753 | 0.228 |
+| + spread | 6.691 | 0.263 |
+| + spread + opponent pace | 6.707 | 0.255 |
+| + spread + opp pace + opp RB carries allowed | 6.644 | 0.287 |
+| + total | 6.652 | 0.283 |
+| plays/game + RB rate + spread (clip 7) + opp RB allowed | **6.622** | **0.298** |
+
+Team plays/game has no RB-carry signal once the RB rate (RB carries per
+offensive play) is in (coefficient ~0). Opponent pace adds nothing once
+opponent RB carries allowed is in. The game total adds nothing. Raw carries
+by spread: underdogs of 3.5+ ~1 carry below their own rate, favorites of 3.5+
+~1.1 above, inside a field goal ~0 (no close-game effect either way); most of
+that is team quality, which rate and opponent-allowed already carry, leaving
+~0.07 carries per point of spread, flat past a touchdown. Symmetric beat a
+down-only cap (6.15 vs 6.65 on the boards) because the board under-claims some
+rooms too. Deadband 0.5 vs 1.0 carries: 6.11 vs 6.15 (1.0 kept per the user).
+
+**Mechanism** (`data/rb_carry_budget.py`, fit by `scripts/fit_rb_carry_budget.py`
+on 2018-2021 so the 2022-2025 backtest is out of sample; OOS level within
++-0.6 carries each year and below a flat league mean every year):
+
+    budget = lg_rb + 0.092 + 42.86*(rate - lg_rate) + 0.071*clip(spread, +-7)
+                   + 0.483*(opp RB carries allowed - lg_rb)
+
+Runs on the assembled board before vacancy; a sidelined back counts at his
+stashed pre-injury volume (injury-neutral claim), and that stash is scaled by
+the same factor so vacancy hands out budget-consistent carries. A room within
++-1 carry of its budget is not touched; outside, it is pulled to the nearest
+band edge (no jump at the edge). Yards and TDs move with carries. In-season only.
+
+**Real boards (2024-2025, 7 weeks), both arms with `v2_rb_participation`:**
+
+| | participation only | + budget (uniform) | + budget (lead-weighted) |
+|---|---|---|---|
+| clean room carries (actual 21.48) | 23.12 (1.076x) | **22.29 (1.037x)** | 22.29 (1.037x) |
+| all rooms, mean vs 21.87 actual | 22.98 | 21.75 | 21.73 |
+| team RB carries RMSE / corr | 7.615 / 0.135 | **6.250 / 0.256** | 6.277 / 0.249 |
+| gap RB1 / RB2 | +1.29 / +0.01 | +0.87 / -0.29 | +0.74 / -0.25 |
+| gap RB3 / RB4+ | +0.22 / +0.12 | +0.13 / +0.10 | +0.19 / +0.12 |
+| player carry RMSE (all rows) | 4.148 | **4.035** | 4.070 |
+| points RMSE all rows / played | 5.573 / 6.332 | **5.559 / 6.313** | 5.571 / 6.323 |
+| calibrated points bias, played | -0.34 | -0.58 | -0.59 |
+
+Uniform beats lead-weighted on every player measure, so only uniform went to
+the harness (`v2_rb_carry_budget_lead` stays as an unshipped modifier).
+
+**Known cost: RB points bias goes more negative** (-0.34 -> -0.58 on played
+backs). Carries are now about right (-0.22), so the remaining RB shortfall is
+EFFICIENCY: projected yards/carry 4.30 vs 4.57 actual (rush yards -2.97 per
+played back) and rush TDs -0.05. The old carry inflation had been hiding it.
+That is the calibration re-fit (owed) and a yards-per-carry audit, not a
+reason to keep the inflated volume.
+
+**Harness v2** (2022-2025 wk3-17, `--add v2_rb_carry_budget`, replay flags and
+`v2_rb_participation` on both arms): **INCONCLUSIVE**, bias growth +0.158 (cap 0.3).
+
+| scope | RMSE | pairwise | MAE | bias |
+|---|---|---|---|---|
+| START-RB | 7.723 -> 7.706 (-0.017, CI [-0.066, +0.030]) | 0.646 -> 0.650 (+0.004, CI [-0.001, +0.009]) | 6.035 -> 5.970 | -0.175 -> -0.712 |
+| START-ALL | 7.692 -> 7.689 (-0.003, n.s.) | +0.001 | 5.973 -> 5.954 | -0.289 -> -0.447 |
+| ALL | 6.230 -> 6.229 (-0.001, n.s.) | 0.000 | 4.417 -> 4.406 | -0.334 -> -0.417 |
+| START-QB / WR / TE | unchanged | unchanged | unchanged | unchanged |
+
+Reading it. Every RB accuracy measure points the right way (RMSE, MAE -0.065,
+pairwise +0.004 just short of significance) while start-RB bias grows by 0.54
+points. RMSE^2 = error variance + bias^2, so with the level taken out of both
+arms the start-RB comparison is ~7.721 -> ~7.673 (-0.048; arithmetic estimate,
+not a harness result): the budget improves the SHAPE of RB projections and the
+remaining penalty is level. That level is the yards-per-carry / rush-TD
+shortfall described above, which the carry inflation used to offset (error
+cancellation being removed, not a new error). The RB calibration line was fit on the inflated boards and is the
+place to restore the level.
+
+**Status 2026-09-30 (later): both `v2_rb_participation` and `v2_rb_carry_budget`
+SHIPPED into DEFAULT_FEATURES** at the user's direction ("commit both then
+calibrate"). `v2_rb_carry_budget_lead` stays an unshipped modifier. The
+calibration re-fit now covers every flag shipped since the last one:
+`v2_wrte_participation`, `v2_script_neutral_level_fix`, `v2_rb_participation`
+and `v2_rb_carry_budget`. A yards-per-carry audit (projected 4.30 vs 4.57
+actual) is still owed, and the calibration should be read against it: a RB line
+that absorbs a fixable efficiency error would hide it.

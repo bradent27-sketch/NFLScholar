@@ -1579,7 +1579,7 @@ MODEL_FEATURES = (
                              # not just early. See
                              # docs/weekly_projections_methodology.md,
                              # 2026-09-29.
-    'v2_wrte_participation',  # CANDIDATE 2026-09-29. In-season WR/TE: scale a
+    'v2_wrte_participation',  # SHIPPED 2026-09-29. In-season WR/TE: scale a
                              # depth receiver's whole stat line by how often a
                              # player with his active snap share actually
                              # plays (fitted curve, half strength - see
@@ -2113,6 +2113,20 @@ DEFAULT_FEATURES = frozenset({
     # v2_pass_capacity_injury_neutral_claim). See
     # docs/weekly_projections_methodology.md, 2026-09-29.
     'v2_vacancy_absence_decay',
+    # SHIPPED 2026-09-29 at the user's direction. In-season WR/TE stat lines
+    # are scaled by how often a player with his active snap share actually
+    # plays (curve fit on 2019-2021, data/participation_curve.json, half
+    # strength tuned on 2022-2023) - the root cause of the clean-room target
+    # flatness (depth receivers projected as if they always play, which
+    # over-claims the room and gets trimmed out of the starters). Harness v2,
+    # 2024-2025 wk3-17 (outside both fit windows), injury replay on:
+    # START-ALL RMSE -0.031 CI[-0.045,-0.017], pairwise +0.002
+    # CI[+0.001,+0.003], bias growth -0.189; START-WR -0.062, START-TE -0.042
+    # (pairwise +0.010). NOT a calibration no-op (it acts on every in-season
+    # WR/TE), so the WR/TE calibration lines are due a re-fit. Not yet tested
+    # jointly with v2_vacancy_absence_decay. See
+    # docs/weekly_projections_methodology.md, 2026-09-29.
+    'v2_wrte_participation',
 })
 
 

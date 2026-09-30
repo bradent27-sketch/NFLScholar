@@ -3123,7 +3123,7 @@ def test_wrte_participation_discounts_only_the_depth_receiver_in_season():
         wp.realized_script_by_team_week = lambda year: {}
         wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
             'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
-        for arm, feats in (('base', wp.DEFAULT_FEATURES),
+        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_wrte_participation'}),
                            ('flag', wp.DEFAULT_FEATURES | {'v2_wrte_participation'})):
             wp.build_weekly_projections.clear()
             boards[arm] = wp.build_weekly_projections(

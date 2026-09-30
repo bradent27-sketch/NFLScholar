@@ -3346,3 +3346,12 @@ feed (nobody sidelined), so it is a strict no-op there. Same reasoning as
 `v2_pass_capacity_injury_neutral_claim`. `v2_historical_reserve_replay`
 stays backtest-only by design (it only acts under the replay flag). The
 sibling candidate `v2_wrte_participation` remains on hold.
+
+**Update 2026-09-29: `v2_wrte_participation` SHIPPED into DEFAULT_FEATURES**
+at the user's direction, on the 2024-2025 harness result and the
+clean-room flatness check above (share slope 1.080 -> 1.020). Two things
+still owed: (1) the WR/TE calibration re-fit, because unlike the
+absence-decay flag this one acts on every in-season WR/TE, so the
+calibration fit boards change; (2) a joint check with
+`v2_vacancy_absence_decay`, which the two harness runs did not do (each was
+measured with the other off).

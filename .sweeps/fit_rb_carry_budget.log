@@ -1,0 +1,7 @@
+train [2018, 2019, 2020, 2021]: n=1764  mean RB carries 21.69  in-sample RMSE 6.489
+coef [c0, rate, spread(clip 7), opp_rb]: [ 0.0921 42.8604  0.071   0.4826]
+  OOS 2022: n=446  actual 21.89  budget 21.61  RMSE 6.590  (league mean 6.749)  corr 0.235
+  OOS 2023: n=448  actual 22.19  budget 21.70  RMSE 7.184  (league mean 7.570)  corr 0.319
+  OOS 2024: n=448  actual 21.66  budget 22.24  RMSE 6.172  (league mean 6.522)  corr 0.328
+  OOS 2025: n=448  actual 21.95  budget 21.54  RMSE 6.633  (league mean 6.689)  corr 0.179
+wrote E:\NFLScholar\data\rb_carry_budget.json

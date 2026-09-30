@@ -1,0 +1,63 @@
+=== K=2 ===
+naive: raw season-to-date mean  OOS RMSE 7.044
+trailing rb carries/game                 OOS RMSE 6.753  corr 0.228  bias -0.10  coef [9.102 0.588]
++ spread                                 OOS RMSE 6.692  corr 0.263  bias -0.10  coef [9.787 0.557 0.077]
++ spread + opp pace                      OOS RMSE 6.704  corr 0.257  bias -0.16  coef [9.773 0.557 0.069 0.106]
++ spread + opp pace + opp rb allowed     OOS RMSE 6.639  corr 0.290  bias -0.15  coef [ 8.956  0.597  0.013 -0.069  0.446]
++ all + total                            OOS RMSE 6.644  corr 0.287  bias +0.07  coef [ 9.084  0.602  0.014 -0.038  0.415 -0.126]
++ spread + opp rb allowed                OOS RMSE 6.647  corr 0.286  bias -0.18  coef [9.02  0.594 0.013 0.407]
++ spread(clip 7) + opp rb allowed        OOS RMSE 6.645  corr 0.287  bias -0.18  coef [9.031 0.593 0.021 0.406]
+plays + rb rate + spread(clip 7) + opp rb OOS RMSE 6.624  corr 0.297  bias -0.17  coef [ 2.1901e+01 -1.1000e-02  4.0746e+01  4.8000e-02  3.7500e-01]
+=== boards vs budget (408 team-weeks, all rooms) | actual RB carries 21.87 ===
+  board room sum               mean 22.98  RMSE 7.615  corr 0.135
+  budget                       mean 21.63  RMSE 6.146  corr 0.266
+  blend 0.25 budget          mean 22.64  RMSE 6.992
+  blend 0.50 budget          mean 22.30  RMSE 6.518
+  blend 0.75 budget          mean 21.96  RMSE 6.227
+  cap deadband 0.0 symmetric  mean 21.63  RMSE 6.146  moved 100%  | down-only mean 20.63 RMSE 6.646
+  cap deadband 0.5 symmetric  mean 21.78  RMSE 6.135  moved 87%  | down-only mean 20.94 RMSE 6.637
+  cap deadband 1.0 symmetric  mean 21.95  RMSE 6.165  moved 76%  | down-only mean 21.23 RMSE 6.650
+  cap deadband 2.0 symmetric  mean 22.24  RMSE 6.297  moved 58%  | down-only mean 21.70 RMSE 6.729
+  room over budget: mean gap +1.35, share of rooms over by >1: 53%
+=== K=4 ===
+naive: raw season-to-date mean  OOS RMSE 7.044
+trailing rb carries/game                 OOS RMSE 6.753  corr 0.228  bias -0.08  coef [7.991 0.639]
++ spread                                 OOS RMSE 6.691  corr 0.263  bias -0.09  coef [8.738 0.605 0.076]
++ spread + opp pace                      OOS RMSE 6.707  corr 0.255  bias -0.15  coef [8.704 0.606 0.065 0.156]
++ spread + opp pace + opp rb allowed     OOS RMSE 6.644  corr 0.287  bias -0.14  coef [ 7.844  0.647  0.009 -0.052  0.495]
++ all + total                            OOS RMSE 6.652  corr 0.283  bias +0.09  coef [ 7.957  0.654  0.01  -0.015  0.459 -0.13 ]
++ spread + opp rb allowed                OOS RMSE 6.650  corr 0.285  bias -0.16  coef [7.888 0.645 0.009 0.465]
++ spread(clip 7) + opp rb allowed        OOS RMSE 6.648  corr 0.285  bias -0.16  coef [7.906 0.644 0.016 0.463]
+plays + rb rate + spread(clip 7) + opp rb OOS RMSE 6.622  corr 0.298  bias -0.17  coef [2.1884e+01 1.0000e-03 4.3613e+01 4.5000e-02 4.2800e-01]
+=== boards vs budget (408 team-weeks, all rooms) | actual RB carries 21.87 ===
+  board room sum               mean 22.98  RMSE 7.615  corr 0.135
+  budget                       mean 21.67  RMSE 6.120  corr 0.280
+  blend 0.25 budget          mean 22.65  RMSE 6.990
+  blend 0.50 budget          mean 22.32  RMSE 6.511
+  blend 0.75 budget          mean 21.99  RMSE 6.212
+  cap deadband 0.0 symmetric  mean 21.67  RMSE 6.120  moved 100%  | down-only mean 20.65 RMSE 6.635
+  cap deadband 0.5 symmetric  mean 21.82  RMSE 6.113  moved 89%  | down-only mean 20.96 RMSE 6.628
+  cap deadband 1.0 symmetric  mean 21.98  RMSE 6.145  moved 75%  | down-only mean 21.25 RMSE 6.643
+  cap deadband 2.0 symmetric  mean 22.26  RMSE 6.294  moved 56%  | down-only mean 21.72 RMSE 6.734
+  room over budget: mean gap +1.31, share of rooms over by >1: 53%
+=== K=8 ===
+naive: raw season-to-date mean  OOS RMSE 7.044
+trailing rb carries/game                 OOS RMSE 6.774  corr 0.215  bias -0.06  coef [7.629 0.655]
++ spread                                 OOS RMSE 6.707  corr 0.254  bias -0.07  coef [8.434 0.618 0.079]
++ spread + opp pace                      OOS RMSE 6.726  corr 0.244  bias -0.14  coef [8.369 0.621 0.065 0.214]
++ spread + opp pace + opp rb allowed     OOS RMSE 6.675  corr 0.272  bias -0.12  coef [ 7.66e+00  6.55e-01  1.60e-02 -5.00e-03  4.85e-01]
++ all + total                            OOS RMSE 6.686  corr 0.268  bias +0.12  coef [ 7.755  0.662  0.017  0.037  0.45  -0.135]
++ spread + opp rb allowed                OOS RMSE 6.675  corr 0.271  bias -0.12  coef [7.662 0.655 0.016 0.483]
++ spread(clip 7) + opp rb allowed        OOS RMSE 6.674  corr 0.272  bias -0.12  coef [7.67  0.654 0.024 0.482]
+plays + rb rate + spread(clip 7) + opp rb OOS RMSE 6.646  corr 0.287  bias -0.17  coef [2.1859e+01 2.2000e-02 4.3783e+01 5.1000e-02 4.5100e-01]
+=== boards vs budget (408 team-weeks, all rooms) | actual RB carries 21.87 ===
+  board room sum               mean 22.98  RMSE 7.615  corr 0.135
+  budget                       mean 21.74  RMSE 6.100  corr 0.289
+  blend 0.25 budget          mean 22.67  RMSE 6.985
+  blend 0.50 budget          mean 22.36  RMSE 6.501
+  blend 0.75 budget          mean 22.05  RMSE 6.197
+  cap deadband 0.0 symmetric  mean 21.74  RMSE 6.100  moved 100%  | down-only mean 20.68 RMSE 6.627
+  cap deadband 0.5 symmetric  mean 21.88  RMSE 6.104  moved 90%  | down-only mean 20.99 RMSE 6.626
+  cap deadband 1.0 symmetric  mean 22.03  RMSE 6.143  moved 78%  | down-only mean 21.27 RMSE 6.650
+  cap deadband 2.0 symmetric  mean 22.29  RMSE 6.291  moved 57%  | down-only mean 21.73 RMSE 6.743
+  room over budget: mean gap +1.24, share of rooms over by >1: 53%

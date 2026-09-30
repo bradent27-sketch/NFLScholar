@@ -1,0 +1,103 @@
+2026-09-30 10:25:58.117 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.118 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.119 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.119 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.122 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.122 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.123 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.123 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.124 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.124 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.124 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.124 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.125 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.125 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.126 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.126 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.126 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.126 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.127 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.127 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.127 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.128 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.128 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.128 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.129 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.129 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.129 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.130 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.130 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.131 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.131 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.132 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:58.134 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:59.123 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:25:59.123 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:25:59.123 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:26:00.897 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:26:01.376 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:26:01.376 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:01.734 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 10:26:01.734 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:01.935 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:02.912 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:03.254 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:04.272 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:05.366 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:05.713 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:06.478 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:07.557 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:07.907 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:08.613 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:09.682 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:10.025 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:10.884 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:11.936 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:12.288 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:13.000 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:14.020 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:14.367 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:15.069 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:16.130 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+2026-09-30 10:26:16.473 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+team-games: train 1776  test 1344  | mean RB carries train 21.81 test 21.94
+naive: raw season-to-date mean  OOS RMSE 7.044
+trailing rb carries/game                 OOS RMSE 6.753  corr 0.228  bias -0.08  coef [7.991 0.639]
++ spread                                 OOS RMSE 6.691  corr 0.263  bias -0.09  coef [8.738 0.605 0.076]
++ spread + opp pace                      OOS RMSE 6.707  corr 0.255  bias -0.15  coef [8.704 0.606 0.065 0.156]
++ spread + opp pace + opp rb allowed     OOS RMSE 6.644  corr 0.287  bias -0.14  coef [ 7.844  0.647  0.009 -0.052  0.495]
++ all + total                            OOS RMSE 6.652  corr 0.283  bias +0.09  coef [ 7.957  0.654  0.01  -0.015  0.459 -0.13 ]
+
+--- RB carries vs spread (+ = favored), residual of trailing rate ---
+                 n  actual  resid
+sb                               
+(-30.0, -9.5]  243   19.85  -1.03
+(-9.5, -6.5]   297   20.52  -0.80
+(-6.5, -3.5]   435   20.50  -1.18
+(-3.5, -1.0]   582   22.26   0.43
+(-1.0, 1.0]    104   20.69  -1.22
+(1.0, 3.5]     629   22.14   0.08
+(3.5, 6.5]     365   23.13   1.02
+(6.5, 9.5]     257   23.44   1.16
+(9.5, 30.0]    208   23.48   1.29
+
+--- by opponent defensive plays faced / game ---
+                                n  resid
+ob                                      
+(55.367000000000004, 60.906]  624   0.03
+(60.906, 62.36]               624  -0.13
+(62.36, 63.78]                624  -0.47
+(63.78, 65.139]               627   0.04
+(65.139, 72.333]              621   0.72
+
+=== boards vs budget (408 team-weeks, all rooms) | actual RB carries 21.87 ===
+  board room sum               mean 22.98  RMSE 7.615  corr 0.135
+  budget                       mean 21.70  RMSE 6.103  corr 0.288
+  blend 0.25 budget          mean 22.66  RMSE 6.986
+  blend 0.50 budget          mean 22.34  RMSE 6.503
+  blend 0.75 budget          mean 22.02  RMSE 6.200
+  cap deadband 0.0 symmetric  mean 21.70  RMSE 6.103  moved 100%  | down-only mean 20.67 RMSE 6.624
+  cap deadband 0.5 symmetric  mean 21.84  RMSE 6.102  moved 90%  | down-only mean 20.98 RMSE 6.620
+  cap deadband 1.0 symmetric  mean 22.00  RMSE 6.136  moved 76%  | down-only mean 21.26 RMSE 6.636
+  cap deadband 2.0 symmetric  mean 22.27  RMSE 6.287  moved 56%  | down-only mean 21.73 RMSE 6.730
+  room over budget: mean gap +1.28, share of rooms over by >1: 53%

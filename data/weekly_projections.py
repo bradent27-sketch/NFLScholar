@@ -1657,7 +1657,7 @@ MODEL_FEATURES = (
                              # treats IR/PUP/SUS/NFI as out, so this makes
                              # the backtest match live. See
                              # data.historical_availability.RESERVE_ROSTER_STATUSES.
-    'v2_vacancy_absence_decay',  # CANDIDATE 2026-09-29. Vacancy hands out an
+    'v2_vacancy_absence_decay',  # SHIPPED 2026-09-29. Vacancy hands out an
                              # OUT player's FULL projected volume, but once he
                              # has missed games his teammates' own recency-
                              # weighted rates already contain part of it.
@@ -2100,6 +2100,19 @@ DEFAULT_FEATURES = frozenset({
     # windows' full numbers and docs/weekly_projections_methodology.md,
     # 2026-09-29 (follow-up entry) for the writeup.
     'v2_xtd',
+    # SHIPPED 2026-09-29 at the user's direction ("looks like an overall
+    # win"). Scales a sidelined player's stashed _full_ volume by the share
+    # his teammates' recency-weighted rates have NOT already absorbed, so
+    # vacancy and the injury-neutral capacity claim stop double-counting a
+    # long absence. Harness v2, 2022-2025 wk3-17, complete injury replay in
+    # both arms: START-ALL RMSE -0.031 CI[-0.043,-0.017], pairwise +0.003
+    # CI[+0.002,+0.005], bias growth +0.111 (cap 0.3), START-WR -0.052,
+    # START-RB -0.028; no fitted parameters. No calibration refit: it only
+    # touches sidelined rows, and CALIBRATION_INPUT_FEATURES boards have no
+    # injury feed, so it is a strict no-op there (same reasoning as
+    # v2_pass_capacity_injury_neutral_claim). See
+    # docs/weekly_projections_methodology.md, 2026-09-29.
+    'v2_vacancy_absence_decay',
 })
 
 

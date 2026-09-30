@@ -3339,4 +3339,10 @@ toward zero.
   play), or a missing in-season carry-conservation pass. Worth its own
   diagnostic.
 
-**Status: candidate, NOT in DEFAULT_FEATURES** pending the user's sign-off.
+**Status: `v2_vacancy_absence_decay` SHIPPED into DEFAULT_FEATURES** at the
+user's direction ("looks like an overall win"). No calibration refit: it
+only touches sidelined rows, and the calibration fit boards have no injury
+feed (nobody sidelined), so it is a strict no-op there. Same reasoning as
+`v2_pass_capacity_injury_neutral_claim`. `v2_historical_reserve_replay`
+stays backtest-only by design (it only acts under the replay flag). The
+sibling candidate `v2_wrte_participation` remains on hold.

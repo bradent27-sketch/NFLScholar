@@ -1666,6 +1666,13 @@ MODEL_FEATURES = (
                              # by the share his teammates haven't absorbed -
                              # see vacancy_absence_retention. Live-relevant:
                              # the live injury feed marks IR players OUT too.
+                             # Harness v2, 2022-2025 wk3-17, both arms on the
+                             # complete replay: SHIP-ELIGIBLE. START-ALL RMSE
+                             # -0.031 CI[-0.043,-0.017], pairwise +0.003
+                             # CI[+0.002,+0.005], bias growth +0.111 (cap
+                             # 0.3); START-WR -0.052, START-RB -0.028. No
+                             # fitted parameters. See
+                             # docs/weekly_projections_methodology.md, 2026-09-29.
     'v2_vacancy_before_capacity',  # run vacancy redistribution BEFORE pass-
                              # capacity conservation instead of after (see
                              # the ordering comment above _run_pass_capacity/

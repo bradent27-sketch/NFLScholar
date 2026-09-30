@@ -3249,3 +3249,94 @@ partly in-sample) and a WR/TE calibration re-fit, which would follow a
 ship per the "re-fit whenever DEFAULT_FEATURES changes" rule.
 
 **Status: candidate, NOT in DEFAULT_FEATURES** pending the user's sign-off.
+
+## 2026-09-29 — injury replay was missing reserve-list players; completing it exposes a long-absence double count in vacancy (`v2_vacancy_absence_decay`, candidate)
+
+**The gap.** `v2_historical_injury_replay` reads the weekly injury REPORT.
+A player on IR, PUP, NFI or a suspension is off the 53 and never appears
+on it, so the replay left him at full availability. Example, 2024 wk8:
+Nico Collins (IR), T.J. Hockenson (PUP), Jameson Williams (suspended) all
+projected in full. Measured on the board parquet, 2022-2025 wk3-17: the
+replay zeroed 1,208 player-weeks; another 1,992 board rows carried a
+reserve-list status (nflverse weekly rosters: RES/EXE/RET) and every one
+of them recorded no stat line that week. 690 of those were projected >= 5
+points, 252 >= 10 (Justin Jefferson at 21.6 while on IR).
+
+**Fix (backtest-only): `v2_historical_reserve_replay`.** Adds every
+RES/EXE/RET player from that week's weekly roster as OUT, matched by
+gsis_id, riding on the existing replay flag. Reserve status wins over a
+same-week report entry. Gameday inactives (INA) are deliberately NOT
+replayed: they are announced ~90 minutes before kickoff, later than the
+live feed, so using them would leak. The live feed already treats
+IR/PUP/SUS/NFI as out (`_ASSUME_OUT_STATUSES`), so this makes the
+backtest match live, not the reverse.
+
+Effect on how much of the injury layer earlier experiments could see, WR/TE
+rooms with an OUT source, 2024-2025 wk3-17: 344 (report only) -> 606.
+RB rooms: 144 -> 359. The vacancy sub-component ablation, the
+`RECEIVER_VACANCY_RANK_DECAY` sweeps and the double-count fix all ran on
+the smaller set, weighted toward fresh absences.
+
+**What the complete replay shows** (`scripts/diag_vacancy_absence_length.py`,
+2024-2025 wk3-17, log `.sweeps/diag_vacancy_absence_length_2024-2025_wk3-17.log`).
+Room volume projected minus actual per team-week, split by how many team
+games the OUT player had already missed:
+
+| games source already missed | WR/TE targets | RB carries | RB targets |
+|---|---|---|---|
+| 0 (fresh) | -0.13 | +1.97 | -1.04 |
+| 1 | +0.12 | +5.77 | -0.34 |
+| 2-3 | **+1.60** | **+7.00** | -0.09 |
+| 4+ | **+1.60** | **+10.04** | +0.62 |
+
+Vacancy hands out the OUT player's FULL projected volume, taken from his
+last appearances. For a fresh absence that is the right amount. Once he
+has missed games, his teammates' recency-weighted in-season rates already
+contain them, with his volume spread over whoever played, so the handout
+counts it a second time. The injury-neutral capacity claim
+(`v2_pass_capacity_injury_neutral_claim`) reads the same stashed volume and
+double-counts the same way.
+
+**Fix: `v2_vacancy_absence_decay`, no fitted parameters.** A sidelined
+player's stashed `_full_` volume is scaled by
+`1 - A * G/(G+K)`. `A` is the recency weight (`RECENCY_DECAY`^weeks-ago)
+of his team's games since his last appearance over all its games so far,
+`G` is team games played, and `K` is `STAT_K['targets']` (3). That is
+the share of teammates' blended rate that already reflects the absence.
+Healthy rows never read `_full_`, so only sidelined players are touched;
+cold start is excluded (no in-season sample). Because vacancy and the
+capacity claim both read that one stash, a single change fixes both.
+Nico Collins, 2024 wk8 (out since wk5): 10.23 -> 6.16 targets handed out.
+
+**Harness v2, 2022-2025 wk3-17, add mode, both arms on injury replay +
+reserve replay** (log
+`.sweeps/harness_vacancy_absence_decay_2022-2025_wk3-17.log`). Verdict
+**SHIP-ELIGIBLE**, bias growth +0.111 (cap 0.3), Holm p all 1.0. Nothing
+is fitted, so all four seasons are out-of-sample for it.
+
+| scope | RMSE Δ (95% CI) | pairwise Δ (95% CI) | bias |
+|---|---|---|---|
+| START-ALL | **-0.031** [-0.043, -0.017] | **+0.003** [+0.002, +0.005] | -0.213 -> -0.324 |
+| START-WR | **-0.052** [-0.071, -0.031] | **+0.008** [+0.005, +0.011] | -0.415 -> -0.541 |
+| START-RB | **-0.028** [-0.054, -0.003] | +0.002 [-0.001, +0.004] | +0.115 -> -0.079 |
+| START-TE | -0.019 [-0.038, +0.002] | +0.002 [-0.003, +0.007] | -0.756 -> -0.789 |
+| ALL | **-0.019** [-0.026, -0.011] | +0.001 [+0.001, +0.001] | -0.199 -> -0.268 |
+| QB | 0.000 | 0.000 | unchanged |
+
+Weeks better (START-ALL RMSE): 43-17. The bias moves the same way the
+2026-09-25 double-count fix did: removing surplus volume from OUT rooms
+uncovers a separate general under-projection in WR/TE, while RB moves
+toward zero.
+
+**Not done.**
+- Calibration re-fit, which follows any ship per the house rule.
+- Interaction with `v2_wrte_participation` (both candidates; neither is
+  shipped, and both act on the same rooms).
+- RB rooms carry a large projected-minus-actual gap in carries even when
+  nobody is out: clean rooms were +5.7 per team-week (27.6 projected vs
+  21.9 actual, arm B). Unexamined. It may be the same mechanism as the
+  WR/TE participation problem (depth backs projected as if they always
+  play), or a missing in-season carry-conservation pass. Worth its own
+  diagnostic.
+
+**Status: candidate, NOT in DEFAULT_FEATURES** pending the user's sign-off.

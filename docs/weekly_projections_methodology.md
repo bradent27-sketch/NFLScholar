@@ -3355,3 +3355,94 @@ absence-decay flag this one acts on every in-season WR/TE, so the
 calibration fit boards change; (2) a joint check with
 `v2_vacancy_absence_decay`, which the two harness runs did not do (each was
 measured with the other off).
+
+## 2026-09-30 — RB carries over-projected ~28%: traced to `v2_script_neutral_volume`'s fitted curves (level and shape); `v2_script_neutral_level_fix` (candidate)
+
+**Symptom.** In RB rooms with nobody OUT, 2024-2025 wk3-17, the board projected
+27.6 carries per team-week against 21.4 actual (ratio 1.29). Shares inside the
+room were close to right (RB1 63% projected vs 66% actual), so it was a level
+problem. `scripts/diag_rb_carry_overprojection.py`, log
+`.sweeps/diag_rb_carry_overprojection_2024-2025_wk3-17.log`.
+
+**Where it starts.** Not the multipliers (matchup/script/pace/env net to x0.98)
+and not injury allocation (these are clean rooms). The blended per-player rates
+alone summed to 28.0 carries per room, more than the team's whole 26.7 rush
+attempts. A player's own in-season rate was 9.73/game against 8.21 for a plain
+trailing mean of the same games (+18%, uniform across tiers). In-season there is
+no RB carry budget: `apply_pass_capacity_conservation` trims WR/TE/RB targets to
+a team budget, but nothing does that for carries (the RB allocator's team
+capacities only run at cold start).
+
+**Ablation.** Same 7 weeks (4,6,...,16) x 2024-2025, 283 clean rooms:
+
+| arm | room carries projected | actual | gap | ratio | yards/carry (proj / actual 4.57) |
+|---|---|---|---|---|---|
+| as shipped | 27.56 | 21.48 | +6.07 | 1.28 | 3.76 |
+| `v2_script_neutral_volume` OFF | 23.41 | 21.48 | +1.92 | 1.09 | 4.42 |
+| + `v2_script_neutral_level_fix` | 24.10 | 21.48 | +2.62 | 1.12 | 4.30 |
+
+**Cause: the flag's curves, two defects.**
+1. LEVEL. `scripts/fit_script_curves.py` fit log(volume / player season mean)
+   through the origin. That ratio's log averages -0.15 to -0.35 (skewed weekly
+   volume), and forcing the line through zero pushed the offset into the two
+   slopes. Every fitted factor came out <= 1 in every game, so dividing a past
+   game by it inflated volume. Volume-weighted mean of 1/f, 2022-2025, out of
+   sample: RB carries x1.18, RB targets x1.24, WR targets x1.14, TE x1.14, QB
+   attempts x1.04, QB yards x1.06. The forward multiplier is a near-flat slope
+   with no level term, so nothing put it back. WR/TE/RB targets were re-trimmed
+   by pass capacity; RB carries have no such trim, which is why RBs showed it.
+2. SHAPE. The offset in the slopes also flipped the RB carries LEAD slope
+   slightly negative (-0.0087) when carries in fact rise ~30% for a team leading
+   big (mean ratio 1.32 at script +10..+30). The shipped factor there was 0.90.
+
+**Second-order effect: yards per carry.** Efficiency ratios (yards/carry,
+TDs/target, ...) divide RAW dependent stats by the DE-SCRIPTED volume, so an
+inflated denominator deflated the ratio by the same ~1.18. Projected yards/carry
+was 3.75 against 4.43-4.57 actual. The two errors cancelled almost exactly, which
+is why RB rushing yards looked right (33.3 vs 33.0) and why RB points bias was
+~0 despite carries +19%. Flag OFF and the fix both restore yards/carry (4.42,
+4.30). An earlier note that carries and yards/carry would need separate fixes
+was wrong: it is one bug.
+
+**Fix (`v2_script_neutral_level_fix`, rides on `v2_script_neutral_volume`).**
+`fit_v2` in the fit script: same piecewise form fit WITH an intercept, applied
+without it, divided by `level` = volume-weighted mean of exp(slopes . script)
+over the 2016-2021 fit window (nothing from 2022-2025 is used). Stored as
+`curves_v2` in `data/script_curves.json`; the shipped `curves` section is
+byte-identical. Out-of-sample level after the fix: RB carries 1.019, RB targets
+1.012, WR 1.008, TE 0.999, QB attempts 1.002, QB yards 0.998. Script effect left
+after de-scripting (max-min of mean de-scripted ratio across 5 script bins):
+RB carries 0.44 -> 0.18, RB targets 0.81 -> 0.20, WR 0.50 -> 0.15, TE 0.31 -> 0.08.
+
+**Harness v2, 2022-2025 wk3-17, add mode, both arms on the complete injury
+replay** (log `.sweeps/harness_script_neutral_level_fix_2022-2025_wk3-17.log`).
+Verdict **INCONCLUSIVE** (no significant effect), bias growth +0.166 (cap 0.3):
+
+| scope | RMSE delta (95% CI) | pairwise delta | bias |
+|---|---|---|---|
+| START-ALL | -0.002 [-0.009, +0.005] | 0.000 [-0.001, +0.001] | -0.153 -> -0.319 |
+| ALL | -0.001 [-0.005, +0.003] | 0.000 | -0.247 -> -0.334 |
+| START-RB | -0.008 [-0.024, +0.009] | -0.001 | +0.084 -> -0.176 |
+| START-QB | -0.002 [-0.018, +0.014] | -0.001 | +0.179 -> -0.146 |
+| START-WR / START-TE | -0.002 / -0.002 | 0.000 / +0.002 | -0.270 -> -0.332 / -0.687 -> -0.766 |
+
+Reading it. Points are essentially unchanged, because the inflation was already
+cancelled inside RB rushing yards (above), so this is a volume-correctness fix,
+not an accuracy gain. It also means the original 9/29 ship's accuracy win is NOT
+a level artifact: the win survives with the level removed. The bias moving
+negative is the general under-projection the inflation had been partly masking
+(QB start bias +0.18 -> -0.15), which the owed calibration re-fit is the right
+place to address.
+
+**What is left in RB rooms** (level-fix arm, per clean room): RB1 +1.29 carries
+(ratio 1.09; part is selection - the RB1 slot is chosen by projected carries),
+RB2 +0.11, RB3 +0.90 (ratio 1.78, 35% had no box score), RB4+ +0.31 (ratio 1.86).
+RB3 and below are the same phantom-depth mechanism as the WR/TE participation
+fix; an RB participation discount is the next step and would bring the room to
+roughly 1.06x (estimate, untested). There is still no in-season RB carry budget.
+
+**Status: SHIPPED into DEFAULT_FEATURES 2026-09-30** at the user's direction, as an
+obvious-error removal (accuracy-neutral, bias growth +0.166 under the 0.3 cap).
+The calibration re-fit now owed covers this flag and `v2_wrte_participation`
+together. RB3/RB4 phantom depth and the missing in-season carry budget are the
+next items, in that order.

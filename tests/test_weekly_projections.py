@@ -2990,7 +2990,7 @@ def test_script_neutralize_history_only_rewrites_covered_columns():
     ])
     original = wp._load_script_curves
     try:
-        wp._load_script_curves = lambda: {('RB', 'rushing_attempts'): {
+        wp._load_script_curves = lambda *_a, **_k: {('RB', 'rushing_attempts'): {
             'beta_lead': 0.0, 'beta_trail': 0.1, 'beta_exp': 0.0}}
         wp.realized_script_by_team_week = lambda year: {('KC', 1.0): -10.0, ('KC', 2.0): 0.0}
         out = wp._script_neutralize_history(df, 'team', 'RB', 2099)
@@ -3183,3 +3183,54 @@ def test_vacancy_absence_retention_is_neutral_without_current_season_games():
     hist = _absence_hist()
     # A team with no games on record (e.g. a bad team label) leaves it alone.
     assert wp.vacancy_absence_retention(hist, 'name', 'team', ['Hurt Wk5'], ['XXX'], 8)[0] == 1.0
+
+
+# --- v2_script_neutral_level_fix ------------------------------------------------
+
+def test_script_real_factor_divides_by_the_curve_level():
+    base = {'beta_lead': 0.01, 'beta_trail': 0.01, 'beta_exp': 0.0}
+    plain = wp._script_real_factor(base, np.array([10.0, -10.0, 0.0]))
+    leveled = wp._script_real_factor({**base, 'level': 0.8}, np.array([10.0, -10.0, 0.0]))
+    assert np.allclose(leveled, plain / 0.8)
+    # A curve with no `level` key (the original section) is untouched.
+    assert wp._script_real_factor(base, np.array([0.0]))[0] == 1.0
+
+
+def _sample_script(n=4000):
+    return np.random.default_rng(0).normal(-1.4, 7.7, n).clip(-21, 21)
+
+
+def test_v2_script_curves_do_not_inflate_volume_but_the_original_ones_do():
+    # Volume-weighted mean of 1/f over a realistic script distribution, weights
+    # = the curve's own implied volume, i.e. 1/mean(f). 1.00 = the average
+    # game's volume survives de-scripting.
+    script = _sample_script()
+    original, fixed = wp._load_script_curves('curves'), wp._load_script_curves('curves_v2')
+    assert set(original) == set(fixed) and len(fixed) == 6
+    for key in fixed:
+        o = wp._script_real_factor(original[key], script)
+        f = wp._script_real_factor(fixed[key], script)
+        assert 1.0 / o.mean() > 1.03, key     # documents the original defect: x1.04 to x1.25
+        assert 0.95 < 1.0 / f.mean() < 1.05, key
+
+
+def test_v2_rb_carries_curve_has_the_right_direction_when_leading():
+    # Carries rise for a team that is leading, so a game played with a big lead
+    # must be divided DOWN (factor > 1); the original fit had this backwards.
+    original = wp._load_script_curves('curves')[('RB', 'rushing_attempts')]
+    fixed = wp._load_script_curves('curves_v2')[('RB', 'rushing_attempts')]
+    assert wp._script_real_factor(original, np.array([10.0]))[0] < 1.0
+    assert wp._script_real_factor(fixed, np.array([10.0]))[0] > 1.0
+    assert wp._script_real_factor(fixed, np.array([-10.0]))[0] < 1.0
+
+
+def test_script_neutralize_history_uses_the_requested_curve_section(monkeypatch):
+    df = pd.DataFrame({'name': ['A', 'A'], 'team': ['KC', 'KC'], 'game_team': ['KC', 'KC'],
+                       'week': [1, 2], 'rushing_attempts': [20.0, 20.0]})
+    monkeypatch.setattr(wp, 'realized_script_by_team_week', lambda year: {('KC', 1.0): 10.0, ('KC', 2.0): -10.0})
+    legacy = wp._script_neutralize_history(df, 'team', 'RB', 2099)
+    fixed = wp._script_neutralize_history(df, 'team', 'RB', 2099, 'curves_v2')
+    assert legacy['rushing_attempts'].iloc[0] > 20.0          # original: a lead INFLATES the game
+    assert fixed['rushing_attempts'].iloc[0] < 20.0           # fixed: a lead is scaled down
+    assert fixed['rushing_attempts'].iloc[1] > 20.0           # a deficit is scaled up
+    assert df['rushing_attempts'].tolist() == [20.0, 20.0]    # input never mutated

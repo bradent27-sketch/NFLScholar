@@ -45,7 +45,59 @@
       }
     }
   },
+  "curves_v2": {
+    "QB": {
+      "passing_attempts": {
+        "beta_exp": 0.00145,
+        "beta_lead": -0.01607,
+        "beta_trail": -0.00198,
+        "level": 0.97157,
+        "n": 2855
+      },
+      "passing_yards": {
+        "beta_exp": -0.00159,
+        "beta_lead": -0.00769,
+        "beta_trail": 0.00735,
+        "level": 0.95209,
+        "n": 2855
+      }
+    },
+    "RB": {
+      "rushing_attempts": {
+        "beta_exp": -0.00246,
+        "beta_lead": 0.01758,
+        "beta_trail": 0.01619,
+        "level": 1.01066,
+        "n": 7356
+      },
+      "targets": {
+        "beta_exp": 0.00228,
+        "beta_lead": -0.01289,
+        "beta_trail": -0.0106,
+        "level": 1.02312,
+        "n": 7397
+      }
+    },
+    "TE": {
+      "targets": {
+        "beta_exp": 0.00081,
+        "beta_lead": -0.01279,
+        "beta_trail": -0.00059,
+        "level": 0.97251,
+        "n": 5658
+      }
+    },
+    "WR": {
+      "targets": {
+        "beta_exp": 0.00138,
+        "beta_lead": -0.00996,
+        "beta_trail": -0.00958,
+        "level": 1.02345,
+        "n": 11953
+      }
+    }
+  },
   "fit_window": "2016-2021",
-  "fitted_at": "2026-09-29T01:14:15.232804+00:00",
+  "fitted_at": "2026-09-30T03:08:28.815596+00:00",
   "min_games": 8
 }

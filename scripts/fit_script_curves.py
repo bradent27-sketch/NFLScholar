@@ -208,10 +208,75 @@ def fit(pooled):
     return curves, report
 
 
+def design(script):
+    return np.column_stack([np.clip(script, 0, None), np.clip(script, None, 0)])
+
+
+def fit_v2(pooled):
+    """'curves_v2' for 'v2_script_neutral_level_fix': the SAME piecewise
+    log-linear form, fit WITH an intercept, plus a `level` constant.
+
+    Why the shipped no-intercept fit is wrong. `ratio` is a game's volume over
+    the player's own season MEAN, so log(ratio) averages well below 0 (about
+    -0.15 to -0.35 here, a Jensen effect of skewed weekly volume). Forcing the
+    line through the origin ("script 0 must mean ratio 1") pushes that offset
+    into the two slopes, because the lead regressor is >= 0 and the trail
+    regressor <= 0 and each has a non-zero mean. Measured 2022-2025: the RB
+    carries `beta_lead` came out slightly NEGATIVE when carries in fact rise
+    ~30% for a team leading big, and every fitted factor was <= 1 in every
+    game, so dividing a past game by it inflated volume x1.14-1.25 (RB
+    carries x1.18) with nothing on the forward side to put the level back.
+
+    Fit with an intercept (slopes are then unbiased), drop the intercept from
+    the applied factor, and divide by `level` = the volume-weighted mean of
+    exp(slopes . x) over the FIT window's own games, so the de-scripted rate
+    stays at the average game's level. Nothing from the test years is used.
+    """
+    curves = {}
+    report = []
+    for (pos, stat), group in pooled.groupby(['position', 'stat'], observed=True):
+        with np.errstate(divide='ignore'):
+            log_ratio = np.log(group['ratio'].to_numpy(dtype=float))
+        log_ratio = np.clip(log_ratio, -LOG_RATIO_CLIP, LOG_RATIO_CLIP)
+        script = group['realized_script'].to_numpy(dtype=float)
+        spread = group['own_spread'].to_numpy(dtype=float)
+        x = design(script)
+        beta, *_ = np.linalg.lstsq(np.column_stack([np.ones(len(x)), x]), log_ratio, rcond=None)
+        slopes = beta[1:]
+        level = float(np.average(np.exp(x @ slopes), weights=group['ratio'].to_numpy(dtype=float)))
+        x_exp = -spread
+        beta_exp = float(np.sum(x_exp * log_ratio) / np.sum(x_exp ** 2)) if np.sum(x_exp ** 2) > 0 else 0.0
+        curves.setdefault(pos, {})[stat] = {
+            'beta_lead': round(float(slopes[0]), 5), 'beta_trail': round(float(slopes[1]), 5),
+            'beta_exp': round(beta_exp, 5), 'level': round(level, 5), 'n': int(len(group)),
+        }
+        report.append((pos, stat, len(group), float(slopes[0]), float(slopes[1]), beta_exp, level))
+    return curves, report
+
+
+def oos_check(curves_legacy, curves_v2, pooled_test):
+    """Volume inflation from dividing by each section's f_real on held-out
+    games: volume-weighted mean of 1/f (1.00 = the average game's volume is
+    unchanged). Same 0.5-2.0 clip the model applies."""
+    print()
+    print(f"{'pos':<4} {'stat':<20} {'games':>6}  {'legacy':>7} {'v2':>7}   (out-of-sample level, 1.00 = neutral)")
+    for (pos, stat), g in pooled_test.groupby(['position', 'stat'], observed=True):
+        x = design(g['realized_script'].to_numpy(dtype=float))
+        w = g['ratio'].to_numpy(dtype=float)
+        vals = []
+        for section in (curves_legacy, curves_v2):
+            c = section[pos][stat]
+            f = np.exp(x @ np.array([c['beta_lead'], c['beta_trail']])) / c.get('level', 1.0)
+            vals.append(float(np.average(1.0 / np.clip(f, 0.5, 2.0), weights=w)))
+        print(f"{pos:<4} {stat:<20} {len(g):>6}  {vals[0]:>7.3f} {vals[1]:>7.3f}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--years', default='2016-2021')
     ap.add_argument('--min-games', type=int, default=8)
+    ap.add_argument('--oos-years', default='2022-2025',
+                    help="held-out years for the printed level check (never used in the fit); '' to skip")
     args = ap.parse_args()
     if '-' in args.years:
         lo, hi = args.years.split('-')
@@ -229,11 +294,22 @@ def main():
     for pos, stat, n, beta_lead, beta_trail, beta_exp in report:
         print(f"{pos:<4} {stat:<20} {n:>7} {beta_lead:>10.4f} {beta_trail:>11.4f} {beta_exp:>9.4f}")
 
+    curves_v2, report_v2 = fit_v2(pooled)
+    print()
+    print("'curves_v2' (with intercept, level-normalized):")
+    print(f"{'pos':<4} {'stat':<20} {'n':>7} {'beta_lead':>10} {'beta_trail':>11} {'beta_exp':>9} {'level':>7}")
+    for pos, stat, n, bl, bt, be, lv in report_v2:
+        print(f"{pos:<4} {stat:<20} {n:>7} {bl:>10.4f} {bt:>11.4f} {be:>9.4f} {lv:>7.3f}")
+    if args.oos_years:
+        lo2, hi2 = args.oos_years.split('-')
+        oos_check(curves, curves_v2, collect(list(range(int(lo2), int(hi2) + 1)), args.min_games))
+
     payload = {
         'fit_window': f"{years[0]}-{years[-1]}",
         'min_games': args.min_games,
         'fitted_at': datetime.now(timezone.utc).isoformat(),
         'curves': curves,
+        'curves_v2': curves_v2,
     }
     with open(OUTPUT_PATH, 'w', encoding='utf-8') as fh:
         json.dump(payload, fh, indent=2, sort_keys=True)

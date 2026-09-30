@@ -764,14 +764,16 @@ def _script_neutral_driver_stat(pos, stat):
     return SCRIPT_NEUTRAL_DEPENDENT_DRIVER.get((pos, stat))
 
 
-@lru_cache(maxsize=1)
-def _load_script_curves():
-    """{(pos, stat): {'beta_lead', 'beta_trail', 'beta_exp'}} from
+@lru_cache(maxsize=4)
+def _load_script_curves(section='curves'):
+    """{(pos, stat): {'beta_lead', 'beta_trail', 'beta_exp', 'level'}} from
     data/script_curves.json (scripts/fit_script_curves.py's output).
-    Cached for the process - the file is a development artifact rebuilt by
-    re-running that script, not something that changes under a running
-    app. {} (the flag degrades to a clean no-op everywhere) if the file is
-    missing or malformed.
+    ``section`` picks 'curves' (the original no-intercept fit, level 1.0) or
+    'curves_v2' (with intercept, level-normalized - see
+    'v2_script_neutral_level_fix'). Cached for the process - the file is a
+    development artifact rebuilt by re-running that script, not something
+    that changes under a running app. {} (the flag degrades to a clean
+    no-op everywhere) if the file or section is missing or malformed.
     """
     try:
         with open(SCRIPT_CURVES_PATH, encoding='utf-8') as fh:
@@ -779,7 +781,7 @@ def _load_script_curves():
     except (OSError, ValueError):
         return {}
     out = {}
-    for pos, stats in (payload.get('curves') or {}).items():
+    for pos, stats in (payload.get(section) or {}).items():
         if not isinstance(stats, dict):
             continue
         for stat, coefs in stats.items():
@@ -790,6 +792,7 @@ def _load_script_curves():
                     'beta_lead': float(coefs.get('beta_lead', 0.0)),
                     'beta_trail': float(coefs.get('beta_trail', 0.0)),
                     'beta_exp': float(coefs.get('beta_exp', 0.0)),
+                    'level': float(coefs.get('level', 1.0)) or 1.0,
                 }
             except (TypeError, ValueError):
                 continue
@@ -808,7 +811,10 @@ def _script_real_factor(curve, script):
         return np.ones(len(script))
     lead = np.clip(script, 0.0, None)
     trail = np.clip(script, None, 0.0)
-    factor = np.clip(np.exp(curve['beta_lead'] * lead + curve['beta_trail'] * trail),
+    # `level` (1.0 for the original curves) is the fit window's volume-weighted
+    # mean of exp(slopes . script): dividing by it keeps the de-scripted rate
+    # at the average game's volume instead of at the tied-game maximum.
+    factor = np.clip(np.exp(curve['beta_lead'] * lead + curve['beta_trail'] * trail) / curve.get('level', 1.0),
                      *SCRIPT_NEUTRAL_REAL_CLIP)
     return np.where(np.isfinite(script), factor, 1.0)
 
@@ -873,7 +879,7 @@ def wrte_participation_multiplier(expected_share, strength=None):
     return 1.0 - strength * (1.0 - np.minimum(g, 1.0))
 
 
-def _script_neutralize_history(df, team_col, pos, year):
+def _script_neutralize_history(df, team_col, pos, year, curves_section='curves'):
     """A COPY of `df` with every 'v2_script_neutral_volume'-covered stat
     column (for THIS position) divided by f_real(that row's own team's
     realized script that week) - the per-game de-scripting step, applied
@@ -894,7 +900,7 @@ def _script_neutralize_history(df, team_col, pos, year):
     lookup = realized_script_by_team_week(year)
     if not lookup:
         return df
-    curves = _load_script_curves()
+    curves = _load_script_curves(curves_section)
     out = df.copy()
     team = _historical_game_team(out, team_col).astype(str).str.strip().str.upper()
     week = pd.to_numeric(out['week'], errors='coerce').to_numpy(dtype=float)
@@ -1596,6 +1602,34 @@ MODEL_FEATURES = (
                              # +0.010), START-RB +0.004 n.s. Clean-room share
                              # slope 1.080 -> 1.020. See
                              # docs/weekly_projections_methodology.md, 2026-09-29.
+    'v2_script_neutral_level_fix',  # SHIPPED 2026-09-30. Rides on
+                             # 'v2_script_neutral_volume' (no effect without
+                             # it). Fixes two defects in that flag's fitted
+                             # curves. LEVEL: every fitted factor was <= 1 in
+                             # every game, so dividing a past game by it
+                             # inflated volume (2022-2025 out of sample: RB
+                             # carries x1.18, RB targets x1.24, WR/TE targets
+                             # x1.14, QB attempts x1.04) with nothing on the
+                             # forward side to put the level back; WR/TE/RB
+                             # targets were re-trimmed by pass capacity but RB
+                             # carries have no such budget, hence ~+18% RB
+                             # carries. SHAPE: the no-intercept fit pushed the
+                             # skewed-ratio offset into the slopes - the RB
+                             # carries lead slope came out slightly negative
+                             # when carries rise ~30% for a team leading big.
+                             # Uses 'curves_v2' in data/script_curves.json:
+                             # same piecewise form fit WITH an intercept,
+                             # divided by a fit-window `level`. Out-of-sample
+                             # level 0.999-1.019 for all six curves, and the
+                             # script effect left after de-scripting falls
+                             # 0.44 -> 0.18 (RB carries), 0.81 -> 0.20 (RB
+                             # targets). Harness v2, 2022-2025 wk3-17:
+                             # INCONCLUSIVE, accuracy unchanged (START-ALL
+                             # RMSE -0.002 CI[-0.009,+0.005]), bias growth
+                             # +0.166 - a volume-correctness fix (RB room
+                             # carries 27.6 -> 24.1 vs 21.5 actual), not an
+                             # accuracy gain. See scripts/fit_script_curves.py
+                             # fit_v2 and docs/weekly_projections_methodology.md.
     'v2_offense_prior_blend',  # credibility-blend a thin CURRENT-SEASON
                              # offense's own baseline (the "expected" side of
                              # every defense-game ratio in
@@ -2127,6 +2161,21 @@ DEFAULT_FEATURES = frozenset({
     # jointly with v2_vacancy_absence_decay. See
     # docs/weekly_projections_methodology.md, 2026-09-29.
     'v2_wrte_participation',
+    # SHIPPED 2026-09-30 at the user's direction. Fixes the level and shape of
+    # v2_script_neutral_volume's fitted curves (data/script_curves.json
+    # 'curves_v2'): the original no-intercept fit made every factor <= 1, so
+    # de-scripting inflated volume (2022-2025 out of sample: RB carries
+    # x1.18, RB targets x1.24, WR/TE targets x1.14, QB attempts x1.04) and
+    # deflated every efficiency ratio built on it (RB yards/carry 3.76 vs
+    # 4.57 actual). After the fix the level is 0.999-1.019 on all six curves
+    # and RB room carries fall 27.6 -> 24.1 vs 21.5 actual. Harness v2,
+    # 2022-2025 wk3-17: INCONCLUSIVE on accuracy (START-ALL RMSE -0.002
+    # CI[-0.009,+0.005]) with bias growth +0.166 (cap 0.3) - a volume-
+    # correctness fix, shipped as an obvious-error removal. Not a
+    # calibration no-op: the WR/TE/QB/RB calibration re-fit now covers this
+    # and v2_wrte_participation. See docs/weekly_projections_methodology.md,
+    # 2026-09-30.
+    'v2_script_neutral_level_fix',
 })
 
 
@@ -7631,6 +7680,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
              or _week_is_complete(schedule_df, as_of_week))
     )
     use_v2_guard = 'v2_as_of_guard' in feats
+    script_curves_section = 'curves_v2' if 'v2_script_neutral_level_fix' in feats else 'curves'
     source_contract = {
         'as_of_week': int(as_of_week),
         'latest_observed_week': latest_observed_week,
@@ -8585,7 +8635,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             mapped_functional = cur['_identity_key'].map(current_functional_position_by_identity)
             cur['_functional_position'] = mapped_functional.fillna(cur['_functional_position']).astype(str).str.upper()
         _prior_source_for_totals = (
-            _script_neutralize_history(player_prior, prior_team_col, pos, year - 1)
+            _script_neutralize_history(player_prior, prior_team_col, pos, year - 1, script_curves_section)
             if 'v2_script_neutral_volume' in feats else player_prior)
         prior = (attach_player_identity(
                     _season_totals(_prior_source_for_totals, prior_name_col, prior_team_col, pos, stats),
@@ -9044,7 +9094,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 # matchup profile a few lines down) is deliberately left
                 # untouched, same "raw team-game history" principle as
                 # every other defense-facing consumer in this file.
-                player_pos_rows = _script_neutralize_history(player_pos_rows, team_col, pos, year)
+                player_pos_rows = _script_neutralize_history(
+                    player_pos_rows, team_col, pos, year, script_curves_section)
             defense_current_evidence = _defense_game_evidence(
                 pos_rows, game_universe=hist, team_col=team_col)
             upcoming_opponent_map = dict(zip(cur[name_col], cur['Opponent']))
@@ -10561,7 +10612,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             script_neutral_mult = np.ones(len(cur))
             if script_neutral_active:
                 script_neutral_mult = _script_exp_factor(
-                    _load_script_curves().get((pos, _script_neutral_driver)),
+                    _load_script_curves(script_curves_section).get((pos, _script_neutral_driver)),
                     cur['target_margin'].to_numpy(dtype=float))
             stat_trace[stat]['script_neutral_multiplier'] = script_neutral_mult
 
@@ -11122,6 +11173,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'blended_rate': _trace_number(trace, 'blended_rate', i),
                     'matchup_multiplier': _trace_number(trace, 'matchup_multiplier', i, 1.0),
                     'participation_multiplier': _trace_number(trace, 'participation_multiplier', i, 1.0),
+                    'script_neutral_multiplier': _trace_number(trace, 'script_neutral_multiplier', i, 1.0),
                     'alignment_residual_multiplier': _trace_number(
                         trace, 'alignment_residual_multiplier', i, 1.0),
                     'alignment_residual_available': bool(_trace_value(

@@ -3827,3 +3827,25 @@ corrected pool (2025: QB +0.70, RB +0.18, WR +0.64); the earlier played-only ref
 (entry 2026-09-30) would have gone the other way (RB intercept up) because of the pool
 artifact. The big intercept drop (RB 1.030 -> 0.269) is the old lift on low projections
 no longer being needed once phantom depth, carry inflation and the RB level errors are fixed.
+
+**Harness v2, `v2_rb_carry_budget_keep_tds`** (2022-2025 wk3-17, replay flags; run in the
+same invocation as the zone flag, so both were scored against the defaults BEFORE the zone
+flag shipped; the zone block reproduced the earlier standalone run to the digit):
+**INCONCLUSIVE**, bias growth -0.043.
+
+| scope | RMSE | pairwise | bias |
+|---|---|---|---|
+| START-ALL | 7.685 -> 7.681 (-0.004, CI [-0.008, +0.000]) | 0.000 | -0.401 -> -0.358 |
+| START-RB | 7.718 -> 7.707 (-0.012, CI [-0.026, +0.003]) | 0.000 | -0.588 -> -0.440 |
+| ALL | 6.227 -> 6.225 (-0.002, CI [-0.004, +0.000]) | 0.000 | -0.396 -> -0.374 |
+| START-QB / WR / TE | unchanged (RB-only change) | | |
+
+It meets the win bar fixed in advance (START-ALL RMSE not worse, START-RB RMSE improving,
+bias toward zero, growth under the cap, board TD shortfall materially smaller: top-36 RB TD
+points bias -0.19 -> -0.03). The RB RMSE gain is twice the zone flag's; the two act on
+different things (zone raises the expected TD level, keep_tds stops the budget removing it)
+and the what-if on real boards leaves RB TDs at x0.95 of actual after both, so no
+overshoot. **Status: SHIPPED into DEFAULT_FEATURES 2026-10-01.** The stacked effect of the
+two (zone already in the defaults, keep_tds added on top) is not yet measured end-to-end:
+a harness run on the final defaults is the follow-up (`--add v2_rb_carry_budget_keep_tds`
+against defaults that already include the zone).

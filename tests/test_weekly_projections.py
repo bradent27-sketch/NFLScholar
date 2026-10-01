@@ -3586,7 +3586,7 @@ def test_rb_carry_budget_keep_tds_leaves_projected_rush_tds_at_the_pre_budget_le
             'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
         wp.team_rb_carry_budgets = lambda *a, **k: pd.DataFrame({'budget': {'KC': 12.0}}).rename_axis('team')
         for arm, feats in (('none', wp.DEFAULT_FEATURES - {'v2_rb_carry_budget'}),
-                           ('trim', wp.DEFAULT_FEATURES | {'v2_rb_carry_budget'}),
+                           ('trim', (wp.DEFAULT_FEATURES | {'v2_rb_carry_budget'}) - {'v2_rb_carry_budget_keep_tds'}),
                            ('keep', wp.DEFAULT_FEATURES | {'v2_rb_carry_budget', 'v2_rb_carry_budget_keep_tds'})):
             wp.build_weekly_projections.clear()
             boards[arm] = wp.build_weekly_projections(

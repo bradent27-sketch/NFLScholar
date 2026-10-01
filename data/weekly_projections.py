@@ -1766,7 +1766,7 @@ MODEL_FEATURES = (
                              # carries^2 so the lead back absorbs most of it
                              # (the leftover room excess is ~all RB1). No
                              # effect without v2_rb_carry_budget.
-    'v2_rb_carry_budget_keep_tds',  # CANDIDATE 2026-09-30. Modifier of v2_rb_carry_budget:
+    'v2_rb_carry_budget_keep_tds',  # SHIPPED 2026-10-01. Modifier of v2_rb_carry_budget:
                              # the budget scales carries and rushing yards only,
                              # not rushing TDs (a TD projection is goal-line
                              # opportunity, not carry volume; the uniform trim
@@ -2368,6 +2368,16 @@ DEFAULT_FEATURES = frozenset({
     # growth -0.037. Not a calibration no-op (RB/QB TDs move); folded into the
     # calibration re-fit.
     'v2_xtd_rush_outside_zone',
+    # SHIPPED 2026-10-01 (win bar fixed in advance, user away). The carry budget
+    # scales carries and rushing yards only, not rushing TDs: a TD projection is
+    # goal-line opportunity, not the between-the-20s carry volume the budget
+    # constrains, and the uniform trim was taking 7.3% of RB rush TDs (RB1 -6%)
+    # from a total ~12% short. Real boards: top-36 RB TD points bias -0.19 ->
+    # -0.03 when undone. Harness v2 2022-2025 wk3-17 (vs defaults before the
+    # zone flag shipped): INCONCLUSIVE, START-ALL RMSE -0.004 CI[-0.008,+0.000],
+    # START-RB RMSE -0.012 CI[-0.026,+0.003], START-RB bias -0.588 -> -0.440,
+    # bias growth -0.043. The calibration v5 lines were fit with it on.
+    'v2_rb_carry_budget_keep_tds',
 })
 
 

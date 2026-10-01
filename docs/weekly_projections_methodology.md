@@ -3597,3 +3597,149 @@ calibration re-fit now covers every flag shipped since the last one:
 and `v2_rb_carry_budget`. A yards-per-carry audit (projected 4.30 vs 4.57
 actual) is still owed, and the calibration should be read against it: a RB line
 that absorbs a fixable efficiency error would hide it.
+
+## 2026-09-30 - Calibration re-fit after the four 09-29/30 ships (NOT APPLIED, decision pending)
+
+`scripts/fit_seasonal_calibration.py --mode dump` (2021-2025, weeks 1-18, new
+CALIBRATION_INPUT_FEATURES = DEFAULT_FEATURES minus calibration, i.e. with
+`v2_wrte_participation`, `v2_script_neutral_level_fix`, `v2_rb_participation`,
+`v2_rb_carry_budget`) then `--mode emit`. 27,918 player-weeks; logs in
+`.sweeps/calibration_refit_2026-09-30_*.log`.
+
+**Held-out 2025 startable MAE / signed bias** (fit 2021-2024, half-strength, two-sided):
+
+| pos | shipped lines | refit single | WR/TE 2-bucket |
+|---|---|---|---|
+| QB | 6.396 / -0.017 | 6.398 / +0.067 | same |
+| RB | 5.904 / -1.095 | 5.938 / -0.673 | same |
+| WR | 5.833 / -0.711 | 5.848 / -0.499 | 5.826 / -0.490 |
+| TE | 5.170 / -1.253 | 5.186 / -1.013 | 5.120 / -0.983 |
+
+RB on a second hold-out (fit 2021-2023, test 2024-2025): shipped 5.793 / -0.960,
+half-refit 5.832 / -0.498, full-strength refit (0.856, 2.493) 5.890 / -0.095.
+Refit lines if applied: QB (0.752, 4.007), RB (0.938, 1.111), WR (0.965, 0.960),
+TE (0.964, 0.843); WR cold (0.908, 1.187) rest (0.991, 0.862); TE cold (0.856,
+0.927) rest (1.015, 0.764).
+
+**Reading it.** The four flags moved the needed lines very little (RB 0.907/1.030
+-> 0.938/1.111). By the START-MAE criterion the v4 lines were shipped on, the
+refit does NOT beat the shipped lines for QB or RB (+0.002 / +0.03-0.04) and
+barely does for WR (-0.007) and TE bucketed (-0.05); it buys bias, not accuracy.
+Startable RBs who played are under-projected on every channel (2021-2025 wk5+:
+rush yards -5.0, rush TDs -0.07, targets -0.40, receptions -0.29, receiving
+yards -1.87, points -1.43; every year -0.8 to -1.9), so the RB level gap is not
+only the carry-side yards/carry shortfall and a calibration line would be
+papering over it. Played-only pools also carry a survivorship effect for any
+participation-discounted back (projection is x P(play), the actual exists only
+if he played). The RB level needs a cause-level audit before its line moves.
+
+## 2026-09-30 - RB level audit (why startable RBs who played read -1.4 pts)
+
+`scripts/diag_rb_level_audit.py` (collect: 2022-2025, weeks 4,6,...,16, current
+DEFAULT_FEATURES + replay; boards in `.sweeps/rb_level_audit/`, output in
+`.sweeps/rb_level_audit_analysis.log`). 3,207 live RB rows; every row kept
+(DNP = 0) beside the played-only view.
+
+**1. About half the calibration-dump "bias" is selection, not model error.**
+Top-36 RBs per week by projected points, raw points bias: -0.35 with the pool
+chosen among all live rows (DNP = 0); -0.68 played-only; -0.82 when the pool is
+chosen among played rows only, which is what `fit_seasonal_calibration.py --mode
+dump` does (it drops no-actual rows BEFORE taking the top-N, so participation-
+discounted depth backs who happened to play enter the pool and read low).
+The dump's -1.43 (no replay, weeks 1-18) is that effect plus more. A
+calibration fit on it would push every RB up to undo the participation discount.
+Any re-fit must keep no-box-score rows (actual 0, Availability > 0.01) and take
+the pool by projection over all rows.
+
+**2. Volume is fine.** All rows, bias by room rank (RB1/RB2/RB3/RB4+):
+carries +0.14/+0.07/-0.02/-0.04, targets -0.06/-0.04/-0.06/-0.03, receptions,
+receiving yards ~0. Clean played RB1/RB2 (no OUT back in the room): carries
+-0.23, targets -0.10, receiving yards -0.46, catch rate 78.4% vs 78.4%. The
+carry budget and participation fixes did their job; the level gap is not volume.
+
+**3. The gap is rushing efficiency, mostly rushing TDs.** Points bias by
+channel, top-36 by projection, all rows (total -0.35): rush TDs -0.30, rush
+yards -0.07, receiving TDs -0.05, reception/receiving yards ~0, unprojected
+fumbles/2-pt +0.07. All live rows (total -0.36): rush TDs -0.19, rush yards
+-0.11, receptions/receiving -0.09.
+  * Rush TDs: clean played RB1/RB2 TD/carry projected vs actual 2022 .0281/.0301,
+    2023 .0256/.0282, 2024 .0299/.0346, 2025 .0323/.0392 (-7%, -9%, -14%, -18%).
+    RB1 0.402 vs 0.469 TD/game (-14%), RB2 0.140 vs 0.186 (-25%) over all rows.
+    The blended rate itself is already 9% short (0.318 vs 0.351) and the carry
+    budget's uniform trim takes another 5% (0.318 -> 0.301).
+  * Rush yards: played RB YPC 4.235 projected vs 4.430 actual (-4.4%; RB1 4.274 vs
+    4.447). Blended YPC is 4.330 (-2.6%; 2022-2024 within 0.5-1.8%, 2025 -7% on
+    this subset - a subset effect, NOT a league shift: whole-league RB YPC is
+    4.416/4.167/4.357/4.371 in 2022-25), then RB
+    rushing_yards carries a script multiplier that carries/targets do not.
+  * Stage trace (played clean RB1/RB2, rush yards): blended 47.9 -> pre-vacancy
+    46.5 (script 0.978, pace 0.991, matchup 1.003) -> final 44.1 (carry budget
+    -2.4) vs 47.2 actual.
+
+**4. A specific defect: RB rushing yards still use the OLD personal script curve.**
+`v2_script_neutral_volume` de-scripts RB rushing_attempts and targets (and
+receptions/receiving yards through targets) but has no driver for ('RB',
+'rushing_yards') or ('RB','rushing_tds'), so RB rush yards still multiply raw
+history by the per-player backward bucket curve (`_vectorized_game_script_
+multiplier`). That multiplier averages 0.971 (p10 0.85, p90 1.10) and carries no
+signal: clean played RB1/RB2 binned by it, actual yards are flat (45.4, 48.2,
+47.6, 43.6, 49.3) and actual carries are flat (10.5-10.7) while projected yards
+swing 36.1 -> 51.1 (actual/projected 1.26 at multiplier <=0.9, 0.965 at >1.04).
+Removing it (arithmetic on the saved boards): RB1/RB2 yards bias -1.59 -> -0.77,
+RMSE 33.145 -> 32.865, MAE 24.244 -> 24.320.
+
+**Status: diagnosis only, nothing changed.** Candidate fixes, in order of size:
+(a) drive RB rushing_yards from the rushing_attempts de-scripted factor (or drop
+its old curve) behind a named flag; (b) the rush-TD level (-9% to -25%, worst in
+2024-25 on the clean-starter subset): K_td / role-based TD prior, plus not
+trimming TDs with the carry budget's uniform factor on the lead back; (c) then
+re-fit calibration on a pool built over ALL rows. RB TD/YPC levels vary by
+season on the clean-starter subset, but the LEAGUE is stable (RB TD/carry
+.0300/.0285/.0321/.0330, YPC 4.42/4.17/4.36/4.37 in 2022-25; .0257-.0346 over
+2016-2025), so the TD shortfall is not a league-rate drift: projected RB1/RB2
+TD/carry (.028-.032) sits at the league average while the lead backs who play
+actually score above it (.030-.039).
+
+## 2026-09-30 - `v2_rb_rush_yards_script_neutral` (CANDIDATE): RB rushing yards on the carries' de-scripted curve
+
+**Why.** The RB level audit (entry above) found RB rushing_yards still carried the
+old per-player backward script multiplier (mean 0.971, no signal), while carries,
+targets and receiving yards were already de-scripted by `v2_script_neutral_volume`.
+
+**Change.** `_script_neutral_driver_stat(pos, stat, rb_rush_yards=True)` makes
+('RB','rushing_yards') a dependent of rushing_attempts (`RB_RUSH_YARDS_DRIVER`):
+history is divided by the carries' f_real, the forward multiplier is the carries'
+f_exp, and the old multiplier is skipped. Carries, TDs, receiving untouched.
+Needs `v2_script_neutral_volume` (shipped). Tests: driver map, history
+de-scripting (yards and carries share one divisor, YPC preserved), in-season build
+(script multiplier 1.0, forward factor equals the carries').
+
+**Real boards** (`.sweeps/rb_level_audit_rushyds/`, 28 weeks 2022-2025, played RBs):
+YPC 4.235 -> 4.371 (actual 4.430); RB1 yards gap per game -2.60 -> -0.61, RB2
+-3.66 -> -2.83; clean RB1/RB2 rush yards bias -3.11 -> -1.68; top-24 points
+bias (all rows) -0.37 -> -0.16.
+
+**Harness v2** (2022-2025 wk3-17, replay flags, current defaults): **INCONCLUSIVE**,
+bias growth -0.035 (bias moves toward zero).
+
+| scope | RMSE | pairwise | bias |
+|---|---|---|---|
+| START-RB | 7.705 -> 7.689 (-0.016, CI [-0.044, +0.011]) | +0.001 | -0.695 -> -0.577 |
+| START-ALL | 7.686 -> 7.683 (-0.004, n.s.) | 0.000 | -0.441 -> -0.406 |
+| ALL | 6.229 -> 6.227 (-0.002, n.s.) | 0.000 | -0.417 -> -0.396 |
+| START-WR / TE / QB | +0.002 / +0.001 / 0 (n.s.) | 0 | unchanged |
+
+Reading it. No accuracy loss anywhere, RB RMSE trends right, RB bias recovers a
+fifth of the gap the carry budget opened (-0.71 -> -0.58 in the harness arms).
+It is a correctness fix (an anti-predictive multiplier removed), not an
+accuracy gain. Status: awaiting ship decision.
+
+**Status 2026-09-30 (later): `v2_rb_rush_yards_script_neutral` SHIPPED into
+DEFAULT_FEATURES** at the user's direction, as an obvious-error removal
+(accuracy-neutral, bias growth -0.035). Sequencing from here, at the user's
+standing instruction (unattended until 6 AM): `v2_xtd_rush_outside_zone` is
+tested next against these defaults; a win leads straight to the calibration
+re-fit on the final default set, a non-win is iterated on before anything is
+pushed. Win bar fixed in advance: harness bias growth under the 0.3 cap, START-ALL
+RMSE not worse, START-RB and START-QB bias moving toward zero or RMSE improving,
+and the board audit showing the RB rush-TD shortfall materially smaller.

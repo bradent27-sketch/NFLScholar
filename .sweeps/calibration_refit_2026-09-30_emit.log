@@ -1,0 +1,77 @@
+2026-09-30 16:32:30.078 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.088 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.088 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.089 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.092 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.092 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.092 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.093 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.094 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.094 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.094 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.095 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.095 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.095 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.096 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.096 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.096 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.097 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.097 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.098 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.098 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.098 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.098 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.099 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.109 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.109 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.109 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.110 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.110 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.111 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.111 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.112 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.114 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.142 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.150 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.150 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.150 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.151 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.151 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.152 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.152 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.153 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.157 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+2026-09-30 16:32:30.160 WARNING streamlit.runtime.caching.cache_data_api: No runtime found, using MemoryCacheStorageManager
+========================================================================================
+HELD-OUT 2025: startable MAE / |bias|   (fit on 2021-2024)
+========================================================================================
+pos        shipped single        refit single      WR/TE 2-bucket
+QB           6.396/-0.017        6.398/+0.067        6.398/+0.067
+RB           5.904/-1.095        5.938/-0.673        5.938/-0.673
+WR           5.833/-0.711        5.848/-0.499        5.826/-0.490
+TE           5.170/-1.253        5.186/-1.013        5.120/-0.983
+
+========================================================================================
+SHIP THESE  (fit on 2021-2025, half-strength, two-sided)
+========================================================================================
+WEEKLY_CALIBRATION = {
+    'QB'  : (0.752, 4.007),
+    'RB'  : (0.938, 1.111),
+    'WR'  : (0.965, 0.960),
+    'TE'  : (0.964, 0.843),
+}
+
+WEEKLY_CALIBRATION_COLD_MAX_WEEK = 4
+WEEKLY_CALIBRATION_BY_BUCKET = {
+    'cold': {
+        'WR'  : (0.908, 1.187),
+        'TE'  : (0.856, 0.927),
+    },
+    'rest': {
+        'WR'  : (0.991, 0.862),
+        'TE'  : (1.015, 0.764),
+    },
+}
+
+(QB/RB fall through to WEEKLY_CALIBRATION - no phase split. WR/TE 'rest'
+ bucket is the in-season line; 'cold' is weeks 1-4.)

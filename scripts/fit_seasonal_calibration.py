@@ -23,6 +23,21 @@ a regime that flips sign. This script:
     python scripts/fit_seasonal_calibration.py --mode dump --years 2021-2025 --weeks 1-18
     python scripts/fit_seasonal_calibration.py --mode analyze
     python scripts/fit_seasonal_calibration.py --mode emit
+
+--all-rows (added 2026-09-30): the original dump keeps only rows with a box
+score and takes the startable top-N AFTER that, so a back the model discounted
+for not playing enters the pool only on the weeks he happened to play and reads
+as under-projected - measured on RBs, the top-36 bias is -0.35 with the pool
+chosen over all live rows vs -0.82 chosen among players who played. With
+v2_wrte_participation / v2_rb_participation shipped that selection is no
+longer small. --all-rows builds the dump the way the model is deployed: the
+injury/reserve replay is ON (a player who was really out is Availability 0 and
+dropped), every remaining live row is kept, a live player with no box score
+scores 0 (column `played` says which), and the top-N is taken over all of
+them. It writes a separate file (--dump-path) so the old dump stays intact:
+
+    python scripts/fit_seasonal_calibration.py --mode dump --all-rows --dump-path .sweeps/seasonal_calibration_allrows.csv --years 2021-2025 --weeks 1-18
+    python scripts/fit_seasonal_calibration.py --mode emit --dump-path .sweeps/seasonal_calibration_allrows.csv
 """
 import argparse
 import os
@@ -48,6 +63,7 @@ POSITIONS = ('QB', 'RB', 'WR', 'TE')
 FIT_YEARS = (2021, 2022, 2023)
 TEST_YEARS = (2024, 2025)
 FEATS = frozenset(CALIBRATION_INPUT_FEATURES | {'v2_historical_ourlads'})
+REPLAY_FLAGS = frozenset({'v2_historical_injury_replay', 'v2_historical_reserve_replay'})
 
 # Projected stats to also dump raw-vs-actual for, per position family.
 STAT_COLS = ('targets', 'receptions', 'receiving_yards', 'receiving_tds',
@@ -66,7 +82,7 @@ BUCKETS = {
 }
 
 
-def do_dump(years, weeks, scoring):
+def do_dump(years, weeks, scoring, all_rows=False):
     scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
     rows = []
     for year in years:
@@ -83,18 +99,27 @@ def do_dump(years, weeks, scoring):
                 [s for s in STAT_COLS if s in wk.columns]].sum()
             build_weekly_projections.clear()
             proj, _meta = build_weekly_projections(
-                year, week, scoring, as_of_week=week, apply_injury=False, features=FEATS)
+                year, week, scoring, as_of_week=week, apply_injury=False,
+                features=(FEATS | REPLAY_FLAGS) if all_rows else FEATS)
             build_weekly_projections.clear()
             if proj.empty:
                 print(f"{year} w{week} empty", flush=True)
                 continue
+            if all_rows and 'Availability' in proj.columns:
+                # replay says he was really out - not a row the model would be asked about
+                proj = proj[pd.to_numeric(proj['Availability'], errors='coerce').fillna(1.0) > 0.01]
             d = proj[['Player', 'Pos', 'Model Proj Pts']].copy()
             d.columns = ['player', 'pos', 'raw']
             d['actual'] = d['player'].map(actual)
+            if all_rows:
+                d['played'] = d['actual'].notna()
+                d['actual'] = d['actual'].fillna(0.0)
             for s in STAT_COLS:
                 if s in proj.columns:
                     d[f'p_{s}'] = pd.to_numeric(proj[s], errors='coerce').to_numpy()
                     d[f'a_{s}'] = d['player'].map(sa[s]) if s in sa.columns else np.nan
+                    if all_rows:
+                        d[f'a_{s}'] = d[f'a_{s}'].fillna(0.0)
             d['year'], d['week'] = year, week
             rows.append(d.dropna(subset=['actual']))
             print(f"{year} w{week} done  ({len(d)} rows)", flush=True)
@@ -304,13 +329,19 @@ def main():
     ap.add_argument('--years', default='2021-2025')
     ap.add_argument('--weeks', default='1-18')
     ap.add_argument('--scoring', default='Full PPR')
+    ap.add_argument('--all-rows', action='store_true',
+                    help='dump mode: replay ON, keep live rows with no box score as 0 (see module docstring)')
+    ap.add_argument('--dump-path', default=None,
+                    help='override the dump CSV path (written by dump, read by analyze/emit)')
     a = ap.parse_args()
+    if a.dump_path:
+        globals()['DUMP_PATH'] = a.dump_path
     if a.mode == 'dump':
         y0, y1 = (int(x) for x in a.years.split('-'))
         w0, w1 = (int(x) for x in a.weeks.split('-'))
         years, weeks = list(range(y0, y1 + 1)), list(range(w0, w1 + 1))
         print(f"dump {years} wk{weeks[0]}-{weeks[-1]}  ({len(years) * len(weeks)} builds)\n", flush=True)
-        do_dump(years, weeks, a.scoring)
+        do_dump(years, weeks, a.scoring, all_rows=a.all_rows)
     elif a.mode == 'emit':
         do_emit()
     else:

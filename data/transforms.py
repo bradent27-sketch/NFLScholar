@@ -19,7 +19,11 @@ from data.loaders import load_pfr_pass_block, load_pfr_def_pressure, load_team_p
 # 5 is a near-certain-look opportunity in a way a target inside the 5 isn't
 # quite the same shape of; a target's marginal value keeps mattering out to
 # the 20 the way a carry's mostly doesn't past the 10).
-REDZONE_RUSH_ZONES = (('rz5', 0, 5), ('rz10', 5, 10), ('rz20', 10, 20))
+# 'oz20' (outside the 20) added 2026-09-30 for 'v2_xtd_rush_outside_zone': ~13.5% of
+# RB and ~6% of QB rushing TDs come from carries outside the 20 (2016-2025 pbp), a
+# slice the three red-zone zones cannot see. Additive - the zone only affects the
+# model when xtd_blended_rate is told to read it.
+REDZONE_RUSH_ZONES = (('rz5', 0, 5), ('rz10', 5, 10), ('rz20', 10, 20), ('oz20', 20, None))
 REDZONE_TARGET_ZONES = (('rz10', 0, 10), ('rz20', 10, 20), ('oz20', 20, None))
 
 

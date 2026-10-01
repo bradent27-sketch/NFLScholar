@@ -750,18 +750,34 @@ SCRIPT_NEUTRAL_DEPENDENT_DRIVER = {
 # (EXPECTED, narrower - a pregame spread is flatter by construction, same
 # reasoning scripts/fit_script_curves.py's own docstring gives for why
 # f_exp's fitted slopes are themselves smaller than f_real's).
+# 'v2_rb_rush_yards_script_neutral' (CANDIDATE 2026-09-30): RB rushing yards
+# follow rushing_attempts' curve, the way RB receiving yards follow targets'.
+# Found by the 2026-09-30 RB level audit: the old per-player backward script
+# multiplier that RB rushing_yards still carried averaged 0.971 and had no
+# predictive signal (clean played RB1/RB2 binned by it: actual yards flat
+# 43.6-49.3 and actual carries flat 10.5-10.7 while projected yards swung
+# 36.1 -> 51.1). See docs/weekly_projections_methodology.md, 2026-09-30.
+RB_RUSH_YARDS_DRIVER = 'rushing_attempts'
 SCRIPT_NEUTRAL_REAL_CLIP = (0.5, 2.0)
 SCRIPT_NEUTRAL_EXP_CLIP = (0.85, 1.15)
 SCRIPT_CURVES_PATH = os.path.join('data', 'script_curves.json')
 
 
-def _script_neutral_driver_stat(pos, stat):
+def _script_neutral_driver_stat(pos, stat, rb_rush_yards=False):
     """The (pos, stat) pair whose OWN fitted curve governs `stat` at this
     position under 'v2_script_neutral_volume' - itself if it has one,
     its named driver if it's a dependent, or None if this flag does not
-    touch this (pos, stat) at all."""
+    touch this (pos, stat) at all.
+
+    ``rb_rush_yards`` ('v2_rb_rush_yards_script_neutral'): also make RB
+    rushing_yards a dependent of rushing_attempts, so it is de-scripted and
+    re-scripted by the carries' own curve instead of keeping the old
+    per-player backward script multiplier (mean 0.971, no signal - see
+    RB_RUSH_YARDS_DRIVER)."""
     if (pos, stat) in SCRIPT_NEUTRAL_VOLUME_CURVES:
         return stat
+    if rb_rush_yards and (pos, stat) == ('RB', 'rushing_yards'):
+        return RB_RUSH_YARDS_DRIVER
     return SCRIPT_NEUTRAL_DEPENDENT_DRIVER.get((pos, stat))
 
 
@@ -966,7 +982,7 @@ def rb_participation_multiplier(share, app, last1, app3, team_rank, strength=Non
     return np.where(usable, 1.0 - strength * (1.0 - g), 1.0)
 
 
-def _script_neutralize_history(df, team_col, pos, year, curves_section='curves'):
+def _script_neutralize_history(df, team_col, pos, year, curves_section='curves', rb_rush_yards=False):
     """A COPY of `df` with every 'v2_script_neutral_volume'-covered stat
     column (for THIS position) divided by f_real(that row's own team's
     realized script that week) - the per-game de-scripting step, applied
@@ -980,7 +996,7 @@ def _script_neutralize_history(df, team_col, pos, year, curves_section='curves')
     caller can call this unconditionally without a separate empty/flag
     check of its own.
     """
-    covered = {stat: _script_neutral_driver_stat(pos, stat) for stat in df.columns}
+    covered = {stat: _script_neutral_driver_stat(pos, stat, rb_rush_yards) for stat in df.columns}
     covered = {stat: driver for stat, driver in covered.items() if driver is not None}
     if not covered or df.empty or team_col not in df.columns or 'week' not in df.columns:
         return df
@@ -1750,6 +1766,19 @@ MODEL_FEATURES = (
                              # carries^2 so the lead back absorbs most of it
                              # (the leftover room excess is ~all RB1). No
                              # effect without v2_rb_carry_budget.
+    'v2_rb_rush_yards_script_neutral',  # SHIPPED 2026-09-30. RB rushing
+                             # yards follow rushing_attempts' de-scripted
+                             # curve (history de-scripted, forward f_exp)
+                             # instead of keeping the old per-player backward
+                             # script multiplier, which averaged 0.971 with no
+                             # signal (RB level audit). Needs
+                             # v2_script_neutral_volume. See
+                             # _script_neutral_driver_stat.
+    'v2_xtd_rush_outside_zone',  # CANDIDATE 2026-09-30. Adds the outside-the-20
+                             # carry zone to v2_xtd's rushing_tds expected-TD
+                             # model (RB and QB; ~13.5% / ~6% of their rushing
+                             # TDs come from there). Needs v2_xtd. See
+                             # XTD_RUSH_OUTSIDE_ZONE.
     'v2_offense_prior_blend',  # credibility-blend a thin CURRENT-SEASON
                              # offense's own baseline (the "expected" side of
                              # every defense-game ratio in
@@ -2313,6 +2342,16 @@ DEFAULT_FEATURES = frozenset({
     # v2_rb_carry_budget_lead (lead-weighted split) stays an unshipped
     # modifier.
     'v2_rb_carry_budget',
+    # SHIPPED 2026-09-30 at the user's direction. RB rushing yards follow the
+    # carries' de-scripted curve (v2_script_neutral_volume's rushing_attempts
+    # curve) instead of the old per-player backward script multiplier, which
+    # averaged 0.971 and had no predictive signal (RB level audit). Real
+    # boards: played-RB yards/carry 4.235 -> 4.371 (actual 4.430). Harness v2
+    # 2022-2025 wk3-17: INCONCLUSIVE with no accuracy loss, START-RB RMSE
+    # -0.016 CI[-0.044,+0.011], START-RB bias -0.695 -> -0.577, bias growth
+    # -0.035. A correctness fix, shipped as an obvious-error removal. Not a
+    # calibration no-op (RB yards move); folded into the calibration re-fit.
+    'v2_rb_rush_yards_script_neutral',
 })
 
 
@@ -4331,6 +4370,16 @@ XTD_ZONE_STATS = {
 # Seed K values from the plan (6 rushing, 8 receiving) - TD events counted
 # over current AND prior season, prior weighted 0.7 (a year-old TD is
 # real but slightly less current evidence than this season's own).
+# 'v2_xtd_rush_outside_zone' (CANDIDATE 2026-09-30): the rushing zones above stop
+# at the 20, but 13.5% of RB (9.6-15.9% by year) and 6.2% of QB rushing TDs
+# (2016-2025 pbp) are scored from outside it - the receiving zones already carry
+# an 'oz20' zone, the rushing ones did not. The 2026-09-30 RB level audit found
+# the blended RB rush-TD rate 9-12% short of actual, concentrated in the backs
+# with the fewest own TDs (who lean on the xTD half of the blend); the highest-
+# projected-TD group was calibrated. TD rate and team-volume elasticity for the
+# zone come from data/xtd_rates.json (scripts/fit_xtd_rates.py, same 2016-2021
+# window as the other zones).
+XTD_RUSH_OUTSIDE_ZONE = 'oz20'
 XTD_TD_EVENT_K = {'rushing_tds': 6.0, 'receiving_tds': 8.0}
 XTD_PRIOR_TD_WEIGHT = 0.7
 # Team-GAMES evidence for the player's own zone-SHARE blend (current-season
@@ -4405,11 +4454,17 @@ def _xtd_zone_context(year, as_of_week, prior_year):
 
 
 def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_total,
-                     player_names, player_teams, env, league_implied, year, as_of_week):
+                     player_names, player_teams, env, league_implied, year, as_of_week,
+                     rush_outside_zone=False):
     """c*own_rate + (1-c)*xTD for `stat` in XTD_ZONE_STATS - see this
     module's 'v2_xtd' comment block above. All array args are aligned to
     the caller's `cur` frame. Returns `own_rate` unchanged (a strict no-op)
     if data/xtd_rates.json is missing or `stat` isn't covered.
+
+    ``rush_outside_zone`` ('v2_xtd_rush_outside_zone'): for rushing_tds also
+    read the 'oz20' (outside the 20) carry zone. ~13.5% of RB and ~6% of QB
+    rushing TDs come from there, and without it the xTD half of the blend is
+    structurally short by that share (see XTD_RUSH_OUTSIDE_ZONE).
     """
     cfg = XTD_ZONE_STATS.get(stat)
     rates = _load_xtd_rates()
@@ -4417,6 +4472,8 @@ def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_tota
     if cfg is None or not rates:
         return own_rate
     play_type, zones, suffix = cfg['type'], cfg['zones'], cfg['zone_suffix']
+    if rush_outside_zone and stat == 'rushing_tds' and XTD_RUSH_OUTSIDE_ZONE not in zones:
+        zones = tuple(zones) + (XTD_RUSH_OUTSIDE_ZONE,)
     td_rate_table = rates.get('td_rate', {}).get(play_type, {}).get(pos, {})
     elasticity_table = rates.get('zone_elasticity', {}).get(play_type, {})
     if not td_rate_table:
@@ -8772,7 +8829,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             mapped_functional = cur['_identity_key'].map(current_functional_position_by_identity)
             cur['_functional_position'] = mapped_functional.fillna(cur['_functional_position']).astype(str).str.upper()
         _prior_source_for_totals = (
-            _script_neutralize_history(player_prior, prior_team_col, pos, year - 1, script_curves_section)
+            _script_neutralize_history(player_prior, prior_team_col, pos, year - 1, script_curves_section,
+                                       'v2_rb_rush_yards_script_neutral' in feats)
             if 'v2_script_neutral_volume' in feats else player_prior)
         prior = (attach_player_identity(
                     _season_totals(_prior_source_for_totals, prior_name_col, prior_team_col, pos, stats),
@@ -9232,7 +9290,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 # untouched, same "raw team-game history" principle as
                 # every other defense-facing consumer in this file.
                 player_pos_rows = _script_neutralize_history(
-                    player_pos_rows, team_col, pos, year, script_curves_section)
+                    player_pos_rows, team_col, pos, year, script_curves_section,
+                    'v2_rb_rush_yards_script_neutral' in feats)
             defense_current_evidence = _defense_game_evidence(
                 pos_rows, game_universe=hist, team_col=team_col)
             upcoming_opponent_map = dict(zip(cur[name_col], cur['Opponent']))
@@ -10450,7 +10509,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 blended = xtd_blended_rate(
                     stat, pos, blended, cur_games, cur_total, _prior_td_total,
                     cur[name_col].to_numpy(dtype=object), cur['Team'].to_numpy(dtype=object),
-                    env, league_implied, year, as_of_week)
+                    env, league_implied, year, as_of_week,
+                    rush_outside_zone=('v2_xtd_rush_outside_zone' in feats))
             if stat == 'targets':
                 # Kept for v2_td_volume_shrink's regression target (the TD-per-
                 # target rate rides on this projected volume). Pre matchup/pace
@@ -10737,7 +10797,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # call sites) already applied - skipped here, not just zeroed
             # after the fact, exactly the way this flag's own comment in
             # MODEL_FEATURES documents.
-            _script_neutral_driver = _script_neutral_driver_stat(pos, stat)
+            _script_neutral_driver = _script_neutral_driver_stat(
+                pos, stat, 'v2_rb_rush_yards_script_neutral' in feats)
             script_neutral_active = 'v2_script_neutral_volume' in feats and _script_neutral_driver is not None
             if script_neutral_active:
                 script_series = None

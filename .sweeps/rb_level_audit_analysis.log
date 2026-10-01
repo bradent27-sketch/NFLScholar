@@ -1,0 +1,80 @@
+rows 3207 live RBs  weeks [np.int64(4), np.int64(6), np.int64(8), np.int64(10), np.int64(12), np.int64(14), np.int64(16)] years [np.int64(2022), np.int64(2023), np.int64(2024), np.int64(2025)]  played 71.1%
+
+=== 1. SURVIVORSHIP: startable pool (top-N RBs per week by projected points), every row vs played-only ===
+  top-24  ALL rows (DNP = 0)     n=  672  raw pts bias -0.37  (proj 14.73 act 15.10)   played 98.2%
+  top-24  PLAYED only            n=  660  raw pts bias -0.60  (proj 14.77 act 15.37)   played 100.0%
+  top-36  ALL rows (DNP = 0)     n= 1008  raw pts bias -0.35  (proj 12.73 act 13.08)   played 97.0%
+  top-36  PLAYED only            n=  978  raw pts bias -0.68  (proj 12.80 act 13.48)   played 100.0%
+  top-48  ALL rows (DNP = 0)     n= 1344  raw pts bias -0.55  (proj 11.00 act 11.55)   played 96.4%
+  top-48  PLAYED only            n= 1295  raw pts bias -0.90  (proj 11.09 act 11.99)   played 100.0%
+
+=== 2. BIAS BY ROOM RANK, every row vs played-only (raw points and projected-stat channels) ===
+
+--- ALL rows (DNP = 0)
+        n  played%  raw pts bias  cal pts bias  rushing_a  rushing_y  rushing_t  targets  reception  receiving
+rk                                                                                                            
+RB1   832    96.51         -0.72         -0.92       0.14      -1.70      -0.07    -0.06      -0.05      -0.02
+RB2   828    88.04         -0.43          0.09       0.07      -1.78      -0.05    -0.04      -0.01       0.01
+RB3   791    62.58         -0.20          0.68      -0.02      -0.17      -0.01    -0.06      -0.05      -0.00
+RB4+  756    33.47         -0.08          0.90      -0.04      -0.65       0.00    -0.03      -0.02       0.00
+
+--- PLAYED only
+        n  played%  raw pts bias  cal pts bias  rushing_a  rushing_y  rushing_t  targets  reception  receiving
+rk                                                                                                            
+RB1   803    100.0         -1.09         -1.31      -0.30      -3.29      -0.08    -0.16      -0.12      -0.02
+RB2   729    100.0         -0.94         -0.45      -0.50      -3.99      -0.06    -0.19      -0.13       0.00
+RB3   495    100.0         -0.92         -0.08      -0.75      -2.93      -0.03    -0.29      -0.22      -0.01
+RB4+  253    100.0         -1.10         -0.14      -0.89      -4.79      -0.02    -0.37      -0.29       0.00
+
+=== 3. CLEAN view: RB1/RB2 who PLAYED and were not in a room with an OUT back (no survivorship, no vacancy) ===
+n=1052
+                    proj        act   bias
+stat                                      
+rushing_attempts  10.384  10.609000 -0.226
+rushing_yards     44.059  47.167999 -3.109
+rushing_tds        0.301   0.351000 -0.049
+targets            2.616   2.717000 -0.101
+receptions         2.048   2.138000 -0.090
+receiving_yards   15.382  15.845000 -0.463
+receiving_tds      0.074   0.087000 -0.013
+  raw points: proj 10.24 act 11.00 bias -0.75 | act_other (fumbles/2pt not projected) mean -0.067
+  points rebuilt from projected stat line: 10.24 (Raw Model Proj Pts 10.24)
+
+=== 4. EFFICIENCY decomposition, played RBs, by room rank (yards = carries x YPC) ===
+         n  carries p/a  YPC proj  YPC act  yds gap/player    from carries    from YPC  TD/carry proj  TD/carry act
+rank                                                                                                               
+RB1    545  14.43/14.45     4.274    4.447          -2.599          -0.108      -2.491          0.030         0.033
+RB2    507    6.04/6.48     4.164    4.444          -3.658          -1.964      -1.694          0.027         0.033
+RB3    339    1.69/2.24     4.146    4.083          -2.128          -2.235       0.107          0.021         0.025
+RB4+   185    0.50/1.14     3.800    4.838          -3.599          -3.081      -0.517          0.026         0.024
+ALL   1576    7.35/7.70     4.235    4.430          -2.956          -1.520      -1.436          0.029         0.032
+
+=== 5. RECEIVING decomposition, played RBs, by room rank ===
+     targets p/a  catch% proj  catch% act  Y/rec proj  Y/rec act  rec yds gap/player
+rank                                                                                
+RB1    3.40/3.47        0.784       0.792       7.581      7.599              -0.656
+RB2    1.77/1.91        0.780       0.778       7.364      7.039              -0.256
+RB3    0.71/0.90        0.780       0.774       7.707      7.581              -1.021
+RB4+   0.27/0.52        0.746       0.732       7.547      6.310              -0.907
+ALL    1.93/2.07        0.782       0.784       7.526      7.397              -0.635
+
+=== 6. CONDITIONAL LEVEL: played RBs, carries/targets projected vs actual by projection bin ===
+  rushing_attempts: 0.3->1.0 (x2.89)  1.9->2.4 (x1.28)  4.4->5.1 (x1.16)  8.1->8.5 (x1.05)  12.5->13.2 (x1.06)  16.9->16.1 (x0.95)
+  targets: 0.1->0.3 (x3.07)  0.6->0.9 (x1.67)  1.2->1.4 (x1.15)  2.0->2.2 (x1.08)  3.0->2.9 (x0.98)  4.7->4.6 (x0.99)
+  rushing_yards: 1.2->4.8 (x4.20)  7.3->10.8 (x1.49)  17.6->21.7 (x1.24)  32.4->35.9 (x1.11)  50.7->56.2 (x1.11)  77.8->75.1 (x0.97)
+  receiving_yards: 0.4->2.4 (x5.53)  2.8->4.1 (x1.48)  6.8->8.2 (x1.21)  11.4->12.9 (x1.13)  17.3->17.2 (x1.00)  29.5->27.2 (x0.92)
+
+=== 7. STAGE TRACE, played RB1/RB2 (carry-weighted multipliers; blended rate -> pre-vacancy -> final) ===
+  rushing_attempts  blended  11.055  pre-vac  10.928  final  10.384  actual  10.609  | matchup 1.002 script 1.000 descript 1.001 pace 0.991 env 1.000 partic 0.998 | budget d -0.544 capacity d +0.000 vacancy d +0.000
+  rushing_yards     blended  47.867  pre-vac  46.451  final  44.059  actual  47.168  | matchup 1.003 script 0.978 descript 1.000 pace 0.991 env 1.000 partic 0.998 | budget d -2.392 capacity d +0.000 vacancy d +0.000
+  rushing_tds       blended   0.318  pre-vac   0.318  final   0.301  actual   0.351  | matchup 1.003 script 1.000 descript 1.000 pace 0.991 env 1.002 partic 0.998 | budget d -0.016 capacity d +0.000 vacancy d +0.000
+  targets           blended   2.795  pre-vac   2.755  final   2.616  actual   2.717  | matchup 1.005 script 1.000 descript 1.000 pace 0.992 env 0.999 partic 0.999 | budget d +0.000 capacity d -0.139 vacancy d +0.000
+  receiving_yards   blended  16.470  pre-vac  16.230  final  15.382  actual  15.845  | matchup 1.004 script 1.000 descript 1.000 pace 0.992 env 0.998 partic 0.999 | budget d +0.000 capacity d -0.848 vacancy d +0.000
+
+=== 8. By season, played RB1/RB2: raw points bias and carries/yards/targets bias ===
+        n  raw pts bias  carries  rush yds  targets  rec yds
+year                                                        
+2022  266         -0.21    -0.53     -2.90    -0.08     1.33
+2023  254         -1.12    -0.12     -2.25    -0.27    -2.70
+2024  272         -0.28    -0.24     -2.38     0.07     0.62
+2025  260         -1.44    -0.00     -4.93    -0.13    -1.26

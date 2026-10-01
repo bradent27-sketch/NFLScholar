@@ -1,9 +1,13 @@
 {
   "fit_window": "2016-2021",
-  "fitted_at": "2026-09-29T02:19:20.071751+00:00",
+  "fitted_at": "2026-10-01T00:10:21.370491+00:00",
   "td_rate": {
     "rush": {
       "QB": {
+        "oz20": {
+          "n_opportunities": 6840,
+          "rate": 0.00482
+        },
         "rz10": {
           "n_opportunities": 402,
           "rate": 0.23134
@@ -18,6 +22,10 @@
         }
       },
       "RB": {
+        "oz20": {
+          "n_opportunities": 56930,
+          "rate": 0.00473
+        },
         "rz10": {
           "n_opportunities": 2367,
           "rate": 0.11027
@@ -32,6 +40,10 @@
         }
       },
       "TE": {
+        "oz20": {
+          "n_opportunities": 243,
+          "rate": 0.00823
+        },
         "rz20": {
           "n_opportunities": 45,
           "rate": 0.0
@@ -42,6 +54,10 @@
         }
       },
       "WR": {
+        "oz20": {
+          "n_opportunities": 1976,
+          "rate": 0.01265
+        },
         "rz10": {
           "n_opportunities": 63,
           "rate": 0.19048
@@ -109,6 +125,7 @@
   },
   "zone_elasticity": {
     "rush": {
+      "oz20": 0.0223,
       "rz10": 0.1655,
       "rz20": 0.2572,
       "rz5": 0.1275

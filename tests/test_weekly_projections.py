@@ -3410,3 +3410,146 @@ def test_rb_carry_budget_fits_the_room_on_the_real_board_and_rescores():
     assert trace['carry_budget_delta'] < 0
     assert trace['final_projection'] == pytest.approx(flag.loc['Lead RB', 'rushing_attempts'], abs=1e-3)
     assert boards['base'][1]['rb_carry_budget_ledger'] == []
+
+
+# --- v2_rb_rush_yards_script_neutral ------------------------------------------------
+
+def test_rb_rush_yards_driver_only_moves_with_the_flag():
+    assert wp._script_neutral_driver_stat('RB', 'rushing_yards') is None
+    assert wp._script_neutral_driver_stat('RB', 'rushing_yards', True) == 'rushing_attempts'
+    # Nothing else changes: other positions' yards and RB's own stats are untouched.
+    assert wp._script_neutral_driver_stat('QB', 'rushing_yards', True) is None
+    assert wp._script_neutral_driver_stat('WR', 'rushing_yards', True) is None
+    assert wp._script_neutral_driver_stat('RB', 'rushing_tds', True) is None
+    assert wp._script_neutral_driver_stat('RB', 'rushing_attempts', True) == 'rushing_attempts'
+
+
+def test_rb_rush_yards_are_descripted_by_the_carries_factor_so_ypc_is_preserved(monkeypatch):
+    df = weekly([
+        {'name': 'A', 'week': 1, 'team': 'KC', 'position': 'RB', 'rushing_attempts': 20.0, 'rushing_yards': 90.0},
+        {'name': 'A', 'week': 2, 'team': 'KC', 'position': 'RB', 'rushing_attempts': 20.0, 'rushing_yards': 90.0},
+    ])
+    monkeypatch.setattr(wp, '_load_script_curves', lambda *_a, **_k: {('RB', 'rushing_attempts'): {
+        'beta_lead': 0.0, 'beta_trail': 0.1, 'beta_exp': 0.0}})
+    monkeypatch.setattr(wp, 'realized_script_by_team_week', lambda year: {('KC', 1.0): -10.0, ('KC', 2.0): 0.0})
+    off = wp._script_neutralize_history(df, 'team', 'RB', 2099)
+    on = wp._script_neutralize_history(df, 'team', 'RB', 2099, rb_rush_yards=True)
+    assert off['rushing_yards'].tolist() == [90.0, 90.0]                 # flag off: untouched
+    wk1 = on[on['week'] == 1].iloc[0]
+    assert wk1['rushing_yards'] == pytest.approx(90.0 / 0.5)             # same divisor as carries (real clip floor 0.5)
+    assert wk1['rushing_attempts'] == pytest.approx(20.0 / 0.5)
+    assert wk1['rushing_yards'] / wk1['rushing_attempts'] == pytest.approx(4.5)
+    assert on[on['week'] == 2].iloc[0]['rushing_yards'] == pytest.approx(90.0)
+
+
+def test_rb_rush_yards_drop_the_old_personal_script_multiplier_in_season():
+    rows = []
+    for week in range(1, 7):
+        rows += [
+            {'name': 'Lead RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+             'weekly_snap_pct': 70.0, 'rushing_attempts': 16.0, 'rushing_yards': 40.0 + 12.0 * (week % 3),
+             'rushing_tds': 0.4, 'targets': 3.0, 'receptions': 2.0, 'receiving_yards': 15.0, 'receiving_tds': 0.1},
+            {'name': 'Second RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+             'weekly_snap_pct': 30.0, 'rushing_attempts': 6.0, 'rushing_yards': 26.0, 'rushing_tds': 0.1,
+             'targets': 2.0, 'receptions': 1.0, 'receiving_yards': 9.0, 'receiving_tds': 0.0},
+        ]
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': w, 'home_team': 'KC' if w % 2 else 'LAC', 'away_team': 'LAC' if w % 2 else 'KC',
+                              'home_score': 20 + 3 * (w % 4), 'away_score': 17, 'spread_line': 4.0, 'total_line': 47.0}
+                             for w in range(1, 8)])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+    boards = {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {'KC': 4.0, 'LAC': -4.0}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_rb_rush_yards_script_neutral'}),
+                           ('flag', wp.DEFAULT_FEATURES | {'v2_rb_rush_yards_script_neutral'})):
+            wp.build_weekly_projections.clear()
+            boards[arm] = wp.build_weekly_projections(
+                2026, 7, 'Full PPR', as_of_week=7, apply_injury=False, features=feats)
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+
+    def trace(arm, stat):
+        return boards[arm][1]['explanations'][('Lead RB', 'RB', 'KC')]['stats'][stat]
+
+    assert trace('flag', 'rushing_yards')['script_multiplier'] == 1.0
+    # The forward factor is the carries' own (same curve, same margin).
+    assert trace('flag', 'rushing_yards')['script_neutral_multiplier'] == pytest.approx(
+        trace('flag', 'rushing_attempts')['script_neutral_multiplier'])
+    assert trace('base', 'rushing_yards')['script_neutral_multiplier'] == 1.0
+    # Carries are identical either way; receiving untouched.
+    assert trace('flag', 'rushing_attempts')['pre_vacancy_projection'] == pytest.approx(
+        trace('base', 'rushing_attempts')['pre_vacancy_projection'])
+    assert trace('flag', 'targets')['pre_vacancy_projection'] == pytest.approx(
+        trace('base', 'targets')['pre_vacancy_projection'])
+
+
+# --- v2_xtd_rush_outside_zone ---------------------------------------------------
+
+def _rush_xtd(monkeypatch, pos='RB', flag=False, rates=None, own=0.0, td_events=0.0):
+    monkeypatch.setattr(wp, '_load_xtd_rates', lambda: rates if rates is not None else {
+        'td_rate': {'rush': {'RB': {'rz5': {'rate': 0.4}, 'oz20': {'rate': 0.005}},
+                             'QB': {'rz5': {'rate': 0.5}, 'oz20': {'rate': 0.004}}}},
+        'zone_elasticity': {'rush': {'rz5': 0.0, 'oz20': 0.0}}})
+    monkeypatch.setattr(wp, '_xtd_zone_context', lambda year, as_of_week, prior_year: {
+        'cur_player': {'a': {'rz5_carries': 1.0, 'oz20_carries': 10.0}},
+        'cur_team': {'KC': {'rz5_carries': 2.0, 'oz20_carries': 40.0}},
+        'prior_player': {'a': {'rz5_carries': 3.0, 'oz20_carries': 30.0}},
+        'prior_team': {'KC': {'rz5_carries': 6.0, 'oz20_carries': 120.0, 'games': 6.0}}})
+    return wp.xtd_blended_rate(
+        'rushing_tds', pos, own_rate=np.array([own]), cur_games=np.array([2.0]),
+        cur_td_total=np.array([td_events]), prior_td_total=np.array([0.0]),
+        player_names=['A'], player_teams=['KC'], env={}, league_implied=None, year=2099, as_of_week=3,
+        rush_outside_zone=flag)
+
+
+def test_rush_outside_zone_adds_the_outside_20_expectation(monkeypatch):
+    off = _rush_xtd(monkeypatch, flag=False)
+    on = _rush_xtd(monkeypatch, flag=True)
+    # rz5: team 1.0/game x share 0.5 x 0.4 = 0.2 (both arms).
+    assert off[0] == pytest.approx(0.2)
+    # oz20 adds team 20 carries/game x share 0.25 x 0.005 = 0.025.
+    assert on[0] == pytest.approx(0.2 + 0.025)
+
+
+def test_rush_outside_zone_covers_qbs_and_leaves_receiving_alone(monkeypatch):
+    on_qb = _rush_xtd(monkeypatch, pos='QB', flag=True)
+    assert on_qb[0] == pytest.approx(1.0 * 0.5 * 0.5 + 20.0 * 0.25 * 0.004)
+    # receiving_tds never reads the rush oz20 zone (it has its own target zones).
+    monkeypatch.setattr(wp, '_load_xtd_rates', lambda: {
+        'td_rate': {'target': {'WR': {'rz10': {'rate': 0.5}}}}, 'zone_elasticity': {'target': {'rz10': 0.0}}})
+    monkeypatch.setattr(wp, '_xtd_zone_context', lambda year, as_of_week, prior_year: {
+        'cur_player': {'a': {'rz10_targets': 2.0}}, 'cur_team': {'KC': {'rz10_targets': 4.0}},
+        'prior_player': {'a': {'rz10_targets': 8.0}}, 'prior_team': {'KC': {'rz10_targets': 16.0, 'games': 16.0}}})
+    kw = dict(own_rate=np.array([0.9]), cur_games=np.array([2.0]), cur_td_total=np.array([0.0]),
+              prior_td_total=np.array([0.0]), player_names=['A'], player_teams=['KC'], env={},
+              league_implied=None, year=2099, as_of_week=3)
+    assert (wp.xtd_blended_rate('receiving_tds', 'WR', rush_outside_zone=True, **kw)[0]
+            == pytest.approx(wp.xtd_blended_rate('receiving_tds', 'WR', **kw)[0]))
+
+
+def test_rush_outside_zone_is_inert_without_a_fitted_rate_for_the_position(monkeypatch):
+    rates = {'td_rate': {'rush': {'RB': {'rz5': {'rate': 0.4}}}}, 'zone_elasticity': {'rush': {'rz5': 0.0}}}
+    assert _rush_xtd(monkeypatch, flag=True, rates=rates)[0] == pytest.approx(_rush_xtd(monkeypatch, flag=False, rates=rates)[0])
+
+
+def test_shipped_xtd_rates_carry_the_rush_outside_zone():
+    wp._load_xtd_rates.cache_clear()
+    rates = wp._load_xtd_rates()
+    for pos in ('RB', 'QB'):
+        rate = rates['td_rate']['rush'][pos]['oz20']['rate']
+        assert 0.002 < rate < 0.01
+    assert 'oz20' in rates['zone_elasticity']['rush']

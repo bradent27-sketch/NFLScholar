@@ -3849,3 +3849,41 @@ overshoot. **Status: SHIPPED into DEFAULT_FEATURES 2026-10-01.** The stacked eff
 two (zone already in the defaults, keep_tds added on top) is not yet measured end-to-end:
 a harness run on the final defaults is the follow-up (`--add v2_rb_carry_budget_keep_tds`
 against defaults that already include the zone).
+
+## 2026-10-01 - Stacked check on the final defaults; calibration v5 vs the harness (OPEN)
+
+`--flags v2_rb_carry_budget_keep_tds` (ablate it from the final defaults: zone, keep_tds
+and calibration v5 all on), 2022-2025 wk3-17, replay flags: **removing keep_tds hurts**,
+so it stays: START-ALL RMSE 7.700 -> 7.705 (+0.005, CI [+0.001, +0.010]), START-RB
+7.724 -> 7.740 (+0.016, CI [0.000, +0.032]), ALL 6.306 -> 6.309 (+0.003, CI [+0.001,
++0.005]); START-RB bias -0.528 -> -0.689. keep_tds is confirmed on top of the zone flag.
+
+**Open problem: calibration v5 worsens the harness's played-only metrics.** The base arm
+of that run (v5 lines) against the base arms of the earlier runs (v4 lines, same
+flags otherwise) is:
+
+| | v4 lines (zone harness base) | v5 lines (this run, base) |
+|---|---|---|
+| ALL RMSE / bias | 6.227 / -0.396 | 6.306 / -0.835 |
+| START-ALL RMSE / bias | 7.683 / -0.403 | 7.700 / -0.643 |
+| START-QB RMSE / bias | 7.467 / -0.160 | 7.492 / -0.446 |
+| START-RB RMSE / bias | 7.711 / -0.584 | 7.724 / -0.528 |
+| START-WR RMSE / bias | 7.932 / -0.273 | 7.955 / -0.798 |
+| START-TE (lines unchanged) | 6.685 / -0.680 | 6.670 / -0.684 |
+
+(Pairwise accuracy unchanged everywhere; the earlier base arm did not yet have keep_tds,
+which only helps the RB row.) So v5 costs about +0.02 START RMSE at QB/WR and +0.08 on ALL
+in the metric this project gates changes on.
+
+Why the two analyses disagree: the harness scores only players who have a box score
+(E[actual | played]); the all-rows dump scores a listed live player who did not play as 0
+(E[actual including an unforeseen scratch]). On the startable pool about 3% do not play,
+which is worth about +0.4 signed bias, so the v4 lines look high on all rows (+0.18 to
++0.70) and low on played rows (-0.37). v5 targets the second quantity, and the
+participation flags (which discount by P(play)) are themselves not E[. | played] flags,
+so the harness cannot see their benefit either. Neither is wrong; they answer different
+questions, and v5 was applied under a criterion (all-rows START-MAE) I chose on my own
+authority while the user was away. The harness is the project's standing gate and it says
+v5 is worse. **Recommendation: revert the QB/RB/WR lines to v4 until this is decided**,
+keeping the all-rows dump tooling; a defensible alternative is lines fit to E[actual |
+played] on the corrected pool (played rows only, pool defined over all rows).

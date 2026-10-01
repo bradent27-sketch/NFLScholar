@@ -3887,3 +3887,10 @@ authority while the user was away. The harness is the project's standing gate an
 v5 is worse. **Recommendation: revert the QB/RB/WR lines to v4 until this is decided**,
 keeping the all-rows dump tooling; a defensible alternative is lines fit to E[actual |
 played] on the corrected pool (played rows only, pool defined over all rows).
+
+**Decision 2026-10-01 (user): keep calibration v4.** The QB/RB/WR lines are back to the v4
+values (QB 0.738/4.154, RB 0.907/1.030, WR 0.933/1.105, WR cold 0.863/1.292, rest
+0.969/0.990; TE was never changed). The v5 values and write-up stay in the source comment
+and the 2026-10-01 entries above as a record, and `fit_seasonal_calibration.py --all-rows`
+stays as tooling. Not done: a played-only re-fit on the corrected pool (lines fit to E[actual |
+played], pool defined over all rows), which would be the version consistent with the harness.

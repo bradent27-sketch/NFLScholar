@@ -2632,7 +2632,15 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 #     WR 6.100 -> 6.025   TE 5.378 -> 5.254
 # Re-fit: scripts/fit_seasonal_calibration.py --mode dump then --mode emit.
 #
-# V5 - ALL-ROWS RE-FIT 2026-10-01 (QB, RB, WR; TE KEPT at v4). Paired with the
+# V5 - ALL-ROWS RE-FIT 2026-10-01 - NOT APPLIED. The lines below are v4 again: v5 was
+# applied overnight, then REVERTED at the user's direction (2026-10-01) because the
+# project's gate (harness v2, played-only paired pools) scored it worse: ALL RMSE
+# 6.227 -> 6.306, START-QB 7.467 -> 7.492, START-WR 7.932 -> 7.955, with bias more
+# negative. The v5 fit targets E[actual incl. an unforeseen scratch]; the harness
+# scores E[actual | played]. v5 values, kept for the record and a possible later
+# played-only re-fit: QB (0.873, 1.543) RB (0.951, 0.269) WR (0.974, 0.219), WR cold
+# (0.927, 0.583) rest (0.989, 0.120). See docs/weekly_projections_methodology.md,
+# 2026-10-01. What follows is the v5 write-up as it was fit. Paired with the
 # 2026-09-29/10-01 ships (v2_wrte_participation, v2_script_neutral_level_fix,
 # v2_rb_participation, v2_rb_carry_budget, v2_rb_rush_yards_script_neutral,
 # v2_xtd_rush_outside_zone). Two things changed in HOW it is fit, both from the
@@ -2655,9 +2663,9 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 # for the survivorship artifact and for the carry/TD level errors fixed since.
 # ===========================================================================
 WEEKLY_CALIBRATION = {
-    'QB': (0.873, 1.543),
-    'RB': (0.951, 0.269),
-    'WR': (0.974, 0.219),
+    'QB': (0.738, 4.154),
+    'RB': (0.907, 1.030),
+    'WR': (0.933, 1.105),
     'TE': (0.927, 0.888),
 }
 # WR/TE only (see V4 block). week <= WEEKLY_CALIBRATION_COLD_MAX_WEEK -> 'cold'.
@@ -2666,11 +2674,11 @@ WEEKLY_CALIBRATION = {
 WEEKLY_CALIBRATION_COLD_MAX_WEEK = 4
 WEEKLY_CALIBRATION_BY_BUCKET = {
     'cold': {
-        'WR': (0.927, 0.583),
+        'WR': (0.863, 1.292),
         'TE': (0.818, 0.987),
     },
     'rest': {
-        'WR': (0.989, 0.120),
+        'WR': (0.969, 0.990),
         'TE': (0.981, 0.790),
     },
 }

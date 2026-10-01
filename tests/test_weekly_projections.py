@@ -3553,3 +3553,52 @@ def test_shipped_xtd_rates_carry_the_rush_outside_zone():
         rate = rates['td_rate']['rush'][pos]['oz20']['rate']
         assert 0.002 < rate < 0.01
     assert 'oz20' in rates['zone_elasticity']['rush']
+
+
+def test_rb_carry_budget_keep_tds_leaves_projected_rush_tds_at_the_pre_budget_level():
+    rows = []
+    for week in range(1, 6):
+        rows += [
+            {'name': 'Lead RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+             'weekly_snap_pct': 70.0, 'rushing_attempts': 16.0, 'rushing_yards': 70.0, 'rushing_tds': 0.4,
+             'targets': 3.0, 'receptions': 2.0, 'receiving_yards': 15.0, 'receiving_tds': 0.1},
+            {'name': 'Second RB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'RB',
+             'weekly_snap_pct': 30.0, 'rushing_attempts': 6.0, 'rushing_yards': 26.0, 'rushing_tds': 0.1,
+             'targets': 2.0, 'receptions': 1.0, 'receiving_yards': 9.0, 'receiving_tds': 0.0},
+        ]
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 6, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context,
+                wp.team_rb_carry_budgets)
+    boards = {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        wp.team_rb_carry_budgets = lambda *a, **k: pd.DataFrame({'budget': {'KC': 12.0}}).rename_axis('team')
+        for arm, feats in (('none', wp.DEFAULT_FEATURES - {'v2_rb_carry_budget'}),
+                           ('trim', wp.DEFAULT_FEATURES | {'v2_rb_carry_budget'}),
+                           ('keep', wp.DEFAULT_FEATURES | {'v2_rb_carry_budget', 'v2_rb_carry_budget_keep_tds'})):
+            wp.build_weekly_projections.clear()
+            boards[arm] = wp.build_weekly_projections(
+                2026, 6, 'Full PPR', as_of_week=6, apply_injury=False, features=feats)[0].set_index('Player')
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context,
+         wp.team_rb_carry_budgets) = original
+        wp.build_weekly_projections.clear()
+
+    tds = {arm: boards[arm].loc['Lead RB', 'rushing_tds'] for arm in boards}
+    car = {arm: boards[arm].loc['Lead RB', 'rushing_attempts'] for arm in boards}
+    assert car['trim'] < car['none'] and car['keep'] == pytest.approx(car['trim'], abs=1e-3)   # carries cut either way
+    assert tds['trim'] < tds['none']                                                        # default trims TDs
+    assert tds['keep'] == pytest.approx(tds['none'], abs=1e-3)                              # keep_tds does not

@@ -3743,3 +3743,61 @@ re-fit on the final default set, a non-win is iterated on before anything is
 pushed. Win bar fixed in advance: harness bias growth under the 0.3 cap, START-ALL
 RMSE not worse, START-RB and START-QB bias moving toward zero or RMSE improving,
 and the board audit showing the RB rush-TD shortfall materially smaller.
+
+## 2026-09-30 - RB rushing TDs: `v2_xtd_rush_outside_zone` and `v2_rb_carry_budget_keep_tds` (CANDIDATES)
+
+**Where the RB rush-TD shortfall comes from** (28 weeks 2022-2025, all live RB rows,
+actual 0.1827 TD/row; team RB room 0.704 TD/game):
+
+| stage | RB-room TD/team-game |
+|---|---|
+| actual | 0.704 |
+| expected from actual zone opportunities x fit rates (RB share only, incl. outside 20) | 0.661 / 0.676 / 0.795 / 0.694 by year (mean 0.706) |
+| expected from PRIOR-season zone opportunities x fit rates | 0.691 / 0.650 / 0.683 / 0.727 (mean 0.688) |
+| with `v2_xtd_rush_outside_zone`: blended rate (pre-multiplier) | 0.661 (0.1715 per live row; 0.1603 without the zone) |
+| ... after matchup/pace/participation (pre-vacancy) | 0.638 |
+| ... final board (after the carry budget) | 0.622 |
+
+1. **Outside-20 zone missing.** 12.4% of rushing TDs (RB 13.5%, QB 6.2%; 2016-2025
+   pbp) come from carries outside the 20; the xTD half of the blend had no zone for
+   them. The team-level zone model WITH it matches actual RB TDs (ratio ~1.0-1.03 over
+   2022-2025), so the zone rates themselves are not stale (RB zone TD rates 2022-25
+   vs the 2016-21 fit: rz5 0.37 vs 0.40, rz10 0.098 vs 0.110, rz20 0.038 vs 0.042,
+   oz20 0.0054 vs 0.0047 - if anything slightly LOW, not high). Flag
+   `v2_xtd_rush_outside_zone` adds the zone (RB and QB; rates from
+   `data/xtd_rates.json`, refit 2016-2021, only oz20 entries added).
+   Real boards: RB TD/row 0.1511 -> 0.1613 (x0.83 -> x0.88 of actual), top-36 raw
+   points bias -0.352 -> -0.239, RB TD channel points bias -0.380 -> -0.188.
+2. **The carry budget trims TDs it should not.** The budget's uniform factor scales
+   rushing TDs along with carries, taking 7.3% of RB rush TDs (RB1 -6%, RB2 -8%) from
+   a total already ~12% short. A TD projection is goal-line opportunity, not the
+   between-the-20s carry volume a carry budget constrains. What-if on the zone-flag
+   boards: leaving TDs at their pre-budget value moves RB TD x0.883 -> x0.947 and the
+   top-36 RB TD points bias -0.188 -> -0.025. `v2_rb_carry_budget_keep_tds` (budget
+   scales carries and yards only) implements it; participation, by contrast, is not
+   the problem (undoing it leaves the top-36 TD bias at -0.187).
+3. Bins by projected TD show the remaining under-projection in the mid octiles
+   (0.19 -> 0.25) with the top octile now slightly over (0.618 -> 0.594); that shape
+   is partly regression-to-the-mean from sorting on a noisy projection, not bias.
+
+**Harness:** `v2_xtd_rush_outside_zone` alone: `.sweeps/harness_xtd_rush_outside_2022-2025_wk3-17.log`;
+the pair: `.sweeps/harness_xtd_zone_keep_tds_2022-2025_wk3-17.log`. Results below.
+
+**Harness v2, `v2_xtd_rush_outside_zone` alone** (2022-2025 wk3-17, replay flags,
+defaults incl. the rush-yards flag): **SHIP-ELIGIBLE**, bias growth -0.037.
+
+| scope | RMSE | pairwise | bias |
+|---|---|---|---|
+| START-ALL | 7.683 -> 7.681 (-0.003, CI [-0.005, -0.001]) | 0.000 | -0.403 -> -0.366 |
+| START-RB | 7.711 -> 7.705 (-0.006, CI [-0.011, -0.001]) | 0.000 | -0.584 -> -0.473 |
+| START-QB | 7.467 -> 7.467 (0.000) | -0.001 | -0.160 -> -0.132 |
+| START-WR / TE | -0.001 / -0.001 (n.s.) | 0 | unchanged |
+| ALL | 6.227 -> 6.225 (-0.001, CI [-0.003, -0.001]) | 0.000 | -0.396 -> -0.376 |
+
+Both RB and all-starter RMSE improvements are significant (CI excludes 0), bias moves
+toward zero at every scope that moves, QB TDs included (the shared rush zone covers
+QBs). **Status: SHIPPED into DEFAULT_FEATURES 2026-10-01** under the win bar fixed in
+advance (the user is away until 6 AM and asked for no permission requests). The pair
+test with `v2_rb_carry_budget_keep_tds` is running against the pre-ship defaults
+(`.sweeps/harness_xtd_zone_keep_tds_2022-2025_wk3-17.log`); its result relative to
+this run says whether keep_tds adds anything.

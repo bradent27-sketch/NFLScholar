@@ -213,8 +213,16 @@ def team_rb_carry_budgets(hist: pd.DataFrame, prior_stats: pd.DataFrame, schedul
 
 
 def apply_rb_carry_budget(result: pd.DataFrame, budgets: pd.DataFrame, deadband: float | None = None,
-                          lead_weighted: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Fit each team's RB carries to its budget band. Returns (board, ledger)."""
+                          lead_weighted: bool = False, keep_tds: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Fit each team's RB carries to its budget band. Returns (board, ledger).
+
+    ``keep_tds`` ('v2_rb_carry_budget_keep_tds'): scale carries and rushing yards by the
+    room factor but leave rushing TDs at their own projected level. A TD projection comes
+    from goal-line opportunity (v2_xtd's zone model), not from the between-the-20s carry
+    volume a carry budget constrains, and a uniform trim took 7.3% of RB rushing TDs
+    (RB1 -6%) while the TD total was already ~12% short of actual (2026-09-30 RB level
+    audit: undoing it moves the top-36 RB TD points bias from -0.19 to -0.03).
+    """
     deadband = RB_CARRY_BUDGET_DEADBAND if deadband is None else float(deadband)
     if (result is None or result.empty or budgets is None or budgets.empty
             or 'rushing_attempts' not in result.columns or not {'Team', 'Pos'}.issubset(result.columns)):
@@ -261,11 +269,12 @@ def apply_rb_carry_budget(result: pd.DataFrame, budgets: pd.DataFrame, deadband:
             factor = pd.Series(target / claim, index=idx)
         live = idx[~sidelined.loc[idx].to_numpy()]
         side = idx[sidelined.loc[idx].to_numpy()]
-        for col in ('rushing_attempts',) + RUSH_DEPENDENTS:
+        dependents = ('rushing_yards',) if keep_tds else RUSH_DEPENDENTS
+        for col in ('rushing_attempts',) + dependents:
             if col in out.columns:
                 out.loc[live, col] = (pd.to_numeric(out.loc[live, col], errors='coerce').fillna(0.0)
                                       * factor.loc[live]).round(3)
-        for col in ('_full_rushing_attempts',) + tuple(f'_full_{c}' for c in RUSH_DEPENDENTS):
+        for col in ('_full_rushing_attempts',) + tuple(f'_full_{c}' for c in dependents):
             if col in out.columns and len(side):
                 out.loc[side, col] = (pd.to_numeric(out.loc[side, col], errors='coerce').fillna(0.0)
                                       * factor.loc[side]).round(3)

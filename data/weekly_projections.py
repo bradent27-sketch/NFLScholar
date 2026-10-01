@@ -1766,6 +1766,12 @@ MODEL_FEATURES = (
                              # carries^2 so the lead back absorbs most of it
                              # (the leftover room excess is ~all RB1). No
                              # effect without v2_rb_carry_budget.
+    'v2_rb_carry_budget_keep_tds',  # CANDIDATE 2026-09-30. Modifier of v2_rb_carry_budget:
+                             # the budget scales carries and rushing yards only,
+                             # not rushing TDs (a TD projection is goal-line
+                             # opportunity, not carry volume; the uniform trim
+                             # took 7.3% of RB rush TDs). No effect without
+                             # v2_rb_carry_budget.
     'v2_rb_rush_yards_script_neutral',  # SHIPPED 2026-09-30. RB rushing
                              # yards follow rushing_attempts' de-scripted
                              # curve (history de-scripted, forward f_exp)
@@ -1774,7 +1780,7 @@ MODEL_FEATURES = (
                              # signal (RB level audit). Needs
                              # v2_script_neutral_volume. See
                              # _script_neutral_driver_stat.
-    'v2_xtd_rush_outside_zone',  # CANDIDATE 2026-09-30. Adds the outside-the-20
+    'v2_xtd_rush_outside_zone',  # SHIPPED 2026-10-01. Adds the outside-the-20
                              # carry zone to v2_xtd's rushing_tds expected-TD
                              # model (RB and QB; ~13.5% / ~6% of their rushing
                              # TDs come from there). Needs v2_xtd. See
@@ -2352,6 +2358,16 @@ DEFAULT_FEATURES = frozenset({
     # -0.035. A correctness fix, shipped as an obvious-error removal. Not a
     # calibration no-op (RB yards move); folded into the calibration re-fit.
     'v2_rb_rush_yards_script_neutral',
+    # SHIPPED 2026-10-01 (win bar fixed in advance, user away). Adds the
+    # outside-the-20 carry zone to v2_xtd's rushing_tds expected-TD model
+    # (RB and QB; 13.5% / 6.2% of their rushing TDs are scored from there).
+    # Real boards: RB rush TD/row x0.83 -> x0.88 of actual, top-36 RB TD points
+    # bias -0.38 -> -0.19. Harness v2 2022-2025 wk3-17: SHIP-ELIGIBLE, START-ALL
+    # RMSE -0.003 CI[-0.005,-0.001], START-RB RMSE -0.006 CI[-0.011,-0.001],
+    # START-RB bias -0.584 -> -0.473, START-QB bias -0.160 -> -0.132, bias
+    # growth -0.037. Not a calibration no-op (RB/QB TDs move); folded into the
+    # calibration re-fit.
+    'v2_xtd_rush_outside_zone',
 })
 
 
@@ -11782,7 +11798,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                          team_col=team_col, prior_team_col=prior_team_col)
         _pre_carries = pd.to_numeric(result['rushing_attempts'], errors='coerce').fillna(0.0)
         result, _cb_ledger = apply_rb_carry_budget(
-            result, _budgets, lead_weighted=('v2_rb_carry_budget_lead' in feats))
+            result, _budgets, lead_weighted=('v2_rb_carry_budget_lead' in feats),
+            keep_tds=('v2_rb_carry_budget_keep_tds' in feats))
         carry_budget_ledger = _cb_ledger.to_dict('records')
         _moved = (pd.to_numeric(result['rushing_attempts'], errors='coerce').fillna(0.0) - _pre_carries).abs() > 1e-6
         carry_budget_adjusted = bool(_moved.any())

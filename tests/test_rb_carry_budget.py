@@ -120,3 +120,23 @@ def test_shipped_params_are_sane():
     assert p is not None and set(p['coefs']) == {'rate', 'spread', 'opp_rb'}
     assert p['coefs']['rate'] > 0 and p['coefs']['opp_rb'] > 0 and 0 <= p['coefs']['spread'] < 0.3
     assert abs(p['intercept']) < 1.5
+
+
+def test_keep_tds_scales_carries_and_yards_but_leaves_touchdowns():
+    board = _board([['A', 'KC', 'RB', 1.0, 16.0, 80.0, 0.6], ['B', 'KC', 'RB', 1.0, 8.0, 32.0, 0.2]])
+    base, _ = cb.apply_rb_carry_budget(board, _budgets(KC=20.0), deadband=1.0)
+    kept, _ = cb.apply_rb_carry_budget(board, _budgets(KC=20.0), deadband=1.0, keep_tds=True)
+    assert kept['rushing_attempts'].tolist() == base['rushing_attempts'].tolist()
+    assert kept['rushing_yards'].tolist() == base['rushing_yards'].tolist()
+    assert kept['rushing_tds'].tolist() == [0.6, 0.2]                     # untouched
+    assert (base['rushing_tds'] < board['rushing_tds']).all()             # default still trims them
+
+
+def test_keep_tds_leaves_a_sidelined_backs_td_stash_alone():
+    board = _board([['A', 'KC', 'RB', 0.0, 0.0, 0.0, 0.0], ['B', 'KC', 'RB', 1.0, 8.0, 32.0, 0.2]])
+    board['_full_rushing_attempts'] = [16.0, 8.0]
+    board['_full_rushing_yards'] = [72.0, 32.0]
+    board['_full_rushing_tds'] = [0.5, 0.2]
+    out, _ = cb.apply_rb_carry_budget(board, _budgets(KC=20.0), deadband=1.0, keep_tds=True)
+    assert out.loc[0, '_full_rushing_tds'] == 0.5
+    assert out.loc[0, '_full_rushing_attempts'] == pytest.approx(16.0 * 21.0 / 24.0, abs=1e-3)

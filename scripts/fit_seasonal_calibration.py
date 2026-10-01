@@ -331,11 +331,16 @@ def main():
     ap.add_argument('--scoring', default='Full PPR')
     ap.add_argument('--all-rows', action='store_true',
                     help='dump mode: replay ON, keep live rows with no box score as 0 (see module docstring)')
+    ap.add_argument('--extra-features', default='',
+                    help='dump mode: comma-separated flags added on top of CALIBRATION_INPUT_FEATURES '
+                         '(a candidate expected to ship before the lines are applied)')
     ap.add_argument('--dump-path', default=None,
                     help='override the dump CSV path (written by dump, read by analyze/emit)')
     a = ap.parse_args()
     if a.dump_path:
         globals()['DUMP_PATH'] = a.dump_path
+    if a.extra_features:
+        globals()['FEATS'] = frozenset(FEATS | {f for f in a.extra_features.split(',') if f})
     if a.mode == 'dump':
         y0, y1 = (int(x) for x in a.years.split('-'))
         w0, w1 = (int(x) for x in a.weeks.split('-'))

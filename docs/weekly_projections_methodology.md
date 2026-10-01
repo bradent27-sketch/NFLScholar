@@ -3801,3 +3801,29 @@ advance (the user is away until 6 AM and asked for no permission requests). The 
 test with `v2_rb_carry_budget_keep_tds` is running against the pre-ship defaults
 (`.sweeps/harness_xtd_zone_keep_tds_2022-2025_wk3-17.log`); its result relative to
 this run says whether keep_tds adds anything.
+
+## 2026-10-01 - Calibration v5: all-rows re-fit (QB, RB, WR applied; TE kept)
+
+Dump: `fit_seasonal_calibration.py --mode dump --all-rows --extra-features
+v2_rb_carry_budget_keep_tds` (2021-2025 wk1-18; DEFAULT_FEATURES minus calibration, replay
+ON, 38,717 live player-weeks, 72.1% with a box score, no-box-score rows scored 0, top-N over
+all live rows), then `--mode emit`. Logs: `.sweeps/calibration_allrows_*.log`.
+
+Held-out startable MAE / signed bias (pred - actual), v4 lines (shipped) vs the v5 refit
+(fit on the first years, scored on the last; WR/TE use the shipped 2-bucket scheme):
+
+| pos | fit 21-23 / test 24-25 | fit 21-24 / test 25 | fit 22-25 / test 21 |
+|---|---|---|---|
+| QB shipped -> refit | 6.616/+0.52 -> 6.597/+0.11 | 6.723/+0.70 -> 6.711/+0.37 | 6.612/+1.67 -> 6.569/+1.60 |
+| RB shipped -> refit | 5.993/+0.30 -> 5.955/+0.06 | 5.977/+0.18 -> 5.931/-0.07 | 6.569/+0.81 -> 6.553/+0.68 |
+| WR shipped -> refit | 6.308/+0.30 -> 6.259/-0.23 | 6.115/+0.70 -> 6.043/+0.24 | 6.602/+0.90 -> 6.523/+0.52 |
+| TE shipped -> refit | 5.277/-0.40 -> 5.298/-0.77 | 5.188/-0.45 -> 5.183/-0.72 | 5.418/+0.01 -> 5.408/-0.14 |
+
+Rule (same START-MAE criterion v4 shipped on): apply a position only if it improves in every
+split. QB, RB, WR improve in all three; TE is a wash (one split worse, bias more negative)
+and keeps its v4 lines. Applied: QB (0.873, 1.543), RB (0.951, 0.269), WR single (0.974,
+0.219), WR cold (0.927, 0.583), WR rest (0.989, 0.120). The v4 lines OVER-project on the
+corrected pool (2025: QB +0.70, RB +0.18, WR +0.64); the earlier played-only refit
+(entry 2026-09-30) would have gone the other way (RB intercept up) because of the pool
+artifact. The big intercept drop (RB 1.030 -> 0.269) is the old lift on low projections
+no longer being needed once phantom depth, carry inflation and the RB level errors are fixed.

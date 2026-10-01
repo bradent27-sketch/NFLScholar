@@ -2621,11 +2621,33 @@ CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
 #     QB 6.468 -> 6.467   RB 6.177 -> 6.140
 #     WR 6.100 -> 6.025   TE 5.378 -> 5.254
 # Re-fit: scripts/fit_seasonal_calibration.py --mode dump then --mode emit.
+#
+# V5 - ALL-ROWS RE-FIT 2026-10-01 (QB, RB, WR; TE KEPT at v4). Paired with the
+# 2026-09-29/10-01 ships (v2_wrte_participation, v2_script_neutral_level_fix,
+# v2_rb_participation, v2_rb_carry_budget, v2_rb_rush_yards_script_neutral,
+# v2_xtd_rush_outside_zone). Two things changed in HOW it is fit, both from the
+# RB level audit (docs/weekly_projections_methodology.md, 2026-09-30):
+#   * the dump keeps every live row (replay ON, a live player with no box score
+#     scores 0) and takes the startable top-N over all of them. The old dump
+#     dropped no-actual rows first, so participation-discounted depth backs
+#     entered the pool only on weeks they played and read ~2x too low
+#     (RB top-36 bias -0.35 over all live rows vs -0.82 among players who played);
+#     a line fit on that pushes everyone back up and undoes the discounts.
+#   * fit 2021-2025, half-strength, two-sided (unchanged).
+# Held-out startable MAE, shipped v4 lines -> v5 (fit before test; three splits):
+#     QB  6.616->6.597  6.723->6.711  6.612->6.569
+#     RB  5.993->5.955  5.977->5.931  6.569->6.553
+#     WR  6.308->6.259  6.115->6.043  6.602->6.523   (WR 2-bucket)
+#     TE  5.277->5.298  5.188->5.183  5.418->5.408   (a wash, bias worse: kept)
+# The shipped v4 lines OVER-project on the corrected pool (QB +0.70, RB +0.18, WR
+# +0.64 signed bias, 2025); v5 brings them to +0.37 / -0.07 / +0.23. The intercepts
+# fall a lot (RB 1.030 -> 0.269): the old lift on low projections was compensating
+# for the survivorship artifact and for the carry/TD level errors fixed since.
 # ===========================================================================
 WEEKLY_CALIBRATION = {
-    'QB': (0.738, 4.154),
-    'RB': (0.907, 1.030),
-    'WR': (0.933, 1.105),
+    'QB': (0.873, 1.543),
+    'RB': (0.951, 0.269),
+    'WR': (0.974, 0.219),
     'TE': (0.927, 0.888),
 }
 # WR/TE only (see V4 block). week <= WEEKLY_CALIBRATION_COLD_MAX_WEEK -> 'cold'.
@@ -2634,11 +2656,11 @@ WEEKLY_CALIBRATION = {
 WEEKLY_CALIBRATION_COLD_MAX_WEEK = 4
 WEEKLY_CALIBRATION_BY_BUCKET = {
     'cold': {
-        'WR': (0.863, 1.292),
+        'WR': (0.927, 0.583),
         'TE': (0.818, 0.987),
     },
     'rest': {
-        'WR': (0.969, 0.990),
+        'WR': (0.989, 0.120),
         'TE': (0.981, 0.790),
     },
 }

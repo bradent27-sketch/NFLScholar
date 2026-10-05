@@ -528,6 +528,11 @@ in this item.
 
 ## 7. Model + market (+ FantasyPros) blend
 
+**DROPPED 2026-10-05 by the user.** The point of the app is an independent model number to
+compare against the market; a blend would erase that comparison. Market and FantasyPros stay
+benchmarks and diagnostics only (see scripts/review_live_season.py), never inputs to the
+displayed projection. The original plan text is kept below for the record.
+
 **Why.** After §2a the market and model agree on level but diverge
 player-by-player (E1), and a consensus of sharp books is the strongest
 public benchmark. Averaging two partly independent good forecasts

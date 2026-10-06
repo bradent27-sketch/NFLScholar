@@ -4344,14 +4344,18 @@ WR 0.8 / TE 0.8 / RB 1.0 / QB 1.0 in-sample, START RMSE -0.002 at best; held out
 WR -0.004/+0.001/-0.007/-0.005, TE +0.016/+0.007/-0.007/+0.019, ALL +0.001/+0.002/-0.004/+0.002 - not robust. The
 points lines and the season anchor already absorb it. Not built.
 
-**Candidate: `v2_qb_passing_td_k` (UNSHIPPED, harness running).** K=15 (shared 5) for QB passing_tds: the QB's own
-current-season TD rate is trusted far too much after 2-4 games (K=5 puts 40-50% weight on it). The WR/TE receiving_tds
-K of 30/16 was a CI-excluding-0 win for the same reason; QB passing_tds was never swept (item 4 covered RB volume, QB
-RUSHING, WR/TE yardage, WR/TE TDs). Live week-5 effect: QB pass-TD sd 0.444 -> 0.391, points move up to +-1.2 (Willis +0.7,
-Murray +0.5; Cousins -1.2, Darnold -0.9). Harness v2 2022-2025 wk3-17 with injury/reserve replay,
-`.sweeps/harness_qb_passing_td_k_2022-2025_wk3-17.log`, sentinel `.sweeps/harness_qbk.done`, started 13:14. Win bar:
-bias growth < 0.3, START-ALL and START-QB RMSE not worse, no position worse. Only QBs can move (the flag touches one
-stat for one position), so START-QB is the scope that matters.
+**Candidate: `v2_qb_passing_td_k` - harness INCONCLUSIVE, left UNSHIPPED (recorded reject).** K=15 (shared 5) for QB
+passing_tds: the QB's own current-season TD rate is trusted heavily after 2-4 games (K=5 puts 40-50% weight on it); the
+WR/TE receiving_tds K of 30/16 was a CI-excluding-0 win for the same reason and QB passing_tds had never been swept (item 4
+covered RB volume, QB RUSHING, WR/TE yardage, WR/TE TDs). Live week-5 effect: QB pass-TD sd 0.444 -> 0.391, points move up to
++-1.2. Harness v2 2022-2025 wk3-17 with injury/reserve replay
+(`.sweeps/harness_qb_passing_td_k_2022-2025_wk3-17.log`): bias growth +0.004. START-QB RMSE 7.584 -> 7.574 (-0.010, CI
+[-0.035, +0.014], pairwise +0.002), START-ALL 7.657 -> 7.655 (-0.002, CI [-0.006, +0.002]), every other position +-0.000,
+Holm-adjusted p 0.49 for QB. It clears the no-worse bar but only just, with nothing to show for it: better in 25 of 60
+weeks (worse in more weeks than it helps), QB MAE 6.039 -> 6.051, QB bias unchanged. A change that moves QB points by up to
+a point for an effect indistinguishable from zero is not worth shipping; the season anchor, by contrast, improved 33 of 60
+weeks and MAE. The TD over-dispersion is evidently already absorbed by the QB calibration line (slope 0.738), as the
+earlier TD-compression test found. Stays in MODEL_FEATURES as a documented candidate, off by default.
 
 **Verdict:** no obvious large path to improve the board on projection accuracy. The model is within 0-2% of an oracle
 season mean (earlier audit entry), agrees with the posted player lines (r = 0.90), and beats them on the weeks scored

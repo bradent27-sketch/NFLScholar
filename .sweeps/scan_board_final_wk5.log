@@ -1,0 +1,67 @@
+board 2026 week 5: 448 rows, 30 teams, positions {'WR': 184, 'RB': 113, 'TE': 108, 'QB': 43}
+
+[ok  ] duplicate (Player, Pos, Team) rows: 0
+
+[ok  ] same player on more than one team: 0
+
+[ok  ] missing Opponent: 0
+
+[ok  ] rows for a team that is not playing this week (bye / wrong team): 0
+
+[ok  ] teams playing this week with no rows on the board: 0
+
+[ok  ] non-finite stat values: 0
+
+[ok  ] negative stat values: 0
+
+[ok  ] receptions > targets: 0
+
+[ok  ] receiving TDs > receptions: 0
+
+[ok  ] rushing TDs > rushing attempts: 0
+
+[ok  ] passing TDs > completions: 0
+
+[FAIL] receiving yards per target > 18 or < 3 (targets > 1): 2
+         Player Pos Team  targets  receiving_yards
+    Blake Corum  RB   LA    1.265            3.209
+Devontez Walker  WR  BAL    1.052           22.094
+
+[FAIL] rushing yards per carry > 8 or < 2.0 (carries > 2): 2
+           Player Pos Team  rushing_attempts  rushing_yards
+       Jared Goff  QB  DET              2.39           4.05
+Michael Penix Jr.  QB  ATL              3.23           5.84
+
+[ok  ] teams with other than exactly one QB projected over 5 attempts: {}
+
+team volume: pass attempts 22.6-40.2, carries 20.4-31.5, targets 21.5-38.2; targets/attempt 0.94-0.97
+
+[ok  ] teams with implausible projected volume (pass 22-45, rush 18-36, targets/attempt 0.8-1.05): 0
+
+[ok  ] Availability <= 0.01 but still projected points > 0.5: 0
+
+[ok  ] Availability outside [0, 1]: 0
+
+[ok  ] Model Proj Pts negative or NaN: 0
+
+[ok  ] Model Proj Pts > 3 pts but Raw is ~0 (calibration intercept lifting nothing): 0
+
+[ok  ] Expected Snap Share outside [0, 1]: 0
+
+top 3 per position (eyeball):
+Pos             Player Team Opponent  Model Proj Pts
+ QB       Dak Prescott  DAL       TB           20.69
+ QB         Josh Allen  BUF       LA           20.61
+ QB         Jared Goff  DET      ARI           20.32
+ RB       Jahmyr Gibbs  DET      ARI           26.85
+ RB     Bijan Robinson  ATL      BAL           23.51
+ RB     Kyren Williams   LA      BUF           21.12
+ TE       Trey McBride  ARI      DET           18.51
+ TE       Brock Bowers   LV       NE           15.73
+ TE        Sam LaPorta  DET      ARI           14.47
+ WR Jaxon Smith-Njigba  SEA       SF           25.57
+ WR        CeeDee Lamb  DAL       TB           24.07
+ WR         Puka Nacua   LA      BUF           21.70
+
+[ok  ] rows without a decomposition: 0 []
+[ok  ] decomposition stages not adding to the final value: 0 []

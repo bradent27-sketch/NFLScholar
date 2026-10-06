@@ -1,0 +1,45 @@
+TD calibration, played rows, wk3+, all years: actual = a + b * projected
+  QB rush  a +0.0686  b 0.704
+  RB rush  a +0.0696  b 0.768
+  RB rec   a +0.0214  b 0.732
+  WR rec   a +0.0614  b 0.717
+  TE rec   a +0.0699  b 0.700
+  QB pass  a +0.6535  b 0.543
+
+fit 21-23 / test 24-25: coefs QB rush b=0.63, RB rush b=0.72, RB rec b=0.72, WR rec b=0.68, TE rec b=0.60, QB pass b=0.55
+scope    n  RMSE base  dRMSE +TDcal (shipped lines)  dRMSE +TDcal (lines refit)  bias base  bias TDcal+refit  dpairwise (refit)
+   QB  831      7.848                        -0.020                      -0.020     -0.118            -0.303             0.0018
+   RB 1408      7.530                        -0.001                       0.003      0.098            -0.027            -0.0013
+   WR 1902      7.774                        -0.010                       0.022      0.087            -0.454             0.0005
+   TE  702      6.648                         0.012                       0.072     -0.458            -0.791            -0.0006
+  ALL 4843      7.563                        -0.006                       0.016     -0.024            -0.353            -0.0001
+
+fit 21-24 / test 25: coefs QB rush b=0.69, RB rush b=0.76, RB rec b=0.73, WR rec b=0.71, TE rec b=0.65, QB pass b=0.55
+scope    n  RMSE base  dRMSE +TDcal (shipped lines)  dRMSE +TDcal (lines refit)  bias base  bias TDcal+refit  dpairwise (refit)
+   QB  419      8.045                        -0.040                      -0.032      0.033            -0.043             0.0032
+   RB  707      7.667                         0.000                      -0.001      0.051            -0.076             0.0002
+   WR  946      7.506                        -0.015                      -0.008      0.441             0.004            -0.0006
+   TE  353      6.770                         0.005                       0.029     -0.494            -0.739             0.0025
+  ALL 2425      7.548                        -0.013                      -0.005      0.121            -0.135             0.0012
+
+fit 22-25 / test 21: coefs QB rush b=0.82, RB rush b=0.81, RB rec b=0.77, WR rec b=0.73, TE rec b=0.75, QB pass b=0.55
+scope    n  RMSE base  dRMSE +TDcal (shipped lines)  dRMSE +TDcal (lines refit)  bias base  bias TDcal+refit  dpairwise (refit)
+   QB  416      7.653                         0.004                       0.002      1.045             0.944            -0.0048
+   RB  683      7.959                        -0.031                      -0.012      0.260             0.200             0.0015
+   WR  945      8.009                        -0.035                      -0.043      0.638             0.217            -0.0007
+   TE  354      7.050                         0.002                       0.007      0.044            -0.089            -0.0011
+  ALL 2398      7.799                        -0.022                      -0.020      0.513             0.293            -0.0003
+
+verdict by position (dRMSE per split: shipped lines | refit lines):
+  QB: shipped [-0.02, -0.04, 0.004] | refit [-0.02, -0.032, 0.002]
+  RB: shipped [-0.001, 0.0, -0.031] | refit [0.003, -0.001, -0.012]
+  WR: shipped [-0.01, -0.015, -0.035] | refit [0.022, -0.008, -0.043]
+  TE: shipped [0.012, 0.005, 0.002] | refit [0.072, 0.029, 0.007]
+
+Harness window 2022-2025 wk3-17 (TD fit on all years, so in-sample):
+    scope  RMSE base  RMSE +TDcal shipped lines  RMSE +TDcal refit lines  bias base  bias +TDcal refit
+ START-QB      7.574                      7.587                    7.575     -0.089             -0.044
+ START-RB      7.789                      7.786                    7.784     -0.281             -0.373
+ START-WR      7.970                      7.965                    7.980      0.015             -0.517
+ START-TE      6.839                      6.839                    6.855     -0.519             -0.726
+START-ALL      7.696                      7.695                    7.701     -0.165             -0.425

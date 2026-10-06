@@ -1,0 +1,75 @@
+rows 7722 live WR/TE, weeks [np.int64(4), np.int64(6), np.int64(8), np.int64(10), np.int64(12), np.int64(14), np.int64(16)], years [np.int64(2022), np.int64(2023), np.int64(2024), np.int64(2025)]
+
+==========================================================================================
+TE - by within-team rank (projected targets), clean rooms, ALL live rows (no box score = 0)
+==========================================================================================
+      n  played  snap exp  snap act  tgt p  tgt a   yds p      yds a   td p   td a  pts bias
+rk                                                                                          
+1   187   0.930     0.717     0.706  4.192  4.545  31.752  36.096001  0.190  0.267    -1.118
+2   186   0.694     0.471     0.482  1.781  1.548  12.268  11.403000  0.069  0.070     0.207
+3+  302   0.407     0.219     0.297  0.656  0.526   4.435   3.566000  0.025  0.036    -0.028
+  TE room total targets per team-game: projected 7.02 actual 6.94
+
+  TE target channel by stage (carry-free: mean per row, clean rooms):
+      blended  pre-vacancy  capacity d  vacancy d  final  actual  matchup  descript   pace  partic
+rank                                                                                              
+1       4.973        4.740      -0.548        0.0  4.192   4.545    1.004       1.0  0.982   0.970
+2       2.329        2.039      -0.259        0.0  1.781   1.548    1.005       1.0  0.982   0.890
+3+      0.934        0.752      -0.096        0.0  0.656   0.526    1.002       1.0  0.980   0.823
+all     2.437        2.212      -0.266        0.0  1.945   1.921    1.004       1.0  0.982   0.924
+
+  TE efficiency, played rows: projected / actual
+    rank 1    n= 174  tgt 4.27/4.89  yds/tgt 7.64/7.94  td/tgt 0.0460/0.0588  catch 0.715/0.702
+    rank 2    n= 129  tgt 1.88/2.23  yds/tgt 7.03/7.36  td/tgt 0.0388/0.0451  catch 0.708/0.733
+    rank 3+   n= 123  tgt 0.86/1.29  yds/tgt 7.19/6.77  td/tgt 0.0462/0.0692  catch 0.708/0.736
+    rank all  n= 426  tgt 2.56/3.04  yds/tgt 7.46/7.67  td/tgt 0.0444/0.0571  catch 0.713/0.713
+
+  TE1 by expected snap share quintile (all rows):
+     snap  tgt_p  tgt_a   td_p   td_a
+sb                                   
+q1  0.489  2.737  2.579  0.110  0.184
+q2  0.630  3.909  5.054  0.173  0.270
+q3  0.742  4.428  4.595  0.196  0.270
+q4  0.826  4.878  4.784  0.215  0.270
+q5  0.900  5.025  5.737  0.257  0.342
+
+  TE1 by projected targets quintile (all rows): proj -> actual
+    tgt_p  tgt_a  blended    cap
+tb                              
+q1  2.299  2.842    3.044 -0.389
+q2  3.225  4.270    4.052 -0.460
+q3  4.127  4.892    5.075 -0.685
+q4  4.969  5.270    5.913 -0.734
+q5  6.335  5.474    6.786 -0.477
+
+  TE target bias by year (all ranks, clean rooms, all rows):
+rk       1     2    3+
+year                  
+2022 -0.47  0.05  0.07
+2023 -0.31  0.22  0.15
+2024 -0.46  0.27  0.29
+2025 -0.18  0.36  0.03
+
+==========================================================================================
+WR - by within-team rank (projected targets), clean rooms, ALL live rows (no box score = 0)
+==========================================================================================
+      n  played  snap exp  snap act  tgt p  tgt a   yds p      yds a   td p   td a  pts bias
+rk                                                                                          
+1   187   0.979     0.835     0.832  7.134  7.626  58.416  61.497002  0.333  0.380    -0.961
+2   187   0.952     0.781     0.758  5.250  5.305  42.852  44.658001  0.238  0.267    -0.639
+3+  734   0.654     0.299     0.337  1.439  1.375  11.311  10.501000  0.061  0.049     0.072
+  WR room total targets per team-game: projected 18.03 actual 18.33
+
+  WR target channel by stage (carry-free: mean per row, clean rooms):
+      blended  pre-vacancy  capacity d  vacancy d  final  actual  matchup  descript   pace  partic
+rank                                                                                              
+1       8.146        8.069      -0.935        0.0  7.134   7.626    1.013       1.0  0.984   0.993
+2       6.051        5.948      -0.698        0.0  5.250   5.305    1.010       1.0  0.985   0.987
+3+      1.880        1.659      -0.220        0.0  1.439   1.375    1.013       1.0  0.983   0.886
+all     3.642        3.465      -0.421        0.0  3.043   3.093    1.012       1.0  0.984   0.955
+
+  WR efficiency, played rows: projected / actual
+    rank 1    n= 183  tgt 7.15/7.79  yds/tgt 8.18/8.06  td/tgt 0.0466/0.0498  catch 0.651/0.630
+    rank 2    n= 178  tgt 5.30/5.57  yds/tgt 8.21/8.42  td/tgt 0.0462/0.0504  catch 0.630/0.639
+    rank 3+   n= 480  tgt 1.74/2.10  yds/tgt 7.96/7.64  td/tgt 0.0434/0.0357  catch 0.629/0.620
+    rank all  n= 841  tgt 3.67/4.07  yds/tgt 8.13/8.04  td/tgt 0.0457/0.0458  catch 0.639/0.630

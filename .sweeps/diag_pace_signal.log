@@ -1,0 +1,21 @@
+
+=== 2026 through week 4: ATL players vs NO ===
+      off_pace  off_rank  def_pace  def_rank  def_games
+team                                                   
+NO        69.9       2.0      60.5      20.0          3
+ATL       63.3      11.0      62.3      12.0          3
+league mean off/def plays per game: 61.4 / 61.3 (range off 52.5-74.5, def 48.0-68.9)
+NO def_pace 60.5 / league 61.3 = 0.987 -> clip 0.987 -> shrink alpha = 3/(3+12) = 0.200 -> multiplier 0.997
+ceiling this week: a defense at the +15% clip would give x1.030; after 12 games x1.075, a full 17 x1.088
+NO OFFENSE is rank 2 in plays run, but the multiplier reads the plays its DEFENSE faced (rank 20).
+
+=== plays per team-game, 2016-2025: n=4956 ===
+sd of a team's plays in a game around its own to-date mean: 8.7
+   bucket    n  model alpha (n/(n+12)) coef opp def plays-faced coef opp OFFENSE pace coef own defense faced  sd(x_opp_def)  sd(x_opp_off)
+2-4 games  960                    0.20             +0.13 (0.07)          +0.09 (0.06)           +0.65 (0.06)           5.09           5.21
+      5-8 1280                    0.35             +0.23 (0.08)          +0.15 (0.07)           +0.46 (0.07)           3.43           3.68
+     9-12 1280                    0.47             +0.23 (0.09)          -0.05 (0.08)           +0.42 (0.08)           2.83           3.09
+    13-17 1118                    0.56             +0.12 (0.11)          +0.07 (0.09)           +0.63 (0.10)           2.39           2.87
+  opp def only (what the model reads)    R2 0.0038  rmse 8.30
+  opp def + opp offense pace             R2 0.0042  rmse 8.30
+  all three                              R2 0.0333  rmse 8.18

@@ -194,6 +194,11 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
             ourlads_qb1s=ourlads_qb1s,
         )
     status = resolution['by_team'].get(str(team).upper(), {})
+    # The week a saved choice starts applying from: the next unplayed week.
+    # Earlier weeks keep whatever was chosen for them (data/qb1_overrides.csv
+    # from_week/through_week), so a fill-in picked for an injury does not get
+    # written back over the weeks the regular starter actually played.
+    upcoming_week = int(latest_observed) + 1 if latest_observed is not None else 1
     player_options = qbs[name_col].astype(str).sort_values().tolist()
     selected = status.get('player')
     selected_index = player_options.index(selected) if selected in player_options else 0
@@ -217,6 +222,9 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
                 f"Imported Ourlads QB1: {selected} (source slot {status.get('source_slot', 1)}). "
                 'This establishes expected starter eligibility only; the projection still models his stats independently.'
             )
+        elif status.get('status') == 'returning_starter':
+            st.info(f"Automatic: {selected} is back from injury and projected as the starter. "
+                    f"{status.get('reason', '')}")
         elif status.get('status') == 'observed_current_starter':
             st.info(
                 f"Automatic in-season starter: {selected} "
@@ -237,8 +245,9 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
         with save_col:
             if st.button('Save QB1 selection', key=f'projection_qb1_save_{year}_{team}'):
                 try:
-                    save_qb1_override(year, team, choice)
-                    st.success(f'Saved {choice} as {team} QB1 for {year}. Weekly projections will refresh now.')
+                    save_qb1_override(year, team, choice, week=upcoming_week)
+                    st.success(f'Saved {choice} as {team} QB1 from week {upcoming_week} of {year} until changed. '
+                               'Weekly projections will refresh now.')
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))
@@ -246,8 +255,9 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
             if status.get('status') == 'manual_override' and st.button(
                     'Clear manual selection', key=f'projection_qb1_clear_{year}_{team}'):
                 try:
-                    clear_qb1_override(year, team)
-                    st.success('Cleared the manual selection. The automatic-incumbent rule will apply if available.')
+                    clear_qb1_override(year, team, week=upcoming_week)
+                    st.success(f'Cleared the manual selection from week {upcoming_week} on. '
+                               'The automatic rules will apply if available.')
                     st.rerun()
                 except ValueError as exc:
                     st.error(str(exc))

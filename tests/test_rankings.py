@@ -8,7 +8,8 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from ui.tabs.rankings import _blended_woven_rank, _market_proj_pts_with_backfill  # noqa: E402
+from ui.tabs.rankings import (_blended_woven_rank, _market_proj_pts_with_backfill,  # noqa: E402
+                              _unused_stat_labels, _weather_cells)
 
 
 def test_market_proj_pts_backfill_subtracts_an_unpriced_interception_penalty():
@@ -134,3 +135,28 @@ def test_market_proj_pts_backfill_matches_the_market_when_fully_priced():
     # only meaningful if our own priced-stat score differs from our total,
     # so this mainly guards that a fully-priced row doesn't crash or blow up.
     assert out.iloc[0] >= 0.0
+
+
+def test_single_position_hides_the_stat_columns_it_never_projects():
+    passing = {'Pass Yds', 'Pass TDs', 'Pass Att', 'Pass Cmp', 'INT'}
+    rushing = {'Rush Att', 'Rush Yds', 'Rush TDs'}
+    receiving = {'Tgt', 'Rec', 'Rec Yds', 'Rec TDs'}
+    assert _unused_stat_labels(['QB']) == receiving
+    assert _unused_stat_labels(['RB']) == passing
+    assert _unused_stat_labels(['WR']) == passing | rushing
+    assert _unused_stat_labels(['TE']) == passing | rushing
+
+
+def test_multi_position_groups_only_hide_what_every_position_lacks():
+    passing = {'Pass Yds', 'Pass TDs', 'Pass Att', 'Pass Cmp', 'INT'}
+    assert _unused_stat_labels(['RB', 'WR', 'TE']) == passing    # FLEX keeps rushing and receiving
+    assert _unused_stat_labels(['QB', 'RB', 'WR', 'TE']) == set()    # SUPERFLEX keeps everything
+    assert _unused_stat_labels(['K']) == set()    # a position with no entry keeps every column
+    assert _unused_stat_labels([]) == set()
+
+
+def test_precip_cell_is_emoji_only_but_dry_stays_a_word():
+    cells = {b: _weather_cells(True, 5.0, 60.0, b)[2] for b in ('dry', 'light_rain', 'heavy_rain', 'snow')}
+    assert cells == {'dry': 'Dry', 'light_rain': '🌦️', 'heavy_rain': '🌧️', 'snow': '🌨️'}
+    assert _weather_cells(True, 5.0, 60.0, None)[2] == '—'
+    assert _weather_cells(False, None, None, 'dry')[2] == '🏟️'

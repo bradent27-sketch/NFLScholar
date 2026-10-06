@@ -3602,3 +3602,405 @@ def test_rb_carry_budget_keep_tds_leaves_projected_rush_tds_at_the_pre_budget_le
     assert car['trim'] < car['none'] and car['keep'] == pytest.approx(car['trim'], abs=1e-3)   # carries cut either way
     assert tds['trim'] < tds['none']                                                        # default trims TDs
     assert tds['keep'] == pytest.approx(tds['none'], abs=1e-3)                              # keep_tds does not
+
+
+def test_pass_capacity_keep_tds_leaves_projected_receiving_tds_at_the_pre_budget_level():
+    # KC's three receivers over-claim a thin pass budget (QB throws ~22 a game), so the capacity pass
+    # trims targets. Default also trims receiving TDs; 'v2_pass_capacity_keep_tds' must not.
+    rows = []
+    for week in range(1, 6):
+        rows.append({'name': 'KC QB', 'team': 'KC', 'opponent_team': 'LAC', 'week': week, 'position': 'QB',
+                     'weekly_snap_pct': 100.0, 'passing_attempts': 22.0, 'passing_completions': 14.0,
+                     'passing_yards': 160.0, 'passing_tds': 1.0, 'passing_interceptions': 0.5})
+        for name, tgt, tds in (('WR One', 10.0, 0.6), ('WR Two', 8.0, 0.4), ('TE One', 6.0, 0.3)):
+            rows.append({'name': name, 'team': 'KC', 'opponent_team': 'LAC', 'week': week,
+                         'position': 'TE' if name.startswith('TE') else 'WR', 'weekly_snap_pct': 90.0,
+                         'targets': tgt, 'receptions': tgt * 0.65, 'receiving_yards': tgt * 8.0,
+                         'receiving_tds': tds})
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 6, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+    boards = {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        for arm, feats in (('none', wp.DEFAULT_FEATURES - {'v2_pass_capacity'}),
+                           ('trim', wp.DEFAULT_FEATURES - {'v2_pass_capacity_keep_tds'}),
+                           ('keep', wp.DEFAULT_FEATURES | {'v2_pass_capacity_keep_tds'})):
+            wp.build_weekly_projections.clear()
+            boards[arm] = wp.build_weekly_projections(
+                2026, 6, 'Full PPR', as_of_week=6, apply_injury=False, features=feats)[0].set_index('Player')
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+
+    for player in ('WR One', 'TE One'):
+        tds = {arm: boards[arm].loc[player, 'receiving_tds'] for arm in boards}
+        tgt = {arm: boards[arm].loc[player, 'targets'] for arm in boards}
+        assert tgt['trim'] < tgt['none'] and tgt['keep'] == pytest.approx(tgt['trim'], abs=1e-3)   # targets cut either way
+        assert tds['trim'] < tds['none']                                                          # default trims TDs
+        assert tds['keep'] == pytest.approx(tds['none'], abs=1e-3)                                # keep_tds does not
+
+
+def test_v2_defense_matchup_blends_this_season_with_last_at_the_models_own_weight():
+    # Def Rank / "toughest matchup" used to read this season alone the moment one game existed. It now
+    # blends last season in with a = games/(games + DEFENSE_PRIOR_GAMES), the weight the model's own
+    # defense matchup multiplier uses. Two games played -> a = 2/14.
+    def _rows(season_weeks, dens_pts, kcs_pts):
+        rows = []
+        for wk in season_weeks:
+            rows += [
+                {'name': 'KC WR', 'team': 'KC', 'opponent_team': 'DEN', 'week': wk, 'position': 'WR',
+                 'weekly_snap_pct': 85.0, 'targets': 6.0, 'receptions': 4.0, 'receiving_yards': 50.0,
+                 'fantasy_points': dens_pts},
+                {'name': 'DEN WR', 'team': 'DEN', 'opponent_team': 'KC', 'week': wk, 'position': 'WR',
+                 'weekly_snap_pct': 85.0, 'targets': 6.0, 'receptions': 4.0, 'receiving_yards': 50.0,
+                 'fantasy_points': kcs_pts},
+            ]
+        return weekly(rows)
+    current = _rows([1, 2], dens_pts=30.0, kcs_pts=20.0)       # DEN has allowed 30/game this year, KC 20
+    prior = _rows(range(1, 18), dens_pts=10.0, kcs_pts=20.0)   # DEN allowed 10/game last year, KC 20
+    schedule = pd.DataFrame([{'week': 3, 'home_team': 'KC', 'away_team': 'DEN', 'home_score': np.nan,
+                              'away_score': np.nan}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        result, meta = wp.build_weekly_projections(
+            2026, 3, 'Full PPR', as_of_week=3, apply_injury=False,
+            availability_fingerprint='test_v2_defense_matchup_blend')
+    finally:
+        wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving = original
+    assert not result.empty
+    matchup = meta['explanations'][('KC WR', 'WR', 'KC')]['defense_matchup']
+    alpha = 2.0 / (2.0 + wp.DEFENSE_PRIOR_GAMES)
+    assert matchup['value'] == pytest.approx(alpha * 30.0 + (1.0 - alpha) * 10.0)
+    assert matchup['current_weight'] == pytest.approx(alpha)
+    assert 'blended with 2025 full season' in matchup['source'] and '2 games' in matchup['source']
+    # Blended DEN = 12.9 < KC's 20: DEN is now the TOUGHER defense (rank 2 of 2); this season alone said 30 vs 20.
+    assert matchup['rank'] == 2 and matchup['of'] == 2
+
+
+def test_own_tempo_multiplier_gives_back_tempo_early_and_nothing_late():
+    pace = pd.DataFrame({'off_pace': {'FAST': 66.0, 'SLOW': 54.0, 'MID': 60.0, 'NEWB': 66.0},
+                         'off_games': {'FAST': 3, 'SLOW': 3, 'MID': 3, 'NEWB': 1}})
+    league = pace['off_pace'].mean()                      # 61.5
+    prior = pd.DataFrame({'off_pace': {'NEWB': 69.0, 'FAST': 60.0, 'SLOW': 62.0, 'MID': 61.0},
+                          'off_games': {'NEWB': 17, 'FAST': 17, 'SLOW': 17, 'MID': 17}})
+    got = wp.own_tempo_multiplier(['FAST', 'SLOW', 'MID', 'NOPE'], pace, prior)
+    kappa = wp.TEMPO_KAPPA0 * (1 - 3 / wp.TEMPO_G0)       # 3 games in
+    assert got[0] == pytest.approx(1 - kappa * (66.0 / league - 1))      # fast: hand volume back
+    assert got[1] == pytest.approx(1 - kappa * (54.0 / league - 1))      # slow: add it
+    assert got[0] < 1.0 < got[1]
+    assert got[3] == 1.0                                                  # no tempo evidence anywhere -> neutral
+    # one game is no tempo: NEWB reads LAST season's tempo at G = 0, full kappa
+    newb = wp.own_tempo_multiplier(['NEWB'], pace, prior)[0]
+    assert newb == pytest.approx(1 - min(wp.TEMPO_KAPPA0 * (69.0 / prior['off_pace'].mean() - 1), wp.TEMPO_MAX_ADJ))
+    # ten or more games: tempo has earned its keep, multiplier is 1.0
+    late = pace.assign(off_games=12)
+    assert np.allclose(wp.own_tempo_multiplier(['FAST', 'SLOW'], late, prior), 1.0)
+    # cold start: pace already is last season's, read at G = 0
+    cold = wp.own_tempo_multiplier(['FAST'], late, None, cold_start=True)[0]
+    assert cold == pytest.approx(1 - wp.TEMPO_KAPPA0 * (66.0 / league - 1))
+    # an extreme tempo is capped
+    wild = pd.DataFrame({'off_pace': {'A': 90.0, 'B': 40.0}, 'off_games': {'A': 0, 'B': 0}})
+    assert wp.own_tempo_multiplier(['A'], wild, None, cold_start=True)[0] == pytest.approx(1 - wp.TEMPO_MAX_ADJ)
+    assert wp.own_tempo_multiplier(['B'], wild, None, cold_start=True)[0] == pytest.approx(1 + wp.TEMPO_MAX_ADJ)
+
+
+def test_v2_own_tempo_regression_scales_passing_and_receiving_volume_but_not_rushing():
+    rows = []
+    for week in range(1, 5):
+        for team, opp in (('KC', 'DEN'), ('DEN', 'KC')):
+            rows += [
+                {'name': f'{team} QB', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'QB',
+                 'weekly_snap_pct': 100.0, 'passing_attempts': 34.0, 'passing_completions': 22.0,
+                 'passing_yards': 250.0, 'passing_tds': 1.6, 'passing_interceptions': 0.6,
+                 'rushing_attempts': 3.0, 'rushing_yards': 12.0},
+                {'name': f'{team} WR', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'WR',
+                 'weekly_snap_pct': 90.0, 'targets': 8.0, 'receptions': 5.0, 'receiving_yards': 65.0,
+                 'receiving_tds': 0.4},
+                {'name': f'{team} RB', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'RB',
+                 'weekly_snap_pct': 70.0, 'rushing_attempts': 16.0, 'rushing_yards': 70.0, 'rushing_tds': 0.4,
+                 'targets': 3.0, 'receptions': 2.0, 'receiving_yards': 15.0},
+            ]
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 5, 'home_team': 'KC', 'away_team': 'DEN'}])
+    # KC is the fast team (70 plays a game vs 60), both with four games in the books.
+    pace = pd.DataFrame({'off_pace': {'KC': 70.0, 'DEN': 60.0}, 'def_pace': {'KC': 65.0, 'DEN': 65.0},
+                         'off_games': {'KC': 4, 'DEN': 4}, 'def_games': {'KC': 4, 'DEN': 4}})
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+    boards, metas = {}, {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pace.copy()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        for arm, feats in (('off', wp.DEFAULT_FEATURES - {'v2_own_tempo_regression'}),
+                           ('on', wp.DEFAULT_FEATURES | {'v2_own_tempo_regression'})):
+            wp.build_weekly_projections.clear()
+            boards[arm], metas[arm] = wp.build_weekly_projections(
+                2026, 5, 'Full PPR', as_of_week=5, apply_injury=False, features=feats)
+            boards[arm] = boards[arm].set_index('Player')
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+
+    league = (70.0 + 60.0) / 2
+    expected = 1 - wp.TEMPO_KAPPA0 * (1 - 4 / wp.TEMPO_G0) * (70.0 / league - 1)
+    expected_den = 1 - wp.TEMPO_KAPPA0 * (1 - 4 / wp.TEMPO_G0) * (60.0 / league - 1)
+    for stat, player in (('passing_attempts', 'KC QB'), ('targets', 'KC WR'), ('receiving_yards', 'KC WR')):
+        assert boards['on'].loc[player, stat] / boards['off'].loc[player, stat] == pytest.approx(expected, rel=2e-2)
+    assert boards['on'].loc['DEN WR', 'targets'] / boards['off'].loc['DEN WR', 'targets'] == pytest.approx(expected_den, rel=2e-2)
+    assert expected < 1.0 < expected_den
+    # rushing is not a tempo stat: the RB's carries and the QB's scrambles are untouched
+    assert boards['on'].loc['KC RB', 'rushing_attempts'] == pytest.approx(boards['off'].loc['KC RB', 'rushing_attempts'], abs=1e-3)
+    assert boards['on'].loc['KC QB', 'rushing_attempts'] == pytest.approx(boards['off'].loc['KC QB', 'rushing_attempts'], abs=1e-3)
+    # the popup multiplies the stat's pace_multiplier in, so the trace carries the combined number
+    trace_on = metas['on']['explanations'][('KC WR', 'WR', 'KC')]['stats']['targets']['pace_multiplier']
+    trace_off = metas['off']['explanations'][('KC WR', 'WR', 'KC')]['stats']['targets']['pace_multiplier']
+    assert trace_on == pytest.approx(trace_off * expected, rel=1e-2)
+
+
+def test_v2_pace_alpha_cap_limits_how_hard_an_opponents_plays_faced_drives_the_pace_multiplier():
+    rows = []
+    for week in range(1, 5):
+        for team, opp in (('KC', 'DEN'), ('DEN', 'KC')):
+            rows += [
+                {'name': f'{team} QB', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'QB',
+                 'weekly_snap_pct': 100.0, 'passing_attempts': 34.0, 'passing_completions': 22.0,
+                 'passing_yards': 250.0, 'passing_tds': 1.6, 'passing_interceptions': 0.6},
+                {'name': f'{team} WR', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'WR',
+                 'weekly_snap_pct': 90.0, 'targets': 8.0, 'receptions': 5.0, 'receiving_yards': 65.0,
+                 'receiving_tds': 0.4},
+            ]
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 5, 'home_team': 'KC', 'away_team': 'DEN'}])
+    # DEN's defense has faced 68 plays a game over 16 games, the league mean is 60: +13.3% before shrinkage (inside the +-15% clip).
+    pace = pd.DataFrame({'off_pace': {'KC': 60.0, 'DEN': 60.0}, 'def_pace': {'KC': 52.0, 'DEN': 68.0},
+                         'off_games': {'KC': 16, 'DEN': 16}, 'def_games': {'KC': 16, 'DEN': 16}})
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+    mults = {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pace.copy()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        for arm, feats in (('off', wp.DEFAULT_FEATURES - {'v2_pace_alpha_cap'}),
+                           ('on', wp.DEFAULT_FEATURES | {'v2_pace_alpha_cap'})):
+            wp.build_weekly_projections.clear()
+            _, meta = wp.build_weekly_projections(
+                2026, 5, 'Full PPR', as_of_week=5, apply_injury=False, features=feats)
+            # KC's WR faces DEN's defense (+13.3% plays faced); DEN's WR faces KC's (-13.3%)
+            mults[arm] = {t: meta['explanations'][(f'{t} WR', 'WR', t)]['stats']['targets']['pace_multiplier']
+                          for t in ('KC', 'DEN')}
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+    league = 60.0
+    uncapped = 16 / (16 + wp.PACE_PRIOR_GAMES)
+    assert mults['off']['KC'] == pytest.approx(1 + uncapped * (68.0 / league - 1), abs=2e-3)
+    assert mults['on']['KC'] == pytest.approx(1 + wp.PACE_ALPHA_CAP * (68.0 / league - 1), abs=2e-3)
+    assert mults['on']['DEN'] == pytest.approx(1 + wp.PACE_ALPHA_CAP * (52.0 / league - 1), abs=2e-3)
+    assert 1.0 < mults['on']['KC'] < mults['off']['KC'] and mults['off']['DEN'] < mults['on']['DEN'] < 1.0
+
+
+def test_context_parts_include_every_factor_applied_between_the_matchup_and_the_pre_vacancy_stage():
+    from ui.tabs.rankings import _context_parts
+    values = {'script_multiplier': 1.0, 'script_neutral_multiplier': 0.96, 'participation_multiplier': 0.80,
+              'pace_multiplier': 1.01, 'availability_multiplier': 1.0, 'environment_multiplier': 1.05,
+              'weather_stat_multiplier': 0.97}
+    parts = _context_parts(values)
+    assert parts['script'] == pytest.approx(0.96)                # forward script-neutral factor, not dropped
+    assert parts['participation'] == pytest.approx(0.80) and parts['weather'] == pytest.approx(0.97)
+    assert parts['combined'] == pytest.approx(0.96 * 0.80 * 1.01 * 1.05 * 0.97)
+    # a missing / NaN entry reads as neutral, never as zero or NaN
+    sparse = _context_parts({'pace_multiplier': None, 'weather_stat_multiplier': float('nan')})
+    assert sparse['combined'] == pytest.approx(1.0)
+
+
+def test_shown_decomposition_factors_reproduce_the_pre_vacancy_stage_for_a_starter_and_a_depth_receiver():
+    from ui.tabs.rankings import _context_parts
+    rows = []
+    for week in range(1, 5):
+        for team, opp in (('KC', 'DEN'), ('DEN', 'KC')):
+            for label, (snap, tgt) in zip(('Alpha', 'Bravo', 'Charlie'), ((92.0, 9.0), (85.0, 6.0), (30.0, 2.0))):
+                rows.append({'name': f'{team} {label}', 'team': team, 'opponent_team': opp, 'week': week,
+                             'position': 'WR', 'weekly_snap_pct': snap, 'targets': tgt, 'receptions': tgt * 0.65,
+                             'receiving_yards': tgt * 8.0, 'receiving_tds': tgt * 0.05})
+            rows.append({'name': f'{team} QB', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'QB',
+                         'weekly_snap_pct': 100.0, 'passing_attempts': 34.0, 'passing_completions': 22.0,
+                         'passing_yards': 250.0, 'passing_tds': 1.6, 'passing_interceptions': 0.6})
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 5, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        wp.build_weekly_projections.clear()
+        _, meta = wp.build_weekly_projections(2026, 5, 'Full PPR', as_of_week=5, apply_injury=False)
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+    seen_participation = []
+    for player in ('KC Alpha', 'KC Charlie'):
+        vals = meta['explanations'][(player, 'WR', 'KC')]['stats']['targets']
+        assert 'weather_stat_multiplier' in vals            # recorded in the explanation, not only in the trace
+        parts = _context_parts(vals)
+        stage = vals['blended_rate'] * vals['matchup_multiplier'] * parts['combined']
+        assert stage == pytest.approx(vals['pre_vacancy_projection'], rel=1e-2), player
+        seen_participation.append(parts['participation'])
+    # the depth receiver's discount is the factor that used to be missing from the shown chain
+    assert seen_participation[0] == pytest.approx(1.0, abs=0.02) and seen_participation[1] < 0.95
+    # script_status is one string for the whole board: every row must read all of it, not one character of it
+    statuses = {meta['explanations'][(p, 'WR', 'KC')]['stats']['targets']['script_status']
+                for p in ('KC Alpha', 'KC Bravo', 'KC Charlie')}
+    assert len(statuses) == 1 and all(len(x) > 3 for x in statuses), statuses
+
+
+def test_uncalibrate_zero_rows_keeps_a_healthy_players_no_volume_projection_at_zero():
+    frame = pd.DataFrame({'Player': ['Backup QB', 'Starter QB', 'Out QB'], 'Pos': 'QB',
+                          'Availability': [1.0, 1.0, 0.0], 'Raw Model Proj Pts': [0.0, 18.0, 0.0],
+                          'Model Proj Pts': [4.15, 17.4, 4.15], 'Calibrated Model Proj Pts': [4.15, 17.4, 4.15]})
+    off = wp._uncalibrate_sidelined(frame.copy())
+    assert off['Model Proj Pts'].tolist() == [4.15, 17.4, 0.0]            # legacy: only the sidelined row restored
+    on = wp._uncalibrate_sidelined(frame.copy(), include_zero_rows=True)
+    assert on['Model Proj Pts'].tolist() == [0.0, 17.4, 0.0] and on['Calibrated Model Proj Pts'].tolist() == [0.0, 17.4, 0.0]
+
+
+def test_apply_season_anchor_pulls_eligible_rows_toward_their_own_average_and_leaves_the_rest():
+    hist = pd.DataFrame({
+        'name': ['A WR'] * 3 + ['B RB'] + ['C QB'] * 3 + ['D WR'] * 3 + ['E WR'] * 3,
+        'fantasy_points': [10.0, 20.0, 30.0, 8.0, 10.0, 20.0, 30.0, 10.0, 20.0, 30.0, 10.0, 20.0, 30.0]})
+    result = pd.DataFrame({
+        'Player': ['A WR', 'B RB', 'C QB', 'D WR', 'E WR', 'F WR'], 'Pos': ['WR', 'RB', 'QB', 'WR', 'WR', 'WR'],
+        'Team': 'KC', 'Availability': [1.0, 1.0, 1.0, 0.0, 1.0, 1.0],
+        'Model Proj Pts': [12.0, 12.0, 12.0, 12.0, 0.0, 12.0], 'Calibrated Model Proj Pts': [12.0, 12.0, 12.0, 12.0, 0.0, 12.0]})
+    out, info = wp.apply_season_anchor(result, hist, 'name')
+    by = out.set_index('Player')['Model Proj Pts']
+    assert by['A WR'] == pytest.approx(20.0 + wp.SEASON_ANCHOR_S['WR'] * (12.0 - 20.0), abs=0.01)   # pulled up toward his 20.0
+    assert by['B RB'] == 12.0          # one game: no average to anchor to
+    assert by['C QB'] == 12.0          # QB is not anchored
+    assert by['D WR'] == 12.0          # sidelined
+    assert by['E WR'] == 0.0           # nothing projected stays nothing
+    assert by['F WR'] == 12.0          # no games on record
+    assert out.set_index('Player')['Calibrated Model Proj Pts']['A WR'] == by['A WR']
+    assert list(info) == [('A WR', 'WR', 'KC')] and info[('A WR', 'WR', 'KC')]['games'] == 3
+    # a projection above his average is pulled DOWN, and never below zero
+    hi, _ = wp.apply_season_anchor(result.assign(**{'Model Proj Pts': [30.0] * 6}), hist, 'name')
+    assert hi.set_index('Player')['Model Proj Pts']['A WR'] == pytest.approx(20.0 + wp.SEASON_ANCHOR_S['WR'] * 10.0, abs=0.01)
+    assert wp.apply_season_anchor(result, pd.DataFrame(), 'name')[1] == {}
+
+
+def test_v2_season_anchor_moves_the_built_board_toward_the_players_to_date_average():
+    rows = []
+    for week in range(1, 5):
+        for team, opp in (('KC', 'DEN'), ('DEN', 'KC')):
+            for label, snap, tgt in (('Alpha', 92.0, 9.0), ('Bravo', 85.0, 6.0)):
+                rows.append({'name': f'{team} {label}', 'team': team, 'opponent_team': opp, 'week': week,
+                             'position': 'WR', 'weekly_snap_pct': snap, 'targets': tgt, 'receptions': tgt * 0.65,
+                             'receiving_yards': tgt * 8.0, 'receiving_tds': tgt * 0.05, 'fantasy_points': 30.0})
+            rows.append({'name': f'{team} QB', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'QB',
+                         'weekly_snap_pct': 100.0, 'passing_attempts': 34.0, 'passing_completions': 22.0,
+                         'passing_yards': 250.0, 'passing_tds': 1.6, 'passing_interceptions': 0.6, 'fantasy_points': 30.0})
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    schedule = pd.DataFrame([{'week': 5, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+    boards, metas = {}, {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        for arm, feats in (('off', wp.DEFAULT_FEATURES - {'v2_season_anchor'}), ('on', wp.DEFAULT_FEATURES | {'v2_season_anchor'})):
+            wp.build_weekly_projections.clear()
+            boards[arm], metas[arm] = wp.build_weekly_projections(
+                2026, 5, 'Full PPR', as_of_week=5, apply_injury=False, features=feats)
+            boards[arm] = boards[arm].set_index('Player')
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+    off, on = boards['off'].loc['KC Alpha', 'Model Proj Pts'], boards['on'].loc['KC Alpha', 'Model Proj Pts']
+    assert off < 30.0                                                   # his projection is below his 30.0 average...
+    assert on == pytest.approx(30.0 + wp.SEASON_ANCHOR_S['WR'] * (off - 30.0), abs=0.02) and on > off   # ...so it is pulled up
+    assert boards['on'].loc['KC QB', 'Model Proj Pts'] == boards['off'].loc['KC QB', 'Model Proj Pts']   # QB untouched
+    assert boards['on'].loc['KC Alpha', 'Raw Model Proj Pts'] == boards['off'].loc['KC Alpha', 'Raw Model Proj Pts']
+    anchor = metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['season_anchor']
+    assert anchor['games'] == 4 and anchor['mean'] == pytest.approx(30.0) and anchor['after'] == pytest.approx(on)
+    assert metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['calibrated_points'] == pytest.approx(on)
+    # the calibration caption reports the line's own result, so raw -> line -> anchor chains in the dialog
+    line = metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['calibration']
+    assert line['displayed_points'] == pytest.approx(anchor['before']) and line['delta'] == pytest.approx(anchor['before'] - line['raw_points'])
+    assert metas['off']['explanations'][('KC Alpha', 'WR', 'KC')]['calibration']['displayed_points'] == pytest.approx(off)
+    assert 'season_anchor' not in metas['off']['explanations'][('KC Alpha', 'WR', 'KC')]
+
+
+def test_qb_passing_td_k_override_slows_the_current_season_blend_and_is_off_by_default():
+    games, conf = np.array([2.0, 4.0]), np.array([0.5, 0.5])
+    shared = wp._current_blend_weight(games, 'passing_tds', conf)
+    slow = wp._current_blend_weight(games, 'passing_tds', conf, k_override=wp.QB_PASSING_TD_K)
+    assert wp._current_blend_weight(games, 'passing_tds', conf, k_override=None) == pytest.approx(shared)
+    assert (slow < shared).all() and (slow > 0).all()
+    # w = g / (g + K * (1.3 - 0.6 * confidence)); confidence 0.5 -> K * 1.0
+    assert slow == pytest.approx(games / (games + wp.QB_PASSING_TD_K))
+    # the flag is a named candidate, not a default
+    assert 'v2_qb_passing_td_k' in wp.MODEL_FEATURES and 'v2_qb_passing_td_k' not in wp.DEFAULT_FEATURES
+
+
+def test_blended_rate_forwards_k_override_to_the_blend_weight():
+    cur, prior = np.array([3.0]), np.array([1.0])
+    args = (cur, np.array([2.0]), prior, np.array([1.0]), 'passing_tds', np.array([0.5]))
+    base = wp._blended_rate(*args)[0]
+    slow = wp._blended_rate(*args, k_override=wp.QB_PASSING_TD_K)[0]
+    assert 1.0 < slow < base < 3.0          # a larger K leans further on the prior

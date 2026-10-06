@@ -108,6 +108,31 @@ def is_stale(fetched_at, now=None):
     return fetched_at < posting_anchor(now)
 
 
+def snapshot_is_for_week(fetched_at, year, week):
+    """Was this weekly snapshot pulled for ``week``'s slate, or for an earlier one?
+
+    ``is_stale`` only asks whether a NEW slate has gone up since the pull, measured against today. A board built
+    for the NEXT week before that slate posts has a different question: the snapshot is the right one only if it
+    was taken after the Tuesday posting anchor that precedes this week's FIRST game. Found 2026-10-06: the week-5
+    board built Monday evening carried the week-4 lines (pulled Saturday), identical for 342 of 342 players, into
+    the permanent ledger as that week's market benchmark. Returns True when the schedule cannot answer (never
+    blocks a board on a missing schedule) and False for a missing timestamp."""
+    if fetched_at is None:
+        return False
+    try:
+        from data.loaders import load_schedule
+        sched = load_schedule(year)
+        weeks = pd.to_numeric(sched['week'], errors='coerce')
+        days = pd.to_datetime(sched.loc[weeks == int(week), 'gameday'], errors='coerce').dropna()
+        if days.empty:
+            return True
+        first_game = days.min().to_pydatetime().replace(
+            hour=23, minute=59, tzinfo=datetime.timezone.utc)
+    except Exception:
+        return True
+    return fetched_at >= posting_anchor(first_game)
+
+
 def _parse_time(value):
     try:
         stamp = datetime.datetime.fromisoformat(str(value))

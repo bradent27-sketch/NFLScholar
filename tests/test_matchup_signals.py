@@ -526,6 +526,45 @@ def test_defense_stat_rank_missing_team_returns_none():
     assert ms.defense_stat_rank(df, 'NOTATEAM', 'WR', 'receiving_yards') is None
 
 
+def _allowed_rows(per_team_games, position='WR', stat='fantasy_points'):
+    """{team: [pts allowed in game 1, game 2, ...]} -> one allowed-to-position row per game."""
+    rows = []
+    for team, vals in per_team_games.items():
+        for wk, val in enumerate(vals, start=1):
+            rows.append({'name': f'{team}-{wk}', 'week': wk, 'opponent_team': team, 'team': 'OFF',
+                         'position': position, stat: val})
+    return weekly(rows)
+
+
+def test_blended_defense_table_weights_this_season_by_games_over_games_plus_prior():
+    # AAA: soft this year (30/game over 4 games), stingy last year (10). With prior_games=12 this
+    # season is worth 4/16 = 25%, so AAA reads 0.25*30 + 0.75*10 = 15, not 30. BBB is the same both years.
+    cur = _allowed_rows({'AAA': [30.0] * 4, 'BBB': [20.0] * 4})
+    old = _allowed_rows({'AAA': [10.0] * 17, 'BBB': [20.0] * 17})
+    t = ms.blended_defense_stat_table(cur, old, 'WR', 'fantasy_points', prior_games=12.0)
+    assert abs(t.loc['AAA', 'value'] - 15.0) < 1e-9
+    assert abs(t.loc['BBB', 'value'] - 20.0) < 1e-9
+    assert abs(t.loc['AAA', 'current_weight'] - 0.25) < 1e-9 and t.loc['AAA', 'current_games'] == 4
+    # The blend flips the ordering a current-only read gives: AAA looked softest on 4 games alone.
+    assert ms.defense_stat_rank(cur, 'AAA', 'WR', 'fantasy_points')['rank'] == 1
+    assert ms.defense_rank_from_table(t, 'AAA')['rank'] == 2
+    assert ms.defense_rank_from_table(t, 'BBB')['rank'] == 1 and ms.defense_rank_from_table(t, 'BBB')['of'] == 2
+
+
+def test_blended_defense_table_falls_back_to_whichever_season_exists():
+    cur = _allowed_rows({'AAA': [30.0] * 2, 'NEW': [12.0] * 2})
+    old = _allowed_rows({'AAA': [10.0] * 17, 'GONE': [25.0] * 17})
+    t = ms.blended_defense_stat_table(cur, old, 'WR', 'fantasy_points', prior_games=12.0)
+    assert t.loc['NEW', 'current_weight'] == 1.0 and t.loc['NEW', 'value'] == 12.0       # no prior season
+    assert t.loc['GONE', 'current_weight'] == 0.0 and t.loc['GONE', 'value'] == 25.0     # no games yet this year
+    # Nothing played this season at all: pure prior, same numbers defense_stat_rank gives on it.
+    t0 = ms.blended_defense_stat_table(cur.iloc[0:0], old, 'WR', 'fantasy_points', prior_games=12.0)
+    assert (t0['current_weight'] == 0.0).all()
+    assert ms.defense_rank_from_table(t0, 'AAA')['value'] == ms.defense_stat_rank(old, 'AAA', 'WR', 'fantasy_points')['value']
+    assert ms.defense_rank_from_table(t0, 'MISSING') is None
+    assert ms.blended_defense_stat_table(cur.iloc[0:0], None, 'WR', 'fantasy_points', 12.0).empty
+
+
 def main():
     tests = [(name, fn) for name, fn in sorted(globals().items())
              if name.startswith('test_') and callable(fn)]

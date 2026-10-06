@@ -112,6 +112,42 @@ def test_dependent_stats_rescale_by_the_same_factor_as_targets():
     assert _approx(bench['receiving_tds'], 0.05 * factor, rel=1e-2)
 
 
+def test_keep_tds_scales_targets_receptions_and_yards_but_leaves_receiving_tds():
+    # 'v2_pass_capacity_keep_tds': a TD projection is red-zone opportunity, not
+    # the between-the-20s target volume the budget constrains, so the uniform
+    # trim must not take it. Same room as the dependent-stats test above.
+    rows = [_board_row('SF', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=20.0)]
+    rows.append(_board_row('SF', 'WR1', 'WR', 9.0, receptions=7.0, receiving_yards=110.0, receiving_tds=0.8))
+    for i in range(9):
+        rows.append(_board_row('SF', f'Bench{i}', 'WR', 1.5, receptions=1.0, receiving_yards=12.0, receiving_tds=0.05))
+    board = pd.DataFrame(rows)
+
+    trimmed, _ = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=1)
+    kept, _ = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=1, keep_tds=True)
+
+    for player, tds in (('WR1', 0.8), ('Bench0', 0.05)):
+        t = trimmed[trimmed['Player'].eq(player)].iloc[0]
+        k = kept[kept['Player'].eq(player)].iloc[0]
+        assert t['targets'] < board[board['Player'].eq(player)].iloc[0]['targets']      # the room was over budget
+        assert t['receiving_tds'] < tds                                                   # default trims the TDs too
+        assert abs(k['receiving_tds'] - tds) <= 1e-9                                      # keep_tds does not
+        assert k['targets'] == t['targets']                                               # volume is cut either way
+        assert k['receptions'] == t['receptions'] and k['receiving_yards'] == t['receiving_yards']
+    # Nothing else about the board moves: QB row and column set are untouched.
+    assert list(kept.columns) == list(board.columns)
+    assert kept[kept['Pos'].eq('QB')]['receiving_tds'].tolist() == [0.0]
+
+
+def test_keep_tds_also_leaves_tds_alone_when_a_thin_room_is_scaled_up():
+    rows = [_board_row('GB', 'QB1', 'QB', 0.0, 0.0, 0.0, 0.0, passing_attempts=36.0)]
+    for i, t in enumerate([6.0, 4.0, 2.0]):
+        rows.append(_board_row('GB', f'WR{i}', 'WR', t, receiving_tds=0.2))
+    board = pd.DataFrame(rows)
+    up, _ = pca.apply_pass_capacity_conservation(board, prior_history=None, tier_size=3, keep_tds=True)
+    assert (up[up['Pos'].eq('WR')]['targets'] > board[board['Pos'].eq('WR')]['targets']).all()
+    assert up[up['Pos'].eq('WR')]['receiving_tds'].tolist() == [0.2, 0.2, 0.2]
+
+
 def test_falls_back_to_prior_season_history_when_no_live_qb_attempts():
     # QB room unresolved this week (0 live attempts) - the team must still
     # get a sane, nonzero budget from its own prior-season team-games.

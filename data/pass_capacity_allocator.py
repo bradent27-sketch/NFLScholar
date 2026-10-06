@@ -310,8 +310,16 @@ def apply_pass_capacity_conservation(
         rb_share_band: float | None = None,
         factor_deadband: float | None = None,
         injury_neutral_claim: bool = False,
+        keep_tds: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit one team's RB/WR/TE targets (and dependents) to a real pass budget.
+
+    ``keep_tds`` (default off; 'v2_pass_capacity_keep_tds'): scale receptions and
+    receiving yards with targets but leave ``receiving_tds`` at its pre-budget
+    value. Same reasoning as the RB carry budget's keep_tds: a TD projection is
+    red-zone opportunity, which the budget's uniform trim (about x0.88 on the
+    WR/TE slice) does not measure - the phantom volume it removes is the depth
+    tail's, while the TDs it takes back come mostly out of the top of the room.
 
     ``result`` is the fully assembled whole-league board (all four positions
     concatenated). Operates on ``Team``/``Pos``/``targets`` and, where
@@ -388,7 +396,10 @@ def apply_pass_capacity_conservation(
 
     out = result.copy()
     out['targets'] = pd.to_numeric(out['targets'], errors='coerce').fillna(0.0)
-    dependent_cols = [c for c in ('receptions', 'receiving_yards', 'receiving_tds') if c in out.columns]
+    dependent_cols = [c for c in (('receptions', 'receiving_yards') if keep_tds
+                                  else ('receptions', 'receiving_yards', 'receiving_tds')) if c in out.columns]
+    if keep_tds and 'receiving_tds' in out.columns:
+        out['receiving_tds'] = pd.to_numeric(out['receiving_tds'], errors='coerce').fillna(0.0)
     for col in dependent_cols:
         out[col] = pd.to_numeric(out[col], errors='coerce').fillna(0.0)
     pass_attempts = pd.to_numeric(

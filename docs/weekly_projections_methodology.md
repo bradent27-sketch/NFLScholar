@@ -3894,3 +3894,466 @@ values (QB 0.738/4.154, RB 0.907/1.030, WR 0.933/1.105, WR cold 0.863/1.292, res
 and the 2026-10-01 entries above as a record, and `fit_seasonal_calibration.py --all-rows`
 stays as tooling. Not done: a played-only re-fit on the corrected pool (lines fit to E[actual |
 played], pool defined over all rows), which would be the version consistent with the harness.
+
+## 2026-10-05 - `v2_qb1_returning_starter` SHIPPED; QB1 overrides are now dated
+
+**The defect.** The in-season QB1 rule reads the most recent full-snap starter, so a regular
+starter who missed games and is back stays behind the fill-in who played last (2026 wk3: SEA
+Darnold, MIN, ATL). The live review (`scripts/review_live_season.py`, 2026 wk1-4) had QB1 wrong
+in 9 of 124 team-weeks.
+
+**Rule.** A team's established starter (>=65% of last year's team QB snaps, or a full-snap
+starter of week 1) whose most recent missed game was a listed-out one (injury report or reserve
+list, any completed week; FantasyPros file included) and who is not listed out for the target
+week is QB1 again. Healthy-but-benched starters are not restored, a fill-in who got hurt is not
+restored over the current starter, and a QB1 override naming a player listed out this week is
+skipped for that week (a fill-in override set during the starter's injury gives way when he
+returns; both cases raise a warning). `_returning_qb_starters`, `qb1_returning_inputs`.
+
+**Resolver check** (`scripts/diag_qb1_resolution.py`, 2022-2025 wk3-17, no overrides): correct
+starter picked 1476 (82.5%) -> 1487 (83.1%), wrong 126 -> 125, unresolved 188 -> 178. 38 picks
+changed: 23 fixed, 12 broken, 3 wrong either way. Remaining losses are mostly the starter's
+first healthy week where the team waited (Dak 2022 wk6, Mac Jones wk6, Tannehill wk10).
+
+**Harness v2** (2022-2025 wk3-17, replay flags, add mode): **INCONCLUSIVE, no harm anywhere**,
+bias growth -0.021.
+
+| scope | RMSE | pairwise | bias |
+|---|---|---|---|
+| START-QB | 7.575 -> 7.500 (-0.076, CI [-0.177, +0.030]) | 0.609 -> 0.609 | -0.263 -> -0.141 |
+| START-ALL | 7.697 -> 7.683 (-0.014, CI [-0.033, +0.004]) | 0.645 -> 0.645 | -0.342 -> -0.321 |
+| ALL | 6.223 -> 6.216 (-0.007, CI [-0.017, +0.005]) | 0.754 -> 0.754 | -0.353 -> -0.342 |
+| START-RB / WR / TE | -0.004 / 0.000 / -0.002 (n.s.) | unchanged | unchanged |
+
+**Shipped into DEFAULT_FEATURES** on the bar fixed in advance (bias growth under the 0.3 cap,
+START-QB and START-ALL not worse), at the user's request to do the QB fix. One line removes it.
+
+**A live-only trap, fixed before shipping.** The rule reads "out last week, not listed out
+now" as "back". On a week-5 board built before that week's report was pulled, nobody is listed
+out, and the flag restored five injured starters over the user's overrides (CHI Williams, WAS
+Daniels - "likely to miss multiple weeks", NYG Dart, TB Mayfield, ATL Rush). A replay always has a
+report, so the backtest could not see it. `qb1_returning_gate` runs the rule only when the target
+week's availability profiles are non-empty, and otherwise adds a warning saying why. Live
+week-5 board after the gate: no QB1 changes. Expect flips once the report is pulled; each carries
+a warning.
+
+**Dated overrides.** `data/qb1_overrides.csv` gained optional `from_week` / `through_week`
+(blank = open), so a mid-season change no longer rewrites weeks already played; the Depth Charts
+save/clear writes the upcoming week. The legacy three-column file still reads as season-long.
+The shipped file was rewritten from git history with the windows. Tests:
+`tests/test_qb1_overrides_and_returning.py` (13).
+
+## 2026-10-05 - TE room audit: yards per target is fine, the target split is not a cheap fix, TDs are short; `v2_pass_capacity_keep_tds` (SHIPPED 2026-10-06)
+
+**Trigger.** Live 2026 wk1-4 review: TE yards/target 8.13 projected vs 7.33, TD/target 0.055 vs
+0.069, v4 calibration lowering startable TEs by 0.95. Four weeks is noise-sized, so this was
+re-run on 28 boards, 2022-2025 wk 4,6,...,16 (`scripts/diag_receiver_audit.py`,
+`scripts/analyze_te_room.py`, DEFAULT_FEATURES + injury and reserve replay, 8,670 live WR/TE
+rows, no-box-score rows kept at 0). Logs `.sweeps/te_room_analysis.log`.
+
+1. **Yards per target is not over-projected.** Played TEs 7.46 projected vs 7.67 actual (TE1
+   7.64 vs 7.94, catch rate 71.3% vs 71.3%). The live 8.13 vs 7.33 does not repeat.
+2. **Targets: room total right (7.02 vs 6.94), split slightly flat.** Clean rooms TE1 4.19 vs
+   4.55 (-0.35), TE2 1.78 vs 1.55 (+0.23), TE3+ 0.66 vs 0.53 (+0.13). Pre-capacity claims run
+   +4% / +32% / +43% over actual for TE1/2/3+; the uniform capacity trim (x0.88) fixes the room
+   total and leaves TE1 short, depth long. Tried on board arithmetic (WR/TE slice re-fit to the
+   same budget, baseline reproduces the boards to 0.009): TE participation strength 0.75 / 1.0
+   (TE2/3 over-projection goes to +0.05 / 0.00, but the freed volume lands on WRs, TE1 gets
+   -0.35 -> -0.40 and START-TE RMSE rises 0.02-0.06), WR+TE strength up together, and a
+   within-room tilt (shares^1.1-1.3; TE RMSE -0.009, START-TE RMSE +0.01, year-inconsistent).
+   None improves RMSE consistently, so alpha stays 0.5 and nothing was built.
+3. **Receiving TDs are the real miss, for WR as well.** Projected vs actual receiving TDs on
+   these boards: TE 247 vs 300 (z +3.0, short in all four years), WR 669 vs 749 (z +2.9, short in
+   all four). TD/target projected 0.041-0.044 against league 0.051 (TE) and 0.048 (WR) over
+   2022-2025. The 2021-2025 all-rows calibration dump agrees: receiving TD projected/actual TE
+   0.92 / 0.85 / 0.90 / 0.79 / 0.70, WR 0.93 / 1.03 / 0.90 / 0.82 / 0.94. By channel TE1's
+   -0.83 points bias is receptions -0.21, receiving yards -0.31, TDs -0.29 (WR1 -0.79: -0.21 /
+   -0.30 / -0.28).
+4. **Where they go.** TE1 TD rate: blended 0.227 (already 7% under actual 0.245) -> 0.216 after
+   participation/pace/matchup -> capacity trim -0.029 (-13.6%) -> 0.197. The capacity pass scales
+   receiving TDs by the same factor as targets - the defect already fixed for RB rush TDs
+   (2026-09-30, `v2_rb_carry_budget_keep_tds`): a TD projection is red-zone opportunity, the trim
+   removes depth-tail phantom targets, and the TDs it takes back come mostly from the top of the room.
+
+**Candidate: `v2_pass_capacity_keep_tds`** (modifier of `v2_pass_capacity`): the pass-capacity fit
+scales targets, receptions and receiving yards, and leaves receiving TDs at their pre-budget value.
+Board arithmetic over all 28 boards: TE TD ratio 0.82 -> 0.95, WR 0.89 -> 1.02; START-TE (top 12
+by projection, all rows) bias -0.51 -> -0.17, RMSE 6.765 -> 6.685; START-WR bias -0.50 -> -0.18,
+RMSE 8.633 -> 8.583; consistent in all four years (TE 0.78/0.93/0.82/0.78 -> 0.91/1.06/0.94/0.90).
+Real pipeline, 4 boards (2022 w4, 2023-2025 w12): targets, receptions and yards bit-identical, TE
+TDs 36.4 -> 41.6 (offline prediction 41.5; actual 39), WR 94.9 -> 108.7 (prediction 107.6; actual 92 -
+a small sample that happened to start near actual), no TD above receptions. Tests: allocator
+(`keep_tds` leaves TDs in over- and under-budget rooms) and a build-level test
+(`test_pass_capacity_keep_tds_...`).
+
+**Harness v2** (2022-2025 wk3-17, replay flags, add mode, defaults without the QB flag; log
+`.sweeps/harness_pass_capacity_keep_tds_2022-2025_wk3-17.log`): **SHIP-ELIGIBLE**, bias growth -0.153,
+no scope worse, 45 of 60 weeks better.
+
+| scope | RMSE | pairwise | bias |
+|---|---|---|---|
+| START-ALL | 7.667 -> 7.652 (-0.015, CI [-0.023, -0.007]) | 0.646 -> 0.647 (+0.001) | -0.324 -> -0.171 |
+| START-TE | 6.681 -> 6.659 (-0.022, CI [-0.039, -0.005]) | 0.600 -> 0.604 (+0.004, CI [+0.001, +0.008]) | -0.720 -> -0.509 |
+| START-WR | 7.914 -> 7.897 (-0.018, CI [-0.034, +0.001]) | 0.612 -> 0.614 (+0.002) | -0.272 -> -0.004 |
+| START-RB | 7.699 -> 7.686 (-0.013, CI [-0.020, -0.006]) | 0.649 -> 0.650 (+0.001) | -0.319 -> -0.265 |
+| ALL | 6.223 -> 6.213 (-0.011, CI [-0.015, -0.006]) | 0.754 -> 0.754 | -0.353 -> -0.259 |
+| START-QB | unchanged | | |
+
+WR/TE MAE (secondary) is flat to +0.017 on WR: the same mean-consistent-not-median pattern as the other TD
+fixes. **SHIPPED into DEFAULT_FEATURES 2026-10-06** on the win bar fixed in advance (bias growth under 0.3,
+START-ALL RMSE not worse, START-TE / START-WR RMSE or bias improving, no position worse). It moves TE/WR
+TDs, so it is a calibration input: the lines are re-checked on a fresh dump built on the final defaults.
+
+**Calibration tooling.** `fit_seasonal_calibration.py --mode emit --played-only` fits and scores on
+rows with a box score only while the startable pool is still taken over all live rows (the harness's
+definition). On the existing all-rows dump (2021-2025, built 2026-10-01) the shipped v4 lines are
+already close to unbiased played-only on the 2025 hold-out (QB +0.08, RB -0.01, WR +0.19) and a
+refit changes RMSE by <=0.01 (QB 8.013 -> 8.020, RB 7.685 -> 7.686, WR 7.508 -> 7.507); only TE's
+two-bucket refit moves anything (RMSE 6.909 -> 6.851, bias -0.74 unchanged). The refit decision
+waits for the final default set (keep_tds moves TE/WR TDs).
+
+## 2026-10-05 - Def Rank column (and the dialog's "toughest matchup" line) now blend last season in
+
+Display only; no projection reads `defense_matchup`, so no model flag and no backtest.
+
+**What it was.** For each (position, opponent), `defense_stat_rank` took the defense's mean
+fantasy points allowed per game to that position from THIS season's completed games and ranked
+the 32 teams; last season was used only as a fallback while zero current games existed. A
+four-game sample therefore read as the whole truth (2026 wk5 WR: HOU "softest" at 44.6 pts/game).
+Raw points allowed - not adjusted for the quality of the offenses faced.
+
+**What it is now (user request: full scope, blended with the previous season).**
+`blended_defense_stat_table`: value = a * this season + (1 - a) * last season, a = games /
+(games + `DEFENSE_PRIOR_GAMES`) = games / (games + 12), the weighting the model's own defense
+matchup multiplier uses (`blend_defense_prior`). About 25% this season after four games, 50% after
+twelve; a defense with no games yet reads as last season alone, one with no prior season as this
+season alone. One groupby per position instead of one per opponent. The dialog's source line now
+reads e.g. "2026 through Week 4 (4 games, 25%) blended with 2025 full season (75%)", the header
+tooltip and the table caption say the same.
+
+**Effect, 2026 wk5 WR:** HOU 44.6 current / 26.1 prior -> 30.7 blended, rank 1 -> 18 (of 32); CHI
+28 -> 12; CLE 7 -> 22; BUF 4 -> 19; PHI 10 -> 23; PIT 21 -> 8. Not changed: opponent adjustment
+(raw points allowed), the weight constant, the coaching-change shortened prior the backtest uses.
+Tests: `test_blended_defense_table_*` (2), `test_v2_defense_matchup_blends_this_season_with_last_...`
+(the cold-start test still passes unchanged).
+
+## 2026-10-05 - Pace multiplier audit (ATL players vs NO, x0.997): working as built, and the signal is weak
+
+`scripts/diag_pace_signal.py`, log `.sweeps/diag_pace_signal.log`. No change made.
+
+**How it is built.** `pace_mult` for a player = the OPPOSING DEFENSE's plays-faced per game
+(`load_team_pace` `def_pace`: plays the offenses that played it ran) over the league mean, clipped to
+0.85-1.15, then shrunk toward 1 by `games / (games + PACE_PRIOR_GAMES=12)` of that defense's games.
+
+**ATL @ NO, week 5 board (3 games each).** NO's OFFENSE runs 69.9 plays a game, #2 in the league
+(league mean 61.4). But the multiplier reads NO's DEFENSE: 60.5 plays faced, rank 20, below the 61.3 mean
+-> 0.987 -> shrink 3/(3+12) = 0.20 -> x0.997. A team that runs a lot of plays holds the ball, so the
+opponent gets no more; and even a +15% defense would give only x1.03 now, x1.075 after twelve games, x1.088
+after a full season.
+
+**Does the signal predict plays?** 4,956 team-games, 2016-2025: the opposing defense's plays-faced
+explains 0.4% of a game's play count (sd 8.7); the opponent's OWN tempo has a coefficient of +0.02-0.15
+(n.s.); the team's own to-date tempo carries only ~0.37 into the next game. Out of sample (fit 2016-21,
+test 2022-25, n=1,918), RMSE of plays per team-game: own to-date mean 8.499, the model's pace multiplier
+8.561 (slightly worse; worse early and late), a flat 0.16 coefficient on the opposing defense 8.108 (mostly
+from regressing own pace toward the league mean). The fitted coefficient on the opposing defense is
+0.13-0.23 at every point in the season while the model's shrink weight rises 0.20 -> 0.56, so it
+over-reacts late and is about right early - on a signal worth under 0.3 points at one standard deviation.
+
+**Open question tested next.** Own tempo regresses to the mean (0.37 persistence) but the model's per-game
+volume rates carry it in full: on 187 clean-room board team-games the fast quintile is over-projected by
+1.9 WR/TE targets (act/proj 0.93, slope -0.195 targets per play of tempo, se 0.114, early-season -0.34,
+se 0.16): suggestive, under-powered. The overnight calibration dump now records team, opponent and
+pass/rush attempts so `scripts/analyze_team_tempo.py` can test this on 5 seasons of team-games.
+
+
+## 2026-10-06 - Calibration re-check on the final defaults (QB1 returning starter + pass-capacity keep_tds): v4 lines KEPT
+
+Both flags shipped since the last fit (`v2_qb1_returning_starter` is not a calibration input in effect;
+`v2_pass_capacity_keep_tds` moves WR/TE TDs). Fresh dump on the final defaults:
+`fit_seasonal_calibration.py --mode dump --all-rows` -> `.sweeps/seasonal_calibration_allrows_v6.csv`
+(2021-2025 wk1-18, 38,719 live player-weeks, 27,914 with a box score; it now also records team, opponent
+and pass/rush attempts).
+
+The harness-consistent criterion, as the 2026-10-01 entry asked for: lines fit and scored on rows with a
+box score only, the startable pool still taken over ALL live rows (`--played-only`;
+`scripts/eval_calibration_lines.py` scores lines exactly the way harness v2 does from the dump, which is
+the harness base-arm board, so no two-hour rerun is needed to compare lines).
+
+| split (shipped v4 vs refit, START pools, played rows) | QB dRMSE | RB | WR | TE |
+|---|---|---|---|---|
+| fit 21-23 / test 24-25 | +0.007 | +0.002 | +0.024 | +0.063 |
+| fit 21-24 / test 25 | +0.008 | +0.001 | -0.003 | +0.027 |
+| fit 22-25 / test 21 | +0.019 | +0.013 | -0.026 | 0.000 |
+
+No position improves in every split (rule: apply only if it does), and TE is worse in two. On the
+harness window itself (2022-2025 wk3-17, refit on all years, so in-sample for the refit) START-ALL RMSE
+is 7.696 shipped vs 7.702 refit, START-WR bias moves +0.015 -> -0.399. The v4 lines are already close to
+unbiased on this criterion (2025 held out: QB +0.03, RB +0.05, WR +0.38/+0.13 refit, TE -0.57) - the
+v5 all-rows lines were the wrong target and the played-only target says the shipped lines are about
+where they should be. **Decision: v4 lines stay. Nothing applied.** The only line with any support is
+the TE two-bucket refit on the old dump (RMSE 6.909 -> 6.851) and it does not repeat across splits here.
+
+## 2026-10-06 - Historical pace proxy credited traded players' games to the wrong club (fixed); own-tempo candidate
+
+**Defect (found while checking the tempo candidate; backtest-only).** `_as_of_team_game_plays` -> `as_of_team_pace`
+and `as_of_team_weekly_plays`, the historical stand-ins for `load_team_pace` / `load_team_weekly_plays`, grouped
+player box scores by the merged team column, which holds a player's LATEST team. A traded player's earlier
+games therefore landed under his new club with his old club's opponent: phantom games (ARI "vs CIN" in a week ARI
+played WAS), games per team up to 25, and the team he left missing his plays (2024 NYG lost Daniel Jones's
+attempts). 2024 week 6: league mean 27.8 plays/game (real 61.0), NYG 8.1, LAC 9.6, TEN 11.0. Every historical
+`pace_mult` and the defense-matchup ratio's per-game play normalisation in every backtest read this. Live boards use
+the nflreadpy source and were never affected. Fix: credit each game to `_historical_game_team` (the offense that
+played it). 2024 wk6 after: league mean 58.9 (real 61.0, the gap being sacks), correlation with the real source 0.93
+(off) / 0.95 (def), 4-5 games per team. This is the same class as the open "traded-player end-of-season team" item.
+**Consequence: harness base arms are not comparable across this date** (earlier logs: ALL RMSE 6.223, START-ALL
+7.667 before; the first log after is the tempo run below). Paired A/B deltas run before it stay valid as deltas -
+both arms read the same proxy - but their size could differ slightly. 710 tests pass.
+
+**Own-tempo regression (`v2_own_tempo_regression`, CANDIDATE).** The pace audit above found the multiplier built
+as intended; the lead was elsewhere: a team's own plays per game persist only ~0.37 into the next game, but
+every player's per-game rate carries it in full. 2021-2025 calibration dump, team-games, actual - projected on the
+team's own to-date tempo (plays/game minus league): pass attempts slope -0.209 (t -3.6), targets -0.184 (t -4.3),
+rush attempts -0.036 (t -0.8, no effect). Share of the relative tempo deviation to hand back (kappa) by games
+played: ~0.7 at cold start and games 2-8 (0.80/0.62 at G 2-3, 0.14/0.44 at 4-5, 0.49/0.69 at 6-8 for pass
+attempts/targets), ~0 from game 9 (0.06/0.09, then -0.03/-0.15); the fast quintile is over-projected ~6% on pass
+attempts (-2.1 of 34.8), the slow under ~3.6%. Rule: multiplier = 1 - kappa(G) * (own plays/game / league - 1),
+kappa = 0.65 * max(0, 1 - G/10), capped at +-10%, on passing and receiving stats only; a team with under 2 games
+reads last season's tempo at G = 0; a cold start reads last season's at G = 0. Fit on 2021-2023; on 2024-2025 it
+cuts squared team-volume error 1.0-1.4% (pass attempts 0.9%, targets 1.4%). `own_tempo_multiplier`, `TEMPO_*`,
+the popup's pace number now includes it. Tests: the multiplier (early/late/cap/no-evidence) and a build-level test
+(passing and receiving volume scale, carries and scrambles do not).
+
+**Harness v2** (2022-2025 wk3-17, replay flags, add mode, defaults now incl. the pace-proxy fix, QB1 and keep_tds
+flags; log `.sweeps/harness_own_tempo_2022-2025_wk3-17.log`): **INCONCLUSIVE, no effect**, bias growth +0.012.
+
+| scope | RMSE | pairwise | bias |
+|---|---|---|---|
+| START-ALL | 7.657 -> 7.658 (+0.002, CI [-0.003, +0.006]) | 0.646 -> 0.646 | -0.073 -> -0.085 |
+| START-QB | 7.496 -> 7.500 (+0.004, CI [-0.010, +0.017]) | 0.608 -> 0.608 | +0.031 -> +0.016 |
+| START-WR | 7.900 -> 7.899 (-0.001) | 0.616 -> 0.616 | +0.106 -> +0.094 |
+| START-TE | 6.645 -> 6.650 (+0.005, CI [-0.004, +0.015]) | 0.596 -> 0.595 | -0.488 -> -0.511 |
+| START-RB | 7.667 -> 7.668 (+0.001) | 0.652 -> 0.652 | -0.173 -> -0.177 |
+| ALL | 6.190 -> 6.191 (+0.001, CI [-0.001, +0.004]) | 0.755 -> 0.755 | -0.179 -> -0.183 |
+
+Weeks better 16 of 36 (START-ALL). The team-level volume error does fall (1.0-1.4% of squared error on 2024-25) but
+a team's attempts are shared across several players and the per-player noise dwarfs it, so nothing shows in points.
+**Not shipped; stays in MODEL_FEATURES as an unshipped candidate** (a correctness-flavoured fix with no measurable
+accuracy gain does not meet the bar the user set, and START-QB / START-TE trend the wrong way). New harness
+reference (defaults as of 2026-10-06, pace proxy fixed): ALL RMSE 6.190 / bias -0.179, START-ALL 7.657 / -0.073.
+A direct test would score team totals, not player points; not pursued.
+
+
+## 2026-10-06 - `v2_pace_alpha_cap` SHIPPED: the opponent-pace multiplier was sized about 4x too large late in the season
+
+Follow-up to the pace audit above, at the user's direction ("implement it now" if there is an indication of how
+hard to enforce it). The multiplier is 1 + alpha * (opposing defense's plays-faced / league - 1), clipped to
++-15%, alpha = defense games / (games + 12): 0.20 at 3 games, 0.56 at 17.
+
+**Strength.** Plays minus the team's own to-date mean, on the opposing defense's plays-faced deviation
+(`scripts/diag_pace_signal.py`; a check against the game total line on 3,714 team-games, 2018-2025): +0.136
+(t 3.4), by games played 0.13 / 0.23 / 0.23 / 0.12 (se 0.07-0.11), i.e. no trend with games played, and +0.16
+(se 0.14) at cold start on last season's numbers (n=638, 2016-2025). The signal is not the game total in
+disguise: correlation with the Vegas total 0.03, and the coefficient is unchanged (+0.135, t 3.4) with the
+total in the same fit. Own offense's tempo of the opponent adds nothing (+0.02 to +0.15, n.s.). Opponent
+defense pace is therefore real but worth about 0.7 plays per 5 plays of deviation, ~1% of volume.
+
+**Change.** `pace_alpha = min(games/(games+12), PACE_ALPHA_CAP = 0.15)`, in-season and cold start alike (the
+cold-start 0.16 is within its se of 0.15; the existing cold-start regression still applies on top). Reached at
+game 2, so effectively constant. The defense-matchup ratio stays pace-normalised, so the multiplier remains the
+only place opponent pace enters.
+
+**Direct test, plays per team-game, own to-date mean scaled by the multiplier, 4,640 team-games 2016-2025
+(nflreadpy team stats, unaffected by the proxy bug):**
+
+| weight | all | 2022-2025 | 9+ games |
+|---|---|---|---|
+| no multiplier | 8.549 | 8.499 | 8.143 |
+| current G/(G+12) | 8.568 | 8.561 | 8.172 |
+| capped 0.10 | 8.538 | 8.504 | 8.131 |
+| **capped 0.15** | **8.537** | 8.511 | **8.128** |
+| capped 0.20 | 8.539 | 8.518 | 8.128 |
+
+So the current weight predicted plays WORSE than no multiplier at all; capped at 0.10-0.20 it beats both overall
+and late in the season, and the exact value is not delicate. On 2022-2025 alone no multiplier is still marginally
+best (8.499 vs 8.511): the signal is that small.
+
+**Harness v2, shortened** (2025 wk9-17 only: a full four-season run is ~2h15m, about 6 min of any run is startup
+and each week ~2.3 min; log `.sweeps/harness_pace_alpha_cap_2025_wk9-17.log`): **INCONCLUSIVE, no harm**,
+bias growth -0.005. START-ALL RMSE 7.667 -> 7.666 (-0.001, CI [-0.014, +0.010]); START-RB -0.009, START-WR
+-0.006, START-QB +0.013, START-TE +0.010, all CIs span 0; pairwise unchanged. Underpowered by design: it checks
+that nothing broke, the mechanism check is the direct test above. **Shipped into DEFAULT_FEATURES.** Volume moves
+by at most ~2% (late-season teams at the clip), so calibration is unaffected in practice; the v4 lines stay. The
+full-window harness and a pace ablation (is the multiplier worth keeping at all) are not run; both would sit
+inside the harness noise.
+
+**Full-window ablation (2022-2025 wk3-17, run afterwards, log `.sweeps/harness_pace_alpha_cap_ablate_2022-2025_wk3-17.log`):
+INCONCLUSIVE, neutral.** Removing `v2_pace_alpha_cap` moves START-ALL RMSE 7.660 -> 7.659 (-0.001, CI [-0.005, +0.004]),
+bias growth -0.002; START-QB -0.004, RB +0.001, WR +0.001, TE -0.002, every CI spans 0, pairwise identical to three
+decimals. So at the harness's scale the cap is neither helping nor hurting, as expected for a ~2% volume change. It stays
+shipped on the direct predicted-plays test above (the uncapped multiplier did worse than no multiplier on late-season
+plays), not on a harness win.
+
+
+## 2026-10-06 - Model audit: decomposition vs calculation, data integrity, and where the model is weakest
+
+Requested by the user: walk the weekly model for UI bugs, check that what the projection uses is shown in the
+decomposition, and find where the model struggles most. Harness runs queued behind this: the full-window pace-cap
+ablation (`.sweeps/harness_pace_alpha_cap_ablate_2022-2025_wk3-17.log`, started 08:04) and `v2_season_anchor`
+(`.sweeps/harness_season_anchor_2022-2025_wk3-17.log`, chained after it).
+
+### Decomposition bugs found and fixed (UI/explanations only; no projection changed)
+
+1. **Three shipped multipliers were applied but not shown, so the dialog's chain did not reproduce the projection.**
+   The table's "Context multiplier" was script x pace x availability x environment. It omitted the participation
+   multiplier (`v2_wrte_participation` / `v2_rb_participation`), the forward script factor of
+   `v2_script_neutral_volume`, and weather (`v2_weather_adjustment`, which was not even recorded in the explanation).
+   On 2022-2025 WR/TE audit boards the stage after the shown Context multiplier sat a median **-15%** below blended
+   rate x defense x shown factors (targets: 67% of rows off by more than 5%, 50% by more than 15%; hidden
+   participation x script-neutral averaged 0.88, p10 0.78). A depth receiver read ~1.0 while the real factor was 0.77.
+   Fix: `_context_parts` (one helper, used by the primary table, the thin "what it's made of" table, the per-stat deep
+   dive and both alignment/scheme worked-calc tables) now includes every factor; `weather_stat_multiplier` is
+   recorded per stat; the table adds a Role / participation and a Weather column; captions say what each one is.
+   Test: the shown factors reproduce `pre_vacancy_projection` within 1% for a starter and a depth receiver.
+2. **RB carry-budget change was invisible.** `v2_rb_carry_budget` (shipped) records `carry_budget_delta` (median
+   -1.8% of carries, -2.4% of rushing yards, 41-55% of RBs over 0.25) with `pass_capacity_delta` 0; the dialog never
+   read it, so the stages stopped short of the final value for RB rushing. New "Carry budget Δ" column with its own
+   stage in the points row.
+3. **`script_status` display bug (open since 09-25): fixed.** The status is one string; `_trace_value` indexed it per
+   row, so player i's caption showed the i-th CHARACTER ("Game script (s, ...)", "(r, ...)") and 'not modeled' past the
+   string's length. Scalar strings are now returned whole. Test added.
+4. **Stale text:** the pass-capacity room caption described a "trusted tier keeps its value, tail shares the rest"
+   allocator reverted 2026-08-30; the math is one uniform factor. Rewritten (also says receiving TDs are left as
+   projected since keep_tds). The capacity bullet in "What these columns mean" likewise.
+5. Checked and fine: stage chain `pre_vacancy + capacity + budget + vacancy = final` closes to 0.00 on every row
+   (targets and TDs, 2022-2025 boards); no row without a decomposition; every column header and the Def Rank text
+   match the code.
+
+### Data / calculation checks (`scripts/scan_board_integrity.py`)
+
+Live 2026 week 5 (448 rows, 30 teams) and 2025 week 9 historical: no duplicates, no player on two teams, no bye-week
+rows, no non-finite or negative stats, receptions <= targets, TDs <= opportunities, QB volume 22-40 attempts,
+targets/attempt 0.94-0.97, no Out player with projected points. Findings:
+- **13 healthy QBs with a raw projection of exactly 0 displayed 4.15 pts** (the QB calibration intercept) - fixed with
+  `v2_uncalibrate_zero_rows` (SHIPPED; the existing sidelined guard now also covers zero-volume rows; backtest-invisible
+  because a zero row is never in a startable pool).
+- **ATL and MIN had no QB resolved in 2025 week 9 (zero pass attempts)**: the in-season resolver leaves ~10% of
+  team-weeks unresolved (188 of 1,790 in the 2022-2025 diag). Live, the board surfaces them for a manual pick, so this
+  is a lead (a ranked fallback guess might beat zero), not a bug.
+
+### TD projections are over-dispersed, but compressing them does not help points (`scripts/eval_td_calibration.py`)
+By projected level, actual/projected TDs, 2021-2025 wk3+, all live rows: QB rush 2.84 / 0.90 / 0.90 / 0.91 / 0.80 from
+the lowest to the highest bin; RB rush 1.68 -> 0.81; WR rec 1.53 -> 0.80; TE rec 1.76 -> 0.80. Regressions of actual on
+projected TDs: slope 0.70-0.77 (QB pass 0.54). Replacing each TD count with its fitted line and re-running the shipped
+points lines: START-ALL RMSE moves -0.022 / -0.013 / -0.006 held out (shipped lines) but TE is worse in every split
+(+0.002 to +0.012) and the harness window is -0.001; with lines refit it is +0.016 / -0.005 / -0.020. Not built: the
+points lines already compress most of this and TD counts are too noisy for a stat-level line to add accuracy.
+
+### Where the model is weakest (`scripts/analyze_model_weak_spots.py`, 2022-2025 wk3-17 startable pool, played rows)
+- **On level it is at the ceiling.** RMSE within 0-2% of an oracle that knows each player's whole-season average
+  excluding the game (QB 7.53 vs 7.64, RB 7.82 vs 7.77, WR 7.97 vs 7.82, TE 6.85 vs 6.84). Weekly points are mostly
+  noise: sd of actual 7.1-8.5, and the boom/bust tails (actual > 2x or < 0.25x projection, 14% of games) are 51% of
+  squared error. Every signed bias here (largest +0.68 top-12 WR, -0.86 TE 11-20) is worth <0.5% RMSE.
+- **Skill over naive averages is small**: 3-6% RMSE vs the player's to-date mean, ~10% vs last-3 mean; weakest WR
+  ranks 31-55 (0.5%) and WR team #3+ (negative, bias +1.1), WR late season (0.2%), TE rank 1-4 (1.3%). Pairwise accuracy
+  inside mid tiers is a coin flip (QB 7-12 0.50, WR 13-30 0.52, TE 0.52-0.53).
+- **The one clean inefficiency**: the model's departure from a player's own to-date mean (known pre-game) carries real
+  signal (corr 0.27-0.36) but is too large for WR (slope 0.72, se 0.044) and RB (0.76, 0.041), TE 0.83, QB 0.95; right
+  at weeks 3-6, 0.5-0.7 from week 7 (WR wk7-11 0.47). The calibration lines shrink toward the pool mean, not the
+  player's own. `scripts/eval_season_anchor.py`: final = mean + s*(calibrated - mean), s fit per position (RB 0.75,
+  WR 0.69, TE 0.84, QB ~0.98 left alone) improved held-out START RMSE in all six year splits (ALL mean -0.027,
+  range -0.004 to -0.054; WR -0.050 and TE -0.007 in every split, pairwise +0.009 for WR; RB 5/6, QB none) and on the
+  harness window 7.696 -> 7.657 (in-sample). A phase-by-phase s was unstable across fits (WR wk7-11 0.30-0.48) and
+  is not used. Built as `v2_season_anchor` (CANDIDATE; points total only, eligible: RB/WR/TE, 2+ games, not sidelined,
+  non-zero; dialog shows "Season anchor: a -> b").
+
+### `v2_season_anchor` SHIPPED 2026-10-06 (pre-set bar met; the harness's own verdict is INCONCLUSIVE)
+Harness v2, 2022-2025 wk3-17 (`.sweeps/harness_season_anchor_2022-2025_wk3-17.log`), candidate arm vs shipped
+DEFAULT_FEATURES (both arms with injury + reserve replay), played-only START pools:
+
+| scope | RMSE base -> anchor | CI | bias | pairwise |
+|---|---|---|---|---|
+| START-ALL | 7.642 -> 7.631 (-0.012) | [-0.030, +0.007] | -0.081 -> -0.016 | +0.001 |
+| START-WR | 7.862 -> 7.844 (-0.018) | [-0.054, +0.019] | +0.102 -> +0.213 | +0.003 |
+| START-RB | 7.618 -> 7.605 (-0.012) | [-0.046, +0.019] | -0.159 -> -0.096 | -0.000 |
+| START-TE | 6.635 -> 6.634 (-0.001) | [-0.019, +0.018] | -0.487 -> -0.474 | -0.002 |
+| START-QB | unchanged (not anchored) | | | |
+
+Bias growth -0.064 (cap 0.3); weeks better 33-27 START-ALL, 36-24 ALL; no position worse. Holm-adjusted p = 1.0 for
+every position, so by the harness's own rule this is "no significant effect"; the effect is ~0.15% of RMSE.
+**Why it ships anyway:** the bar written down before the run (bias growth < 0.3, START-ALL RMSE not worse, WR/RB/TE
+improving or flat, no position worse) is met; the mechanism is a direct measurement (WR slope 0.72 +/- 0.04, RB 0.76 +/-
+0.04 of the model's departure from the player's own to-date mean), and the held-out check beat the shipped lines in all
+six year-splits (mean -0.027 ALL) with only three fitted numbers, so over-fit risk is minimal; and the user's standing
+instruction is that obvious systematic over-reach gets removed rather than waiting for significance. The harness arm is
+in-sample for `s` (fit on 2021-2025), which is why the held-out splits carry the weight. START-WR bias moved +0.10 ->
++0.21 (within the 0.3 cap; the pull toward each WR's own average lifts the low projections more than it lowers the high
+ones). Live week-5 2026 board: 315 of 448 rows move (RB 89, WR 147, TE 79; QB none), mean |change| 0.33 / 0.47 / 0.21
+pts, largest +2.6 (Nico Collins) / -2.1; every anchored row has availability 1.0, nothing non-finite. **To undo it:
+remove `'v2_season_anchor'` from DEFAULT_FEATURES.** Calibration v4 lines are unchanged. Not done: a per-phase `s`
+(unstable across fits) and a QB anchor (s ~ 0.98, nothing to gain).
+- Leakage trap noted: an "own season level" benchmark built from the model's OWN future projections contains this
+  game's result and gave a misleading ~0 week-specific signal; the pre-game to-date mean is the clean comparison.
+
+
+## 2026-10-06 - Week-5 pre-slate check: model vs the posted lines, bug scan, one fix, one candidate, one reject
+
+Requested by the user before they start using the week-5 board: walk the model, test projections against the early
+sportsbook lines, bug-test, and say whether there is an obvious path to improve. Market and FantasyPros are
+BENCHMARKS only here (no blend).
+
+**Team scoring vs the game lines** (week-5 spreads/totals posted for all 15 games; `scripts` inline, scratch). Model
+team offensive TDs (pass TDs + rush TDs) against the market-implied points: correlation 0.81, slope 0.148 TD per implied
+point (7 points per TD would be 0.145) - the board is on the market's scale. Outliers, model implied points minus
+market: MIN -6.7, ATL -5.4, NYJ -5.0, MIA -3.7, DEN -3.5 low; BAL +3.9, SF +2.5, PHI +2.5, CLE +2.2 high. The low ones
+are teams whose QB has a small current-season TD sample (Murray 2 games at 0.41 TD/game vs a 1.24 prior, Penix 1,
+Willis 4).
+**Historical check of that gap** (2021-2025 wk3-17, 2,096 team-weeks from `seasonal_calibration_allrows_v6.csv` and the
+nflverse closing lines): predicting a team's actual offensive TDs, the model's team TD sum has RMSE 1.360 and slope
+0.53 (about 2x over-dispersed, in every phase: wk3-6 0.57, wk7-11 0.45, wk12-17 0.57); the market-implied total has RMSE
+1.315, and adding the model to the market improves nothing (1.315). Same for total yards (85.4 vs 81.6) and passing yards.
+So the model's team-level scoring read carries no information beyond the market's, and its spread is too wide - it is
+the over-dispersion already known from the TD audit, seen at team level. NOT acted on by blending (rejected by the user).
+
+**Player level, week-5 props (posted 2026-10-06, Underdog/PrizePicks/DraftKings/Pinnacle, scored to PPR points).** On the
+111 players with coverage >= 0.9: correlation 0.90 (QB 0.81, RB 0.89, WR 0.88, TE 0.90), mean model-minus-market -0.3
+points, mean absolute gap 1.75. Largest gaps are role calls, not data errors: Kamara (NO, 2 games after an absence) 5.5 vs
+13.3, Love (ARI) 9.8 vs 16.5, Braelon Allen (NYJ) 6.2 vs 11.8, Addison (MIN) 8.4 vs 13.9; above market: Lamb 24.1 vs 17.5,
+Coleman (BUF) 10.1 vs 4.8, Kyren Williams 21.1 vs 15.7. Weeks 3-4 live ledger (`.sweeps/live_review_2026.log`): model RMSE
+6.30 vs market 6.49 vs FantasyPros 6.84 on the same 572 player-weeks, and when they disagree by 2+ points the model is
+closer about half the time (44-55% by gap bin) - no player-level edge for the market to claim.
+
+**Bugs found**
+1. **Stale market lines on the new week's board and in the ledger (FIXED).** The week-5 ledger file built Monday evening
+   carried week-4's props as its market benchmark: `Mkt Market Pts` identical for 342 of 342 players vs the week-4 file.
+   `is_stale` only compares against today's posting anchor, so a Saturday pull stays "fresh" until Tuesday 15:00 UTC.
+   New `data.odds_weekly.snapshot_is_for_week(fetched_at, year, week)` (pulled after the Tuesday anchor preceding the
+   week's first game); the Market props tab now shows a warning and returns no market for a snapshot from an earlier
+   slate, so neither the board nor the ledger gets last week's numbers. Tests added. The existing wk05 ledger file keeps
+   its stale market columns (ledger files are never deleted); scoring uses the latest pre-kickoff board, so a rebuild
+   after the Tuesday post supersedes it - do not score "market" from `2026_wk05_20261005T234357970352Z`.
+2. Display/decomposition items already fixed earlier today (see the audit entry above). Board renders without exceptions
+   in the QB/RB/WR/TE/FLEX views; per-position columns, Snap Share / Injury labels and emoji-only Precip confirmed.
+
+**Efficiency over-dispersion: found, but regressing it does NOT help points (REJECTED, `scripts/eval_efficiency_shrink.py`).**
+Projected yards per opportunity are too extreme at both ends: WR rows projected above 17 yards per catch project 67 yards
+and get 56 (n=233), below 9 project 32 and get 38; QB projections above 8 Y/A are 11 yards high, below 6 are 13 low;
+WR/TE under 5 yards per target are 11 yards low; QB TD per attempt above 0.07 is 0.56 TDs high. Shrinking projected
+yards toward the position mean (`new = volume * (m + lam * (eff - m))`) with the shipped calibration lines: best lam
+WR 0.8 / TE 0.8 / RB 1.0 / QB 1.0 in-sample, START RMSE -0.002 at best; held out by fit-year split the change is
+WR -0.004/+0.001/-0.007/-0.005, TE +0.016/+0.007/-0.007/+0.019, ALL +0.001/+0.002/-0.004/+0.002 - not robust. The
+points lines and the season anchor already absorb it. Not built.
+
+**Candidate: `v2_qb_passing_td_k` (UNSHIPPED, harness running).** K=15 (shared 5) for QB passing_tds: the QB's own
+current-season TD rate is trusted far too much after 2-4 games (K=5 puts 40-50% weight on it). The WR/TE receiving_tds
+K of 30/16 was a CI-excluding-0 win for the same reason; QB passing_tds was never swept (item 4 covered RB volume, QB
+RUSHING, WR/TE yardage, WR/TE TDs). Live week-5 effect: QB pass-TD sd 0.444 -> 0.391, points move up to +-1.2 (Willis +0.7,
+Murray +0.5; Cousins -1.2, Darnold -0.9). Harness v2 2022-2025 wk3-17 with injury/reserve replay,
+`.sweeps/harness_qb_passing_td_k_2022-2025_wk3-17.log`, sentinel `.sweeps/harness_qbk.done`, started 13:14. Win bar:
+bias growth < 0.3, START-ALL and START-QB RMSE not worse, no position worse. Only QBs can move (the flag touches one
+stat for one position), so START-QB is the scope that matters.
+
+**Verdict:** no obvious large path to improve the board on projection accuracy. The model is within 0-2% of an oracle
+season mean (earlier audit entry), agrees with the posted player lines (r = 0.90), and beats them on the weeks scored
+live. What remains is within-tier discrimination, which no variant tested so far moves beyond noise.
+

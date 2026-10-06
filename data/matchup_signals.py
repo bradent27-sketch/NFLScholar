@@ -1167,6 +1167,66 @@ def defense_stat_rank(stats_df, defense_team, position, stat_col):
     }
 
 
+def defense_stat_table(stats_df, position, stat_col):
+    """Per-defense table behind defense_stat_rank: DataFrame indexed by defense
+    team with `games` (distinct games faced by `position`) and `value` (mean
+    per-game `stat_col` allowed to the position). Empty when the frame has no
+    usable rows."""
+    empty = pd.DataFrame(columns=['games', 'value'], dtype='float64')
+    if stats_df is None or stats_df.empty or 'opponent_team' not in stats_df.columns:
+        return empty
+    rows = _played_weeks(stats_df[stats_df['position'].astype(str).str.upper() == str(position).upper()])
+    if rows.empty or stat_col not in rows.columns:
+        return empty
+    per_team_game = rows.groupby(['opponent_team', 'week'])[stat_col].sum()
+    grouped = per_team_game.groupby('opponent_team')
+    return pd.DataFrame({'games': grouped.size().astype('float64'), 'value': grouped.mean()})
+
+
+def blended_defense_stat_table(current_df, prior_df, position, stat_col, prior_games):
+    """defense_stat_table for this season blended with last season, defense by
+    defense: ``value = a*current + (1-a)*prior`` with ``a = games/(games +
+    prior_games)`` (games = this season's games the defense has faced at the
+    position) - the same credibility shape the model's own defense matchup
+    multiplier uses (weekly_projections.blend_defense_prior, DEFENSE_PRIOR_GAMES).
+    A defense with no current games reads as last season alone (a = 0); one
+    with no prior season reads as this season alone (a = 1).
+
+    Columns: value, current_value, prior_value, current_games, current_weight."""
+    cur = defense_stat_table(current_df, position, stat_col)
+    old = defense_stat_table(prior_df, position, stat_col)
+    teams = cur.index.union(old.index)
+    n = cur['games'].reindex(teams).fillna(0.0)
+    c = cur['value'].reindex(teams)
+    p = old['value'].reindex(teams)
+    alpha = n / (n + float(prior_games))
+    both = c.notna() & p.notna()
+    weight = pd.Series(np.where(both, alpha, np.where(c.notna(), 1.0, 0.0)), index=teams)
+    value = pd.Series(np.where(both, alpha * c + (1.0 - alpha) * p, c.fillna(p)), index=teams)
+    return pd.DataFrame({'value': value, 'current_value': c, 'prior_value': p,
+                         'current_games': n, 'current_weight': weight}).dropna(subset=['value'])
+
+
+def defense_rank_from_table(table, defense_team):
+    """defense_stat_rank's result dict for one defense, read off a table built
+    by blended_defense_stat_table (so a whole position's 32 teams share one
+    groupby instead of repeating it per opponent). rank 1 = allows the MOST.
+    Extra keys carry the blend's ingredients for the source line."""
+    if table is None or table.empty or str(defense_team) not in table.index:
+        return None
+    row = table.loc[str(defense_team)]
+    values = table['value']
+    value = float(row['value'])
+    return {
+        'value': value, 'league_avg': float(values.mean()),
+        'pct': _percentile_of(value, values),
+        'rank': int((values > value).sum()) + 1, 'of': int(len(values)),
+        'current_value': None if pd.isna(row['current_value']) else float(row['current_value']),
+        'prior_value': None if pd.isna(row['prior_value']) else float(row['prior_value']),
+        'current_games': float(row['current_games']), 'current_weight': float(row['current_weight']),
+    }
+
+
 def red_zone_defense(pbp_df, defense_team):
     """
     Red-zone trips faced and the touchdown rate allowed on them, from

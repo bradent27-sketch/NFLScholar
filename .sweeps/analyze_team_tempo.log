@@ -1,0 +1,42 @@
+
+=== pass attempts (QB): team-games 2307, projected 32.36 vs actual 32.16 per game ===
+   window    n  slope (act-proj per play of tempo dev)    se    t  implied by "tempo fully carried, 0.37 persists"
+all weeks 2158                                  -0.209 0.058 -3.6                                           -0.332
+games 2-5  584                                  -0.302 0.087 -3.5                                           -0.333
+     6-10  720                                  -0.115 0.116 -1.0                                           -0.331
+    11-17  854                                  -0.111 0.114 -1.0                                           -0.332
+           n  tempo_dev   proj    act  act - proj
+bin                                              
+slowest  462      -5.76  30.05  31.14        1.08
+slow     461      -1.88  31.28  30.99       -0.29
+mid      461       0.09  32.45  32.04       -0.41
+fast     463       2.17  33.23  34.01        0.77
+fastest  460       5.67  34.77  32.63       -2.14
+
+=== rush attempts (all): team-games 2558, projected 25.25 vs actual 26.13 per game ===
+   window    n  slope (act-proj per play of tempo dev)    se    t  implied by "tempo fully carried, 0.37 persists"
+all weeks 2398                                  -0.036 0.043 -0.8                                           -0.259
+games 2-5  640                                   0.008 0.061  0.1                                           -0.259
+     6-10  800                                  -0.047 0.088 -0.5                                           -0.258
+    11-17  958                                  -0.116 0.085 -1.4                                           -0.259
+           n  tempo_dev   proj    act  act - proj
+bin                                              
+slowest  512      -5.86  24.98  25.78        0.80
+slow     511      -1.95  25.17  26.55        1.38
+mid      513       0.04  25.36  26.51        1.16
+fast     510       2.14  25.31  25.90        0.59
+fastest  512       5.63  25.45  25.91        0.46
+
+=== targets (all): team-games 2558, projected 31.22 vs actual 31.17 per game ===
+   window    n  slope (act-proj per play of tempo dev)    se    t  implied by "tempo fully carried, 0.37 persists"
+all weeks 2398                                  -0.184 0.043 -4.3                                           -0.320
+games 2-5  640                                  -0.271 0.064 -4.2                                           -0.320
+     6-10  800                                  -0.188 0.082 -2.3                                           -0.320
+    11-17  958                                   0.005 0.085  0.1                                           -0.321
+           n  tempo_dev   proj    act  act - proj
+bin                                              
+slowest  512      -5.86  29.29  30.06        0.77
+slow     511      -1.95  30.27  30.31        0.05
+mid      513       0.04  31.30  31.32        0.02
+fast     510       2.14  32.02  32.28        0.26
+fastest  512       5.63  33.22  31.87       -1.35

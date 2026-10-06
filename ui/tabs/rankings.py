@@ -33,7 +33,7 @@ from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
 from data.weekly_projections import build_weekly_projections, season_snap_share, DEFAULT_FEATURES
 from data.prediction_ledger import record_board
-from data.odds_weekly import weekly_props, weekly_market_projection, weekly_market_book_lines
+from data.odds_weekly import weekly_props, weekly_market_projection, weekly_market_book_lines, snapshot_is_for_week
 from data.draft_projections import PROJECTED_STATS as _MARKET_PROJECTED_STATS
 from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
 from data.availability_overrides import availability_fingerprint, AVAILABILITY_OVERRIDE_PATH
@@ -75,7 +75,36 @@ _STAT_DISPLAY_COLS = [
 _RANK_PROJ_SHORT_LABELS = {
     'FantasyPros Proj Pts': 'FP Proj', 'Market Proj Pts': 'Market Proj', 'Model Proj Pts': 'Model Proj',
     'FantasyPros Rank': 'FP Rank', 'FantasyPros ECR': 'FP ECR', 'Model vs FantasyPros ECR': 'Model vs FP ECR',
+    # Header text only (2026-10-05 request) - the underlying column names stay
+    # 'Season Snap %' / 'Injury Status', which the styler, the snap meter and
+    # the other tables that share them still key off.
+    'Season Snap %': 'Snap Share', 'Injury Status': 'Injury',
 }
+
+# Stat columns a position never carries (2026-10-05 request): with one
+# position on screen, a block of em dashes for stats it can't produce is just
+# width. Keyed by the _STAT_DISPLAY_COLS label. A column is dropped only when
+# EVERY position on screen lacks it, so FLEX loses passing but keeps rushing
+# and receiving, and SUPERFLEX keeps everything. A position not listed here
+# (e.g. K) is treated as using every column.
+_PASSING_LABELS = frozenset({'Pass Yds', 'Pass TDs', 'Pass Att', 'Pass Cmp', 'INT'})
+_RUSHING_LABELS = frozenset({'Rush Att', 'Rush Yds', 'Rush TDs'})
+_RECEIVING_LABELS = frozenset({'Tgt', 'Rec', 'Rec Yds', 'Rec TDs'})
+_POSITION_UNUSED_STAT_LABELS = {
+    'QB': _RECEIVING_LABELS,
+    'RB': _PASSING_LABELS,
+    'WR': _PASSING_LABELS | _RUSHING_LABELS,
+    'TE': _PASSING_LABELS | _RUSHING_LABELS,
+}
+
+
+def _unused_stat_labels(positions):
+    """Stat column labels no position in `positions` projects - safe to hide."""
+    unused = None
+    for pos in positions or []:
+        theirs = _POSITION_UNUSED_STAT_LABELS.get(str(pos).upper(), frozenset())
+        unused = set(theirs) if unused is None else unused & theirs
+    return unused or set()
 # Rank badges ("RB4") and one-decimal point totals never need more than a
 # "small" preset column - left to auto-size, the HEADER text (especially
 # before the short_labels above shrink it) was the thing actually forcing
@@ -97,8 +126,9 @@ _WIND_WINDY_MAX_MPH = 20.0
 _TEMP_FREEZING_MAX_F = 32.0
 _TEMP_COLD_MAX_F = 50.0
 _TEMP_HOT_MIN_F = 85.0
-_PRECIP_LABELS = {'dry': 'Dry', 'light_rain': '🌦️ Light Rain', 'heavy_rain': '🌧️ Heavy Rain',
-                  'snow': '🌨️ Snow'}
+# Emoji only, like Wind/Temp (2026-10-05 request) - 'Dry' stays a word since
+# it has no emoji of its own (☀️ already means a mild Temp).
+_PRECIP_LABELS = {'dry': 'Dry', 'light_rain': '🌦️', 'heavy_rain': '🌧️', 'snow': '🌨️'}
 
 
 def _weather_cells(is_outdoor, wind_mph, temp_f, precip_bucket):
@@ -449,6 +479,30 @@ def _render_decomposition_navigation(detail):
                       kwargs={'radar_opponent': abbr_to_pff_team(opponent)})
 
 
+def _context_parts(values):
+    """The game/role context factors the projection multiplies in AFTER the defense matchup, from one
+    stat's explanation dict. Everything that scales the stat between 'Player Projection x Defense
+    multiplier' and the pre-vacancy value is here, so the shown Context multiplier reproduces that stage
+    (2026-10-06: it used to omit participation, the script-neutral forward factor and weather, so on a
+    WR/TE board the stage after it sat a median ~15% below what the shown factors implied).
+
+    'script' is the game-script factor in whichever form this stat uses it - the old per-player backward
+    curve, or the forward factor of v2_script_neutral_volume (the other one is 1.0)."""
+    def f(key):
+        v = values.get(key, 1.0)
+        return 1.0 if v is None or pd.isna(v) else float(v)
+    parts = {
+        'script': f('script_multiplier') * f('script_neutral_multiplier'),
+        'participation': f('participation_multiplier'),
+        'pace': f('pace_multiplier'),
+        'availability': f('availability_multiplier'),
+        'environment': f('environment_multiplier'),
+        'weather': f('weather_stat_multiplier'),
+    }
+    parts['combined'] = float(np.prod(list(parts.values())))
+    return parts
+
+
 def _render_decomposition_header(detail):
     st.caption(
         f"{detail['position']} · {detail['team']} vs {detail['opponent']} · "
@@ -595,12 +649,7 @@ def _render_alignment_mix(detail, reference_only=False):
         # table's final value is expected, not a bug. The 'Final proj' column
         # this replaced was removed the same day (redundant with the main
         # table, and space-hungry).
-        context_mult = (
-            float(stat_vals.get('script_multiplier', 1.0))
-            * float(stat_vals.get('pace_multiplier', 1.0))
-            * float(stat_vals.get('availability_multiplier', 1.0))
-            * float(stat_vals.get('environment_multiplier', 1.0))
-        )
+        context_mult = _context_parts(stat_vals)['combined']
         per_game_col = f'{stat_label} /Game'
         mult_col = f'{stat_label} Allowed×'
         combined_col = f'{stat_label} Combined'
@@ -711,12 +760,7 @@ def _render_scheme_mix(detail):
         stat_vals = detail.get('stats', {}).get(stat, {})
         blended_rate = stat_vals.get('blended_rate')
         blended_mult = evidence.get(f'defense_scheme_{pff_stat}_candidate_multiplier')
-        context_mult = (
-            float(stat_vals.get('script_multiplier', 1.0))
-            * float(stat_vals.get('pace_multiplier', 1.0))
-            * float(stat_vals.get('availability_multiplier', 1.0))
-            * float(stat_vals.get('environment_multiplier', 1.0))
-        )
+        context_mult = _context_parts(stat_vals)['combined']
         per_game_col = f'{stat_label} /Game'
         mult_col = f'{stat_label} Allowed×'
         combined_col = f'{stat_label} Combined'
@@ -816,26 +860,20 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     rows = []
     stage_totals = {stage: {} for stage in (
         'raw_average', 'season_adj', 'player_projection', 'after_defense',
-        'after_context', 'after_capacity', 'after_vacancy', 'final')}
+        'after_context', 'after_capacity', 'after_budget', 'after_vacancy', 'final')}
     raw_average_notes = set()
     prior2_weights = []
     context_ingredients = None
+    weather_by_stat = {}
     for stat, values in stats.items():
-        context_mult = (
-            values.get('script_multiplier', 1.0) * values.get('pace_multiplier', 1.0)
-            * values.get('availability_multiplier', 1.0) * values.get('environment_multiplier', 1.0)
-        )
+        parts = _context_parts(values)
+        context_mult = parts['combined']
+        weather_by_stat[stat] = parts['weather']
         if context_ingredients is None:
-            # Player/game-level, not per-stat - every stat's dict carries
-            # the same 4 numbers, so the first one seen is representative;
-            # feeds the standalone "thin" table right after this one.
-            context_ingredients = {
-                'script': float(values.get('script_multiplier', 1.0)),
-                'pace': float(values.get('pace_multiplier', 1.0)),
-                'availability': float(values.get('availability_multiplier', 1.0)),
-                'environment': float(values.get('environment_multiplier', 1.0)),
-                'combined': float(context_mult),
-            }
+            # Player/game-level, except weather (it pushes pass stats down and rush stats up) - the
+            # first stat seen is representative; weather is reported as the range across stats below.
+            # Feeds the standalone "thin" table right after this one.
+            context_ingredients = dict(parts)
         matchup_mult = float(values.get('matchup_multiplier', 1.0))
         cur_w, cur_games = values.get('current_weight'), values.get('current_games') or 0.0
         if cur_w is None:
@@ -868,6 +906,9 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         # out. See data/weekly_projections.py's post_capacity_snapshot
         # comment for the full story - this was a real mislabeling bug.
         capacity_raw = float(values.get('pass_capacity_delta', 0.0) or 0.0)
+        # v2_rb_carry_budget (RB rushing stats): its own stage, recorded as carry_budget_delta with
+        # pass_capacity_delta 0 - it used to be shown nowhere, so the stages stopped short of the final value.
+        budget_raw = float(values.get('carry_budget_delta', 0.0) or 0.0)
 
         raw_avg_val = values.get('raw_prior_rate')
         season_adj_val = values.get('defense_adjusted_prior_rate')
@@ -880,13 +921,16 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             after_defense_val * context_mult if after_defense_val is not None else None)
         after_capacity_val = (after_context_val + capacity_raw
                               if after_context_val is not None else None)
-        after_vacancy_val = (after_capacity_val + vacancy_raw
-                             if after_capacity_val is not None else None)
+        after_budget_val = (after_capacity_val + budget_raw
+                            if after_capacity_val is not None else None)
+        after_vacancy_val = (after_budget_val + vacancy_raw
+                             if after_budget_val is not None else None)
         final_val = values.get('final_projection', values.get('projection'))
         for stage, val in (
             ('raw_average', raw_avg_val), ('season_adj', season_adj_val),
             ('player_projection', player_proj_val), ('after_defense', after_defense_val),
             ('after_context', after_context_val), ('after_capacity', after_capacity_val),
+            ('after_budget', after_budget_val),
             ('after_vacancy', after_vacancy_val), ('final', final_val),
         ):
             if val is not None and pd.notna(val):
@@ -913,6 +957,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             'Defense multiplier': f"{matchup_mult:.3f}×",
             'Context multiplier': f"{context_mult:.3f}×",
             'Team capacity Δ': _fmt_stat(stat, capacity_raw, signed=True),
+            'Carry budget Δ': _fmt_stat(stat, budget_raw, signed=True),
             'Vacancy Δ': _fmt_stat(stat, vacancy_raw, signed=True),
             'Projected value': _fmt_stat(stat, final_val),
             # The de-vigged, reliability-weighted multi-book consensus for the
@@ -922,6 +967,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
                 _DECOMP_TO_MARKET_STAT.get(stat, stat))),
             '_vacancy_raw': vacancy_raw,
             '_capacity_raw': capacity_raw,
+            '_budget_raw': budget_raw,
             '_defense_mult': matchup_mult,
             '_context_mult': context_mult,
         })
@@ -929,6 +975,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     vacancy_vals = table['_vacancy_raw'].tolist()
     capacity_vals = table['_capacity_raw'].tolist()
     show_capacity = any(abs(v) > 0.0005 for v in capacity_vals)
+    budget_vals = table['_budget_raw'].tolist()
+    show_budget = any(abs(v) > 0.0005 for v in budget_vals)
     display_cols = ['Stat', 'Previous Avg', 'Previous Adj Avg']
     if has_current_season_data:
         display_cols.append('Current Season Avg')
@@ -937,6 +985,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     display_cols.append('Context multiplier')
     if show_capacity:
         display_cols.append('Team capacity Δ')
+    if show_budget:
+        display_cols.append('Carry budget Δ')
     display_cols.append('Vacancy Δ')
     display_cols.append('Projected value')
     show_market = market_detail is not None and (
@@ -954,7 +1004,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     stage_by_col = {
         'Previous Avg': 'raw_average', 'Previous Adj Avg': 'season_adj',
         'Player Projection': 'player_projection', 'Defense multiplier': 'after_defense',
-        'Context multiplier': 'after_context', 'Team capacity Δ': 'after_capacity',
+        'Context multiplier': 'after_context', 'Team capacity Δ': 'after_capacity', 'Carry budget Δ': 'after_budget',
         'Vacancy Δ': 'after_vacancy', 'Projected value': 'final',
     }
     points_row = {'Stat': 'Fantasy points at this stage'}
@@ -1002,6 +1052,10 @@ def _render_decomposition_primary_table(detail, market_detail=None):
                 v = capacity_vals[i]
                 out.append(f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;')
                 continue
+            elif col == 'Carry budget Δ':
+                v = budget_vals[i]
+                out.append(f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;')
+                continue
             else:
                 out.append('')
                 continue
@@ -1041,34 +1095,53 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         )
     if 'Team capacity Δ' in display_cols:
         bullets.append(
-            "**Team capacity Δ**: team's RB/WR/TE volume refit to a realistic pass-attempt budget "
-            "(top 8 pass-catchers keep their own value, rest share what's left) — runs even with "
+            "**Team capacity Δ**: the team's RB and WR/TE targets (with receptions and yards; receiving TDs are "
+            "left as projected) scaled by one uniform factor to a realistic pass-attempt budget — runs even with "
             "nobody hurt. Separate from **Vacancy Δ**, which is only an actual OUT teammate's volume moving."
+        )
+    if 'Carry budget Δ' in display_cols:
+        bullets.append(
+            "**Carry budget Δ**: the running-back room's carries (and rushing yards; rushing TDs are left as "
+            "projected) scaled by one factor to the team's expected carry budget — runs before Vacancy Δ."
         )
     with st.expander("What these columns mean", expanded=False):
         for bullet in bullets:
             st.markdown(f"- {bullet}")
 
     if context_ingredients is not None:
-        _render_context_multiplier_table(context_ingredients)
+        _render_context_multiplier_table(context_ingredients, weather_by_stat)
 
 
-def _render_context_multiplier_table(ingredients):
+def _render_context_multiplier_table(ingredients, weather_by_stat=None):
     """Standalone "thin" table of the actual numbers behind the Context
     multiplier column - added 2026-08-25 per explicit request ("right in
-    that spot include the actual numbers that are being used"). One row,
-    since script/pace/availability/environment are player/game-level, the
-    same for every stat in the line above."""
+    that spot include the actual numbers that are being used"). One row:
+    script/participation/pace/availability/environment are player/game-level,
+    the same for every stat in the line above. Weather is per stat (it pushes
+    pass stats down and rush stats up), so it is shown as its range."""
     st.markdown("**Context multiplier - what it's made of**")
+    wx = [v for v in (weather_by_stat or {}).values() if v is not None and pd.notna(v)]
+    if wx and abs(max(wx) - min(wx)) > 5e-4:
+        weather_cell = f"{min(wx):.3f}–{max(wx):.3f}"
+    else:
+        weather_cell = f"{(wx[0] if wx else ingredients.get('weather', 1.0)):.3f}"
     thin = pd.DataFrame([{
         'Game script ×': f"{ingredients['script']:.3f}",
+        'Role / participation ×': f"{ingredients.get('participation', 1.0):.3f}",
         'Pace ×': f"{ingredients['pace']:.3f}",
         'Availability ×': f"{ingredients['availability']:.3f}",
         'Vegas environment ×': f"{ingredients['environment']:.3f}",
+        'Weather ×': weather_cell,
         'Combined (Context multiplier) ×': f"{ingredients['combined']:.3f}",
     }])
     st.dataframe(style_plain_dataframe(thin), hide_index=True, width="stretch", height=df_auto_height(1))
-    st.caption("Context multiplier = Game script × Pace × Availability × Vegas-implied game environment.")
+    st.caption(
+        "Context multiplier = Game script × Role / participation × Pace × Availability × Vegas environment × "
+        "Weather. **Role / participation** discounts a depth receiver or back who is often active without a "
+        "box-score role (1.0 for a starter). **Game script** is this game's forward script factor (the "
+        "script-neutral volume curve, or the player's own backward curve for stats that still use it). "
+        "**Pace** is the opposing defense's plays-faced against the league average, capped at a 15% weight."
+    )
 
 
 def _team_cell_style(team_code):
@@ -1344,12 +1417,15 @@ def _render_context_deep_dive(detail):
     stats = detail.get('stats', {})
     rows = []
     for stat, values in stats.items():
+        parts = _context_parts(values)
         rows.append({
             'Stat': stat.replace('_', ' ').title(),
-            'Game script': f"{values.get('script_multiplier', 1.0):.3f}×",
-            'Pace': f"{values.get('pace_multiplier', 1.0):.3f}×",
-            'Availability': f"{values.get('availability_multiplier', 1.0):.3f}×",
-            'Environment': f"{values.get('environment_multiplier', 1.0):.3f}×",
+            'Game script': f"{parts['script']:.3f}×",
+            'Role / participation': f"{parts['participation']:.3f}×",
+            'Pace': f"{parts['pace']:.3f}×",
+            'Availability': f"{parts['availability']:.3f}×",
+            'Environment': f"{parts['environment']:.3f}×",
+            'Weather': f"{parts['weather']:.3f}×",
         })
     if rows:
         st.dataframe(style_plain_dataframe(pd.DataFrame(rows)), hide_index=True, width="stretch", height=df_auto_height(len(rows)))
@@ -1363,8 +1439,10 @@ def _render_context_deep_dive(detail):
         "**Pace**: opponent's plays/game ("
         + (f"{opp_pace:.1f}" if opp_pace is not None else "unavailable") + " vs league "
         + (f"{league_pace:.1f}" if league_pace is not None else "unavailable") + "). "
+        "**Role / participation**: discount for a depth player who is often active without a box-score role. "
         "**Availability**: this week's injury/role discount. **Environment**: Vegas-implied team total "
-        f"and venue ({sample.get('environment_status', 'feature disabled')})."
+        f"and venue ({sample.get('environment_status', 'feature disabled')}). "
+        "**Weather**: wind/cold effect on this stat (down for passing, up for rushing)."
     )
     role = detail.get('role', {})
     if role.get('alignment_available'):
@@ -1687,8 +1765,10 @@ def _render_pass_capacity_room(detail):
             display.style.apply(lambda _: style_grid, axis=None).format(
                 {'Targets before': '{:.2f}', 'Targets after': '{:.2f}', 'Δ targets': '{:+.2f}'}),
             hide_index=True, width="stretch", height=df_auto_height(len(display)))
-        st.caption("This player's row is highlighted. 'Trusted' tier keeps its own value; 'tail' shares "
-                  "whatever budget the trusted tier leaves behind.")
+        st.caption("This player's row is highlighted. Everyone in a group is scaled by the same factor "
+                  "(budget ÷ claim) - nobody is protected and nobody is pinned. 'Tier' only labels the eight "
+                  "highest-projected pass catchers ('trusted') against the rest ('tail'); it does not change the math. "
+                  "Receptions and receiving yards move with targets; receiving TDs are left as projected.")
 
 
 _VACANCY_VOLUME_LABELS = {
@@ -2070,9 +2150,18 @@ def _render_decomposition_audit_body(detail):
     if calibration.get('enabled'):
         st.caption(
             f"Point calibration: raw {calibration.get('raw_points', detail['raw_points']):.2f} → "
-            f"displayed {calibration.get('displayed_points', detail['calibrated_points']):.2f} "
+            f"calibrated {calibration.get('displayed_points', detail['calibrated_points']):.2f} "
             f"({calibration.get('delta', 0.0):+.2f}); "
             f"slope {calibration.get('slope', 1.0):.3f}, intercept {calibration.get('intercept', 0.0):.3f}."
+        )
+
+    anchor = detail.get('season_anchor')
+    if anchor:
+        st.caption(
+            f"Season anchor: {anchor['before']:.2f} → {anchor['after']:.2f} pts. Pulled toward his own average of "
+            f"{anchor['mean']:.1f} pts over {anchor['games']} games this season (×{anchor['factor']:.2f} of the gap) - "
+            "the model's week-to-week departures from a player's own average run too large, most of all for WR/RB "
+            "late in the season. Applied to the point total only."
         )
 
     _render_vacancy_redistribution(detail)
@@ -2830,7 +2919,7 @@ def _scoring_dict(scoring_mode):
     return {**DEFAULT_SCORING, 'rec': rec}
 
 
-def _render_weekly_market_pull(wk_scoring, name_pool):
+def _render_weekly_market_pull(wk_scoring, name_pool, wk_year=None, wk_week=None):
     """
     Live player-prop lines -> a market-implied projected-points column,
     from the SAME free weekly board (PrizePicks/Underdog/DraftKings - no
@@ -2865,6 +2954,14 @@ def _render_weekly_market_pull(wk_scoring, name_pool):
         if meta.get('stale'):
             age_bits.append("stale — a fresh pull didn't return anything")
         st.caption(" · ".join(age_bits))
+        if wk_year is not None and wk_week is not None and not snapshot_is_for_week(stamp, wk_year, wk_week):
+            # The saved pull is last week's slate (the books post the next one Tuesday/Wednesday). Showing it as
+            # this week's market would put the wrong numbers on the board AND into the permanent ledger.
+            st.caption(
+                f"⚠️ These lines were pulled before Week {wk_week}'s slate was posted (books post Tue/Wed), so they "
+                "belong to an earlier week. Market Proj Pts is left blank until a fresh pull — hit 🔄 Refresh player props."
+            )
+            return pd.DataFrame()
 
     # PER-BOOK STATUS, before the board is built. This tab runs weekly_props()
     # on open, so what shows here is exactly what a "Build board" will use.
@@ -3193,7 +3290,7 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, name_
                 )
                 market_df = None
             else:
-                market_df = _render_weekly_market_pull(wk_scoring, name_pool)
+                market_df = _render_weekly_market_pull(wk_scoring, name_pool, wk_year, wk_week)
         with tab_pipeline:
             _render_pipeline_diagnostics(model_meta)
     return fp_weekly, market_df
@@ -3671,9 +3768,15 @@ def render():
             # coloring further down both still need the raw values; it's
             # dropped from the actually-rendered frame later, at the
             # display_cols re-select (indexed = indexed[[...]]).
-            keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position', '_matchup_pct']
             positions, group_label = position_group_buttons(
                 'wr', default='SUPERFLEX', rerun_scope='fragment')
+            # Hide the stat columns none of the selected positions project
+            # (no receiving for QB, no passing for RB/WR/TE, no rushing for
+            # WR/TE) - display_cols is re-applied to the frame further down,
+            # so this one filter covers both slices.
+            _unused_stats = _unused_stat_labels(positions)
+            display_cols = [c for c in display_cols if c not in _unused_stats]
+            keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position', '_matchup_pct']
             # Matchup filter (explicit request, prop-betting workflow): isolate
             # one game's slate instead of scanning the whole week. Keyed by the
             # board's own (year, week, scoring) so switching weeks always starts
@@ -3880,16 +3983,19 @@ def render():
                 "own positional rank, side by side, unblended — Model Rank is shaded by tier, a cluster "
                 "break in Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
                 "**Def Rank**, right after Opponent, is this defense's rank (1-32) in fantasy points "
-                "allowed per game to this position this season — 1 allows the MOST (softest matchup), "
+                "allowed per game to this position — this season blended with last season, weighted "
+                "games / (games + 12) toward this season (about 25% after four games, 50% after twelve; "
+                "the same weighting the model uses for defense matchups), raw points allowed with no "
+                "adjustment for the offenses faced. 1 allows the MOST (softest matchup), "
                 "32 the least (hardest) — colored by percentile (bright green = easiest matchup at the "
                 "position, bright red = hardest, muted near league-average), off the same number the "
                 "projection decomposition's own \"toughest matchup\" "
                 "line uses. **Wind** / **Temp** / **Precip** just after it are this game's conditions, "
                 "icon-only (recorded once played, forecast otherwise): 🍃 calm / 💨 windy / 💨💨 very "
-                "windy, 🥶 freezing / ❄️ cold / ☀️ mild / 🥵 hot, and Dry / 🌦️ Light Rain / 🌧️ Heavy "
-                "Rain / 🌨️ Snow — 🏟️ in all three for an indoor game rather than an unmeasured dash, "
+                "windy, 🥶 freezing / ❄️ cold / ☀️ mild / 🥵 hot, and Dry / 🌦️ light rain / 🌧️ heavy "
+                "rain / 🌨️ snow — 🏟️ in all three for an indoor game rather than an unmeasured dash, "
                 "since weather genuinely doesn't apply there. "
-                "**Season Snap %** and its own **Last 5 Snaps** trend, next to Injury Status, are this "
+                "**Snap Share** and its own **Last 5 Snaps** trend, next to Injury, are this "
                 "player's role/opportunity — his share of the team's snaps in the games he actually "
                 "played, independent of whether this week's projection is driven by volume or by an "
                 "easy matchup. "

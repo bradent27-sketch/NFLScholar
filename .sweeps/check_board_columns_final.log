@@ -1,0 +1,26 @@
+
+== QB (120s) exceptions [] stub_calls 1
+['Player', 'Rank', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks', 'Pass Yds', 'Pass TDs', 'Pass Att', 'Pass Cmp', 'INT', 'Rush Att', 'Rush Yds', 'Rush TDs', 'Injury Status', 'Season Snap %', 'Last 5 Snaps', 'Model Rank', 'Market Rank', 'Market Coverage']
+labels: {'Market Proj Pts': 'Market Proj', 'Model Proj Pts': 'Model Proj', 'Injury Status': 'Injury', 'Season Snap %': 'Snap Share'}
+Precip values: ['Dry', '\U0001f326\ufe0f', '\U0001f3df\ufe0f']
+
+== RB (15s) exceptions [] stub_calls 2
+['Player', 'Rank', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks', 'Rush Att', 'Rush Yds', 'Rush TDs', 'Tgt', 'Rec', 'Rec Yds', 'Rec TDs', 'Injury Status', 'Season Snap %', 'Last 5 Snaps', 'Model Rank', 'Market Rank', 'Market Coverage']
+labels: {'Market Proj Pts': 'Market Proj', 'Model Proj Pts': 'Model Proj', 'Injury Status': 'Injury', 'Season Snap %': 'Snap Share'}
+Precip values: ['Dry', '\U0001f326\ufe0f', '\U0001f3df\ufe0f']
+
+== WR (15s) exceptions [] stub_calls 3
+['Player', 'Rank', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks', 'Tgt', 'Rec', 'Rec Yds', 'Rec TDs', 'Injury Status', 'Season Snap %', 'Last 5 Snaps', 'Model Rank', 'Market Rank', 'Market Coverage']
+labels: {'Market Proj Pts': 'Market Proj', 'Model Proj Pts': 'Model Proj', 'Injury Status': 'Injury', 'Season Snap %': 'Snap Share'}
+Precip values: ['Dry', '\U0001f326\ufe0f', '\U0001f3df\ufe0f']
+
+== TE (16s) exceptions [] stub_calls 4
+['Player', 'Rank', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks', 'Tgt', 'Rec', 'Rec Yds', 'Rec TDs', 'Injury Status', 'Season Snap %', 'Last 5 Snaps', 'Model Rank', 'Market Rank', 'Market Coverage']
+labels: {'Market Proj Pts': 'Market Proj', 'Model Proj Pts': 'Model Proj', 'Injury Status': 'Injury', 'Season Snap %': 'Snap Share'}
+Precip values: ['Dry', '\U0001f326\ufe0f', '\U0001f3df\ufe0f']
+
+== FLEX (16s) exceptions [] stub_calls 5
+['Player', 'Rank', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks', 'Rush Att', 'Rush Yds', 'Rush TDs', 'Tgt', 'Rec', 'Rec Yds', 'Rec TDs', 'Injury Status', 'Season Snap %', 'Last 5 Snaps', 'Model Rank', 'Market Rank', 'Market Coverage']
+labels: {'Market Proj Pts': 'Market Proj', 'Model Proj Pts': 'Model Proj', 'Injury Status': 'Injury', 'Season Snap %': 'Snap Share'}
+Precip values: ['Dry', '\U0001f326\ufe0f', '\U0001f3df\ufe0f']
+ledger dir contents (temp): []

@@ -1,0 +1,46 @@
+====================================================================================================
+1. HELD-OUT: shipped lines vs lines refit on the other years (played rows only; START pools; weeks 1-18)
+====================================================================================================
+
+fit 21-23 / test 24-25
+scope    n  RMSE shipped  RMSE refit  dRMSE   dMAE  bias shipped  bias refit  dpairwise
+   QB  831         7.848       7.855  0.007  0.001        -0.118      -0.147     0.0000
+   RB 1408         7.530       7.532  0.002  0.001         0.098       0.106     0.0000
+   WR 1902         7.774       7.798  0.024 -0.023         0.087      -0.293     0.0000
+   TE  702         6.648       6.711  0.063  0.032        -0.458      -0.704     0.0000
+  ALL 4843         7.563       7.582  0.020 -0.004        -0.024      -0.212    -0.0005
+
+fit 21-24 / test 25
+scope    n  RMSE shipped  RMSE refit  dRMSE   dMAE  bias shipped  bias refit  dpairwise
+   QB  419         8.045       8.053  0.008  0.002         0.033       0.076     0.0000
+   RB  707         7.667       7.668  0.001 -0.003         0.051       0.036     0.0000
+   WR  946         7.506       7.503 -0.003 -0.033         0.441       0.126     0.0000
+   TE  353         6.770       6.797  0.027 -0.003        -0.494      -0.665     0.0000
+  ALL 2425         7.548       7.552  0.004 -0.014         0.121      -0.024     0.0001
+
+fit 22-25 / test 21
+scope    n  RMSE shipped  RMSE refit  dRMSE   dMAE  bias shipped  bias refit  dpairwise
+   QB  416         7.653       7.672  0.019  0.007         1.045       1.174     0.0000
+   RB  683         7.959       7.972  0.013  0.009         0.260       0.294     0.0000
+   WR  945         8.009       7.983 -0.026 -0.062         0.638       0.353     0.0000
+   TE  354         7.050       7.050  0.000 -0.010         0.044      -0.025     0.0000
+  ALL 2398         7.799       7.795 -0.003 -0.022         0.513       0.423     0.0004
+
+per-position verdict (apply only if RMSE improves in EVERY split; |bias| noted):
+  QB: dRMSE by split [0.007, 0.008, 0.019]  d|bias| [0.029, 0.043, 0.129]  -> not every split
+  RB: dRMSE by split [0.002, 0.001, 0.013]  d|bias| [0.008, -0.015, 0.035]  -> not every split
+  WR: dRMSE by split [0.024, -0.003, -0.026]  d|bias| [0.206, -0.315, -0.285]  -> not every split
+  TE: dRMSE by split [0.063, 0.027, 0.0]  d|bias| [0.245, 0.171, -0.019]  -> not every split
+
+====================================================================================================
+2. POOLED, harness window 2022-2025 weeks 3-17: shipped lines vs lines fit on all years (in-sample)
+====================================================================================================
+    scope    n  RMSE shipped  RMSE refit  dRMSE  bias shipped  bias refit  pairwise shipped  pairwise refit
+ START-QB 1377         7.574       7.575  0.001        -0.089      -0.040            0.6090          0.6090
+ START-RB 2327         7.789       7.792  0.003        -0.281      -0.283            0.6482          0.6482
+ START-WR 3192         7.970       7.978  0.007         0.015      -0.399            0.6134          0.6134
+ START-TE 1160         6.839       6.854  0.014        -0.519      -0.674            0.6032          0.6032
+START-ALL 8056         7.696       7.702  0.006        -0.165      -0.344            0.6457          0.6461
+
+shipped lines: {'QB/all': (0.738, 4.154), 'RB/all': (0.907, 1.03), 'WR/all': (0.933, 1.105), 'WR/cold': (0.863, 1.292), 'WR/rest': (0.969, 0.99), 'TE/all': (0.927, 0.888), 'TE/cold': (0.818, 0.987), 'TE/rest': (0.981, 0.79)}
+refit (all years): {'QB/all': (np.float64(0.766), np.float64(3.72)), 'RB/all': (np.float64(0.922), np.float64(0.838)), 'WR/all': (np.float64(0.94), np.float64(0.755)), 'WR/cold': (np.float64(0.901), np.float64(1.068)), 'WR/rest': (np.float64(0.954), np.float64(0.655)), 'TE/all': (np.float64(0.94), np.float64(0.716)), 'TE/cold': (np.float64(0.847), np.float64(0.879)), 'TE/rest': (np.float64(0.974), np.float64(0.65))}

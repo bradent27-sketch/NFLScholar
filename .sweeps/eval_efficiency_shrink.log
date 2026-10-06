@@ -1,0 +1,23 @@
+START-pool RMSE by single-channel lam (shipped lines, all of 2021-2025, in-sample), lam=1 is the model today
+position means (yards per opportunity): {'WR': 8.074, 'TE': 7.261, 'RB': 5.841, 'QB': 7.142}
+change in START RMSE vs lam=1.0 (negative = better):
+pos    n  1.0     0.9     0.8     0.7     0.6    0.5    0.4    0.3
+ WR 3979  0.0 -0.0020 -0.0024 -0.0015  0.0010 0.0049 0.0103 0.0171
+ TE 1455  0.0 -0.0016 -0.0023 -0.0022 -0.0013 0.0004 0.0030 0.0063
+ RB 2893  0.0  0.0007  0.0016  0.0028  0.0042 0.0058 0.0077 0.0098
+ QB 1723  0.0  0.0004  0.0015  0.0034  0.0060 0.0094 0.0136 0.0185
+
+held-out: lam chosen on the fit years per position, scored on the test years (change vs lam=1)
+{'split': 'fit 21-23 / test 24-25', 'lam': 'WR0.8 TE0.5 RB0.9 QB1.0', 'WR': -0.0038, 'TE': 0.0157, 'RB': 0.0021, 'QB': 0.0, 'ALL': 0.0011}
+{'split': 'fit 21-24 / test 25', 'lam': 'WR0.8 TE0.7 RB0.9 QB1.0', 'WR': 0.0011, 'TE': 0.0066, 'RB': 0.0035, 'QB': 0.0, 'ALL': 0.0023}
+{'split': 'fit 22-25 / test 21', 'lam': 'WR0.8 TE0.8 RB1.0 QB1.0', 'WR': -0.0072, 'TE': -0.0067, 'RB': 0.0, 'QB': 0.0, 'ALL': -0.0038}
+{'split': 'fit 21,23,25 / test 22,24', 'lam': 'WR0.9 TE0.5 RB1.0 QB0.8', 'WR': -0.0045, 'TE': 0.0185, 'RB': 0.0, 'QB': 0.0072, 'ALL': 0.0017}
+
+verdict (negative everywhere = robust):
+  WR: [-0.0038, 0.0011, -0.0072, -0.0045] -> not every split
+  TE: [0.0157, 0.0066, -0.0067, 0.0185] -> not every split
+  RB: [0.0021, 0.0035, 0.0, 0.0] -> not every split
+  QB: [0.0, 0.0, 0.0, 0.0072] -> not every split
+  ALL: [0.0011, 0.0023, -0.0038, 0.0017] -> not every split
+
+lam fit on all years: {'WR': 0.8, 'TE': 0.8, 'RB': 1.0, 'QB': 1.0}

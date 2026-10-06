@@ -38,6 +38,13 @@ them. It writes a separate file (--dump-path) so the old dump stays intact:
 
     python scripts/fit_seasonal_calibration.py --mode dump --all-rows --dump-path .sweeps/seasonal_calibration_allrows.csv --years 2021-2025 --weeks 1-18
     python scripts/fit_seasonal_calibration.py --mode emit --dump-path .sweeps/seasonal_calibration_allrows.csv
+
+--played-only (emit mode, added 2026-10-05): the variant consistent with the project's gate, harness
+v2. The startable pool is still taken over ALL live rows (so a participation-discounted back who sat
+is in or out of the pool on his projection alone, never on whether he played), but the lines are fit
+on, and the held-out check scored on, rows with a box score only - E[actual | played], which is what
+`backtest_component.py` measures. The default (no flag) is the original all-rows criterion, which
+scores a live player who did not play as 0. Needs the `played` column of an --all-rows dump.
 """
 import argparse
 import os
@@ -68,7 +75,8 @@ REPLAY_FLAGS = frozenset({'v2_historical_injury_replay', 'v2_historical_reserve_
 # Projected stats to also dump raw-vs-actual for, per position family.
 STAT_COLS = ('targets', 'receptions', 'receiving_yards', 'receiving_tds',
              'carries', 'rushing_yards', 'rushing_tds',
-             'attempts', 'passing_yards', 'passing_tds', 'passing_interceptions')
+             'attempts', 'passing_yards', 'passing_tds', 'passing_interceptions',
+             'passing_attempts', 'rushing_attempts')   # last two added 2026-10-05 (team volume checks)
 
 # Candidate season-phase bucketings to score against per-week and single-line.
 BUCKETS = {
@@ -108,8 +116,12 @@ def do_dump(years, weeks, scoring, all_rows=False):
             if all_rows and 'Availability' in proj.columns:
                 # replay says he was really out - not a row the model would be asked about
                 proj = proj[pd.to_numeric(proj['Availability'], errors='coerce').fillna(1.0) > 0.01]
-            d = proj[['Player', 'Pos', 'Model Proj Pts']].copy()
-            d.columns = ['player', 'pos', 'raw']
+            # team/opp added 2026-10-05 so a dump can also be aggregated to team-games (pace/tempo checks);
+            # analyze/emit ignore them, and an older dump without them still loads.
+            _keep = [c for c in ('Player', 'Pos', 'Team', 'Opponent', 'Model Proj Pts') if c in proj.columns]
+            d = proj[_keep].copy()
+            d.columns = [{'Player': 'player', 'Pos': 'pos', 'Team': 'team', 'Opponent': 'opp',
+                          'Model Proj Pts': 'raw'}[c] for c in _keep]
             d['actual'] = d['player'].map(actual)
             if all_rows:
                 d['played'] = d['actual'].notna()
@@ -255,9 +267,15 @@ def _apply(raw, coeff):
     return np.clip(coeff[0] * np.asarray(raw, dtype=float) + coeff[1], 0.0, None)
 
 
-def do_emit():
+def do_emit(played_only=False):
     df = pd.read_csv(DUMP_PATH)
-    df['start'] = _startable_mask(df)
+    df['start'] = _startable_mask(df)       # pool over ALL rows, before any played filter
+    if played_only:
+        if 'played' not in df.columns:
+            raise SystemExit("--played-only needs the 'played' column of an --all-rows dump")
+        df = df[df['played'].astype(bool)].copy()
+        print(f"--played-only: fitting and scoring on {len(df):,} rows with a box score "
+              "(pool chosen over all live rows)\n")
     all_years = sorted(df['year'].unique())
     hold = max(all_years)                       # 2025 - never in any fit here
     ship_fit = df[df['year'] < hold]            # 2021-2024 -> the held-out check
@@ -278,7 +296,7 @@ def do_emit():
     t = df[df['year'] == hold].copy()
     from data.weekly_projections import WEEKLY_CALIBRATION as SHIPPED
     print("=" * 88)
-    print(f"HELD-OUT {hold}: startable MAE / |bias|   (fit on {min(all_years)}-{hold - 1})")
+    print(f"HELD-OUT {hold}: startable MAE / signed bias / RMSE   (fit on {min(all_years)}-{hold - 1})")
     print("=" * 88)
     print(f"{'pos':<5}{'shipped single':>20}{'refit single':>20}{'WR/TE 2-bucket':>20}")
     for pos in POSITIONS:
@@ -288,7 +306,7 @@ def do_emit():
 
         def mb(pred):
             e = pred - act
-            return f"{np.abs(e).mean():.3f}/{e.mean():+.3f}"
+            return f"{np.abs(e).mean():.3f}/{e.mean():+.3f}/{np.sqrt((e ** 2).mean()):.3f}"
 
         shipped = _apply(raw, SHIPPED.get(pos, (1.0, 0.0)))
         refit = _apply(raw, s_single[pos])
@@ -334,6 +352,9 @@ def main():
     ap.add_argument('--extra-features', default='',
                     help='dump mode: comma-separated flags added on top of CALIBRATION_INPUT_FEATURES '
                          '(a candidate expected to ship before the lines are applied)')
+    ap.add_argument('--played-only', action='store_true',
+                    help='emit mode: fit and score on rows with a box score only, pool still chosen over '
+                         'all live rows (the harness-v2-consistent criterion; needs an --all-rows dump)')
     ap.add_argument('--dump-path', default=None,
                     help='override the dump CSV path (written by dump, read by analyze/emit)')
     a = ap.parse_args()
@@ -348,7 +369,7 @@ def main():
         print(f"dump {years} wk{weeks[0]}-{weeks[-1]}  ({len(years) * len(weeks)} builds)\n", flush=True)
         do_dump(years, weeks, a.scoring, all_rows=a.all_rows)
     elif a.mode == 'emit':
-        do_emit()
+        do_emit(played_only=a.played_only)
     else:
         do_analyze()
 

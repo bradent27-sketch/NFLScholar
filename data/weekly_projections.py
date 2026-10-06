@@ -133,7 +133,7 @@ from data.rb_role_allocator import (
 )
 from data.player_aliases import canonical_player_key, stable_roster_identity_keys
 from data.availability_overrides import (
-    load_availability_overrides, resolve_target_week_availability,
+    load_availability_overrides, resolve_target_week_availability, _ASSUME_OUT_STATUSES,
 )
 from data.pass_capacity_allocator import apply_pass_capacity_conservation, SIDELINED_AVAILABILITY
 from data.rb_carry_budget import team_rb_carry_budgets, apply_rb_carry_budget
@@ -141,7 +141,8 @@ from data.qb_volume_blend import blend_qb1_volume
 from data.fantasypros_availability import load_fantasypros_availability
 from data.historical_availability import (
     historical_injury_profiles, historical_reserve_profiles, merge_reserve_profiles)
-from data.matchup_signals import defense_stat_rank
+from data.matchup_signals import (defense_stat_rank, blended_defense_stat_table,
+                                   defense_rank_from_table)
 from data.weekly_distribution import player_distribution
 from data.pff_alignment import (
     load_weekly_alignment_profiles, load_season_alignment_prior,
@@ -270,6 +271,14 @@ STAT_K_BY_POS = {
     'TE': {'receiving_tds': 16},
 }
 
+# 'v2_qb_passing_td_k' (CANDIDATE 2026-10-06): K for QB passing_tds only. The shared K of 5 puts ~40-50% weight on
+# a QB's own current-season TD rate after 2-4 games, but a QB's TD-per-attempt rate is one of the noisiest rates in
+# the model: projected team TDs regress on actual team TDs with slope 0.53 over 2021-2025 (the same over-dispersion
+# the WR/TE receiving_tds K of 30/16 above fixed), and the team-level TD sum is out-predicted by the market's implied
+# total (RMSE 1.360 vs 1.315). Never swept: the item-4 groups covered RB volume, QB RUSHING, WR/TE yardage and WR/TE
+# receiving_tds, not QB passing_tds.
+QB_PASSING_TD_K = 15.0
+
 # role_confidence in [0, 1] scales K by this range - a confident every-down
 # role shrinks K toward the low end (own rate trusted sooner), a thin/
 # uncertain role stretches it toward the high end (leans harder on the
@@ -334,6 +343,13 @@ COLD_START_MULTIPLIER_REGRESSION = 0.25
 # explicit, user-maintained layer for those ambiguous rooms instead.
 QB1_OVERRIDE_PATH = Path(__file__).with_name('qb1_overrides.csv')
 QB1_OVERRIDE_COLUMNS = ('year', 'team', 'player')
+# Optional week window for an override row (added 2026-10-05). Blank means
+# open-ended, so a legacy three-column file still reads as season-long. The
+# file used to have no week at all, so a fill-in chosen while the starter was
+# hurt (CHI Case Keenum, WAS Marcus Mariota, TB Jalon Daniels) stayed in force
+# for every week of the season, before and after - the 2026 live review found
+# 9 of 124 team-weeks projecting the wrong QB1, worth ~15-18 points each.
+QB1_OVERRIDE_WINDOW_COLUMNS = ('from_week', 'through_week')
 # A QB who handled at least 65% of his prior team's full-season offensive
 # snaps is a clear incumbent for this narrow preseason-workload purpose.
 # It intentionally does not bless a player who only started part of last year:
@@ -662,6 +678,79 @@ PACE_CLIP = (0.85, 1.15)
 # neutral and a full ~17-game season still keeps ~59% trust, same asymptote
 # DEFENSE_PRIOR_GAMES itself settles at.
 PACE_PRIOR_GAMES = 12.0
+# 'v2_pace_alpha_cap': the opposing defense's plays-faced carries a real but small signal for a team's
+# own play count. 2018-2025 team-games (3,714): plays minus the team's own to-date mean on the
+# defense's plays-faced deviation = +0.136 (t 3.4), by games played 0.13 / 0.23 / 0.23 / 0.12, and
+# +0.16 (se 0.14) at cold start on last season's numbers; not explained by the game total line
+# (correlation 0.03). games/(games + PACE_PRIOR_GAMES) rises to 0.56 by game 17, four times what the
+# data supports, so the weight is capped. Reached at game 2, so effectively a constant ~0.15.
+PACE_ALPHA_CAP = 0.15
+
+# --- v2_own_tempo_regression ------------------------------------------------
+# A team's own plays per game barely persist (2016-2025: ~0.37 of a deviation from
+# the league mean carries into the next game), but every player's per-game volume
+# rate carries his team's tempo in full. 2021-2025 calibration dump, 2,558 team-
+# games: actual-minus-projected pass attempts / targets fall with the team's own
+# to-date tempo (slope t = -3.6 / -4.3), and the model hands back almost none of it
+# early (kappa, the share of a relative tempo deviation the projection should give
+# back, ~0.7 at cold start and games 2-8, ~0 from game 9 on). The fast quintile is
+# over-projected ~6% on pass attempts, the slow quintile under-projected ~3.6%.
+# multiplier = 1 - kappa(G) * (team plays per game / league - 1), kappa(G) =
+# TEMPO_KAPPA0 * max(0, 1 - G/TEMPO_G0), capped at +-TEMPO_MAX_ADJ, on the passing
+# and receiving stats only (rushing showed no tempo effect, t = -0.8). Fit on 2021-
+# 2023; on 2024-2025 it cuts squared team volume error 1.0-1.4%.
+TEMPO_KAPPA0 = 0.65
+TEMPO_G0 = 10.0
+TEMPO_MAX_ADJ = 0.10
+TEMPO_MIN_GAMES = 2
+TEMPO_STATS = frozenset({'passing_attempts', 'passing_completions', 'passing_yards', 'passing_tds',
+                         'passing_interceptions', 'targets', 'receptions', 'receiving_yards',
+                         'receiving_tds'})
+
+
+def own_tempo_multiplier(teams, pace, prior_pace=None, cold_start=False,
+                         kappa0=None, g0=None, max_adj=None, min_games=None):
+    """Per-row ndarray of 'v2_own_tempo_regression' multipliers for `teams`.
+
+    `pace` is the as-of team pace frame (index team; 'off_pace', 'off_games'). A team
+    with at least ``min_games`` games reads its to-date tempo at G = its games; with
+    fewer (week 2, a new team) it reads LAST season's tempo from `prior_pace` at G = 0.
+    At a cold start `pace` already IS last season's, so it is read at G = 0. A team
+    with no tempo evidence anywhere gets exactly 1.0."""
+    kappa0 = TEMPO_KAPPA0 if kappa0 is None else kappa0
+    g0 = TEMPO_G0 if g0 is None else g0
+    max_adj = TEMPO_MAX_ADJ if max_adj is None else max_adj
+    min_games = TEMPO_MIN_GAMES if min_games is None else min_games
+
+    def _table(frame):
+        if frame is None or getattr(frame, 'empty', True) or 'off_pace' not in frame.columns:
+            return {}, None
+        off = pd.to_numeric(frame['off_pace'], errors='coerce')
+        games = (pd.to_numeric(frame['off_games'], errors='coerce')
+                 if 'off_games' in frame.columns else pd.Series(np.nan, index=frame.index))
+        league = off.mean()
+        if not np.isfinite(league) or league <= 0:
+            return {}, None
+        return {str(t): (float(o) / league - 1.0, float(g) if np.isfinite(g) else 0.0)
+                for t, o, g in zip(frame.index, off, games) if np.isfinite(o)}, league
+
+    cur, _ = _table(pace)
+    old, _ = _table(prior_pace)
+    out = np.ones(len(teams))
+    for i, team in enumerate(pd.Series(teams).astype(str).to_numpy()):
+        if cold_start and team in cur:
+            dev, games = cur[team][0], 0.0
+        elif team in cur and cur[team][1] >= min_games:
+            dev, games = cur[team]
+        elif team in old:
+            dev, games = old[team][0], 0.0
+        else:
+            continue
+        kappa = kappa0 * max(0.0, 1.0 - games / g0)
+        out[i] = 1.0 - float(np.clip(kappa * dev, -max_adj, max_adj))
+    return out
+
+
 SCRIPT_CLIP = (0.85, 1.15)
 # Which raw stats the game-script read applies to - VOLUME only. Touchdowns
 # are excluded: too sparse per player-game to bucket reliably by margin
@@ -1766,6 +1855,44 @@ MODEL_FEATURES = (
                              # carries^2 so the lead back absorbs most of it
                              # (the leftover room excess is ~all RB1). No
                              # effect without v2_rb_carry_budget.
+    'v2_qb1_returning_starter',  # SHIPPED 2026-10-05. In-season QB1: a team's
+                             # regular starter who missed recent games listed
+                             # Out/Doubtful/IR and is no longer listed out is the
+                             # starter again (the rule otherwise reads only the most
+                             # recent game and kept the fill-in: 2026 wk3 SEA, MIN,
+                             # ATL). Also: a QB1 override naming a player listed out
+                             # this week is skipped for that week, and a fill-in
+                             # override set during the starter's injury gives way
+                             # when he returns (warning shown). See
+                             # _returning_qb_starters.
+    'v2_qb_passing_td_k',  # CANDIDATE 2026-10-06. K=15 (shared 5) for QB passing_tds: a slower blend of the QB's
+                             # own current-season TD rate. See QB_PASSING_TD_K.
+    'v2_season_anchor',  # SHIPPED 2026-10-06 (DEFAULT_FEATURES). Final points total shrunk toward the player's own to-date
+                             # mean (RB 0.75, WR 0.69, TE 0.84; QB left alone): the model's departures from a
+                             # player's own average run ~30% too large for WR/RB from week 7. Held-out RMSE better in
+                             # all six year splits (-0.027 ALL). See apply_season_anchor.
+    'v2_uncalibrate_zero_rows',  # 2026-10-06, shipped in DEFAULT_FEATURES. A healthy player the model projects
+                             # NO volume for (raw total 0) keeps 0, instead of the calibration intercept (4.15 pts
+                             # for a backup QB). Display/ledger only: a zero row is never in a startable pool.
+    'v2_pace_alpha_cap',  # 2026-10-06, shipped on the user's go-ahead (see DEFAULT_FEATURES). The
+                             # opponent-pace multiplier's shrink weight games/(games+12) (0.2 early,
+                             # 0.56 late) is capped at PACE_ALPHA_CAP = 0.15, the weight the data supports.
+    'v2_own_tempo_regression',  # UNSHIPPED 2026-10-06 (harness INCONCLUSIVE, no effect: START-ALL RMSE +0.002). Passing and receiving volume
+                             # (not rushing) is scaled by 1 - kappa(G) * (the team's
+                             # own plays per game / league - 1), kappa = 0.65 * max(0,
+                             # 1 - G/10): a team's own tempo regresses to the mean
+                             # (~0.37 persistence) but the per-game rates carry it in
+                             # full, so fast teams were over-projected (~6% on pass
+                             # attempts, t = -3.6) and slow ones under. See
+                             # own_tempo_multiplier and TEMPO_*.
+    'v2_pass_capacity_keep_tds',  # SHIPPED 2026-10-06. Modifier of v2_pass_capacity:
+                             # the budget scales targets, receptions and
+                             # receiving yards only, not receiving TDs - the
+                             # same defect keep_tds fixed for RB rush TDs. The
+                             # uniform trim (~x0.88 on the WR/TE slice) took
+                             # 12-14% of receiving TDs from a total already 11%
+                             # (WR) / 18% (TE) short in 2022-2025. No effect
+                             # without v2_pass_capacity.
     'v2_rb_carry_budget_keep_tds',  # SHIPPED 2026-10-01. Modifier of v2_rb_carry_budget:
                              # the budget scales carries and rushing yards only,
                              # not rushing TDs (a TD projection is goal-line
@@ -2378,6 +2505,48 @@ DEFAULT_FEATURES = frozenset({
     # START-RB RMSE -0.012 CI[-0.026,+0.003], START-RB bias -0.588 -> -0.440,
     # bias growth -0.043. The calibration v5 lines were fit with it on.
     'v2_rb_carry_budget_keep_tds',
+    # SHIPPED 2026-10-05 on the pre-stated bar (bias growth under the 0.3 cap,
+    # START-QB and START-ALL not worse). In-season QB1: a regular starter who
+    # missed games listed out and is no longer listed out is the starter again,
+    # instead of the fill-in who played the last game (2026 wk3: SEA, MIN, ATL).
+    # Resolver check 2022-2025 wk3-17: correct starter picked 82.5% -> 83.1%
+    # (38 picks changed: 23 fixed, 12 broken, 3 wrong either way). Harness v2
+    # (2022-2025 wk3-17, replay flags): INCONCLUSIVE, START-QB RMSE 7.575 ->
+    # 7.500 (-0.076, CI [-0.177, +0.030]), bias -0.263 -> -0.141, START-ALL
+    # 7.697 -> 7.683 (-0.014, CI [-0.033, +0.004]), pairwise unchanged, bias
+    # growth -0.021; no position worse. Only runs once the target week's
+    # availability report is loaded (qb1_returning_gate), so an early live
+    # build cannot restore every injured starter. Not a calibration input.
+    'v2_qb1_returning_starter',
+    # SHIPPED 2026-10-06 (SHIP-ELIGIBLE). The pass-capacity fit scales targets,
+    # receptions and receiving yards but leaves receiving TDs at their pre-budget
+    # value: the uniform trim (~x0.88 on the WR/TE slice) was taking 12-14% of
+    # receiving TDs from a total already 18% (TE) / 11% (WR) short in 2022-2025.
+    # Harness v2 (2022-2025 wk3-17, replay flags), bias growth -0.153: START-ALL
+    # RMSE 7.667 -> 7.652 (-0.015, CI [-0.023, -0.007]), pairwise +0.001, bias
+    # -0.324 -> -0.171; START-TE 6.681 -> 6.659 (-0.022, CI [-0.039, -0.005]),
+    # pairwise +0.004 (CI [+0.001, +0.008]), bias -0.720 -> -0.509; START-WR
+    # 7.914 -> 7.897 (-0.018, CI [-0.034, +0.001]), bias -0.272 -> -0.004;
+    # START-RB -0.013 (CI [-0.020, -0.006]); QB untouched; no scope worse, 45 of
+    # 60 weeks better. A calibration input: the lines must be re-checked.
+    'v2_pass_capacity_keep_tds',
+    # SHIPPED 2026-10-06 on the user's go-ahead ("implement it now") after a direct
+    # play-count test and a no-harm harness. The opponent-pace multiplier's shrink
+    # weight games/(games+12) (0.2 early, 0.56 late) is capped at PACE_ALPHA_CAP =
+    # 0.15, the weight the data supports (2018-2025 team-games: +0.136, t 3.4;
+    # +0.16 at cold start). Out of sample, RMSE of plays per team-game 8.568 ->
+    # 8.537 (no multiplier at all 8.549; late season 8.172 -> 8.128). Harness v2,
+    # 2025 wk9-17 only (underpowered, a no-harm check): START-ALL RMSE 7.667 ->
+    # 7.666, bias growth -0.005, no scope outside noise. Volume moves <=2%.
+    'v2_pace_alpha_cap',
+    # SHIPPED 2026-10-06 (display fix found in the board audit): see MODEL_FEATURES. Backtest-invisible by
+    # construction (a zero-projection row is never in a startable pool and has no scored effect), so there is no
+    # harness result; the live week-5 board had 13 QBs at 4.15 pts with a raw projection of 0.0.
+    'v2_uncalibrate_zero_rows',
+    # SHIPPED 2026-10-06 (pre-set bar met, harness INCONCLUSIVE by CI): see MODEL_FEATURES. Harness v2 2022-2025
+    # wk3-17: START-ALL RMSE 7.642 -> 7.631 (-0.012, CI [-0.030, +0.007], 33-27 weeks better), bias growth -0.064,
+    # START-WR -0.018 / RB -0.012 / TE -0.001, no position worse; held-out better in all six year splits. QB untouched.
+    'v2_season_anchor',
 })
 
 
@@ -2704,7 +2873,55 @@ def _weekly_calibration_for(pos, week):
     return WEEKLY_CALIBRATION_BY_BUCKET.get(bucket, {}).get(pos, base)
 
 
-def _uncalibrate_sidelined(frame):
+# --- v2_season_anchor ---------------------------------------------------------
+# The calibrated projection shrinks toward the POOL mean (WEEKLY_CALIBRATION), not toward the player's own
+# average, so a WR/RB/TE who has played a few games is still moved too far from his own usual level. 2022-2025
+# startable pool, played rows, the model's departure from the player's to-date mean (known before the game) against
+# what then happened: slope WR 0.72 (se 0.04), RB 0.76 (0.04), TE 0.83 (0.09), QB 0.95 (0.08); right-sized in weeks
+# 3-6 and 0.5-0.7 from week 7 (scripts/analyze_model_weak_spots.py). Shrinking toward the to-date mean,
+#     final = mean + s * (calibrated - mean),   s fit by least squares per position,
+# improved held-out RMSE in all six year splits (mean -0.027 ALL, WR -0.050 in every split, TE every split, RB 5/6)
+# - scripts/eval_season_anchor.py. QB (s ~ 0.98) is left alone. A phase-by-phase s was unstable across fits and
+# is not used. Points total only, like the calibration itself: the stat line is untouched.
+SEASON_ANCHOR_S = {'RB': 0.75, 'WR': 0.69, 'TE': 0.84}
+SEASON_ANCHOR_MIN_GAMES = 2
+
+
+def apply_season_anchor(result, hist, name_col, factors=None, min_games=None):
+    """(result, info): shrink each eligible row's calibrated 'Model Proj Pts' toward the player's mean fantasy
+    points over his games BEFORE the target week (``hist``, scoring-aware 'fantasy_points'). Eligible: a position in
+    ``factors``, at least ``min_games`` played games, not sidelined, and a non-zero projection. ``info`` maps
+    (Player, Pos, Team) -> {'mean', 'games', 'factor', 'before', 'after'} for the rows changed."""
+    factors = SEASON_ANCHOR_S if factors is None else factors
+    min_games = SEASON_ANCHOR_MIN_GAMES if min_games is None else min_games
+    if (result is None or result.empty or hist is None or hist.empty or name_col not in hist.columns
+            or 'fantasy_points' not in hist.columns or 'Model Proj Pts' not in result.columns):
+        return result, {}
+    pts = pd.to_numeric(hist['fantasy_points'], errors='coerce')
+    grouped = pts.groupby(hist[name_col]).agg(['mean', 'count'])
+    out = result.copy()
+    mean = out['Player'].map(grouped['mean'])
+    games = out['Player'].map(grouped['count']).fillna(0)
+    factor = out['Pos'].map(factors)
+    cal = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
+    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
+    eligible = (factor.notna() & mean.notna() & (games >= min_games) & (cal > 0.005) & (avail > SIDELINED_AVAILABILITY))
+    if not eligible.any():
+        return out, {}
+    new = np.round(np.clip(mean + factor * (cal - mean), 0.0, None), 2)
+    info = {}
+    for idx in out.index[eligible]:
+        info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
+            'mean': float(mean[idx]), 'games': int(games[idx]), 'factor': float(factor[idx]),
+            'before': float(cal[idx]), 'after': float(new[idx])}
+    for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
+        if col in out.columns:
+            out.loc[eligible, col] = new[eligible]
+    return out, info
+
+
+def _uncalibrate_sidelined(frame, include_zero_rows=False):
     """Put a SIDELINED row's (Availability <= SIDELINED_AVAILABILITY) point
     total back to its raw, uncalibrated value - in place, returns ``frame``.
 
@@ -2716,11 +2933,18 @@ def _uncalibrate_sidelined(frame):
     line describes how this model's projections for players who PLAY
     disperse; it has nothing to say about a player who isn't playing.
     Backtests are unaffected in practice: a sidelined player has no actual
-    game, so he never enters a scored pool."""
+    game, so he never enters a scored pool.
+
+    ``include_zero_rows`` ('v2_uncalibrate_zero_rows', 2026-10-06): the same holds for a HEALTHY player the model
+    projects no volume for at all (raw total exactly 0: a backup QB whose team has a resolved starter, a QB held at
+    zero until QB1 is chosen) - he showed the intercept, 4.15 pts for 13 quarterbacks on the live week-5 board. The
+    lines are fit on the startable pool, so a zero projection is outside what they describe."""
     if frame is None or frame.empty or 'Availability' not in frame.columns \
             or 'Raw Model Proj Pts' not in frame.columns:
         return frame
     sidelined = pd.to_numeric(frame['Availability'], errors='coerce').fillna(1.0) <= SIDELINED_AVAILABILITY
+    if include_zero_rows:
+        sidelined = sidelined | (pd.to_numeric(frame['Raw Model Proj Pts'], errors='coerce').fillna(0.0) <= 0.005)
     if sidelined.any():
         for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
             if col in frame.columns:
@@ -3754,6 +3978,13 @@ def _as_of_team_game_plays(stats_df, team_col, as_of_week):
     if not play_cols:
         return pd.DataFrame(columns=[team_col, 'opponent_team', 'week', '_plays'])
     frame = hist[[team_col, 'opponent_team', 'week'] + play_cols].copy()
+    # Credit each game to the offense that PLAYED it. The merged team column holds a player's latest
+    # team, so a traded player's early-season games landed under his new club with the old club's
+    # opponent: phantom games (ARI vs CIN in a week ARI played WAS) and a missing QB on the team he
+    # left. 2024 week 6 read a league mean of 27.8 plays/game against a real 61, which drove every
+    # historical pace multiplier (found 2026-10-06). Live boards use load_team_pace and are unaffected.
+    frame[team_col] = _historical_game_team(hist, team_col).to_numpy()
+    frame = frame[frame[team_col].astype(str).str.len() > 0]
     frame['_plays'] = frame[play_cols].apply(pd.to_numeric, errors='coerce').fillna(0.0).sum(axis=1)
     return frame.groupby([team_col, 'opponent_team', 'week'], observed=True)['_plays'].sum().reset_index()
 
@@ -4798,7 +5029,7 @@ def projection_channel(position, stat):
 
 
 def _current_blend_weight(cur_games, stat, role_confidence, role_change_confidence=None,
-                          role_change_reduction=ROLE_CHANGE_K_REDUCTION, pos=None):
+                          role_change_reduction=ROLE_CHANGE_K_REDUCTION, pos=None, k_override=None):
     """The current-season weight used by ``_blended_rate`` (also traced).
 
     ``role_change_reduction`` lets a caller use a smaller (or zero) trust-
@@ -4816,6 +5047,8 @@ def _current_blend_weight(cur_games, stat, role_confidence, role_change_confiden
     confidence = np.clip(np.asarray(role_confidence, dtype=float), 0.0, 1.0)
     lo, hi = K_EFFECTIVE_RANGE
     base_k = STAT_K_BY_POS.get(pos, {}).get(stat, STAT_K.get(stat, 3)) if pos else STAT_K.get(stat, 3)
+    if k_override is not None:
+        base_k = float(k_override)
     k_eff = base_k * (hi - (hi - lo) * confidence)
     if role_change_confidence is not None and stat in {'targets', 'rushing_attempts'}:
         change = np.clip(np.asarray(role_change_confidence, dtype=float), 0.0, 1.0)
@@ -4888,7 +5121,7 @@ def prior2_blend_weight(games_2025, games_2024, current, prior2_value, games_202
 
 def _blended_rate(cur_rate, cur_games, prior_rate, pos_rate, stat, role_confidence,
                   role_change_confidence=None, role_change_reduction=ROLE_CHANGE_K_REDUCTION,
-                  pos=None):
+                  pos=None, k_override=None):
     """
     The one shrinkage formula every stat in this module goes through - see
     the module docstring. All arguments are numpy arrays (vectorized over
@@ -4902,7 +5135,7 @@ def _blended_rate(cur_rate, cur_games, prior_rate, pos_rate, stat, role_confiden
     prior = np.where(np.isnan(prior_rate), pos_rate, prior_rate)
     prior = np.where(np.isnan(prior), 0.0, prior)
     w_current = _current_blend_weight(cur_games, stat, role_confidence, role_change_confidence,
-                                      role_change_reduction, pos)
+                                      role_change_reduction, pos, k_override)
     return w_current * cur_rate + (1 - w_current) * prior
 
 
@@ -5874,8 +6107,12 @@ def _read_qb1_override_table(path=QB1_OVERRIDE_PATH):
     missing = [col for col in QB1_OVERRIDE_COLUMNS if col not in normalized]
     if missing:
         return empty, f'{target.name} is missing required column(s): {", ".join(missing)}.'
-    table = table.rename(columns={normalized[col]: col for col in QB1_OVERRIDE_COLUMNS})
-    table = table.loc[:, list(QB1_OVERRIDE_COLUMNS)].copy()
+    present_window = [col for col in QB1_OVERRIDE_WINDOW_COLUMNS if col in normalized]
+    table = table.rename(columns={normalized[col]: col for col in QB1_OVERRIDE_COLUMNS + tuple(present_window)})
+    table = table.loc[:, list(QB1_OVERRIDE_COLUMNS) + present_window].copy()
+    for col in QB1_OVERRIDE_WINDOW_COLUMNS:
+        table[col] = (pd.to_numeric(table[col], errors='coerce') if col in table.columns
+                      else pd.Series(np.nan, index=table.index, dtype=float))
     table['year'] = pd.to_numeric(table['year'], errors='coerce')
     table['team'] = table['team'].astype(str).str.strip().str.upper()
     table['player'] = table['player'].astype(str).str.strip()
@@ -5896,6 +6133,56 @@ def load_qb1_overrides(year, path=QB1_OVERRIDE_PATH):
     return selected.reset_index(drop=True), None
 
 
+def qb1_overrides_for_week(overrides, week):
+    """The override rows in force for ``week``: from_week <= week <= through_week,
+    a blank bound being open. ``week`` None (or a frame with no window
+    columns) returns the rows unchanged, which is the legacy season-long read."""
+    if overrides is None or overrides.empty or week is None:
+        return overrides
+    out = overrides
+    w = float(week)
+    if 'from_week' in out.columns:
+        start = pd.to_numeric(out['from_week'], errors='coerce')
+        out = out[start.isna() | start.le(w)]
+    if 'through_week' in out.columns:
+        end = pd.to_numeric(out['through_week'], errors='coerce')
+        out = out[end.isna() | end.ge(w)]
+    return out
+
+
+def _write_qb1_override_table(table, path):
+    cols = list(QB1_OVERRIDE_COLUMNS) + list(QB1_OVERRIDE_WINDOW_COLUMNS)
+    out = table.copy()
+    for col in QB1_OVERRIDE_WINDOW_COLUMNS:
+        if col not in out.columns:
+            out[col] = np.nan
+    out['year'] = pd.to_numeric(out['year'], errors='coerce').astype('Int64')
+    for col in QB1_OVERRIDE_WINDOW_COLUMNS:
+        out[col] = pd.to_numeric(out[col], errors='coerce').astype('Int64')
+    out = out.sort_values(['year', 'team', 'from_week'], kind='stable', na_position='first')
+    out.loc[:, cols].to_csv(Path(path), index=False)
+
+
+def _close_qb1_rows_at(table, year, team, week):
+    """End every row of (year, team) in force at ``week`` the week before it,
+    and drop rows that would only start at or after ``week``."""
+    table = table.copy()
+    for col in QB1_OVERRIDE_WINDOW_COLUMNS:
+        if col not in table.columns:
+            table[col] = np.nan
+    mine = pd.to_numeric(table['year'], errors='coerce').eq(int(year)) & table['team'].eq(team)
+    start = pd.to_numeric(table['from_week'], errors='coerce')
+    end = pd.to_numeric(table['through_week'], errors='coerce')
+    drop = mine & start.ge(week)
+    open_at_week = mine & ~drop & (end.isna() | end.ge(week))
+    table.loc[open_at_week, 'through_week'] = week - 1
+    table = table[~drop]
+    # A row closed before it ever applied (through_week < from_week) is noise.
+    start = pd.to_numeric(table['from_week'], errors='coerce')
+    end = pd.to_numeric(table['through_week'], errors='coerce')
+    return table[~(end.notna() & end.lt(start.fillna(1)))]
+
+
 def _invalidate_weekly_projection_cache():
     """Ensure a saved QB1 choice is reflected on the very next app rerun."""
     builder = globals().get('build_weekly_projections')
@@ -5904,8 +6191,14 @@ def _invalidate_weekly_projection_cache():
         clear()
 
 
-def save_qb1_override(year, team, player, path=QB1_OVERRIDE_PATH):
-    """Persist one user-selected preseason QB1, replacing that team's row."""
+def save_qb1_override(year, team, player, path=QB1_OVERRIDE_PATH, week=None, through_week=None):
+    """Persist one user-selected QB1 for a team.
+
+    With ``week``, the choice applies from that week on (through
+    ``through_week`` if given, else until changed): the row that was in force
+    for the team is closed the week before, so earlier weeks keep the choice
+    they really had. Without ``week`` it replaces every row for the team,
+    season-long (the original behaviour)."""
     table, problem = _read_qb1_override_table(path)
     if problem:
         raise ValueError(problem)
@@ -5913,31 +6206,40 @@ def save_qb1_override(year, team, player, path=QB1_OVERRIDE_PATH):
     player = str(player).strip()
     if not team or not player:
         raise ValueError('Both team and player are required for a QB1 override.')
-    keep = ~((pd.to_numeric(table['year'], errors='coerce').eq(int(year))) & table['team'].eq(team))
-    table = pd.concat([
-        table.loc[keep, list(QB1_OVERRIDE_COLUMNS)],
-        pd.DataFrame([{'year': int(year), 'team': team, 'player': player}]),
-    ], ignore_index=True)
-    table = table.sort_values(['year', 'team'], kind='stable').reset_index(drop=True)
-    table.to_csv(Path(path), index=False)
+    if week is None:
+        keep = ~((pd.to_numeric(table['year'], errors='coerce').eq(int(year))) & table['team'].eq(team))
+        table = table.loc[keep]
+        new_row = {'year': int(year), 'team': team, 'player': player, 'from_week': np.nan, 'through_week': np.nan}
+    else:
+        table = _close_qb1_rows_at(table, year, team, int(week))
+        new_row = {'year': int(year), 'team': team, 'player': player, 'from_week': int(week),
+                   'through_week': (int(through_week) if through_week is not None else np.nan)}
+    table = pd.concat([table, pd.DataFrame([new_row])], ignore_index=True)
+    _write_qb1_override_table(table, path)
     _invalidate_weekly_projection_cache()
 
 
-def clear_qb1_override(year, team, path=QB1_OVERRIDE_PATH):
-    """Remove one manual selection; an unambiguous incumbent can still win."""
+def clear_qb1_override(year, team, path=QB1_OVERRIDE_PATH, week=None):
+    """Remove a manual selection; an unambiguous incumbent can still win. With
+    ``week`` only the selection in force from that week on is ended (earlier
+    weeks keep their record); without it every row for the team is removed."""
     table, problem = _read_qb1_override_table(path)
     if problem:
         raise ValueError(problem)
     team = str(team).strip().upper()
-    keep = ~((pd.to_numeric(table['year'], errors='coerce').eq(int(year))) & table['team'].eq(team))
-    table.loc[keep, list(QB1_OVERRIDE_COLUMNS)].to_csv(Path(path), index=False)
+    if week is None:
+        keep = ~((pd.to_numeric(table['year'], errors='coerce').eq(int(year))) & table['team'].eq(team))
+        table = table.loc[keep]
+    else:
+        table = _close_qb1_rows_at(table, year, team, int(week))
+    _write_qb1_override_table(table, path)
     _invalidate_weekly_projection_cache()
 
 
 def resolve_preseason_qb1s(current_qbs, current_name_col, current_team_col,
                             prior_played, prior_name_col, prior_team_col,
                             year, overrides=None, ourlads_qb1s=None,
-                            unavailable_players=None):
+                            unavailable_players=None, week=None):
     """Resolve cold-start QB workload sources from explicit, auditable inputs.
 
     Precedence is deliberately narrow: a manual selection wins, then a
@@ -5972,6 +6274,7 @@ def resolve_preseason_qb1s(current_qbs, current_name_col, current_team_col,
     else:
         file_problem = None
         overrides = overrides.copy()
+    overrides = qb1_overrides_for_week(overrides, week)
     warnings = []
     if file_problem:
         warnings.append(file_problem)
@@ -6096,10 +6399,163 @@ def resolve_preseason_qb1s(current_qbs, current_name_col, current_team_col,
     }
 
 
+def _returning_qb_starters(current, returning, qb_week_snaps, team_played_weeks, as_of_week, unavailable):
+    """{team: pick} for 'v2_qb1_returning_starter' - a team's regular starter who
+    missed recent games INJURED and is no longer listed out.
+
+    The in-season rule otherwise reads only the most recent game, so a fill-in
+    who started while the starter was hurt kept the job on the board after the
+    starter came back (2026 week 3: SEA Drew Lock over Sam Darnold, MIN Carson
+    Wentz over Kyler Murray, ATL Cooper Rush over Michael Penix Jr. - each
+    starter listed out the week before and starting that week).
+
+    A candidate is the team's established starter: a full-season starter for
+    THIS team last year (>= QB1_AUTO_INCUMBENT_MIN_SHARE) or the QB who started
+    its first game this season (>= QB1_INSEASON_MIN_SNAP_SHARE). He qualifies
+    when he has not started since some earlier game, was listed Out/Doubtful/
+    IR (``out_by_week``) for the most recent game he missed, and is not
+    unavailable this week. Several candidates: the one who started most
+    recently wins.
+
+    Measured with scripts/diag_qb1_resolution.py (2022-2025 wk3-17, model's
+    own logic, no overrides) before shipping - see the methodology doc.
+    """
+    out_by_week = returning.get('out_by_week') or {}
+    prior_share = returning.get('prior_share') or {}
+    roster = returning.get('roster')
+    cand = current[['_team', '_key', '_player']].copy()
+    if roster is not None and not roster.empty:
+        cand = pd.concat([cand, roster[['_team', '_key', '_player']]], ignore_index=True)
+    cand = cand.drop_duplicates(subset=['_team', '_key'])
+    picks = {}
+    for team, room in cand.groupby('_team', observed=True):
+        weeks = [w for w in team_played_weeks.get(team, []) if w < float(as_of_week)]
+        if not weeks:
+            continue
+        team_snaps = qb_week_snaps[qb_week_snaps['_team'].eq(team)]
+        best = None
+        for _, row in room.iterrows():
+            key = row['_key']
+            if key in unavailable:
+                continue
+            mine = team_snaps[team_snaps['_key'].eq(key)].set_index('_week')['_snap']
+            mine = mine[~mine.index.duplicated(keep='last')]
+            full_weeks = [w for w, v in mine.items() if v >= QB1_INSEASON_MIN_SNAP_SHARE]
+            is_prior_starter = float(prior_share.get((team, key), 0.0)) >= QB1_AUTO_INCUMBENT_MIN_SHARE
+            opened_season = bool(full_weeks) and min(full_weeks) == weeks[0]
+            # Only the team's ESTABLISHED starter: last year's starter here, or the
+            # QB who started its first game this season. A fill-in who started a
+            # few games and then got hurt himself (2024 MIA Tyler Huntley, CAR
+            # Andy Dalton) has no claim to the job when he is healthy again.
+            if not (is_prior_starter or opened_season):
+                continue
+            last_full = max(full_weeks) if full_weeks else 0.0
+            absent = [w for w in weeks if w > last_full]
+            if not absent:
+                continue
+            injured = [w for w in absent if key in out_by_week.get(int(w), set())]
+            # He must have been listed out for the MOST RECENT game he missed. A
+            # starter who was healthy for a game and still did not play has lost
+            # the job (2022 NO Jameis Winston, 2023 TEN Ryan Tannehill).
+            if not injured or absent[-1] not in injured:
+                continue
+            pick = {'key': key, 'player': row['_player'], 'last_full': last_full,
+                    'injured_weeks': injured, 'first_injured_week': float(min(injured)),
+                    'last_injured_week': float(max(injured)), 'last_snap': float(mine.get(absent[-1], 0.0))}
+            if best is None or pick['last_full'] > best['last_full']:
+                best = pick
+        if best is not None:
+            picks[team] = best
+    return picks
+
+
+def qb1_returning_gate(feats, injury_profiles, as_of_week):
+    """(use_rule, warning) for 'v2_qb1_returning_starter'. The rule reads "was out
+    last week, not listed out now" as "back", which is only true once THIS week's
+    availability report is loaded: before it is (a live board built early in the
+    week, FantasyPros not pulled yet) nobody is listed out, so every injured
+    starter looks healthy and the rule would hand the job back to all of them -
+    including players a manual override or a "likely to miss multiple weeks"
+    note says are still out. A historical replay always has a report."""
+    if 'v2_qb1_returning_starter' not in feats:
+        return False, None
+    if injury_profiles:
+        return True, None
+    return False, (f"QB1 returning-starter rule not applied: no availability report is loaded for "
+                   f"week {int(as_of_week)} yet, so a starter who was out last week cannot be told "
+                   f"apart from one who is still out. Pull the injury report and rebuild.")
+
+
+def qb1_returning_inputs(year, as_of_week, stats_df, name_col, team_col,
+                         prior_played, prior_name_col, prior_team_col, schedule_df):
+    """Inputs for _returning_qb_starters, from sources that are time-valid for
+    a week before ``as_of_week``: the official injury report and the weekly
+    reserve-list status of every completed week this season (plus the
+    FantasyPros injury file where one was saved for that week), last season's
+    QB snap shares, and this season's rostered QBs (so a starter with no game
+    yet this season, like a Week-3 return from a preseason injury, is a
+    candidate)."""
+    out_by_week = {}
+    for week in range(1, int(as_of_week)):
+        names = set()
+        try:
+            for name, prof in (historical_injury_profiles(year, week, schedule_df) or {}).items():
+                if str(prof.get('status', '')).strip().lower() in _ASSUME_OUT_STATUSES:
+                    names.add(name)
+        except Exception:
+            pass
+        try:
+            names |= set((historical_reserve_profiles(year, week) or {}).keys())
+        except Exception:
+            pass
+        try:
+            fp_profiles, _ = load_fantasypros_availability(year, week)
+            for name, prof in (fp_profiles or {}).items():
+                if str(prof.get('status', '')).strip().lower() in _ASSUME_OUT_STATUSES:
+                    names.add(name)
+        except Exception:
+            pass
+        out_by_week[week] = set(clean_name_exact(pd.Series(sorted(names)))) if names else set()
+
+    prior_share = {}
+    if (prior_played is not None and not prior_played.empty
+            and {prior_name_col, prior_team_col, 'position'}.issubset(prior_played.columns)):
+        prior_qbs = prior_played[prior_played['position'].astype(str).str.upper().eq('QB')]
+        if not prior_qbs.empty:
+            # Keyed by (team, player): only last year's starter OF THIS TEAM is an
+            # incumbent here. A former starter elsewhere who signed as a backup
+            # (2026 ATL: Tua Tagovailoa, injured in September) is not.
+            for team, team_qbs in prior_qbs.groupby(_historical_game_team(prior_qbs, prior_team_col), observed=True):
+                if not team:
+                    continue
+                shares = season_snap_share(team_qbs, prior_name_col, prior_team_col)
+                for name, share in shares.items():
+                    key = clean_name_exact(pd.Series([name])).iloc[0]
+                    share = float(pd.to_numeric(share, errors='coerce'))
+                    if np.isfinite(share):
+                        prior_share[(team, key)] = max(share, prior_share.get((team, key), 0.0))
+
+    roster = pd.DataFrame(columns=['_team', '_key', '_player'])
+    if stats_df is not None and not stats_df.empty and {name_col, team_col, 'position'}.issubset(stats_df.columns):
+        qbs = stats_df[stats_df['position'].astype(str).str.upper().eq('QB')].copy()
+        if 'week' in qbs.columns:
+            wk = pd.to_numeric(qbs['week'], errors='coerce')
+            qbs = qbs[wk.isna() | wk.lt(float(as_of_week))]
+        if not qbs.empty:
+            roster = pd.DataFrame({
+                '_team': _clean_team_key(qbs[team_col]).to_numpy(),
+                '_player': qbs[name_col].astype(str).str.strip().to_numpy(),
+            })
+            roster['_key'] = clean_name_exact(roster['_player'])
+            roster = roster[(roster['_team'] != '') & (roster['_key'] != '')].drop_duplicates(
+                subset=['_key'], keep='last')
+    return {'out_by_week': out_by_week, 'prior_share': prior_share, 'roster': roster}
+
+
 def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
                            recent_history, history_name_col, history_team_col,
                            as_of_week, year, overrides=None,
-                           unavailable_players=None):
+                           unavailable_players=None, returning=None):
     """Resolve one expected QB1 per team from explicit choices or real snaps.
 
     An in-season board should not turn a backup's one relief appearance into
@@ -6128,13 +6584,17 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
     else:
         file_problem = None
         overrides = overrides.copy()
+    overrides = qb1_overrides_for_week(overrides, as_of_week)
     warnings = [file_problem] if file_problem else []
     if overrides is None:
         overrides = pd.DataFrame(columns=QB1_OVERRIDE_COLUMNS)
     for col in QB1_OVERRIDE_COLUMNS:
         if col not in overrides.columns:
             overrides[col] = ''
+    _override_from = (pd.to_numeric(overrides['from_week'], errors='coerce').to_numpy(dtype=float)
+                      if 'from_week' in overrides.columns else np.full(len(overrides), np.nan))
     overrides = overrides.loc[:, list(QB1_OVERRIDE_COLUMNS)].copy()
+    overrides['from_week'] = _override_from
     overrides['team'] = _clean_team_key(overrides['team']).to_numpy()
     overrides['player'] = overrides['player'].astype(str).str.strip()
     overrides = overrides[(overrides['team'] != '') & (overrides['player'] != '')]
@@ -6143,6 +6603,8 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
     current['_last_snap_week'] = np.nan
     current['_team_latest_week'] = np.nan
     current['_recently_active'] = False
+    qb_week_snaps = pd.DataFrame(columns=['_team', '_key', '_week', '_snap'])
+    team_played_weeks = {}
     if (recent_history is not None and not recent_history.empty
             and {history_name_col, history_team_col, 'position', 'week', 'weekly_snap_pct'}.issubset(
                 recent_history.columns)):
@@ -6153,6 +6615,9 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
             context['_week'] = pd.to_numeric(context['week'], errors='coerce')
             team_latest = context[(context['_team'] != '') & context['_week'].notna()].groupby(
                 '_team', observed=True)['_week'].max()
+            team_played_weeks = {
+                team: sorted(set(weeks.dropna().astype(float)))
+                for team, weeks in context[context['_team'] != ''].groupby('_team', observed=True)['_week']}
             recent_qbs = context[context['position'].astype(str).str.upper().eq('QB')].copy()
             recent_qbs['_snap'] = (pd.to_numeric(recent_qbs['weekly_snap_pct'], errors='coerce') / 100.0)
             real_snap = recent_qbs['_snap'].gt(0.0) & recent_qbs['_snap'].le(1.0)
@@ -6168,6 +6633,7 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
             if not recent_qbs.empty:
                 recent_qbs['_key'] = clean_name_exact(recent_qbs[history_name_col])
                 recent_qbs = recent_qbs.sort_values(['_team', '_key', '_week'])
+                qb_week_snaps = recent_qbs[['_team', '_key', '_week', '_snap']].copy()
                 tail = recent_qbs.groupby(['_team', '_key'], observed=True).tail(
                     PARTIAL_GAME_REFERENCE_APPEARANCES)
                 signals = tail.groupby(['_team', '_key'], observed=True).agg(
@@ -6193,9 +6659,35 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
     unavailable = set()
     if unavailable_players:
         unavailable = set(clean_name_exact(pd.Series(list(unavailable_players))))
+    returning_picks = (_returning_qb_starters(current, returning, qb_week_snaps, team_played_weeks,
+                                              as_of_week, unavailable)
+                       if returning is not None else {})
     selected, by_team, requires_selection = {}, {}, set()
-    for team, room in current.groupby('_team', observed=True):
+    _teams = sorted(set(current['_team']) | set(returning_picks))
+    for team in _teams:
+        room = current[current['_team'].eq(team)]
         manual = overrides[overrides['team'].eq(team)]
+        ret = returning_picks.get(team)
+        if returning is not None and len(manual) == 1:
+            _m_player = str(manual.iloc[0]['player']).strip()
+            _m_key = clean_name_exact(pd.Series([_m_player])).iloc[0]
+            _m_from = float(manual.iloc[0]['from_week']) if pd.notna(manual.iloc[0]['from_week']) else np.nan
+            if _m_key in unavailable:
+                # The named QB is listed Out/Doubtful for this very week: he
+                # cannot be the starter, so the choice is skipped for this week
+                # only (kept in the file) and the automatic rules decide.
+                warnings.append(f"{team}: QB1 override '{_m_player}' is listed out/doubtful this week; "
+                                'using the automatic starter for this week instead.')
+                manual = manual.iloc[0:0]
+            elif (ret is not None and ret['key'] != _m_key and np.isfinite(_m_from)
+                  and ret['first_injured_week'] <= _m_from <= ret['last_injured_week'] + 1):
+                # A fill-in chosen while the regular starter was injured, and
+                # that starter is now healthy again: the fill-in choice is stale.
+                warnings.append(
+                    f"{team}: QB1 override '{_m_player}' was set in week {int(_m_from)} while "
+                    f"{ret['player']} was injured; {ret['player']} is no longer listed out, so he is "
+                    'projected as the starter. Re-save the override to keep the fill-in.')
+                manual = manual.iloc[0:0]
         if len(manual) > 1:
             warnings.append(f'{team}: multiple QB1 override rows; choose exactly one before projecting QB volume.')
             requires_selection.add(team)
@@ -6231,6 +6723,16 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
                 'status': 'manual_override', 'player': manual_player,
                 'recent_snap_share': 0.0,
                 'reason': 'explicit upcoming-game QB1 selection (no 2026 snaps recorded for him yet)',
+            }
+            continue
+
+        if ret is not None:
+            selected[(team, ret['key'])] = 'returning_starter'
+            by_team[team] = {
+                'status': 'returning_starter', 'player': ret['player'],
+                'recent_snap_share': float(ret['last_snap']),
+                'reason': (f"regular starter back from injury (listed out week(s) "
+                           f"{', '.join(str(int(w)) for w in ret['injured_weeks'])}, not listed out now)"),
             }
             continue
 
@@ -6295,7 +6797,8 @@ def _add_missing_manual_qb1_rows(cur, qb1_resolution, roster_source, name_col, t
     a just-installed starter's roster-only, no-game row either).
     """
     selected = qb1_resolution.get('selected', {})
-    manual_keys = {key for (_team, key), source in selected.items() if source == 'manual_override'}
+    manual_keys = {key for (_team, key), source in selected.items()
+                   if source in ('manual_override', 'returning_starter')}
     if not manual_keys or roster_source is None or roster_source.empty or name_col not in roster_source.columns:
         return cur
     present_keys = (set(clean_name_exact(cur[name_col]))
@@ -8308,6 +8811,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # below would be.
         pace = load_team_pace(year - 1)
     league_pace = pace['def_pace'].mean() if pace is not None and not pace.empty and 'def_pace' in pace.columns else None
+    # v2_own_tempo_regression: last season's team tempo, only read for a team with too few
+    # games this season to have a tempo of its own (week 2, a new club); at a cold start
+    # `pace` already is last season's.
+    tempo_prior_pace = None
+    if 'v2_own_tempo_regression' in feats and not cold_start:
+        tempo_prior_pace = (as_of_team_pace(prior_stats, prior_team_col, 100)
+                            if use_v2_guard and historical_target else load_team_pace(year - 1))
 
     # Per-game play counts for the defense-matchup ratio's own pace
     # normalization (see _team_game_quality_profile's ``plays`` docstring) -
@@ -8580,7 +9090,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 current_qbs, name_col, team_col,
                 player_prior, prior_name_col, prior_team_col, year,
                 ourlads_qb1s=ourlads_signal['qb_starters'],
-                unavailable_players=unavailable_qbs,
+                unavailable_players=unavailable_qbs, week=week,
             )
             qb1_resolution['warnings'].extend(
                 ourlads_source_contract.get('warnings', ourlads_signal['warnings']))
@@ -8589,11 +9099,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             if not current_qbs.empty:
                 current_qbs = (current_qbs.assign(_week=pd.to_numeric(current_qbs['week'], errors='coerce'))
                                 .sort_values('_week').drop_duplicates(name_col, keep='last'))
+            _use_returning, _returning_warning = qb1_returning_gate(feats, injury_profiles, as_of_week)
             qb1_resolution = resolve_inseason_qb1s(
                 current_qbs, name_col, team_col,
                 player_hist, name_col, team_col, as_of_week, year,
                 unavailable_players=unavailable_qbs,
+                returning=(qb1_returning_inputs(year, as_of_week, stats_df, name_col, team_col,
+                                                player_prior, prior_name_col, prior_team_col, schedule_df)
+                           if _use_returning else None),
             )
+            if _returning_warning:
+                qb1_resolution['warnings'].append(_returning_warning)
     if cold_start:
         source_contract['qb_starter_source'] = (
             ('manual_qb1_overrides_plus_healthy_local_ourlads_qb1_plus_unambiguous_prior_season_incumbents'
@@ -9554,6 +10070,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                      else 'Imported Ourlads depth-chart QB1' if selected_qb1s.get((team, key)) == 'ourlads_depth_chart'
                      else 'Automatic prior-season incumbent' if selected_qb1s.get((team, key)) == 'prior_season_incumbent'
                      else 'Automatic recent full-snap starter' if selected_qb1s.get((team, key)) == 'observed_current_starter'
+                     else 'Starter back from injury' if selected_qb1s.get((team, key)) == 'returning_starter'
                      else 'QB1 selection required' if team in required_teams
                      else 'QB non-starter')
                     for team, key in zip(team_keys_rv, name_keys_rv)
@@ -10553,7 +11070,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                     (cur['role_change_confidence'].to_numpy(dtype=float)
                                      if 'v2_adaptive_volume' in feats else None),
                                     role_change_reduction,
-                                    pos=(pos if 'v2_stat_k_by_pos' in feats else None))
+                                    pos=(pos if 'v2_stat_k_by_pos' in feats else None),
+                                    k_override=(QB_PASSING_TD_K if ('v2_qb_passing_td_k' in feats and pos == 'QB'
+                                                                   and stat == 'passing_tds') else None))
             if 'v2_xtd' in feats and stat in XTD_ZONE_STATS:
                 # Replaces the standard blend above for exactly these two
                 # stats (see 'v2_xtd''s own comment block) - passing_tds is
@@ -10740,7 +11259,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 cur_games, stat, cur['role_confidence'].to_numpy(dtype=float),
                 (cur['role_change_confidence'].to_numpy(dtype=float)
                  if 'v2_adaptive_volume' in feats else None),
-                role_change_reduction, pos=(pos if 'v2_stat_k_by_pos' in feats else None))
+                role_change_reduction, pos=(pos if 'v2_stat_k_by_pos' in feats else None),
+                k_override=(QB_PASSING_TD_K if ('v2_qb_passing_td_k' in feats and pos == 'QB'
+                                               and stat == 'passing_tds') else None))
             stat_trace[stat] = {
                 'build_path': np.full(len(cur), 'direct rate'),
                 'current_rate': in_season_rate,
@@ -10907,7 +11428,19 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 # opp_pace itself uninformative for that row anyway.
                 opp_games = cur['Opponent'].map(pace['def_games']).fillna(0.0)
                 pace_alpha = opp_games / (opp_games + PACE_PRIOR_GAMES)
+                if 'v2_pace_alpha_cap' in feats:
+                    pace_alpha = np.minimum(pace_alpha, PACE_ALPHA_CAP)
                 pace_mult = 1.0 + pace_alpha * (pace_mult - 1.0)
+
+        tempo_mult = np.ones(len(cur))
+        if 'v2_own_tempo_regression' in feats and pace is not None and not pace.empty:
+            tempo_mult = own_tempo_multiplier(cur['Team'].astype(str).to_numpy(), pace,
+                                              tempo_prior_pace, cold_start=cold_start)
+
+        def _pace_for(stat):
+            # opponent pace x own-tempo regression for the passing/receiving stats (see TEMPO_STATS)
+            base = pace_mult.to_numpy(dtype=float)
+            return base * tempo_mult if stat in TEMPO_STATS else base
 
         inj_mult = cur[name_col].map(injury_mult).fillna(1.0)
         perstat_env = 'v2_game_total_elasticity_perstat' in feats
@@ -10990,7 +11523,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     # - this factor is 1.0 for him regardless of his own
                     # injury status, so that path is untouched.
                     vacancy_volume[stat] = np.clip(
-                        proj_cols[stat] * pace_mult.to_numpy() * env_mult * _env(stat) * _wx(stat)
+                        proj_cols[stat] * _pace_for(stat) * env_mult * _env(stat) * _wx(stat)
                         * qb_nonstarter_volume_factor, 0.0, None)
 
         for stat in proj_cols:
@@ -11005,12 +11538,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             _wx_stat = _wx(stat)
             _env_stat = _env(stat)
             proj_cols[stat] = np.clip(
-                proj_cols[stat] * pace_mult.to_numpy() * inj_mult.to_numpy()
+                proj_cols[stat] * _pace_for(stat) * inj_mult.to_numpy()
                 * env_mult * _env_stat * _wx_stat,
                 0.0, None)
             trace = stat_trace.get(stat)
             if trace is not None:
-                trace['pace_multiplier'] = pace_mult.to_numpy(dtype=float)
+                # opponent pace x own-tempo regression (the popup multiplies this one number in)
+                trace['pace_multiplier'] = _pace_for(stat)
+                trace['own_tempo_multiplier'] = tempo_mult if stat in TEMPO_STATS else np.ones(len(cur))
                 trace['opponent_defensive_pace'] = opp_pace.to_numpy(dtype=float)
                 trace['league_pace'] = np.full(len(cur), league_pace if league_pace else np.nan)
                 trace['availability_multiplier'] = inj_mult.to_numpy(dtype=float)
@@ -11271,7 +11806,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             out['_availability_source'] = 'V1 legacy injury multiplier'
             out['_availability_match_method'] = 'legacy'
             out['_availability_note'] = ''
-        _uncalibrate_sidelined(out)
+        _uncalibrate_sidelined(out, include_zero_rows=('v2_uncalibrate_zero_rows' in feats))
 
         # Keep the explanation payload outside the visible dataframe.  This
         # preserves a compact table while giving the dialog every input it
@@ -11280,6 +11815,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             values = trace.get(key)
             if values is None:
                 return default
+            if isinstance(values, str):
+                # A scalar status string (script_status) is the same for every row. Indexing it would hand
+                # row i the i-th CHARACTER ("s", "c", ...) and 'not modeled' past its length (fixed 2026-10-06).
+                return values
             try:
                 value = values[index]
             except (IndexError, KeyError, TypeError):
@@ -11324,16 +11863,30 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         prior_available = (not prior_stats.empty and 'opponent_team' in prior_stats.columns
                           and 'week' in prior_stats.columns)
         if not asof_stats.empty or prior_available:
+            # Blended with last season the way the model's own defense matchup
+            # multiplier is (blend_defense_prior: a = games/(games +
+            # DEFENSE_PRIOR_GAMES), so ~25% this season after four games, 50%
+            # after twelve), rather than this season alone until it is the only
+            # evidence (2026-10-05 request: the Def Rank column read a four-game
+            # sample as if last season never happened). Display only - no
+            # projection reads this.
+            _def_table = blended_defense_stat_table(
+                asof_stats, prior_stats if prior_available else None, pos, 'fantasy_points',
+                DEFENSE_PRIOR_GAMES)
             for opp_team in out['Opponent'].dropna().astype(str).unique():
-                rank_info = (defense_stat_rank(asof_stats, opp_team, pos, 'fantasy_points')
-                            if not asof_stats.empty else None)
+                rank_info = defense_rank_from_table(_def_table, opp_team)
                 if rank_info:
-                    rank_info['source'] = f'{year} season, through Week {int(as_of_week) - 1}'
-                elif prior_available:
-                    rank_info = defense_stat_rank(prior_stats, opp_team, pos, 'fantasy_points')
-                    if rank_info:
+                    _w = rank_info['current_weight']
+                    _g = int(round(rank_info['current_games']))
+                    if _w >= 1.0:
+                        rank_info['source'] = f'{year} season, through Week {int(as_of_week) - 1}'
+                    elif _w <= 0.0:
                         rank_info['source'] = f'{year - 1} full season (no {year} games played yet)'
-                if rank_info:
+                    else:
+                        rank_info['source'] = (
+                            f'{year} through Week {int(as_of_week) - 1} ({_g} games, {_w:.0%}) blended with '
+                            f'{year - 1} full season ({1.0 - _w:.0%}) - the same weighting the model '
+                            f'uses for defense matchups')
                     defense_matchup_by_opponent[opp_team] = rank_info
 
         # Rank within THIS position/week, by the same displayed number the
@@ -11465,6 +12018,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'availability_multiplier': _trace_number(trace, 'availability_multiplier', i, 1.0),
                     'environment_multiplier': _trace_number(trace, 'environment_multiplier', i, 1.0),
                     'environment_status': _trace_value(trace, 'environment_status', i, 'feature disabled'),
+                    'weather_stat_multiplier': _trace_number(trace, 'weather_stat_multiplier', i, 1.0),
                     'efficiency_denominator': _trace_value(trace, 'efficiency_denominator', i),
                     'efficiency_rate': _trace_number(trace, 'efficiency_rate', i),
                     'efficiency_evidence': _trace_number(trace, 'efficiency_evidence', i),
@@ -11754,7 +12308,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 result, prior_history=prior_stats, team_col=prior_team_col,
                 wr_te_split=_wr_te_split,
                 matchup_flex=('v2_pass_capacity_matchup_flex' in feats),
-                injury_neutral_claim=('v2_pass_capacity_injury_neutral_claim' in feats))
+                injury_neutral_claim=('v2_pass_capacity_injury_neutral_claim' in feats),
+                keep_tds=('v2_pass_capacity_keep_tds' in feats))
             ledger = ledger_df.to_dict('records')
             adjusted = bool(not ledger_df.empty
                             and (ledger_df['capacity_source'] != 'no capacity signal').any())
@@ -11914,7 +12469,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     for v, (sl, ic) in zip(recomputed, slopes)]
             result['Model Proj Pts'] = np.round(np.clip(recomputed, 0.0, None), 2)
             result['Calibrated Model Proj Pts'] = result['Model Proj Pts']
-            _uncalibrate_sidelined(result)
+            _uncalibrate_sidelined(result, include_zero_rows=('v2_uncalibrate_zero_rows' in feats))
+            result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+
+    # v2_season_anchor: last step on the points total, after calibration and the sidelined/zero restore.
+    season_anchor_info = {}
+    if 'v2_season_anchor' in feats and not cold_start:
+        result, season_anchor_info = apply_season_anchor(result, hist, name_col)
+        if season_anchor_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
     # Raw per-week slot/wide/inline defense-allowed evidence, grouped for
@@ -12064,9 +12626,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if final_stat_line:
             detail['stat_line'] = final_stat_line
         calibration = detail.get('calibration', {})
+        # The calibration line's own result: with v2_season_anchor the displayed total moves once more after it, and
+        # that step is reported separately (detail['season_anchor']), so the two captions chain raw -> line -> anchor.
+        line_points = detail['calibrated_points']
+        if key in season_anchor_info:
+            detail['season_anchor'] = season_anchor_info[key]
+            line_points = season_anchor_info[key]['before']
         calibration['raw_points'] = detail['raw_points']
-        calibration['displayed_points'] = detail['calibrated_points']
-        calibration['delta'] = detail['calibrated_points'] - detail['raw_points']
+        calibration['displayed_points'] = line_points
+        calibration['delta'] = line_points - detail['raw_points']
         detail['calibration'] = calibration
         detail['vacancy'] = [entry for entry in vacancy_ledger if entry['team'] == str(row['Team'])]
         detail['vacancy_adjusted'] = bool(vacancy_adjusted and any(

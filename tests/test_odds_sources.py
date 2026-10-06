@@ -1315,6 +1315,35 @@ def test_weekly_posting_anchor_walks_back_to_tuesday():
     assert is_stale(None) is True
 
 
+def test_snapshot_is_for_week_rejects_the_previous_slates_lines(monkeypatch):
+    import datetime as dt
+    import pandas as pd
+    import data.loaders as loaders
+    from data.odds_weekly import snapshot_is_for_week
+
+    def at(text):
+        return dt.datetime.fromisoformat(text).replace(tzinfo=dt.timezone.utc)
+
+    sched = pd.DataFrame({'week': [4, 4, 5, 5, 5],
+                          'gameday': ['2026-09-27', '2026-10-05', '2026-10-08', '2026-10-11', '2026-10-12']})
+    monkeypatch.setattr(loaders, 'load_schedule', lambda year: sched)
+    # Week 5 opens Thursday 10-08, so its slate is the one posted Tuesday 10-06 at 15:00 UTC.
+    assert snapshot_is_for_week(at('2026-10-03 01:34'), 2026, 5) is False      # Saturday pull = week 4's board
+    assert snapshot_is_for_week(at('2026-10-06 14:59'), 2026, 5) is False      # a minute before the post
+    assert snapshot_is_for_week(at('2026-10-06 18:18'), 2026, 5) is True
+    assert snapshot_is_for_week(at('2026-10-10 12:00'), 2026, 5) is True       # later in the week still fine
+    assert snapshot_is_for_week(at('2026-10-03 01:34'), 2026, 4) is True       # and it IS week 4's board
+    assert snapshot_is_for_week(None, 2026, 5) is False
+    # A schedule that cannot answer never blocks a board.
+    monkeypatch.setattr(loaders, 'load_schedule', lambda year: pd.DataFrame())
+    assert snapshot_is_for_week(at('2026-10-03 01:34'), 2026, 5) is True
+
+    def boom(year):
+        raise RuntimeError('no schedule')
+    monkeypatch.setattr(loaders, 'load_schedule', boom)
+    assert snapshot_is_for_week(at('2026-10-03 01:34'), 2026, 5) is True
+
+
 def test_weekly_snapshot_round_trips_and_survives_a_bad_file():
     import tempfile
     from data.odds_weekly import save_snapshot, load_snapshot, weekly_summary, weekly_consensus

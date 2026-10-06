@@ -271,12 +271,13 @@ STAT_K_BY_POS = {
     'TE': {'receiving_tds': 16},
 }
 
-# 'v2_qb_passing_td_k' (CANDIDATE 2026-10-06): K for QB passing_tds only. The shared K of 5 puts ~40-50% weight on
+# 'v2_qb_passing_td_k' (TESTED 2026-10-06, INCONCLUSIVE, unshipped): K for QB passing_tds only. The shared K of 5 puts ~40-50% weight on
 # a QB's own current-season TD rate after 2-4 games, but a QB's TD-per-attempt rate is one of the noisiest rates in
 # the model: projected team TDs regress on actual team TDs with slope 0.53 over 2021-2025 (the same over-dispersion
 # the WR/TE receiving_tds K of 30/16 above fixed), and the team-level TD sum is out-predicted by the market's implied
 # total (RMSE 1.360 vs 1.315). Never swept: the item-4 groups covered RB volume, QB RUSHING, WR/TE yardage and WR/TE
-# receiving_tds, not QB passing_tds.
+# receiving_tds, not QB passing_tds. Swept 2026-10-06 at K=15 on harness v2 2022-2025 wk3-17: START-QB RMSE -0.010 (CI
+# spans 0), START-ALL -0.002, better in 25 of 60 weeks - no evidence to promote it.
 QB_PASSING_TD_K = 15.0
 
 # role_confidence in [0, 1] scales K by this range - a confident every-down
@@ -1865,8 +1866,9 @@ MODEL_FEATURES = (
                              # override set during the starter's injury gives way
                              # when he returns (warning shown). See
                              # _returning_qb_starters.
-    'v2_qb_passing_td_k',  # CANDIDATE 2026-10-06. K=15 (shared 5) for QB passing_tds: a slower blend of the QB's
-                             # own current-season TD rate. See QB_PASSING_TD_K.
+    'v2_qb_passing_td_k',  # TESTED 2026-10-06, INCONCLUSIVE, left UNSHIPPED (harness v2: START-QB -0.010 CI spans 0,
+                             # START-ALL -0.002, better in 25 of 60 weeks). K=15 (shared 5) for QB passing_tds: a
+                             # slower blend of the QB's own current-season TD rate. See QB_PASSING_TD_K.
     'v2_season_anchor',  # SHIPPED 2026-10-06 (DEFAULT_FEATURES). Final points total shrunk toward the player's own to-date
                              # mean (RB 0.75, WR 0.69, TE 0.84; QB left alone): the model's departures from a
                              # player's own average run ~30% too large for WR/RB from week 7. Held-out RMSE better in

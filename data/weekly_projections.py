@@ -2042,6 +2042,24 @@ MODEL_FEATURES = (
                              # 2026-09-25 - see DEFAULT_FEATURES' note for
                              # why the harness's bias-growth flag (+0.354)
                              # was overridden.
+    'v2_rb_depleted_room_fill',  # SHIPPED 2026-10-07 (user: PHI week 5, Barkley
+                             # and Bigsby out, Shipley the only healthy back
+                             # projected 4 carries and nobody else projected).
+                             # (1) The RB vacancy pass's 2x growth cap leaves
+                             # most of an emptied room's carries "unfilled"
+                             # (10.2 of 14.9 for PHI): the surviving back takes
+                             # DEPLETED_ROOM_SURVIVOR_ABSORB (80%) of what the
+                             # cap could not place, by allocator share. (2) A
+                             # team whose healthy RB count is <= 1 with an OUT
+                             # back also gets its practice-squad RBs (roster
+                             # status DEV, read as of the target week; no
+                             # prior-season games needed) onto
+                             # the board, flagged _ps_elevation_candidate: the
+                             # remaining 20% is split equally among them as an
+                             # EXPECTED value (nobody knows which is elevated).
+                             # Evidence and harness: see the methodology doc,
+                             # 2026-10-07 entry (harness run 2: RB -0.014, CI
+                             # excludes 0; nothing else moves).
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -2563,6 +2581,12 @@ DEFAULT_FEATURES = frozenset({
     # 2022-2025 wk3-17: START-QB RMSE 7.481 -> 7.466 (-0.015, CI [-0.042, +0.009], pairwise +0.003), START-ALL -0.003, bias
     # growth +0.008, every other position +-0.000; matches the offline sweep (-0.019). QB TDs react to far fewer games.
     'v2_qb_td_blend',
+    # SHIPPED 2026-10-07 on the user's go-ahead ("if the harness run looks good you can turn shipley fix on"), after the
+    # pre-set bar was met: see MODEL_FEATURES and DEPLETED_ROOM_SURVIVOR_ABSORB (data/rb_role_allocator.py). Harness v2
+    # 2022-2025 wk3-17 (run 2, the clean one): RB RMSE 6.232 -> 6.219 (-0.014, CI [-0.028, -0.002]), START-RB 7.635 -> 7.616
+    # (-0.019, CI [-0.040, +0.000]), START-ALL -0.006, ALL -0.003, bias growth -0.016; QB/WR/TE exactly unchanged. An
+    # emptied RB room no longer loses the carries its survivors' growth cap could not place. Undo: remove this flag.
+    'v2_rb_depleted_room_fill',
 })
 
 
@@ -6839,7 +6863,81 @@ def _add_missing_manual_qb1_rows(cur, qb1_resolution, roster_source, name_col, t
     return pd.concat([cur, added], ignore_index=True) if not cur.empty else added
 
 
+def _depleted_rb_room_teams(cur, injury_profiles, name_col):
+    """Teams whose RB room is depleted this week: at least one back is OUT and at most ONE healthy back is
+    left (v2_rb_depleted_room_fill). ``cur`` is the in-season RB frame (one row per back with a game this season,
+    a ``Team`` column); ``injury_profiles`` maps player name -> {'plays_probability'}."""
+    if cur is None or cur.empty or not injury_profiles or 'Team' not in cur.columns or name_col not in cur.columns:
+        return set()
+    probability = cur[name_col].map(lambda n: float((injury_profiles.get(n) or {}).get('plays_probability', 1.0)))
+    out = pd.Series((probability <= 0.01).to_numpy(), index=cur.index)
+    team = cur['Team'].astype(str).str.upper()
+    sidelined = out.groupby(team).sum()
+    healthy = (~out).groupby(team).sum()
+    return {t for t in sidelined.index if sidelined[t] >= 1 and healthy.get(t, 0) <= 1}
+
+
 def _add_missing_returning_player_rows(cur, roster_source, player_prior, prior_name_col,
+                                        name_col, team_col, stats, pos, practice_squad_teams=None,
+                                        as_of_week=None, current_snapshot=False):
+    """The rostered-RB/WR/TE placeholder rows of ``_add_missing_returning_player_rows_core`` (unchanged), plus -
+    only when ``practice_squad_teams`` is given - the practice-squad candidates of v2_rb_depleted_room_fill. The
+    second part is added AFTER the first and never alters it, so a flag-off board and the non-depleted teams of a
+    flag-on board are identical."""
+    base = _add_missing_returning_player_rows_core(
+        cur, roster_source, player_prior, prior_name_col, name_col, team_col, stats, pos)
+    if not practice_squad_teams:
+        return base
+    return _add_practice_squad_candidates(base, roster_source, name_col, team_col, stats, pos,
+                                          practice_squad_teams, as_of_week, current_snapshot)
+
+
+def _add_practice_squad_candidates(cur, roster_source, name_col, team_col, stats, pos, teams, as_of_week=None,
+                                   current_snapshot=False):
+    """v2_rb_depleted_room_fill: the practice-squad backs (roster status DEV) of the ``teams`` whose RB room is
+    depleted, as Games=0 placeholder rows flagged ``_ps_elevation_candidate``. They are anonymous call-up candidates
+    - their line is the league-rate expected value the vacancy pass hands out - so no prior-season game is needed
+    (Carson Steele, PHI 2026, has none). The status is read AS OF the target week (the last roster row up to
+    ``as_of_week``): the default placeholder read takes each player's last row of the whole season, which in a
+    backtest is a later week. Roster rows with NO week (the roster-only snapshot of a player with no stats row) are
+    the CURRENT roster on a live board - and the only place a practice-squad back shows up there - so
+    ``current_snapshot`` (live only: not a historical target) keeps them and lets them override older weekly rows;
+    in a backtest they carry no known date and are dropped."""
+    if (roster_source is None or roster_source.empty or name_col not in roster_source.columns
+            or 'status' not in roster_source.columns or team_col not in roster_source.columns):
+        return cur
+    roster = roster_source[roster_source['position'].astype(str).str.upper().eq(pos)].copy()
+    if 'week' in roster.columns:
+        roster['_wk'] = pd.to_numeric(roster['week'], errors='coerce')
+        if as_of_week is not None:
+            dated = roster['_wk'] <= as_of_week
+            roster = roster[dated | roster['_wk'].isna()] if current_snapshot else roster[dated]
+        roster = roster.sort_values('_wk', na_position='last')
+    if roster.empty:
+        return cur
+    roster['_key'] = clean_name_exact(roster[name_col])
+    present_keys = (set(clean_name_exact(cur[name_col]))
+                    if not cur.empty and name_col in cur.columns else set())
+    roster = roster[~roster['_key'].isin(present_keys)].drop_duplicates(subset=['_key'], keep='last')
+    keep = (roster['status'].astype(str).str.upper().eq('DEV')
+            & roster[team_col].astype(str).str.upper().isin({str(t).upper() for t in teams}))
+    source = roster[keep]
+    if source.empty:
+        return cur
+    carry_cols = [name_col, team_col] + [c for c in (
+        'player_id', 'gsis_id', 'pff_id', 'depth_chart_position', 'status',
+        'draft_number', 'is_rookie_flag', 'years_exp', 'ourlads_position',
+        'functional_position', 'projection_position') if c in source.columns]
+    added = source[carry_cols].rename(columns={team_col: 'Team'}).copy()
+    added['Games'] = 0
+    for stat in stats:
+        added[stat] = 0.0
+    added['_identity_key'] = player_identity_keys(added, name_col)
+    added['_ps_elevation_candidate'] = True
+    return pd.concat([cur, added], ignore_index=True) if not cur.empty else added
+
+
+def _add_missing_returning_player_rows_core(cur, roster_source, player_prior, prior_name_col,
                                         name_col, team_col, stats, pos):
     """Give a rostered RB/WR/TE a Games=0 placeholder row, cold-start style,
     when he has a real prior-season role at this position but has not
@@ -9399,8 +9497,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             if pos == 'QB' and 'qb1_override' in feats:
                 cur = _add_missing_manual_qb1_rows(cur, qb1_resolution, stats_df, name_col, team_col, stats)
             elif pos in COLD_START_RETURNING_ROLE_MIN_GAMES:
+                _ps_teams = (_depleted_rb_room_teams(cur, injury_profiles, name_col)
+                             if (pos == 'RB' and 'v2_rb_depleted_room_fill' in feats) else None)
                 cur = _add_missing_returning_player_rows(
-                    cur, stats_df, player_prior, prior_name_col, name_col, team_col, stats, pos)
+                    cur, stats_df, player_prior, prior_name_col, name_col, team_col, stats, pos,
+                    practice_squad_teams=_ps_teams, as_of_week=as_of_week,
+                    current_snapshot=not bool(historical_target))
             if cur.empty:
                 continue
         # Keep a non-display functional-position flag through the assembled
@@ -11702,6 +11804,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             out['_rb_target_allocation_share'] = np.divide(
                 rb_target_allocation, rb_target_capacity,
                 out=np.zeros(len(cur), dtype=float), where=np.isfinite(rb_target_capacity) & (rb_target_capacity > 0))
+        if '_ps_elevation_candidate' in cur.columns:
+            # v2_rb_depleted_room_fill: marks the practice-squad backs added for a depleted room (see
+            # _add_missing_returning_player_rows); every other row, and every other position, reads False.
+            out['_ps_elevation_candidate'] = cur['_ps_elevation_candidate'].fillna(False).astype(bool).to_numpy()
         if not role_profiles.empty:
             for profile_col in ('adot', 'target_share', 'carry_share', 'receiving_back_share',
                                 'snap_share', 'target_earner_rank', 'target_earner_score',
@@ -12372,6 +12478,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     result, injury_profiles, as_of_year=year,
                     injury_provenance=injury_provenance,
                     receiver_pecking_order='v2_receiver_vacancy_pecking_order' in feats,
+                    depleted_room_fill='v2_rb_depleted_room_fill' in feats,
                 )
                 rb_vacancy_ledger = (rb_vacancy_frame.to_dict('records')
                                      if rb_vacancy_frame is not None and not rb_vacancy_frame.empty else [])
@@ -12415,6 +12522,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # vacancy hands out budget-consistent carries. Independent of pass
     # capacity (carries vs targets), so its order relative to that pass does
     # not matter. See data/rb_carry_budget.py.
+    if 'v2_rb_depleted_room_fill' in feats and '_ps_elevation_candidate' in result.columns:
+        # A practice-squad back added for a depleted room has no role of his own: his only volume is the expected
+        # share the vacancy pass hands him. Zero the baseline projection so he does not count in the team's carry
+        # budget or target capacity (and so nothing is left over from a prior-season rate).
+        _ps_rows = result['_ps_elevation_candidate'].fillna(False).astype(bool)
+        if _ps_rows.any():
+            for _stat in OFFENSE_PROJECTION_STATS['RB']:
+                if _stat in result.columns:
+                    result.loc[_ps_rows, _stat] = 0.0
     carry_budget_ledger, carry_budget_adjusted, carry_budget_snapshot = [], False, {}
     if 'v2_rb_carry_budget' in feats and not cold_start and 'rushing_attempts' in result.columns:
         _budgets = team_rb_carry_budgets(hist, prior_stats, schedule_df, week,
@@ -12499,6 +12615,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             result['Calibrated Model Proj Pts'] = result['Model Proj Pts']
             _uncalibrate_sidelined(result, include_zero_rows=('v2_uncalibrate_zero_rows' in feats))
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+
+    if 'v2_rb_depleted_room_fill' in feats and '_ps_elevation_candidate' in result.columns             and 'Injury Status' in result.columns:
+        # Say what these rows are: a practice-squad back on a depleted room's board is an expected-value share of
+        # the vacated volume, not a player with a role.
+        _ps_rows = result['_ps_elevation_candidate'].fillna(False).astype(bool)
+        _blank = result['Injury Status'].fillna('').astype(str).eq('')
+        result.loc[_ps_rows & _blank, 'Injury Status'] = 'Practice squad'
 
     # v2_season_anchor: last step on the points total, after calibration and the sidelined/zero restore.
     season_anchor_info = {}

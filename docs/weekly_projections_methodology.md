@@ -4422,3 +4422,126 @@ about a quarter less spread, and the user asked for QB TDs to stop reacting to a
 about 0.2% of RMSE - do not expect it to be visible; expect fewer wild QB TD projections. Live week 5: QB pass-TD sd 0.435 -> 0.336,
 points move at most about +-1. **To undo it: remove `'v2_qb_td_blend'` from DEFAULT_FEATURES.** `v2_qb_passing_td_k` (K alone) stays
 an unshipped, documented candidate; calibration lines are unchanged (the QB line barely moves under TD compression).
+
+
+## 2026-10-07 - Decomposition notes cleanup, dialog scroll bug, neutral-site weather, and `v2_rb_depleted_room_fill` (CANDIDATE)
+
+Five items from one user report (week 5 board). Three are display-only, one is a data-source bug in the weather feed, one
+is a model candidate.
+
+**1. Explanation text under the worked-calculation tables is now a dropdown.** The Context-multiplier paragraph and the
+"/Game, Allowed×, Combined" paragraphs (alignment table and, for a TE, the scheme table) sit in a collapsed "What these
+mean:" expander, the same pattern as the "What these columns mean" one under the main table. The alignment evidence line
+("slot / non-slot ... from weekly_archive (weeks 1,2,3,4); defensive residual is neutral pending backtest") moved into
+that dropdown, next to the numbers it describes. No number changed.
+
+**2. Switching a Deep dive stat tab scrolled the dialog back to the top.** Reproduced: the frontend empties a lazily
+rendered tab panel the instant its tab is clicked (`st.tabs(..., on_change="rerun")`), so the dialog momentarily shrinks
+(2,058 px -> 1,287 px at a 760 px window). On a tall window the shrunken dialog fits the screen, the browser clamps the
+scroll position to 0, and when the content returns nothing puts it back (1,500 px window: scrollTop 558 -> 0 -> stays 0).
+On a short window the browser happens to restore it, which is why it looked intermittent. Fix: a small script
+(`_DIALOG_SCROLL_KEEP_JS`, injected with `st.html(..., unsafe_allow_javascript=True)`, registered once per page) remembers
+the scroll position when a tab inside the dialog is clicked and restores it once the content is tall enough again; it
+stands down on any wheel/touch/key scroll and after 6 s. Verified in the browser at 1,500 px: 558 -> 0 (collapse) -> 558
+(restored at ~1 s). Lazy tabs were kept (rendering every stat tab on each interaction was the slowness fixed on 09-15).
+
+**3. The audit tab's stack of one-line notes is trimmed to what bears on the player.** Removed: the partial-game count
+(each excluded game already shows "Excluded - reason" in that stat's game log); "Preseason role source: observed
+current-season role" (every in-season player; printed only when the role came from elsewhere); the alignment note (moved,
+above); the Availability block for a healthy player with no designation ("plays 100%, workload 100%"; the builder's own
+"No current designation" is treated as empty); the vacancy lines for a teammate whose absence vacated nothing (a QB the
+QB1 gate had already zeroed) or under ~1 target/carry (kept as one short line only if THIS player received some of it).
+Replaced: the Point calibration and Season anchor captions by one small table "How the point total is built" (raw ->
+calibrated -> season anchor, with the line used and the anchor's basis) and a "What these mean:" dropdown. Tests:
+`tests/test_decomposition_notes.py`.
+
+**4. International / neutral-site games used the nominal home team's weather.** `data/weather.py` fetched the forecast
+(wind, temperature, precipitation) at `STADIUM_COORDS[home_team]`. Week 5 PHI @ JAX is played at Tottenham Hotspur Stadium
+in London, so the model read a Jacksonville forecast (30.3 N). The schedule marks that game `location="Home"` with the JAX
+`stadium_id`, so only the stadium NAME identifies the venue: `VENUE_COORDS` (Tottenham, Wembley, Stade de France,
+Bernabeu, Munich, Frankfurt, Mexico City, Rio, Sao Paulo, Melbourne, Dublin, Canton) is matched on it first
+(`game_venue`), cache keys are per venue, and the schedule's own `roof` column still decides open/closed. Week 5 now
+resolves to 8.5 mph / 57.5 F / dry for London. Completed games were never affected (nflverse records their real weather).
+Not changed, noted: a retractable-roof stadium whose `roof` is not posted yet (ATL, DAL, ARI for a future week) is treated
+as OUTDOOR, so a hot or rainy day there gets a forecast that probably does not apply (see `docs/open_items_2026-10-07.md`).
+
+**5. `v2_rb_depleted_room_fill` (CANDIDATE, off by default): an emptied RB room lost most of its carries and no one else was
+projected.** Live case, PHI week 5: Barkley (14.9 carries/game) out on a manual override, Bigsby (1.5) out on the FantasyPros
+report, Shipley (2.9) the only healthy back. Board: Shipley 4.6 carries / 4.3 pts, every other back 0. Cause: the RB vacancy
+pass hands a vacated back's carries to the surviving backs by allocator share, `VACANCY_SURVIVAL` (0.80) of them, but no back
+may grow past `VACANCY_MAX_GROWTH` (2x). With one small survivor the cap binds and what it cannot place is simply dropped:
+10.2 of Barkley's 11.9 reusable carries were left "unfilled". (A second gap: the practice-squad backs a team would call up -
+Pierce, Steele, Blue - are not on the board at all, deliberately: the 08-31 fix kept every `DEV` roster status off it.)
+
+*What the data says* (all-rows dump, 2021-2025 wk3-17, 2,397 team-weeks; actual = every RB's carries from the weekly
+stats, "board" = the backs the model had a row for):
+
+| room carries the board projected | team-weeks | projected | actual, all RBs | actual, backs on the board | board share |
+|---|---|---|---|---|---|
+| <= 6 | 5 | 2.7 | 15.6 | 9.4 | 60% |
+| 6-9 | 5 | 7.6 | 17.8 | 13.6 | 76% |
+| 9-12 | 16 | 10.5 | 19.4 | 16.3 | 84% |
+| 12-15 | 26 | 13.5 | 21.7 | 20.0 | 92% |
+| 21-24 (typical) | 1,007 | 22.4 | 22.0 | 22.1 | ~100% |
+
+A thin projected room is not a thin real room: the team still runs ~16-19 RB carries, and 8-40% of them go to backs nobody
+projected (call-ups). Small samples (n = 5, 5, 16, 26), consistent direction.
+
+*The change* (flag only): (1) what the growth cap could not place is no longer dropped - the surviving back(s) take
+`DEPLETED_ROOM_SURVIVOR_ABSORB` = 80% of it by their allocator shares (cap lifted for that remainder; the 2x cap still
+governs everything it could place, so a room with a real second back is bit-identical); (2) for a team with an OUT back and
+at most one healthy back, the practice-squad RBs (`DEV` status, point-in-time roster read, prior-season games NOT required) are
+added to the board flagged `_ps_elevation_candidate`, their baseline zeroed so they do not count toward the carry budget or
+target capacity, and the remaining 20% is split equally among them as an EXPECTED value (nobody knows who is elevated), at
+league per-opportunity rates (4.2 yds and 0.030 TD per carry; 0.80 catches, 6.0 yds, 0.035 TD per target). They show as
+"Practice squad" in the Injury column and as recipients in the vacancy table. 80% is read off the table above (76-84% where
+there are enough rooms); it is not fitted. Tests: `tests/test_rb_depleted_room_fill.py` (8).
+
+*PHI week 5 live board* (flag off -> on): Shipley 4.6 -> 12.8 carries, 2.6 targets, 4.3 -> 7.2 pts; Pierce / Steele / Blue 0 ->
+0.68 carries and 1.5 pts each; Hurts and the receivers unchanged.
+
+*Pre-set ship bar (written before the harness run):* harness v2 (2022-2025 wk3-17, injury + reserve replay, played-only),
+`--add v2_rb_depleted_room_fill`: START-ALL RMSE not worse than +0.002, START-RB and ALL not worse than +0.003, bias growth
+< 0.3, no position worse. The flag fires in a small share of team-weeks (a smoke build, 2024 wk8, moved 3 players by
+<= 0.19 pts and added no practice-squad rows), so the harness is expected to read "no effect"; it is a no-harm gate, and the
+case for shipping rests on the mechanism (carries conserved instead of deleted) and the table above.
+**Run 1 (11:25, DISCARDED - the flag was not clean).** START-ALL 7.637 -> 7.633, START-RB 7.634 -> 7.620, START-TE +0.002
+(CI [+0.000, +0.004], 1 of 7 weeks better), bias growth -0.020, verdict INCONCLUSIVE. A smoke build of 2024 wk3 afterwards showed
+why it cannot be used: the flag-on board had 435 rows against 447, and WR/TE projections moved on teams with no depleted room.
+The point-in-time roster read for practice-squad candidates (`week <= as_of_week`) had been applied to the WHOLE placeholder
+pass, so it also removed placeholder rows the default read takes from a later week's roster (a leak in the base arm, now
+visible but not the flag's business). Fixed by splitting the code: `_add_missing_returning_player_rows_core` is the
+original, untouched; `_add_practice_squad_candidates` runs after it and only ever ADDS rows (test: the flag-on frame starts
+with exactly the flag-off rows). Re-smoked 2024 wk3: 447 -> 447 rows, six RBs moved, no WR/TE. The old log is kept as
+`.sweeps/harness_rb_depleted_fill_RUN1_rowsleak_2022-2025_wk3-17.log`. Note for later: the default placeholder read in a
+BACKTEST takes each player's later-week roster status; worth a look on its own (it only matters to backtests, live has no
+later weeks).
+**Run 2 (14:07, the clean run) - SHIPPED 2026-10-07.** Harness v2, 2022-2025 wk3-17, injury + reserve replay, played-only
+(`.sweeps/harness_rb_depleted_fill_2022-2025_wk3-17.log`):
+
+| scope | RMSE base -> flag | CI | bias | weeks better |
+|---|---|---|---|---|
+| START-RB | 7.635 -> 7.616 (-0.019) | [-0.040, +0.000] | -0.109 -> -0.052 | 26-26 |
+| START-ALL | 7.639 -> 7.634 (-0.006) | [-0.012, +0.000] | -0.026 -> -0.010 | 26-26 |
+| RB (all) | 6.232 -> 6.219 (-0.014) | [-0.028, -0.002] | -0.215 -> -0.179 | 33-22 |
+| ALL | 6.257 -> 6.253 (-0.003) | [-0.007, -0.000] | -0.277 -> -0.267 | 33-22 |
+| QB / WR / TE, START-QB / WR / TE | +-0.000 (exactly unchanged) | | | 0-0 |
+
+Bias growth -0.016 (cap 0.3); pairwise accuracy unchanged to +0.001 for RB. Every pre-set bar is met (START-ALL, START-RB and
+ALL all improve rather than merely "not worse"; no position moves the wrong way; bias moves toward zero). The harness's own
+verdict is INCONCLUSIVE (Holm-adjusted p 1.0 everywhere), the same position as `v2_season_anchor` and `v2_qb_td_blend`; it
+ships on the user's go-ahead ("if the harness run looks good you can turn shipley fix on") because the bar is met, the effect
+is confined to the position the mechanism touches (WR/TE/QB untouched to three decimals), RB all-rows RMSE has a CI that
+excludes zero, and the live case is an obvious error (a five-carry backfield with two backs out). Expect it to be invisible on
+most weeks: it only changes a room where a back is OUT and the growth cap binds. **DEFAULT_FEATURES is now 52 flags. To undo:
+remove `'v2_rb_depleted_room_fill'` from DEFAULT_FEATURES.** It is also a calibration input (RB points move slightly); the v4
+lines are unchanged and were not re-checked for this.
+
+**Found while shipping (live only, fixed before commit):** on a live board the practice-squad backs are roster rows with NO
+week (no stats row), and the point-in-time filter (`week <= as_of_week`) dropped them, so the first default-on build showed
+Shipley's 12.8 carries but no practice-squad rows. `_add_practice_squad_candidates` now takes `current_snapshot` (True only
+when the target is not historical): weekless rows count as the current roster and override older weekly rows. A backtest
+still drops weekless rows (they carry no date), so the harness-tested path is unchanged. Test:
+`test_a_live_board_reads_the_weekless_roster_snapshot_and_a_backtest_does_not`. Live week-5 board on the defaults: Shipley
+12.75 carries / 7.21 pts; Pierce, Steele, Blue 0.68 carries / 1.48 pts each, shown as "Practice squad"; integrity scan clean;
+747 tests pass.

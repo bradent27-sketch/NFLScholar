@@ -9,7 +9,7 @@ are older and partly stale; where they disagree with this file, this file wins.
 ## State at the sweep
 
 - Branch `PreNFL2026_v.02`, pushed, HEAD `001ad1b`. `main` was never touched. 727 tests pass. Nothing is running.
-- `DEFAULT_FEATURES` = 51 flags; `MODEL_FEATURES` = 82. Calibration lines are **v4** (kept twice, 10-01 and 10-06).
+- `DEFAULT_FEATURES` = 52 flags; `MODEL_FEATURES` = 83. Calibration lines are **v4** (kept twice, 10-01 and 10-06).
 - Newest ships: `v2_season_anchor` (10-06) and `v2_qb_td_blend` (10-06). Both shipped on a pre-set bar although the
   harness's own verdict was INCONCLUSIVE. Undo = remove the flag name from `DEFAULT_FEATURES`.
 - Standing rules: every model change is a named flag; a `DEFAULT_FEATURES` change needs sign-off or a win on a bar written
@@ -45,6 +45,11 @@ are older and partly stale; where they disagree with this file, this file wins.
    user's 2026-09-01 choice). The backlog said to spend "one minute" on making the repo private before pushes. Not changed;
    it is the user's call.
 
+5. **`v2_rb_depleted_room_fill` is SHIPPED (2026-10-07, DEFAULT_FEATURES = 52).** Harness run 2: RB RMSE -0.014 (CI excludes 0),
+   START-RB -0.019, START-ALL -0.006, bias growth -0.016, QB/WR/TE unchanged. Live PHI: Shipley 4.6 -> 12.8 carries, the three
+   practice-squad backs 0.68 carries each ("Practice squad" in the Injury column). Undo = remove the flag. Details and the
+   discarded first run are in the methodology doc, 2026-10-07 entry. A calibration re-check for RB was not done.
+
 ## B. Model leads, ranked by (expected value / effort)
 
 Context for all of them: at the level the model is near its ceiling (RMSE within 0-2% of an oracle that knows each
@@ -72,16 +77,20 @@ small wins. The large unexplained variance is touchdowns and boom/bust games.
    player's earlier games to his latest club. The methodology notes it as "the same class as the open traded-player
    end-of-season team item". A grep audit of every place that groups historical stats by the merged `team` column is
    not done. Backtest-only effect (live boards read nflreadpy), but it changes harness base arms.
-5. **`v2_venue_mult` has never been backtested standalone.** It is the last untested piece of the old `game_env` bundle
+5. **Backtest-only leak in the default roster placeholder read.** `_add_missing_returning_player_rows_core` takes each
+   player's later-week roster status in a backtest (found 2026-10-07: removing it changed a 2024 wk3 board from 447 to 435
+   rows). Live has no later weeks, so only backtests and calibration dumps are touched; every harness base arm contains it.
+   Quantify before touching it (it would move base arms).
+6. **`v2_venue_mult` has never been backtested standalone.** It is the last untested piece of the old `game_env` bundle
    (the sibling elasticity shipped as `v2_game_total_elasticity_perstat`). One arm, ~2h15m. Low expected value (dome vs
    outdoor), but it is the only built-and-never-measured flag.
-6. **RB2 rushing yards.** After `v2_rb_rush_yards_script_neutral` the RB1 yards gap fell from -2.60 to -0.61/game, but RB2
+7. **RB2 rushing yards.** After `v2_rb_rush_yards_script_neutral` the RB1 yards gap fell from -2.60 to -0.61/game, but RB2
    was still -2.83 (clean RB1/RB2 combined bias -3.11 -> -1.68). `v2_rb_carry_budget_lead` (lead-weighted carry trim)
    is an unshipped modifier that tested worse than uniform.
-7. **Parked, three attempts failed:** the TE target split (TE1 -0.35, TE2 +0.23 targets/game; participation, WR+TE and a
+8. **Parked, three attempts failed:** the TE target split (TE1 -0.35, TE2 +0.23 targets/game; participation, WR+TE and a
    within-room tilt all left START-TE RMSE unchanged or worse). Weak tiers (WR rank 31-55, WR team #3+ with bias +1.1,
    TE rank 1-4) are small.
-8. **Parked, by user decision or evidence:** team-level scoring. The market beats the model on team TDs and yards
+9. **Parked, by user decision or evidence:** team-level scoring. The market beats the model on team TDs and yards
    (model team-TD slope 0.53, i.e. ~2x too spread out) but the model matches posted player props (r = 0.90) and beat
    them live. Blending is rejected permanently. TD compression and yards-per-opportunity shrinkage did not help points.
 
@@ -104,7 +113,12 @@ small wins. The large unexplained variance is touchdowns and boom/bust games.
 - **Draft HQ / draft projections:** no backtest harness exists for `build_projected_board`; the self-weights
   (`STAT_SELF_WEIGHT`, `FULL_TRUST_GAMES`, `ROLE_CHANGE_EVIDENCE_FLOOR`) were moved untuned on 2026-08-31. The cleaner
   role-change fix (volume from the new rank's curve, efficiency from the player's own history) is not built.
-- **Weather:** pregame forecasts come from `data/weather.py` (Open-Meteo). `v2_weather_adjustment` IS shipped, wind
+- **Retractable roofs with no posted roof status:** for a FUTURE game the schedule's `roof` column is blank at ATL, DAL and
+  ARI (and the domes are only marked once the game is played), and the weather code treats a blank roof as outdoors, so a
+  hot or wet day gets an outdoor forecast that likely does not apply (week 5: TB @ DAL reads 79.6 F, dry). Small, but a
+  closed-roof assumption below ~60 F or above ~85 F / in rain would be a better default. Not built.
+- **Weather:** pregame forecasts come from `data/weather.py` (Open-Meteo). International games now use the real stadium
+  (`VENUE_COORDS`; fixed 2026-10-07 after PHI @ JAX at Tottenham was read as Jacksonville). `v2_weather_adjustment` IS shipped, wind
   only: QB and RB carry a confirmed win, the WR slopes are zeroed (WR measured worse at every strength), TE is
   wired. Temperature and precipitation are shown as icons only and are not modelled.
 - **Blocked on data:** O-line PFF grades have no weekly archive (leakage); injury reports are only surfaced on Draft

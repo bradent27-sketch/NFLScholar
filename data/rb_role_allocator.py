@@ -108,6 +108,23 @@ SCORE_RANK_DISCOUNT = {1: 1.08, 2: 0.98, 3: 0.88}
 SCORE_RANK_DISCOUNT_DEFAULT = 0.80
 VACANCY_MAX_GROWTH = 2.00
 
+# v2_rb_depleted_room_fill (2026-10-07). VACANCY_MAX_GROWTH lets no surviving back more than double his own
+# volume, which is right when the room still has a real second back and wrong when the room has been emptied: with
+# PHI's Barkley and Bigsby both out (14.9 + 1.5 carries/game vacated) the lone healthy back, Will Shipley (2.9
+# carries/game), could absorb 2.9 more and the other ~10 carries simply vanished - a 5-carry backfield, no one else
+# projected. What the data says (2021-2025, wk3+, team RB-room carries): when the board projects a room <= 12
+# carries the room's real total is ~18 (not ~11), and the backs ON the board get 76-84% of it; the rest go to RBs
+# nobody projected (call-ups). So what the growth cap could not place is not dropped: the surviving backs take
+# DEPLETED_ROOM_SURVIVOR_ABSORB of it (by their allocator shares, cap lifted) and the rest goes to the team's
+# practice-squad candidates when the board carries any, else stays unallocated.
+DEPLETED_ROOM_SURVIVOR_ABSORB = 0.80
+# Per-opportunity rates for a practice-squad back with no projection of his own (league RB 2022-2025: 4.2 yards and
+# 0.030 TDs per carry; 0.80 catches, 6.0 yards and 0.035 TDs per target). Keyed by the dependent stat.
+DEPLETED_ROOM_LEAGUE_RATES = {
+    'rushing_attempts': {'rushing_yards': 4.2, 'rushing_tds': 0.030},
+    'targets': {'receptions': 0.80, 'receiving_yards': 6.0, 'receiving_tds': 0.035},
+}
+
 # How many extra chart slots an injured-top-three backfield can promote into
 # the "credible core RB" set. 1 => one absence reaches the chart RB4, never the
 # RB5. See the `rank_ceiling` block in allocate_preseason_rb_roles.
@@ -1150,7 +1167,8 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
 def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles: dict[str, dict[str, Any]],
                                            as_of_year: int | None = None,
                                            injury_provenance: dict[str, Any] | None = None,
-                                           receiver_pecking_order: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+                                           receiver_pecking_order: bool = False,
+                                           depleted_room_fill: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Redistribute an out core RB's carries and targets with allocator shares.
 
     ``injury_provenance`` can state the source season.  A prior-season injury
@@ -1162,6 +1180,11 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
     WR/TE branch so a departed pass catcher's targets flow mostly to the
     players just behind him on the depth chart rather than to the team's
     alpha - see RECEIVER_VACANCY_PECKING_TAPER / _LEAD_DAMPEN / _ABS_GROWTH_FLOOR.
+
+    ``depleted_room_fill`` (v2_rb_depleted_room_fill): carries/targets of an OUT back that the surviving backs'
+    growth cap could not place are no longer dropped - see DEPLETED_ROOM_SURVIVOR_ABSORB. Rows flagged
+    ``_ps_elevation_candidate`` (practice-squad backs the build added for a depleted room) receive the
+    practice-squad share as an expected value, split equally.
     """
     columns = ["team", "volume", "source_player", "functional_source_role", "injury_provenance",
                "vacated", "allocated", "unallocated", "recipients", "reason"]
@@ -1186,6 +1209,8 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
         "targets": ("receptions", "receiving_yards", "receiving_tds"),
     }
     share_columns = {"rushing_attempts": "_rb_carry_allocation_share", "targets": "_rb_target_allocation_share"}
+    ps_flag = (out["_ps_elevation_candidate"].fillna(False).astype(bool) if "_ps_elevation_candidate" in out.columns
+               else pd.Series(False, index=out.index))
     for source_index in out.index[sidelined]:
         source = out.loc[source_index]
         team = str(source["Team"])
@@ -1237,70 +1262,121 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                 mask = (out["Team"].astype(str).eq(team) & out["Pos"].isin(["WR", "TE"])
                         & ~sidelined & availability.gt(0.01))
             candidates = out.index[mask]
-            if reusable <= 0 or not len(candidates):
+            # Practice-squad backs the build added for a depleted room (v2_rb_depleted_room_fill).
+            ps_idx = pd.Index([])
+            if depleted_room_fill and source_role == "RB":
+                ps_idx = out.index[out["Team"].astype(str).eq(team) & out["Pos"].eq("RB") & ps_flag
+                                   & ~sidelined & availability.gt(0.01)]
+            if reusable <= 0 or (not len(candidates) and not len(ps_idx)):
                 ledgers.append({"team": team, "volume": volume_col, "source_player": source["Player"],
                                 "functional_source_role": source_role_label, "injury_provenance": source_provenance,
                                 "vacated": pre_injury, "allocated": 0.0, "unallocated": reusable,
                                 "recipients": [], "reason": "No active, allocator-eligible core-RB recipient."})
                 continue
-            shares = (_numeric(out.loc[candidates], share_columns[volume_col], default=np.nan).fillna(0.0)
-                      if source_role == "RB" else pd.to_numeric(out.loc[candidates, volume_col], errors="coerce").fillna(0.0))
-            if shares.sum() <= 0:
+            shares = ((_numeric(out.loc[candidates], share_columns[volume_col], default=np.nan).fillna(0.0)
+                       if source_role == "RB" else pd.to_numeric(out.loc[candidates, volume_col], errors="coerce").fillna(0.0))
+                      if len(candidates) else pd.Series(dtype=float))
+            if len(candidates) and shares.sum() <= 0:
                 shares = pd.to_numeric(out.loc[candidates, "Expected Snap Share"], errors="coerce").fillna(0.0)
-            if shares.sum() <= 0:
-                ledgers.append({"team": team, "volume": volume_col, "source_player": source["Player"],
-                                "functional_source_role": source_role_label, "injury_provenance": source_provenance,
-                                "vacated": pre_injury, "allocated": 0.0, "unallocated": reusable,
-                                "recipients": [], "reason": "Eligible recipients had no role allocation evidence."})
-                continue
-            # "Next man up": rank the healthy recipients by current volume
-            # (pecking-order proxy), weight by a geometric rank decay from the
-            # top backup down, hold the current lead to a fixed small share,
-            # favour the source's own position, and exclude the deep bench
-            # outright - not a raw-target split that hands the alpha the
-            # plurality.  RB carry/target vacancy keeps its allocator-share
-            # split (this branch is WR/TE only).
-            pecking = receiver_pecking_order and source_role in {"WR", "TE"} and len(shares) > 1
-            if pecking:
-                order = shares.rank(method="first", ascending=False)
-                weights = pd.Series(
-                    np.power(RECEIVER_VACANCY_RANK_DECAY, (order - 2.0).clip(lower=0.0)),
-                    index=order.index)
-                weights = weights.where(order > 1.0, RECEIVER_VACANCY_LEAD_SHARE)
-                weights = weights.where(order <= RECEIVER_VACANCY_PARTICIPATION_RANKS, 0.0)
-                cross_pos = out.loc[candidates, "Pos"].astype(str).ne(source_role).to_numpy()
-                weights = weights.where(~cross_pos, weights * RECEIVER_VACANCY_CROSS_POS_WEIGHT)
-                if weights.sum() > 0:
-                    shares = weights
-            volume = pd.to_numeric(out.loc[candidates, volume_col], errors="coerce").fillna(0.0)
-            requested = shares / shares.sum() * reusable
-            allowed = (volume * VACANCY_MAX_GROWTH - volume).clip(lower=0.0)
-            if pecking:
-                allowed = allowed.clip(lower=RECEIVER_VACANCY_ABS_GROWTH_FLOOR)
-            gain = np.minimum(requested, allowed)
-            factor = (volume + gain) / volume.replace(0.0, np.nan)
-            factor = factor.replace([np.inf, -np.inf], np.nan).fillna(1.0)
-            out.loc[candidates, volume_col] = (volume + gain).round(2)
-            for dep_col in dep_cols:
-                if dep_col in out.columns:
-                    base = pd.to_numeric(out.loc[candidates, dep_col], errors="coerce").fillna(0.0)
-                    out.loc[candidates, dep_col] = (base * factor).round(2)
-            # team_rank: 1-based standing of each fill-in among the active,
-            # role-compatible recipient pool by post-redistribution volume.
-            # Display-only metadata for the Deep Dive vacancy table (it trims
-            # rows below the trusted tier) - nothing downstream reads it.
-            _rank = (pd.to_numeric(out.loc[candidates, volume_col], errors="coerce")
-                     .fillna(0.0).rank(ascending=False, method="min"))
-            recipients = [{"player": str(out.at[index, "Player"]),
-                           "allocated": round(float(gain.loc[index]), 3),
-                           "team_rank": int(_rank.loc[index])}
-                          for index in candidates if gain.loc[index] > 0]
-            allocated = float(gain.sum())
+            if len(candidates) and shares.sum() <= 0:
+                if not len(ps_idx):
+                    ledgers.append({"team": team, "volume": volume_col, "source_player": source["Player"],
+                                    "functional_source_role": source_role_label, "injury_provenance": source_provenance,
+                                    "vacated": pre_injury, "allocated": 0.0, "unallocated": reusable,
+                                    "recipients": [], "reason": "Eligible recipients had no role allocation evidence."})
+                    continue
+                candidates, shares = candidates[:0], pd.Series(dtype=float)
+            gain, recipients, allocated = pd.Series(dtype=float), [], 0.0
+            if len(candidates):
+                # "Next man up": rank the healthy recipients by current volume
+                # (pecking-order proxy), weight by a geometric rank decay from the
+                # top backup down, hold the current lead to a fixed small share,
+                # favour the source's own position, and exclude the deep bench
+                # outright - not a raw-target split that hands the alpha the
+                # plurality.  RB carry/target vacancy keeps its allocator-share
+                # split (this branch is WR/TE only).
+                pecking = receiver_pecking_order and source_role in {"WR", "TE"} and len(shares) > 1
+                if pecking:
+                    order = shares.rank(method="first", ascending=False)
+                    weights = pd.Series(
+                        np.power(RECEIVER_VACANCY_RANK_DECAY, (order - 2.0).clip(lower=0.0)),
+                        index=order.index)
+                    weights = weights.where(order > 1.0, RECEIVER_VACANCY_LEAD_SHARE)
+                    weights = weights.where(order <= RECEIVER_VACANCY_PARTICIPATION_RANKS, 0.0)
+                    cross_pos = out.loc[candidates, "Pos"].astype(str).ne(source_role).to_numpy()
+                    weights = weights.where(~cross_pos, weights * RECEIVER_VACANCY_CROSS_POS_WEIGHT)
+                    if weights.sum() > 0:
+                        shares = weights
+                volume = pd.to_numeric(out.loc[candidates, volume_col], errors="coerce").fillna(0.0)
+                requested = shares / shares.sum() * reusable
+                allowed = (volume * VACANCY_MAX_GROWTH - volume).clip(lower=0.0)
+                if pecking:
+                    allowed = allowed.clip(lower=RECEIVER_VACANCY_ABS_GROWTH_FLOOR)
+                gain = np.minimum(requested, allowed)
+                factor = (volume + gain) / volume.replace(0.0, np.nan)
+                factor = factor.replace([np.inf, -np.inf], np.nan).fillna(1.0)
+                out.loc[candidates, volume_col] = (volume + gain).round(2)
+                for dep_col in dep_cols:
+                    if dep_col in out.columns:
+                        base = pd.to_numeric(out.loc[candidates, dep_col], errors="coerce").fillna(0.0)
+                        out.loc[candidates, dep_col] = (base * factor).round(2)
+                # team_rank: 1-based standing of each fill-in among the active,
+                # role-compatible recipient pool by post-redistribution volume.
+                # Display-only metadata for the Deep Dive vacancy table (it trims
+                # rows below the trusted tier) - nothing downstream reads it.
+                _rank = (pd.to_numeric(out.loc[candidates, volume_col], errors="coerce")
+                         .fillna(0.0).rank(ascending=False, method="min"))
+                recipients = [{"player": str(out.at[index, "Player"]),
+                               "allocated": round(float(gain.loc[index]), 3),
+                               "team_rank": int(_rank.loc[index])}
+                              for index in candidates if gain.loc[index] > 0]
+                allocated = float(gain.sum())
+            reason = "Allocator-weighted core-RB injury redistribution."
+            if depleted_room_fill and source_role == "RB" and reusable - allocated > 1e-9:
+                # What the growth cap could not place is not dropped (see DEPLETED_ROOM_SURVIVOR_ABSORB).
+                leftover = reusable - allocated
+                survivor_extra = leftover * DEPLETED_ROOM_SURVIVOR_ABSORB if len(candidates) else 0.0
+                ps_pool = (leftover - survivor_extra) if len(ps_idx) else 0.0
+                if len(candidates) and survivor_extra > 0 and shares.sum() > 0:
+                    cur_volume = pd.to_numeric(out.loc[candidates, volume_col], errors="coerce").fillna(0.0)
+                    extra = shares / shares.sum() * survivor_extra
+                    new_volume = cur_volume + extra
+                    factor = (new_volume / cur_volume.replace(0.0, np.nan)).replace([np.inf, -np.inf], np.nan).fillna(1.0)
+                    out.loc[candidates, volume_col] = new_volume.round(2)
+                    for dep_col in dep_cols:
+                        if dep_col in out.columns:
+                            base = pd.to_numeric(out.loc[candidates, dep_col], errors="coerce").fillna(0.0)
+                            out.loc[candidates, dep_col] = (base * factor).round(2)
+                    gain = gain.add(extra, fill_value=0.0)
+                    allocated += float(extra.sum())
+                    _rank = (pd.to_numeric(out.loc[candidates, volume_col], errors="coerce")
+                             .fillna(0.0).rank(ascending=False, method="min"))
+                    recipients = [{"player": str(out.at[index, "Player"]),
+                                   "allocated": round(float(gain.loc[index]), 3),
+                                   "team_rank": int(_rank.loc[index])}
+                                  for index in candidates if gain.loc[index] > 0]
+                if len(ps_idx) and ps_pool > 0:
+                    per_back = ps_pool / len(ps_idx)
+                    rates = DEPLETED_ROOM_LEAGUE_RATES.get(volume_col, {})
+                    for k, index in enumerate(ps_idx):
+                        before = pd.to_numeric(pd.Series([out.at[index, volume_col]]), errors="coerce").fillna(0.0).iloc[0]
+                        out.at[index, volume_col] = round(float(before) + per_back, 2)
+                        for dep_col in dep_cols:
+                            if dep_col in out.columns:
+                                prev = pd.to_numeric(pd.Series([out.at[index, dep_col]]), errors="coerce").fillna(0.0).iloc[0]
+                                out.at[index, dep_col] = round(float(prev) + per_back * rates.get(dep_col, 0.0), 2)
+                        recipients.append({"player": str(out.at[index, "Player"]), "allocated": round(per_back, 3),
+                                           "team_rank": len(candidates) + 1 + k, "practice_squad": True})
+                    allocated += ps_pool
+                reason += (f" Depleted room: the surviving back(s) absorbed {DEPLETED_ROOM_SURVIVOR_ABSORB:.0%} of what the "
+                           "growth cap could not place"
+                           + (f"; {len(ps_idx)} practice-squad back(s) share the rest as an expected value, not a "
+                              "prediction of who is elevated." if len(ps_idx) else "; the rest goes to unprojected call-ups."))
             ledgers.append({"team": team, "volume": volume_col, "source_player": source["Player"],
                             "functional_source_role": source_role_label, "injury_provenance": source_provenance,
                             "vacated": pre_injury, "allocated": allocated,
                             "unallocated": max(0.0, reusable - allocated), "recipients": recipients,
-                            "reason": "Allocator-weighted core-RB injury redistribution."})
+                            "reason": reason})
     return out, pd.DataFrame(ledgers, columns=columns)
 
 

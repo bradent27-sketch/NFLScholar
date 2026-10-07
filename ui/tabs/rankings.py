@@ -349,6 +349,36 @@ def _render_distribution_chart(distribution, position_label):
     )
 
 
+# Switching a tab inside the projection dialog (the Deep dive stat tabs above all) re-runs the dialog and the
+# frontend empties the tab's panel until the new one arrives, so the dialog momentarily shrinks. On a tall window
+# the shrunken dialog fits the screen, the browser clamps its scroll position to 0, and when the content returns
+# the reader is left at the TOP of the breakdown (reproduced 2026-10-07 at a 1500 px viewport; the user's large
+# monitor). Streamlit has no hook for this, so a small script remembers the scroll position when a tab in the
+# dialog is clicked and puts it back once the content has regrown tall enough. It gives up on any wheel / touch /
+# key scroll by the reader, and after 6 s; it is registered once per page and does nothing when no dialog is open.
+_DIALOG_SCROLL_KEEP_JS = """
+<script>
+(function () {
+  if (window.__wrDialogScrollKeep) return;
+  window.__wrDialogScrollKeep = true;
+  document.addEventListener('click', function (ev) {
+    var tab = ev.target && ev.target.closest ? ev.target.closest('[data-testid="stDialog"] [role="tab"]') : null;
+    if (!tab) return;
+    var box = tab.closest('[data-testid="stDialog"]');
+    if (!box) return;
+    var saved = box.scrollTop, started = Date.now(), moved = false;
+    var stop = function () { moved = true; };
+    ['wheel', 'touchmove', 'keydown'].forEach(function (name) { box.addEventListener(name, stop, { once: true, passive: true }); });
+    var timer = setInterval(function () {
+      if (moved || !document.body.contains(box) || Date.now() - started > 6000) { clearInterval(timer); return; }
+      if (box.scrollTop < saved - 1 && box.scrollHeight - box.clientHeight >= saved) box.scrollTop = saved;
+    }, 40);
+  }, true);
+})();
+</script>
+"""
+
+
 def _close_projection_dialog():
     """Clear the one-shot detail state so a dismissed modal stays closed."""
     st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
@@ -557,6 +587,14 @@ _ALIGNMENT_MIX_STATS = (
 )
 
 
+def _what_these_mean(text):
+    """Explanatory text under a decomposition table, as a collapsed dropdown like the "What these columns
+    mean" one under the main projection table (requested 2026-10-07: a paragraph of formula text under each
+    worked-calculation table is only useful to someone who asks, so it stays out of the way until opened)."""
+    with st.expander("What these mean:", expanded=False):
+        st.markdown(text)
+
+
 def _render_alignment_mix(detail, reference_only=False):
     """Player slot/wide/inline alignment mix + the worked calculation behind
     the defense-allowed multiplier that mix produces - WR/TE only, and only
@@ -696,11 +734,13 @@ def _render_alignment_mix(detail, reference_only=False):
         "not a second adjustment on top of it. 'Combined' matches the primary table's projected value "
         "except for team-capacity and vacancy adjustments, which still apply downstream there."
     )
-    st.caption(
-        "/Game = this player's own per-game projected rate for that stat, split by his own alignment "
-        "share (not a separately measured per-alignment rate). 'Allowed×' = the opponent's allowed-by-"
-        "alignment multiplier for that alignment. 'Combined' = /Game × Allowed× × game context "
+    evidence_note = (detail.get('role') or {}).get('alignment_note')
+    _what_these_mean(
+        "**/Game** = this player's own per-game projected rate for that stat, split by his own alignment "
+        "share (not a separately measured per-alignment rate). **Allowed×** = the opponent's allowed-by-"
+        "alignment multiplier for that alignment. **Combined** = /Game × Allowed× × game context "
         "(script/pace/availability/environment). " + reconcile_clause
+        + (f"\n\n**Evidence:** {evidence_note}" if evidence_note else "")
     )
 
 
@@ -792,11 +832,11 @@ def _render_scheme_mix(detail):
     table = pd.DataFrame(table_rows + [totals_row])
     st.dataframe(style_plain_dataframe(table, multiplier_cols=multiplier_arrays), hide_index=True, width="stretch",
                 height=df_auto_height(len(table)))
-    st.caption(
-        "/Game = this player's own per-game projected rate for that stat, split by his own man/zone "
-        "route share (not a separately measured per-scheme rate). 'Allowed×' = the opponent's allowed-"
+    _what_these_mean(
+        "**/Game** = this player's own per-game projected rate for that stat, split by his own man/zone "
+        "route share (not a separately measured per-scheme rate). **Allowed×** = the opponent's allowed-"
         "by-scheme ratio for that side, back-calculated from every offense it faced this season. "
-        "'Combined' = /Game × Allowed× × game context (script/pace/availability/environment). The bottom "
+        "**Combined** = /Game × Allowed× × game context (script/pace/availability/environment). The bottom "
         "row's multiplier is the blend weighted by this player's own man/zone mix - it IS 'Defense "
         "multiplier' in the primary table for this stat (v2_scheme_matchup, tight ends), so 'Combined' "
         "matches that table's projected value except for team-capacity and vacancy, which apply "
@@ -1140,8 +1180,8 @@ def _render_context_multiplier_table(ingredients, weather_by_stat=None):
         'Combined (Context multiplier) ×': f"{ingredients['combined']:.3f}",
     }])
     st.dataframe(style_plain_dataframe(thin), hide_index=True, width="stretch", height=df_auto_height(1))
-    st.caption(
-        "Context multiplier = Game script × Role / participation × Pace × Availability × Vegas environment × "
+    _what_these_mean(
+        "**Context multiplier** = Game script × Role / participation × Pace × Availability × Vegas environment × "
         "Weather. **Role / participation** discounts a depth receiver or back who is often active without a "
         "box-score role (1.0 for a starter). **Game script** is this game's forward script factor (the "
         "script-neutral volume curve, or the player's own backward curve for stats that still use it). "
@@ -1893,6 +1933,82 @@ def _summarize_vacancy_entry(entry, this_player):
     return {'kind': 'full', 'caption': caption, 'recipients': kept, 'minor': minor}
 
 
+def _render_availability_note(availability):
+    """Availability and workload, printed only when it says something: a designation, a playing probability or
+    workload under 100%, a FantasyPros read, or a real availability source. A healthy player with no designation
+    is "plays 100%, workload 100%" - true for most of the board, so the line was noise (2026-10-07)."""
+    def _num(value):
+        try:
+            number = float(value)
+            return number if np.isfinite(number) else None
+        except (TypeError, ValueError):
+            return None
+
+    status = availability.get('status')
+    if str(status or '').strip().lower() in ('', 'no current designation', 'healthy', 'none'):
+        status = None          # the builder's own words for "nothing reported"
+    plays = _num(availability.get('plays_probability'))
+    workload = _num(availability.get('workload_if_active'))
+    reported = _num(availability.get('reported_probability'))
+    # 'no current availability source' is the sentinel for "nothing to report".
+    source = availability.get('source')
+    has_source = bool(source) and source != 'no current availability source'
+    routine = (not status and not has_source and reported is None
+               and (plays is None or plays >= 0.999) and (workload is None or workload >= 0.999))
+    if routine:
+        return
+    st.markdown("**Availability and workload**")
+    st.caption(
+        f"{status or 'No designation'} — plays {(plays if plays is not None else 1.0):.0%} of the time; "
+        f"workload if active {(workload if workload is not None else 1.0):.0%}."
+    )
+    if reported is not None:
+        st.caption(
+            f"FantasyPros reported {reported:.0%} chance to play — shown for reference only, "
+            "not an input to this projection. Only Out and Doubtful change the model (both → not playing)."
+        )
+    if has_source:
+        availability_note = availability.get('note') or ''
+        st.caption(
+            f"Source: {source} ({availability.get('match_method', 'not recorded')})"
+            f"{f'; {availability_note}' if availability_note else ''}."
+        )
+
+
+def _render_points_path(detail):
+    """How the fantasy-point total moves from the raw model number to the one on the board: one small table
+    (raw -> calibrated -> season anchor) in place of two paragraphs of captions. A stage that did not fire is not
+    listed, and with neither there is nothing to show."""
+    calibration = detail.get('calibration', {}) or {}
+    anchor = detail.get('season_anchor')
+    rows = []
+    if calibration.get('enabled'):
+        raw = float(calibration.get('raw_points', detail['raw_points']))
+        calibrated = float(calibration.get('displayed_points', detail['calibrated_points']))
+        rows.append({'Stage': 'Raw model', 'Points': f"{raw:.2f}", 'Change': '—',
+                     'Basis': 'Volume × per-opportunity rates × context, before any calibration.'})
+        rows.append({'Stage': 'Calibrated', 'Points': f"{calibrated:.2f}", 'Change': f"{calibrated - raw:+.2f}",
+                     'Basis': (f"Position line fitted on past seasons: {float(calibration.get('slope', 1.0)):.3f} × raw "
+                               f"+ {float(calibration.get('intercept', 0.0)):.3f}.")})
+    if anchor:
+        before, after = float(anchor['before']), float(anchor['after'])
+        rows.append({'Stage': 'Season anchor', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
+                     'Basis': (f"Pulled ×{float(anchor['factor']):.2f} of the way toward his own average of "
+                               f"{float(anchor['mean']):.1f} pts over {int(anchor['games'])} games this season.")})
+    if not rows:
+        return
+    st.markdown("**How the point total is built**")
+    frame = pd.DataFrame(rows)
+    st.dataframe(style_plain_dataframe(frame), hide_index=True, width="stretch", height=df_auto_height(len(frame)))
+    if anchor:
+        _what_these_mean(
+            "**Calibration** shrinks the raw model total toward the positional mean with a line fitted on past "
+            "seasons. **Season anchor** exists because the model's week-to-week departures from a player's own "
+            "average run too large, most of all for WR and RB late in the season, so the total is pulled part of the "
+            "way back toward his own average. It applies to the point total only, not to the individual stat lines."
+        )
+
+
 def _render_vacancy_redistribution(detail):
     """How an OUT teammate's vacated volume is filled in - which player lost
     it and which active teammates absorbed how much of it. Added 2026-08-29
@@ -1913,18 +2029,37 @@ def _render_vacancy_redistribution(detail):
     vacancy = detail.get('vacancy', [])
     if not vacancy:
         return
-    st.markdown("**How vacated volume is redistributed**")
     this_player = str(detail.get('player', ''))
-    recipient_rows, minor_lines = [], []
+    # 2026-10-07 per explicit request ("all of this text is essentially useless the way it is presented"): the
+    # section prints only what bears on THIS player's number. A teammate whose absence vacated nothing (a QB the
+    # QB1 gate had already zeroed, "No projected, active role-compatible replacement") and one too small to move
+    # anything (under ~1 target/carry) are dropped unless this player actually received some of it, in which case
+    # they collapse into one line below the table instead of a full sentence each.
+    shown, small_lines = [], []
     for entry in vacancy:
         summ = _summarize_vacancy_entry(entry, this_player)
-        if summ['kind'] in ('skipped', 'negligible'):
-            st.caption(summ['text'])
+        if summ['kind'] == 'skipped':
             continue
+        if summ['kind'] == 'negligible':
+            mine = next((r for r in (entry.get('recipients') or [])
+                         if str(r.get('player', '')) == this_player and float(r.get('allocated', 0.0) or 0.0) > 0), None)
+            if mine is not None:
+                label = _VACANCY_VOLUME_LABELS.get(str(entry.get('volume', '')), 'volume').lower()
+                small_lines.append(f"{entry.get('source_player') or 'a teammate'} ({float(entry.get('vacated', 0.0) or 0.0):.1f} "
+                                   f"{label} vacated, {float(mine['allocated']):+.2f} to this player)")
+            continue
+        shown.append(summ)
+    if not shown and not small_lines:
+        return
+    st.markdown("**How vacated volume is redistributed**")
+    recipient_rows, minor_lines = [], []
+    for summ in shown:
         st.caption(summ['caption'])
         recipient_rows.extend(summ['recipients'])
         if summ['minor']:
             minor_lines.append(summ['minor'])
+    if small_lines:
+        st.caption("Smaller absences that reached this player: " + "; ".join(small_lines) + ".")
     if recipient_rows:
         rec_df = pd.DataFrame(recipient_rows)
         style_grid = pd.DataFrame('', index=rec_df.index, columns=rec_df.columns)
@@ -1999,15 +2134,19 @@ def _render_decomposition_audit_body(detail):
         st.caption("QB status: not the expected starter; projected QB volume is held at zero.")
     elif role.get('starter_source') and role.get('starter_source') != 'Not applicable':
         st.caption(f"Starter/workload source: {role['starter_source']}.")
-    if role.get('partial_game_exclusions'):
-        st.caption(f"Partial-game screen: {role['partial_game_exclusions']} clearly interrupted current-season sample(s) were excluded from rate evidence.")
+    # The partial-game screen ("N interrupted games excluded from rate evidence") is not repeated here: each
+    # excluded game already shows as "Excluded - <reason>" in the Included column of that stat's game log (Deep
+    # dive), which says WHICH game and why, where a bare count could not.
     if role.get('returning_role_restored'):
         st.info(
             'Preseason role restoration: prior missed games were not treated as a reduced Week 1 workload; '
             f"the player's proven active-game role was used ({role.get('returning_role_reason', 'role recovery')})."
         )
-    elif role.get('preseason_role_source') not in (None, 'Not applicable'):
-        st.caption(f"Preseason role source: {role['preseason_role_source']}.")
+    elif (role.get('preseason_role_source') not in (None, 'Not applicable')
+          and not str(role.get('preseason_role_source')).lower().startswith('observed current-season')):
+        # "observed current-season role" is every in-season player's source and says nothing; the line is only
+        # worth printing when the role came from somewhere else (a depth chart, a prior season).
+        st.caption(f"Role source: {role['preseason_role_source']}.")
     if role.get('ourlads_role_floor_applied'):
         label = role.get('ourlads_role_position_label') or detail.get('position')
         rank = role.get('ourlads_role_available_rank')
@@ -2037,12 +2176,8 @@ def _render_decomposition_audit_body(detail):
             f"Depth-chart status flag: {role['ourlads_source_status_warning']}. "
             "It is a chart-source warning only; current availability controls the projection."
         )
-    # alignment_note reads "...alignment matchup is neutral" for
-    # essentially every player right now (no 2026 alignment data is
-    # loaded yet) - only worth a line once the underlying profile is
-    # actually available and doing something.
-    if role.get('alignment_available') and role.get('alignment_note'):
-        st.caption(f"Alignment: {role['alignment_note']}")
+    # The alignment evidence note (which weeks of slot / non-slot data fed the profile) moved into the "What these
+    # mean:" dropdown under the alignment table in the Overview tab, next to the numbers it describes.
 
     # Every share/volume column in the two RB allocation tables at three
     # decimals. style_plain_dataframe's auto-detection would give these one,
@@ -2154,48 +2289,8 @@ def _render_decomposition_audit_body(detail):
                 st.dataframe(style_plain_dataframe(pd.DataFrame(blend_rows)), hide_index=True,
                              width="stretch", height=df_auto_height(len(blend_rows)))
 
-    availability = detail['availability']
-    st.markdown("**Availability and workload**")
-    st.caption(
-        f"{availability['status'] or 'No current designation'} — "
-        f"plays probability {availability['plays_probability']:.0%}; "
-        f"workload if active {availability['workload_if_active']:.0%}."
-    )
-    reported = availability.get('reported_probability')
-    if reported is not None and pd.notna(reported):
-        st.caption(
-            f"FantasyPros reported {float(reported):.0%} chance to play — shown for reference only, "
-            "not an input to this projection. Only Out and Doubtful change the model (both → not playing)."
-        )
-    # 'no current availability source' is the sentinel for "nothing
-    # to report" - printing it as if it were a real source just
-    # restates the line above in a more confusing way.
-    if availability.get('source') and availability['source'] != 'no current availability source':
-        availability_note = availability.get('note') or ''
-        st.caption(
-            f"Availability source: {availability['source']} "
-            f"({availability.get('match_method', 'not recorded')})"
-            f"{f'; {availability_note}' if availability_note else ''}."
-        )
-
-    calibration = detail.get('calibration', {})
-    if calibration.get('enabled'):
-        st.caption(
-            f"Point calibration: raw {calibration.get('raw_points', detail['raw_points']):.2f} → "
-            f"calibrated {calibration.get('displayed_points', detail['calibrated_points']):.2f} "
-            f"({calibration.get('delta', 0.0):+.2f}); "
-            f"slope {calibration.get('slope', 1.0):.3f}, intercept {calibration.get('intercept', 0.0):.3f}."
-        )
-
-    anchor = detail.get('season_anchor')
-    if anchor:
-        st.caption(
-            f"Season anchor: {anchor['before']:.2f} → {anchor['after']:.2f} pts. Pulled toward his own average of "
-            f"{anchor['mean']:.1f} pts over {anchor['games']} games this season (×{anchor['factor']:.2f} of the gap) - "
-            "the model's week-to-week departures from a player's own average run too large, most of all for WR/RB "
-            "late in the season. Applied to the point total only."
-        )
-
+    _render_availability_note(detail['availability'])
+    _render_points_path(detail)
     _render_vacancy_redistribution(detail)
 
     _render_pass_capacity_room(detail)
@@ -2400,6 +2495,7 @@ def _open_projection_dialog(detail, market_detail=None):
             ["Overview", "Market lines", "Range of outcomes",
              "Role, audit & data sources", "News"],
             key="wr_decomp_tabs", on_change="rerun")
+        st.html(_DIALOG_SCROLL_KEEP_JS, unsafe_allow_javascript=True)
 
         if tab_overview.open:
             with tab_overview:

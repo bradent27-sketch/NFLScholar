@@ -72,6 +72,31 @@ STADIUM_COORDS: dict[str, tuple[float, float, bool]] = {
     "WAS": (38.91, -76.86, False),
 }
 
+# Venues that are NOT the nominal home team's stadium: international games (and any other neutral site) are
+# scheduled with a "home" team that is really just a designation - PHI @ JAX in week 5 of 2026 is played at
+# Tottenham Hotspur Stadium in London, not in Jacksonville. Matched on the schedule's `stadium` NAME (lower-case
+# substring), NOT on `location` / `stadium_id`: nflverse carries location="Home" and the home club's stadium_id
+# for that London game, and only the stadium name is right. Whether the roof is closed still comes from the
+# schedule's own `roof` column (it reads "dome" for Paris and Munich), so the third field is only the fallback.
+# Added 2026-10-07 after the user asked whether the week-5 Eagles-Jaguars game used London weather; it used
+# Jacksonville's (a 30.3N forecast for a game in Britain).
+VENUE_COORDS: dict[str, tuple[float, float, bool]] = {
+    "tottenham hotspur": (51.604, -0.066, False),     # London
+    "wembley": (51.556, -0.280, False),               # London
+    "stade de france": (48.924, 2.360, False),        # Paris
+    "bernabeu": (40.453, -3.688, False),              # Madrid - retractable
+    "bayern munich": (48.219, 11.625, False),         # Munich (Allianz Arena)
+    "allianz arena": (48.219, 11.625, False),
+    "deutsche bank park": (50.069, 8.645, False),     # Frankfurt
+    "banorte": (19.303, -99.150, False),              # Mexico City (Estadio Azteca), 2,200 m up
+    "azteca": (19.303, -99.150, False),
+    "maracana": (-22.912, -43.230, False),            # Rio de Janeiro
+    "neo quimica": (-23.545, -46.474, False),         # Sao Paulo (Corinthians Arena)
+    "melbourne cricket": (-37.820, 144.983, False),   # Melbourne
+    "croke park": (53.361, -6.251, False),            # Dublin
+    "hall of fame": (40.821, -81.399, False),         # Canton
+}
+
 INDOOR_ROOF_VALUES = {"dome", "closed", "indoor", "indoors", "retractable-closed"}
 OUTDOOR_ROOF_VALUES = {"outdoors", "open", "outdoor"}
 
@@ -89,6 +114,23 @@ class GameWeather:
     @property
     def usable(self) -> bool:
         return self.is_outdoor and (self.wind_mph is not None or self.temp_f is not None)
+
+
+def game_venue(game) -> tuple[str, float, float] | None:
+    """(cache key, lat, lon) of where one schedule row is actually played, or None when unknown.
+
+    A venue listed in VENUE_COORDS (an international or neutral-site stadium, matched on the schedule's stadium
+    name) wins over the nominal home team's own stadium; otherwise the home team's STADIUM_COORDS entry."""
+    stadium = str(game.get("stadium") or "").lower()
+    if stadium:
+        for needle, (lat, lon, _dome) in VENUE_COORDS.items():
+            if needle in stadium:
+                return f"venue:{needle}", lat, lon
+    home = game.get("home_team")
+    if isinstance(home, str) and home in STADIUM_COORDS:
+        lat, lon, _dome = STADIUM_COORDS[home]
+        return home, lat, lon
+    return None
 
 
 # --- recorded (schedule) path -------------------------------------------------
@@ -268,23 +310,23 @@ def forecast_game_weather(schedule_df: pd.DataFrame, week: int,
     out: dict[str, GameWeather] = {}
     dirty = False
     for _, g in wk.iterrows():
-        home = g.get("home_team")
-        if not isinstance(home, str) or home not in STADIUM_COORDS:
+        venue = game_venue(g)
+        if venue is None:
             continue
+        vkey, lat, lon = venue
         outdoor = _roof_is_outdoor(g.get("roof"))
         if not outdoor:
             obs = GameWeather(is_outdoor=False, source=f"{prov.name}-roof")
-        elif home in cache:
-            c = cache[home]
+        elif vkey in cache:
+            c = cache[vkey]
             obs = GameWeather(c.get("wind_mph"), c.get("temp_f"), True, f"{prov.name}-cache")
         else:
-            lat, lon, _dome = STADIUM_COORDS[home]
             try:
                 wind, temp = prov.fetch(lat, lon, _kickoff_utc(g))
             except Exception:
                 wind, temp = None, None
             obs = GameWeather(wind, temp, True, prov.name)
-            cache[home] = {"wind_mph": wind, "temp_f": temp}
+            cache[vkey] = {"wind_mph": wind, "temp_f": temp}
             dirty = True
         for team in (g.get("home_team"), g.get("away_team")):
             if isinstance(team, str) and team:
@@ -400,20 +442,20 @@ def resolve_game_precip(schedule_df: pd.DataFrame, week: int, use_cache: bool = 
     out: dict[str, str | None] = {}
     dirty = False
     for _, g in wk.iterrows():
-        home = g.get("home_team")
-        if not isinstance(home, str) or home not in STADIUM_COORDS:
+        venue = game_venue(g)
+        if venue is None:
             continue
+        vkey, lat, lon = venue
         if not _roof_is_outdoor(g.get("roof")):
             bucket = None
-        elif home in cache:
-            bucket = cache[home]
+        elif vkey in cache:
+            bucket = cache[vkey]
         else:
-            lat, lon, _dome = STADIUM_COORDS[home]
             try:
                 bucket = _open_meteo_precip(lat, lon, _kickoff_utc(g))
             except Exception:
                 bucket = None
-            cache[home] = bucket
+            cache[vkey] = bucket
             dirty = True
         for team in (g.get("home_team"), g.get("away_team")):
             if isinstance(team, str) and team:

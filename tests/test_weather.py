@@ -167,3 +167,55 @@ def test_wind_is_monotone_and_clamped():
         prev = m
     assert weather_stat_multipliers("QB", 120, is_outdoor=True)["passing_yards"] == pytest.approx(
         WEATHER_STAT_CLAMP[0])
+
+# --- a game played away from the nominal home team's stadium ------------------
+
+def test_game_venue_uses_the_stadium_name_not_the_home_team():
+    """PHI @ JAX in week 5 of 2026 is played in London. nflverse still says location="Home" and the JAX stadium_id,
+    so only the stadium NAME identifies the venue (2026-10-07)."""
+    london = {"home_team": "JAX", "away_team": "PHI", "location": "Home", "stadium_id": "JAX00",
+              "stadium": "Tottenham Hotspur Stadium"}
+    key, lat, lon = wx.game_venue(london)
+    assert key.startswith("venue:") and 51 < lat < 52 and -1 < lon < 1        # Britain, not Florida
+    assert wx.game_venue({"home_team": "JAX", "away_team": "PHI", "stadium": "EverBank Stadium"})[0] == "JAX"
+    assert wx.game_venue({"home_team": "JAX", "away_team": "PHI"})[0] == "JAX"      # no stadium column at all
+    assert wx.game_venue({"home_team": "ZZZ", "stadium": "Somewhere"}) is None       # nothing known: skipped
+    mexico = wx.game_venue({"home_team": "MIN", "stadium": "Estadio Banorte"})
+    assert mexico[0] != "MIN" and 19 < mexico[1] < 20
+
+
+def test_forecast_and_precip_fetch_the_venue_the_game_is_played_at(monkeypatch):
+    seen = []
+
+    class Recorder(wx.WeatherProvider):
+        name = "rec"
+
+        def fetch(self, lat, lon, when):
+            seen.append((round(lat), round(lon)))
+            return 7.0, 55.0
+
+    sch = _schedule([
+        {"season": 2026, "week": 5, "home_team": "JAX", "away_team": "PHI", "roof": "outdoors",
+         "stadium": "Tottenham Hotspur Stadium", "gameday": "2026-10-11", "gametime": "09:30"},
+        {"season": 2026, "week": 5, "home_team": "GB", "away_team": "CHI", "roof": "outdoors",
+         "stadium": "Lambeau Field", "gameday": "2026-10-11", "gametime": "13:00"},
+    ])
+    out = wx.forecast_game_weather(sch, 5, provider=Recorder(), use_cache=False)
+    assert (52, 0) in seen and (44, -88) in seen and (30, -82) not in seen     # London and Green Bay, never Jacksonville
+    assert out["PHI"].temp_f == 55.0 and out["JAX"].wind_mph == 7.0
+
+    coords = []
+    monkeypatch.setattr(wx, "_open_meteo_precip", lambda lat, lon, when: coords.append((round(lat), round(lon))) or "dry")
+    precip = wx.resolve_game_precip(sch, 5, use_cache=False)
+    assert (52, 0) in coords and (30, -82) not in coords
+    assert precip["PHI"] == "dry" and precip["JAX"] == "dry"
+
+
+def test_a_fixed_dome_stadium_name_still_resolves_through_the_roof_column():
+    """Paris and Munich are open-to-the-sky stadiums the schedule marks as domes; the roof column still wins."""
+    sch = _schedule([
+        {"season": 2026, "week": 7, "home_team": "NO", "away_team": "PIT", "roof": "dome",
+         "stadium": "Stade de France", "gameday": "2026-10-25", "gametime": "09:30"},
+    ])
+    out = wx.forecast_game_weather(sch, 7, provider=wx.WeatherProvider(), use_cache=False)
+    assert not out["NO"].is_outdoor and not out["PIT"].is_outdoor

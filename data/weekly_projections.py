@@ -279,6 +279,14 @@ STAT_K_BY_POS = {
 # receiving_tds, not QB passing_tds. Swept 2026-10-06 at K=15 on harness v2 2022-2025 wk3-17: START-QB RMSE -0.010 (CI
 # spans 0), START-ALL -0.002, better in 25 of 60 weeks - no evidence to promote it.
 QB_PASSING_TD_K = 15.0
+# 'v2_qb_td_blend' (SHIPPED 2026-10-06) = QB_PASSING_TD_K plus a regression of the QB's PRIOR-season TD rate toward the
+# league's per-game rate for starters. scripts/eval_qb_td_blend_sweep.py re-scores the blend exactly from 3,553
+# captured QB-weeks (2021-2025): over K x regression the START-QB RMSE surface is a shallow basin at K 12-20 with the
+# prior regressed 25-50% (best -0.019 vs shipped, CI spans 0; K=15 alone -0.012, matching the harness's -0.010);
+# ignoring the prior (1.0) or making the blend much slower is worse, so both a QB's own history and his current-season
+# rate carry real signal. Regress 0.25 (4 of 5 held-out years better; 0.5 is 3 of 5 for 0.001 more).
+QB_PASSING_TD_PRIOR_REGRESS = 0.25
+QB_PASSING_TD_LEAGUE_RATE = 1.46      # passing TDs per game, QB starters who played, 2021-2025
 
 # role_confidence in [0, 1] scales K by this range - a confident every-down
 # role shrinks K toward the low end (own rate trusted sooner), a thin/
@@ -1866,6 +1874,8 @@ MODEL_FEATURES = (
                              # override set during the starter's injury gives way
                              # when he returns (warning shown). See
                              # _returning_qb_starters.
+    'v2_qb_td_blend',  # SHIPPED 2026-10-06 (DEFAULT_FEATURES). v2_qb_passing_td_k's K=15 PLUS the QB's prior-season TD rate regressed
+                             # 25% toward the league per-game rate. Offline sweep best region; see QB_PASSING_TD_PRIOR_REGRESS.
     'v2_qb_passing_td_k',  # TESTED 2026-10-06, INCONCLUSIVE, left UNSHIPPED (harness v2: START-QB -0.010 CI spans 0,
                              # START-ALL -0.002, better in 25 of 60 weeks). K=15 (shared 5) for QB passing_tds: a
                              # slower blend of the QB's own current-season TD rate. See QB_PASSING_TD_K.
@@ -2549,6 +2559,10 @@ DEFAULT_FEATURES = frozenset({
     # wk3-17: START-ALL RMSE 7.642 -> 7.631 (-0.012, CI [-0.030, +0.007], 33-27 weeks better), bias growth -0.064,
     # START-WR -0.018 / RB -0.012 / TE -0.001, no position worse; held-out better in all six year splits. QB untouched.
     'v2_season_anchor',
+    # SHIPPED 2026-10-06 (pre-set bar met; harness INCONCLUSIVE by CI): see MODEL_FEATURES and QB_PASSING_TD_K. Harness v2
+    # 2022-2025 wk3-17: START-QB RMSE 7.481 -> 7.466 (-0.015, CI [-0.042, +0.009], pairwise +0.003), START-ALL -0.003, bias
+    # growth +0.008, every other position +-0.000; matches the offline sweep (-0.019). QB TDs react to far fewer games.
+    'v2_qb_td_blend',
 })
 
 
@@ -11058,6 +11072,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior_rate = np.where(fullback_mask, np.nan_to_num(prior_rate, nan=0.0), prior_rate)
                 pos_rate_arr = np.where(fullback_mask, 0.0, pos_rate_arr)
 
+            td_prior_regress = 0.0
+            if 'v2_qb_td_blend' in feats and pos == 'QB' and stat == 'passing_tds':
+                # A QB's prior-season TD rate is one noisy season: pull it part-way to the league rate (starters).
+                td_prior_regress = QB_PASSING_TD_PRIOR_REGRESS
+                prior_rate = np.where(
+                    np.isfinite(prior_rate),
+                    prior_rate + td_prior_regress * (QB_PASSING_TD_LEAGUE_RATE - prior_rate), prior_rate)
+
             # cur_games (RAW game count, not the recency-weighted
             # weight_sum) still drives the current-vs-prior-season shrinkage
             # below, deliberately - see _weighted_player_rates' docstring on
@@ -11073,8 +11095,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                      if 'v2_adaptive_volume' in feats else None),
                                     role_change_reduction,
                                     pos=(pos if 'v2_stat_k_by_pos' in feats else None),
-                                    k_override=(QB_PASSING_TD_K if ('v2_qb_passing_td_k' in feats and pos == 'QB'
-                                                                   and stat == 'passing_tds') else None))
+                                    k_override=(QB_PASSING_TD_K if (
+                                        ('v2_qb_passing_td_k' in feats or 'v2_qb_td_blend' in feats)
+                                        and pos == 'QB' and stat == 'passing_tds') else None))
             if 'v2_xtd' in feats and stat in XTD_ZONE_STATS:
                 # Replaces the standard blend above for exactly these two
                 # stats (see 'v2_xtd''s own comment block) - passing_tds is
@@ -11262,8 +11285,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 (cur['role_change_confidence'].to_numpy(dtype=float)
                  if 'v2_adaptive_volume' in feats else None),
                 role_change_reduction, pos=(pos if 'v2_stat_k_by_pos' in feats else None),
-                k_override=(QB_PASSING_TD_K if ('v2_qb_passing_td_k' in feats and pos == 'QB'
-                                               and stat == 'passing_tds') else None))
+                k_override=(QB_PASSING_TD_K if (
+                    ('v2_qb_passing_td_k' in feats or 'v2_qb_td_blend' in feats)
+                    and pos == 'QB' and stat == 'passing_tds') else None))
             stat_trace[stat] = {
                 'build_path': np.full(len(cur), 'direct rate'),
                 'current_rate': in_season_rate,
@@ -11281,6 +11305,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 # independent axis from this one.
                 'prior2_weight': stat_prior2_weight,
                 'prior_rate': np.where(np.isnan(prior_rate), pos_rate_arr, prior_rate),
+                'td_prior_regress': np.full(len(cur), td_prior_regress),
                 'prior_source': np.where(prior_source_is_player, 'player prior', 'position fallback'),
                 'role_scale': stat_role_scale,
                 'expected_snap_share': player_share,
@@ -11911,6 +11936,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'defense_adjusted_prior_rate': _trace_number(trace, 'defense_adjusted_prior_rate', i),
                     'prior2_weight': _trace_number(trace, 'prior2_weight', i),
                     'prior_rate': _trace_number(trace, 'prior_rate', i),
+                    'td_prior_regress': _trace_number(trace, 'td_prior_regress', i, 0.0),
                     'prior_source': _trace_value(trace, 'prior_source', i, 'position fallback'),
                     'role_scale': _trace_number(trace, 'role_scale', i, 1.0),
                     'expected_snap_share': _trace_number(trace, 'expected_snap_share', i),

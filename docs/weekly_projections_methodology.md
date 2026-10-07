@@ -4361,3 +4361,64 @@ earlier TD-compression test found. Stays in MODEL_FEATURES as a documented candi
 season mean (earlier audit entry), agrees with the posted player lines (r = 0.90), and beats them on the weeks scored
 live. What remains is within-tier discrimination, which no variant tested so far moves beyond noise.
 
+
+## 2026-10-06 (evening) - QB passing-TD blend: how much is there, and the best setting (offline sweep + candidate `v2_qb_td_blend`)
+
+User: the `v2_qb_passing_td_k` result (START-QB -0.010, CI spanning 0) "feels close to helping", QB TDs seem to react to
+a few games too quickly - find a better value or another way of using the history.
+
+**Is the over-reaction real? Yes, and it is not only in-season.** Projected QB passing TDs regress on actual with slope
+0.52-0.61 in EVERY season phase, weeks 1-2 included (2021-2025, 2,341 played QB-weeks, `scripts/eval_qb_td_shrink.py`),
+and after 5 games the blend puts about 59% weight on the QB's own current-season TD rate (K=5). Murray (2 games, 0.41 TD/game
+against a 1.24 prior) is at weight 0.36 and projects 0.90 TDs.
+
+**How much is there to gain in points? Very little.** Flattening QB TDs completely (league rate x attempts) costs +0.08
+START-QB RMSE; the best compression gains ~0.002-0.016 depending on how the points line is refit. The ceiling for any
+change to how QB TDs are estimated is about -0.02 RMSE (0.26% of 7.59). The TD COUNT itself does improve (RMSE 1.143 ->
+1.122 at best) and the projected TD spread falls ~23%.
+
+**Method (new, exact):** `scripts/capture_qb_td_traces.py` ran the shipped model's as-of builds (DEFAULT_FEATURES + injury/
+reserve replay, weeks 3-17, 2021-2025) and saved every QB's blend inputs and outputs (3,553 QB-weeks, 80 min,
+`.sweeps/qb_td_traces.parquet`). Because blended = w*current + (1-w)*prior and the final TD is blended times
+multipliers, any other K or prior re-scores exactly (`scripts/eval_qb_td_blend_sweep.py`; reproduces the board to
+0.007 pts, and its K=15 result, -0.012, agrees with the harness's -0.010).
+START-QB RMSE change vs shipped (negative = better), K down, share of the PRIOR rate regressed to the league rate across:
+
+| K | 0 | 0.25 | 0.50 | 0.75 | 1.00 |
+|---|---|---|---|---|---|
+| 8 | -0.0089 | -0.0124 | -0.0124 | -0.0088 | -0.0017 |
+| 12 | -0.0123 | -0.0175 | -0.0179 | -0.0136 | -0.0046 |
+| 15 | -0.0124 | -0.0186 | -0.0194 | -0.0147 | -0.0045 |
+| 20 | -0.0110 | -0.0186 | -0.0198 | -0.0146 | -0.0029 |
+| 30 | -0.0067 | -0.0162 | -0.0181 | -0.0122 | +0.0014 |
+| 70 | +0.0057 | -0.0075 | -0.0105 | -0.0036 | +0.0134 |
+| 1000 | +0.0245 | +0.0073 | +0.0028 | +0.0108 | +0.0314 |
+
+A shallow basin at K 12-20 with the prior regressed 25-50%. Both extremes are worse: a QB's own prior-season rate
+(regress 1.0) and his current-season rate (K -> infinity) each carry real signal. Weekly-bootstrap CI of the best
+cell -0.020 is [-0.050, +0.012]; leave-one-year-out (parameters chosen on the other four years) -0.015 mean, better in 3 of 5
+held-out years. Anchoring the final TD to what his own projected passing YARDS imply at the league TD/yard rate
+(`lam`) did not help (-0.006 alone, nothing added on top). K=15 with regress 0.25 is better in 4 of 5 years
+(-0.0186, worst year +0.012); 0.50 is 3 of 5 for 0.001 more, so 0.25 was taken.
+
+**`v2_qb_td_blend` SHIPPED into DEFAULT_FEATURES (51 flags), pre-set bar met, harness INCONCLUSIVE by CI.** K=15 for QB
+passing_tds plus the QB's prior-season rate regressed 25% toward 1.46 TD/game (QB_PASSING_TD_PRIOR_REGRESS /
+QB_PASSING_TD_LEAGUE_RATE; the traced prior is the regressed one and the dialog says so). Harness v2 2022-2025 wk3-17,
+injury/reserve replay (`.sweeps/harness_qb_td_blend_2022-2025_wk3-17.log`), candidate vs shipped:
+
+| scope | RMSE base -> blend | CI | pairwise | bias |
+|---|---|---|---|---|
+| START-QB | 7.481 -> 7.466 (-0.015) | [-0.042, +0.009] | +0.003 | +0.029 -> -0.016 |
+| START-ALL | 7.640 -> 7.637 (-0.003) | [-0.007, +0.001] | +0.000 | -0.003 -> -0.011 |
+| QB (all) | 8.391 -> 8.382 (-0.009) | [-0.026, +0.008] | +0.002 | -1.438 -> -1.446 |
+| ALL | 6.258 -> 6.257 (-0.001) | [-0.004, +0.001] | +0.000 | -0.276 -> -0.277 |
+
+RB / WR / TE move by +-0.000 (the flag touches one stat of one position). Bias growth +0.008 (cap 0.3). Better in 31 of 60
+weeks on START-ALL and 34 of 60 on ALL, against 25 of 60 for K=15 alone. Holm-adjusted p 1.0, so by the harness's own rule
+this is "no significant effect"; it ships because the bar written down beforehand is met, the harness agrees with the
+offline sweep (-0.015 vs -0.019) on both direction and size, the mechanism is measured directly (TD slope 0.55 in every
+phase; optimum K 12-20; the prior carries signal but not all of it), the TD COUNT is more accurate (RMSE 1.143 -> ~1.12) and
+about a quarter less spread, and the user asked for QB TDs to stop reacting to a few games. The effect on points is
+about 0.2% of RMSE - do not expect it to be visible; expect fewer wild QB TD projections. Live week 5: QB pass-TD sd 0.435 -> 0.336,
+points move at most about +-1. **To undo it: remove `'v2_qb_td_blend'` from DEFAULT_FEATURES.** `v2_qb_passing_td_k` (K alone) stays
+an unshipped, documented candidate; calibration lines are unchanged (the QB line barely moves under TD compression).

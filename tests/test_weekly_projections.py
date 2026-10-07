@@ -4004,3 +4004,59 @@ def test_blended_rate_forwards_k_override_to_the_blend_weight():
     base = wp._blended_rate(*args)[0]
     slow = wp._blended_rate(*args, k_override=wp.QB_PASSING_TD_K)[0]
     assert 1.0 < slow < base < 3.0          # a larger K leans further on the prior
+
+
+def test_v2_qb_td_blend_slows_the_current_season_weight_and_regresses_the_prior():
+    rows = []
+    for week in range(1, 5):
+        for team, opp in (('KC', 'DEN'), ('DEN', 'KC')):
+            rows.append({'name': f'{team} Receiver', 'team': team, 'opponent_team': opp, 'week': week,
+                         'position': 'WR', 'weekly_snap_pct': 90.0, 'targets': 8.0, 'receptions': 5.0,
+                         'receiving_yards': 60.0, 'receiving_tds': 0.3, 'fantasy_points': 12.0})
+            rows.append({'name': f'{team} QB', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'QB',
+                         'weekly_snap_pct': 100.0, 'passing_attempts': 34.0, 'passing_completions': 22.0,
+                         'passing_yards': 250.0, 'passing_tds': 3.0, 'passing_interceptions': 0.6,
+                         'fantasy_points': 22.0})
+    current = weekly(rows)
+    prior = current.copy()
+    prior['week'] = 18
+    prior.loc[prior['position'] == 'QB', 'passing_tds'] = 1.0       # last season's TD rate sits below this season's
+    schedule = pd.DataFrame([{'week': 5, 'home_team': 'KC', 'away_team': 'DEN'}])
+    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+    metas = {}
+    try:
+        wp.load_and_merge_data = lambda year, scoring: (
+            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+        wp.load_schedule = lambda year: schedule.copy()
+        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+        wp._target_margins_by_team = lambda year, week: {}
+        wp.realized_script_by_team_week = lambda year: {}
+        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_qb_td_blend'}), ('blend', wp.DEFAULT_FEATURES | {'v2_qb_td_blend'})):
+            wp.build_weekly_projections.clear()
+            _board, metas[arm] = wp.build_weekly_projections(
+                2026, 5, 'Full PPR', as_of_week=5, apply_injury=False, features=feats)
+    finally:
+        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+        wp.build_weekly_projections.clear()
+    key = ('KC QB', 'QB', 'KC')
+    base, blend = (metas[a]['explanations'][key]['stats']['passing_tds'] for a in ('base', 'blend'))
+    assert base['td_prior_regress'] == 0.0 and blend['td_prior_regress'] == wp.QB_PASSING_TD_PRIOR_REGRESS
+    assert blend['current_weight'] < base['current_weight']                      # K 15 instead of 5: a slower weight
+    # the prior moved up toward the league rate (1.0 -> 1.0 + 0.25 * (1.46 - 1.0)), and the blend ties out exactly
+    assert blend['prior_rate'] == pytest.approx(
+        base['prior_rate'] + wp.QB_PASSING_TD_PRIOR_REGRESS * (wp.QB_PASSING_TD_LEAGUE_RATE - base['prior_rate']), abs=0.01)
+    assert blend['blended_rate'] == pytest.approx(
+        blend['current_weight'] * blend['current_rate'] + (1 - blend['current_weight']) * blend['prior_rate'], abs=0.01)
+    # this season's 3-TD rate is the high side here, so a slower blend projects fewer TDs than the shipped one
+    assert blend['projection'] < base['projection']
+    # nobody else moves: the flag touches QB passing TDs only
+    wr = ('KC Receiver', 'WR', 'KC')
+    assert (metas['blend']['explanations'][wr]['stats']['receiving_tds']['projection']
+            == metas['base']['explanations'][wr]['stats']['receiving_tds']['projection'])
+    assert 'v2_qb_td_blend' in wp.MODEL_FEATURES and 'v2_qb_td_blend' in wp.DEFAULT_FEATURES   # shipped 2026-10-06
+    assert 'v2_qb_passing_td_k' not in wp.DEFAULT_FEATURES                                     # K alone stays unshipped

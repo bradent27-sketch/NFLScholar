@@ -1,0 +1,30 @@
+QB played rows 2327, START pool 1723; shipped QB line (0.738, 4.154)
+
+===== anchor = league TD per attempt =====
+fit 21-23 / test 24-25: rate 0.0440  shipped-line RMSE 7.796 | ship-line lam 1.0 d +0.0000 | refit-line lam 1.0 d +0.0034 (line (np.float64(0.762), np.float64(3.742)))
+fit 21-24 / test 25: rate 0.0448  shipped-line RMSE 8.022 | ship-line lam 1.0 d +0.0000 | refit-line lam 0.9 d -0.0086 (line (np.float64(0.759), np.float64(3.919)))
+fit 22-25 / test 21: rate 0.0454  shipped-line RMSE 7.653 | ship-line lam 0.9 d -0.0068 | refit-line lam 0.8 d +0.0341 (line (np.float64(0.775), np.float64(3.736)))
+fit 21,23,25 / test 22,24: rate 0.0456  shipped-line RMSE 7.332 | ship-line lam 0.8 d +0.0058 | refit-line lam 0.7 d +0.0062 (line (np.float64(0.764), np.float64(3.745)))
+  ship: START-QB RMSE change by split [0.0, 0.0, -0.0068, 0.0058] -> not every split
+  refit: START-QB RMSE change by split [0.0034, -0.0086, 0.0341, 0.0062] -> not every split
+
+===== anchor = league TD per passing yard =====
+fit 21-23 / test 24-25: rate 0.0061  shipped-line RMSE 7.796 | ship-line lam 0.9 d -0.0067 | refit-line lam 0.9 d -0.0042 (line (np.float64(0.763), np.float64(3.731)))
+fit 21-24 / test 25: rate 0.0063  shipped-line RMSE 8.022 | ship-line lam 0.9 d -0.0099 | refit-line lam 0.9 d -0.0059 (line (np.float64(0.758), np.float64(3.923)))
+fit 22-25 / test 21: rate 0.0063  shipped-line RMSE 7.653 | ship-line lam 0.8 d -0.0078 | refit-line lam 0.8 d +0.0389 (line (np.float64(0.775), np.float64(3.744)))
+fit 21,23,25 / test 22,24: rate 0.0064  shipped-line RMSE 7.332 | ship-line lam 0.7 d +0.0033 | refit-line lam 0.7 d -0.0017 (line (np.float64(0.763), np.float64(3.76)))
+  ship: START-QB RMSE change by split [-0.0067, -0.0099, -0.0078, 0.0033] -> not every split
+  refit: START-QB RMSE change by split [-0.0042, -0.0059, 0.0389, -0.0017] -> not every split
+
+in-sample on 2021-2025 (anchor TD/att 0.0455), START-QB RMSE by lam, shipped line / refit line:
+ lam  ship RMSE  refit RMSE     refit line  pairwise (refit)  bias (refit)
+ 1.0     7.5897      7.5958 (0.762, 3.854)            0.6131         0.320
+ 0.9     7.5877      7.5928 (0.764, 3.836)            0.6138         0.309
+ 0.8     7.5880      7.5921 (0.765, 3.821)            0.6135         0.297
+ 0.7     7.5906      7.5937  (0.766, 3.81)            0.6134         0.284
+ 0.6     7.5954      7.5977 (0.767, 3.802)            0.6141         0.271
+ 0.5     7.6026      7.6042 (0.767, 3.797)            0.6139         0.256
+ 0.4     7.6121      7.6130 (0.767, 3.797)            0.6148         0.240
+ 0.3     7.6238      7.6243   (0.767, 3.8)            0.6129         0.224
+ 0.2     7.6378      7.6380 (0.766, 3.808)            0.6123         0.206
+ 0.0     7.6725      7.6727 (0.765, 3.836)            0.6064         0.168

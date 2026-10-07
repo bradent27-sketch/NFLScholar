@@ -1,5 +1,9 @@
 # Weekly Rankings — open backlog
 
+> **Superseded for current state by `docs/open_items_2026-10-07.md`** (2026-10-07). This file is the August record
+> of the backlog and its backtest queue; most of its queue is DONE. Items below that are still open were carried into
+> the newer file.
+
 Everything touching the weekly ranking / projection model that is proposed,
 partially built, backtested-but-unshipped, blocked, or explicitly parked.
 Compiled 2026-08-29, updated 2026-08-30. Sources: this codebase,

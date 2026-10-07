@@ -39,6 +39,12 @@ narrative that used to live at the top of this file is archived in
 
 ## Current direction — weekly projection model iteration (Aug 2026–)
 
+> **2026-10-07 update: start with `docs/open_items_2026-10-07.md`.** It is the current list of loose ends, time-sensitive
+> checks, ranked model leads and closed experiments, and it supersedes the "live queue" in
+> `docs/weekly_rankings_backlog.md` sec. 8 (August) and the branch/working-copy details in this section (the work is on
+> `PreNFL2026_v.02`, pushed; the checkout is `E:\NFLScholar`). The newest dated entries are at the bottom of
+> `docs/weekly_projections_methodology.md`.
+
 Active work is on the **weekly projection / ranking model** (`data/weekly_projections.py`
 and its allocators). It is a single standard model — the old V1/V2 toggle was retired
 2026-08-26; component behaviour is gated by named flags in `MODEL_FEATURES`, and only the

@@ -279,6 +279,92 @@ def _totals_bar_html(label, away_value, home_value, more_is_better, away_color, 
     )
 
 
+def _bold_player_row(styled, table, focus_key):
+    """``styled`` with the row of the player whose cleaned name is ``focus_key`` set in bold white. Presentation
+    only: any failure (a duplicate name in a box, an unexpected Styler) returns ``styled`` untouched rather than
+    breaking the box score."""
+    try:
+        from data.utils import clean_name_exact
+        keys = clean_name_exact(pd.Series(table['Player'].astype(str).to_numpy())).to_numpy()
+        if not (keys == focus_key).any():
+            return styled
+        rows = ['font-weight: 800; color: #ffffff' if k == focus_key else '' for k in keys]
+        return styled.apply(lambda col: rows, axis=0)
+    except Exception:
+        return styled
+
+
+def render_box_body(season, game, focus_team=None, highlight_player=None):
+    """
+    The header, the team-comparison bars and the two team tabs for ONE game - everything about a box score that is
+    not a button. Returns True when stat lines were drawn, False (after saying so) when none are on file; the
+    caller owns whatever "close" control goes with that.
+
+    Shared by this tab's inline panel and by the Weekly Rankings decomposition, which opens a game's full box score
+    inside its own dialog (Streamlit allows one dialog at a time, so it cannot be a second dialog). Nothing in here
+    touches session state or a widget key, so it is safe to call from either place.
+
+    ``focus_team`` opens that team's tab first (the player's own); ``highlight_player`` bolds that one line in
+    whichever table it appears, matched on the cleaned name. Both are optional and change only the presentation.
+    """
+    game_id = game['Game Id']
+    st.markdown(_box_header_html(game), unsafe_allow_html=True)
+    away, home = game['Away'], game['Home']
+    away_color = team_color(away) or THEME['colors']['secondary']
+    home_color = team_color(home) or THEME['colors']['primary']
+
+    # Loaded HERE, not in render(), so a slate with no box open pays nothing
+    # for this. A dedicated raw loader, not the six-tabs-share
+    # load_and_merge_data() - that one runs every row through
+    # load_year_data()'s REG-only filter (see its docstring), which drops
+    # every playoff game before a box score ever gets a chance to look one
+    # up. load_box_score_stats() reads the same file without that filter -
+    # see its docstring for why that's safe for a single-game lookup.
+    from data.loaders import load_box_score_stats
+    with skeleton_loader("table", n_rows=6, n_cols=6):
+        stats_df = load_box_score_stats(season)
+    players = game_players(stats_df, game_id)
+    if players.empty:
+        st.caption("No player box score on file for this game yet.")
+        return False
+
+    away_totals, home_totals = team_totals(players, away), team_totals(players, home)
+    if away_totals and home_totals:
+        bars = ''.join(
+            _totals_bar_html(label, away_totals.get(label, 0), home_totals.get(label, 0),
+                             more_is_better, away_color, home_color)
+            for label, more_is_better in TOTALS_COMPARISON
+            if label in away_totals
+        )
+        st.markdown(f"<div class='bs-compare'>{bars}</div>", unsafe_allow_html=True)
+
+    from ui.styling import df_auto_height, style_plain_dataframe
+    tab_labels = [team_display_name(away), team_display_name(home)]
+    focus_label = {away: tab_labels[0], home: tab_labels[1]}.get(str(focus_team).upper()) if focus_team else None
+    team_tabs = st.tabs(tab_labels, default=focus_label) if focus_label else st.tabs(tab_labels)
+    focus_key = None
+    if highlight_player:
+        from data.utils import clean_name_exact
+        focus_key = clean_name_exact(pd.Series([str(highlight_player)])).iloc[0]
+    for tab, abbr in zip(team_tabs, (away, home)):
+        with tab:
+            rendered_any = False
+            for title, columns, gate in BOX_SECTIONS:
+                table = section_rows(players, abbr, columns, gate)
+                if table.empty:
+                    continue
+                rendered_any = True
+                st.markdown(f"**{title}**")
+                styled = style_plain_dataframe(table.set_index('Player'))
+                if focus_key:
+                    styled = _bold_player_row(styled, table, focus_key)
+                st.dataframe(styled, width="stretch", height=df_auto_height(len(table)))
+            if not rendered_any:
+                st.caption("No stat lines on file for this team in this game.")
+    return True
+
+
+
 def _render_box_panel(season):
     """
     The box score, FULL WIDTH, called from one of two spots in render():
@@ -317,54 +403,9 @@ def _render_box_panel(season):
         st.button("Close", key="gs_box_close_missing", on_click=close_box_score)
         return
 
-    st.markdown(_box_header_html(game), unsafe_allow_html=True)
-    away, home = game['Away'], game['Home']
-    away_color = team_color(away) or THEME['colors']['secondary']
-    home_color = team_color(home) or THEME['colors']['primary']
-
-    # Loaded HERE, not in render(), so a slate with no box open pays nothing
-    # for this. A dedicated raw loader, not the six-tabs-share
-    # load_and_merge_data() - that one runs every row through
-    # load_year_data()'s REG-only filter (see its docstring), which drops
-    # every playoff game before a box score ever gets a chance to look one
-    # up. load_box_score_stats() reads the same file without that filter -
-    # see its docstring for why that's safe for a single-game lookup.
-    from data.loaders import load_box_score_stats
-    with skeleton_loader("table", n_rows=6, n_cols=6):
-        stats_df = load_box_score_stats(season)
-    players = game_players(stats_df, game_id)
-    if players.empty:
-        st.caption("No player box score on file for this game yet.")
+    if not render_box_body(season, game):
         st.button("Close box score", key="gs_box_close", on_click=close_box_score)
         return
-
-    away_totals, home_totals = team_totals(players, away), team_totals(players, home)
-    if away_totals and home_totals:
-        bars = ''.join(
-            _totals_bar_html(label, away_totals.get(label, 0), home_totals.get(label, 0),
-                             more_is_better, away_color, home_color)
-            for label, more_is_better in TOTALS_COMPARISON
-            if label in away_totals
-        )
-        st.markdown(f"<div class='bs-compare'>{bars}</div>", unsafe_allow_html=True)
-
-    from ui.styling import df_auto_height, style_plain_dataframe
-    team_tabs = st.tabs([team_display_name(away), team_display_name(home)])
-    for tab, abbr in zip(team_tabs, (away, home)):
-        with tab:
-            rendered_any = False
-            for title, columns, gate in BOX_SECTIONS:
-                table = section_rows(players, abbr, columns, gate)
-                if table.empty:
-                    continue
-                rendered_any = True
-                st.markdown(f"**{title}**")
-                st.dataframe(
-                    style_plain_dataframe(table.set_index('Player')),
-                    width="stretch", height=df_auto_height(len(table)),
-                )
-            if not rendered_any:
-                st.caption("No stat lines on file for this team in this game.")
 
     action_cols = st.columns(3)
     with action_cols[0]:

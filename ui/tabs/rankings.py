@@ -34,6 +34,10 @@ from data.utils import calculate_percentile, clean_name_exact, clean_name_for_me
 from data.weekly_projections import build_weekly_projections, season_snap_share, DEFAULT_FEATURES
 from data.prediction_ledger import record_board
 from data.odds_weekly import weekly_props, weekly_market_projection, weekly_market_book_lines, snapshot_is_for_week
+from ui.box_view import (
+    NO_SCORE, active_box_view, close_box_view, owner_key as box_owner_key, render_box_view, render_game_table,
+    score_entries, score_texts,
+)
 from data.draft_projections import PROJECTED_STATS as _MARKET_PROJECTED_STATS
 from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
 from data.availability_overrides import availability_fingerprint, AVAILABILITY_OVERRIDE_PATH
@@ -348,6 +352,7 @@ def _render_distribution_chart(distribution, position_label):
 def _close_projection_dialog():
     """Clear the one-shot detail state so a dismissed modal stays closed."""
     st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
+    close_box_view()
 
 
 _DECOMPOSITION_2DP_STATS = {'passing_tds', 'rushing_tds', 'receiving_tds', 'passing_interceptions'}
@@ -1251,9 +1256,15 @@ def _render_defense_allowed_by_alignment(detail, stat, label, log):
     pivot_obs = pivot_obs.reset_index().sort_values('source_week')
     pivot_exp = pivot_exp.reset_index()
     merged = pivot_obs.merge(pivot_exp, on=index_cols, how='left', suffixes=('', '_exp'))
+    align_season = (int(pd.to_numeric(adf['source_year'], errors='coerce').dropna().iloc[0])
+                    if 'source_year' in adf.columns and pd.to_numeric(adf['source_year'], errors='coerce').notna().any()
+                    else detail.get('season_year'))
+    align_games = score_entries(merged, align_season, detail['opponent'], 'source_week')
+    align_score_col = f"Score ({detail['opponent']} first)"
     display_data = {
         'Week': merged['source_week'].astype(int),
         'Offense faced': merged['offense_team'],
+        align_score_col: score_texts(align_games),
     }
     avg_cols = []
     ratio_cols = []
@@ -1274,9 +1285,11 @@ def _render_defense_allowed_by_alignment(detail, stat, label, log):
     ]
     display = pd.DataFrame(display_data)
     st.markdown(f"**{detail['opponent']} defense — what it's allowed to {label.lower()}, by alignment, by week**")
-    st.dataframe(
+    render_game_table(
         _style_team_column(_append_average_row(display, 'Week', 'AVG', avg_cols, stat=stat, ratio_cols=ratio_cols), 'Offense faced'),
-        hide_index=True, width="stretch", height=df_auto_height(len(display) + 1))
+        align_games, score_col=align_score_col,
+        key=f"wr_box_align_{stat}_{detail['player']}_{detail['team']}_{detail['target_week']}_{align_season}",
+        owner=box_owner_key(detail), season=align_season, height=df_auto_height(len(display) + 1))
     st.caption(
         "Raw per-week evidence, not the shrunk candidate multiplier shown in the Alignment mix section above "
         "- a thin per-alignment sample there gets pulled most of the way back to a neutral 1.000× until more "
@@ -1317,6 +1330,9 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
     game_log = game_log_by_season.get(season_year) or []
     defense_log = defense_log_by_season.get(season_year) or []
     season_label = season_year if season_year is not None else (detail.get('season_year') or 'current')
+    # Widget-key stem and owner for the clickable Score cells (ui/box_view.py): one per stat tab, player and season.
+    box_key = f"{stat}_{detail['player']}_{detail['team']}_{detail['target_week']}_{season_year}"
+    box_owner = box_owner_key(detail)
 
     player_rows = [g for g in game_log if stat in g]
     if player_rows:
@@ -1333,6 +1349,10 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
         opp_score = pd.to_numeric(pgl.get('_opp_score', pd.Series(dtype=float)), errors='coerce')
         score = [f"{int(t)}-{int(o)}" if pd.notna(t) and pd.notna(o) else '—'
                 for t, o in zip(team_score, opp_score)]
+        # Each row's game (by game_id, else week + team) for the clickable Score; also fills a score the
+        # schedule join above could not.
+        player_games = score_entries(pgl, season_year, detail.get('team'), '_week_num', 'game_id')
+        score = [s if s != NO_SCORE else fallback for s, fallback in zip(score, score_texts(player_games))]
         result = pgl.get('_result', pd.Series('', index=pgl.index)).fillna('').replace('', '—')
         pgl_display = pd.DataFrame({
             'Week': pgl['_week_num'].astype(int),
@@ -1352,9 +1372,12 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
         pgl_with_avg = _append_average_row(
             pgl_display, 'Week', 'AVG', [f'Raw {label}', f'Defense-adj {label}'], stat=stat,
             avg_mask=eligible)
-        st.dataframe(
-            _style_team_column(pgl_with_avg, 'Opponent'), hide_index=True,
-            width="stretch", height=df_auto_height(len(pgl_with_avg)))
+        if any(player_games):
+            st.caption("Click a game's Score to open its full box score.")
+        render_game_table(
+            _style_team_column(pgl_with_avg, 'Opponent'), player_games, score_col='Score',
+            key=f"wr_box_player_{box_key}", owner=box_owner, season=season_year,
+            height=df_auto_height(len(pgl_with_avg)))
         n_excluded = int((~eligible.astype(bool)).sum())
         if n_excluded:
             st.caption(f"{n_excluded} game(s) excluded from this player's rate evidence (marked above, not hidden).")
@@ -1368,18 +1391,22 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
         dgl['_week_num'] = pd.to_numeric(dgl.get('_week'), errors='coerce')
         dgl = dgl.dropna(subset=['_week_num']).sort_values('_week_num')
         baseline_col = f'_baseline_{stat}'
+        defense_games = score_entries(dgl, season_year, detail['opponent'], '_week_num')
+        defense_score_col = f"Score ({detail['opponent']} first)"
         dgl_display = pd.DataFrame({
             'Week': dgl['_week_num'].astype(int),
             'Offense faced': dgl.get('_offense', ''),
+            defense_score_col: score_texts(defense_games),
             f'Allowed {label}': [_fmt_stat(stat, v) for v in dgl[stat]],
             "That offense's own average": [_fmt_stat(stat, v) for v in dgl.get(baseline_col, pd.Series(dtype=float))],
             'Recency weight': [f"{v:.2f}" if pd.notna(v) else '—' for v in dgl.get('_weight', pd.Series(dtype=float))],
         })
         dgl_with_avg = _append_average_row(
             dgl_display, 'Week', 'AVG', [f'Allowed {label}', "That offense's own average"], stat=stat)
-        st.dataframe(
-            _style_team_column(dgl_with_avg, 'Offense faced'), hide_index=True,
-            width="stretch", height=df_auto_height(len(dgl_with_avg)))
+        render_game_table(
+            _style_team_column(dgl_with_avg, 'Offense faced'), defense_games, score_col=defense_score_col,
+            key=f"wr_box_defense_{box_key}", owner=box_owner, season=season_year,
+            height=df_auto_height(len(dgl_with_avg)))
         st.caption(
             f"Defense multiplier ({values.get('matchup_multiplier', 1.0):.3f}×): each week above compares what "
             f"{detail['opponent']} allowed to that offense's own average, recency-weighted, then re-centered "
@@ -1403,6 +1430,11 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
             f"efficiency rate {values.get('efficiency_rate', 0.0):.3f}")
     if values.get('two_year_td_prior'):
         notes.append("Uses a comparable two-year TD prior.")
+    if values.get('td_prior_regress'):
+        notes.append(
+            f"QB TD blend: his prior-season TD rate is regressed {values['td_prior_regress']:.0%} toward the league's "
+            f"per-game rate before it is blended with this season's, and this season's rate carries "
+            f"{values.get('current_weight', 0.0):.0%} (a slow weight - a QB's TD rate is among the noisiest rates).")
     if values.get('qb1_selection_required'):
         notes.append("QB1 selection required — volume held at zero until selected.")
     elif not values.get('qb_projected_starter', True):
@@ -2341,6 +2373,14 @@ def _open_projection_dialog(detail, market_detail=None):
             jump_tab_label, jump_context = pending_jump
             switch_tab(jump_tab_label, **jump_context)
             st.rerun()
+
+        # A game's full box score, opened from a Score cell in the logs below, takes the dialog over until the
+        # reader goes Back (Streamlit allows one dialog at a time). Nothing below runs while it is open, so the
+        # breakdown is rendered exactly as before whenever it is not - see ui/box_view.py.
+        box_view = active_box_view(box_owner_key(detail))
+        if box_view:
+            render_box_view(detail, box_view)
+            return
 
         _render_decomposition_header(detail)
 

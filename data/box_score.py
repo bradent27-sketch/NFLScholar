@@ -353,10 +353,13 @@ def _link_entry(game, team):
         won = str(winner).upper() == subject
 
     score = ''
+    score_plain, result = '', ''
     if game.get('Played') and pd.notna(game.get('Away Pts')) and pd.notna(game.get('Home Pts')):
         mine = game['Home Pts'] if is_home else game['Away Pts']
         theirs = game['Away Pts'] if is_home else game['Home Pts']
         score = f" {int(mine)}-{int(theirs)}"
+        score_plain = f"{int(mine)}-{int(theirs)}"
+        result = 'W' if mine > theirs else ('L' if mine < theirs else 'T')
     return {
         'game_id': str(game['Game Id']),
         'week': int(game['Week']),
@@ -364,4 +367,8 @@ def _link_entry(game, team):
         'label': f"W{int(game['Week'])} {prefix}{opponent}",
         'help': f"Open the box score — {game.get('Date Display') or ''} {prefix}{opponent}{score}".strip(),
         'won': won,
+        # The final score from `team`'s side ("24-17", own points first), '' for an unplayed game; and that side's
+        # result. Added 2026-10-06 for the Weekly Rankings decomposition's clickable Score cells.
+        'score': score_plain,
+        'result': result,
     }

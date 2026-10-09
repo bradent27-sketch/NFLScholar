@@ -2060,6 +2060,33 @@ MODEL_FEATURES = (
                              # Evidence and harness: see the methodology doc,
                              # 2026-10-07 entry (harness run 2: RB -0.014, CI
                              # excludes 0; nothing else moves).
+    'v2_opening_week_stat_calibration',  # SHIPPED 2026-10-08 (was a candidate). Week 1 (RB/WR/TE)
+                             # and week 2 (RB) replace the points calibration
+                             # line with a line per STAT (OPENING_WEEK_STAT_
+                             # CALIBRATION), so the stat line itself is
+                             # calibrated and the points are re-scored from it.
+                             # The shipped board runs +1.8 pts high on
+                             # startable players in week 1 (RB carries +22%,
+                             # TE receiving yards +50%). Held out (one season
+                             # predicted by a fit on the others): week-1
+                             # START-ALL RMSE -0.223 (CI -0.34..-0.11, 4/4
+                             # seasons), week 2 -0.058 (5/5). Weeks 1-2 are
+                             # outside the harness window (3-17); scored
+                             # offline on the harness base-arm board
+                             # (scripts/eval_opening_week_calibration.py).
+                             # Needs 'calibration' on; never touches week 3+.
+    'v2_questionable_workload',  # SHIPPED 2026-10-08 (was a candidate). A WR the injury feed
+                             # lists as Questionable and who plays produces
+                             # ~17% less than projected (2021-2025, final
+                             # Friday designations: actual/projection 0.83 vs
+                             # 0.99 untagged, 4 of 5 seasons). QUESTIONABLE_
+                             # WORKLOAD_FACTORS scales that WR's point total
+                             # (last step, after the season anchor). WR only:
+                             # RB/TE/QB intervals include 1. Not a play
+                             # probability - Out/Doubtful stay the only
+                             # tags that change availability. Held out by
+                             # season: START-ALL RMSE -0.009; harness
+                             # v2: START-ALL -0.011, START-WR -0.027.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -2587,6 +2614,19 @@ DEFAULT_FEATURES = frozenset({
     # (-0.019, CI [-0.040, +0.000]), START-ALL -0.006, ALL -0.003, bias growth -0.016; QB/WR/TE exactly unchanged. An
     # emptied RB room no longer loses the carries its survivors' growth cap could not place. Undo: remove this flag.
     'v2_rb_depleted_room_fill',
+    # SHIPPED 2026-10-08 (user: "both sound good, commit them").
+    # v2_opening_week_stat_calibration: weeks 1-2 only, each stat gets its own
+    # line in place of the points line (RB/WR/TE week 1, RB week 2). Held out
+    # by season: week-1 START-ALL RMSE -0.223 (CI -0.34..-0.11, 4/4 seasons),
+    # week 2 -0.058 (5/5). It cannot touch a board from week 3 on. Undo: remove
+    # this flag.
+    'v2_opening_week_stat_calibration',
+    # v2_questionable_workload: a Questionable WR who is projected to play has
+    # his point total x0.83 (last step). Harness v2 2022-2025 wk3-17:
+    # START-ALL RMSE 7.629 -> 7.618 (CI -0.019..-0.003), START-WR -0.027,
+    # bias growth +0.066, QB/RB/TE exactly unchanged; verdict SHIP-ELIGIBLE.
+    # Undo: remove this flag.
+    'v2_questionable_workload',
 })
 
 
@@ -2610,7 +2650,13 @@ def resolve_model_features(features=None):
 # changes, the line has to be re-fitted - that is what makes it a
 # measurement rather than a magic number (see DEFAULT_FEATURES's own
 # comment for the 2026-08-26 re-fit this triggered).
-CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'})
+#
+# Three flags act AFTER the points line and are not inputs to it: the season anchor (2026-10-06), the opening-week
+# per-stat lines and the Questionable-tag cut (both 2026-10-08). A dump built with them on would record already
+# adjusted totals as the "raw" the lines are fitted to, so they are left out of the input set.
+POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat_calibration',
+                                       'v2_questionable_workload'})
+CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
 # ---------------------------------------------------------------------------
@@ -2961,6 +3007,52 @@ def apply_season_anchor(result, hist, name_col, factors=None, min_games=None):
     return out, info
 
 
+# --- v2_questionable_workload ---------------------------------------------------------------------------------------
+# A "Questionable" tag changes nothing in the projection (the standing rule: only Out and Doubtful do), yet receivers
+# who then PLAY produce less than a healthy one at the same projection. 2021-2025 weeks 3-17, the official report's
+# last pre-game designation (81% Friday filings, median 47 h before kickoff), WR START pool, played rows: actual /
+# projection 0.827 (CI 0.77-0.89; 289 player-games) against 0.985 for untagged WRs, the same direction in 4 of 5
+# seasons (0.79 0.79 0.82 1.00 0.78), and a regression on projection level puts it at -2.0 points (CI -2.8 to -1.2).
+# It sits in efficiency, not volume: targets 0.97, receptions 0.92, receiving yards 0.89, receiving TDs 0.66. It is a
+# conditional production factor (workload if active), NOT a play probability: the harness scores players who played.
+# RB 0.95 (CI 0.88-1.02), TE 0.97 (0.83-1.14) and QB 0.83 (0.67-1.00, 40 rows) have intervals that include 1, and
+# adding them left START-RB/TE slightly worse, so only WR is cut. Factor: least squares through the origin on the
+# finished (calibrated + anchored) points; fit without each season 0.81-0.85. Held out by season (scripts/
+# eval_questionable_factor.py): START-ALL RMSE -0.009, START-WR -0.022, Q-tagged WR bias +2.25 -> +0.09.
+# Points total only, like the calibration and the season anchor: the stat line stays the healthy line.
+# Caveats (docs/weekly_projections_methodology.md, 2026-10-08): the history is Friday-final designations, so an
+# early-week tag is not what was measured; the tag decides, not the practice status (not in the live feed).
+QUESTIONABLE_WORKLOAD_FACTORS = {'WR': 0.83}
+
+
+def apply_questionable_workload(result, injury_profiles, factors=None):
+    """(result, info): scale the point total of each eligible row by ``factors[pos]`` (default
+    QUESTIONABLE_WORKLOAD_FACTORS). Eligible: a position in ``factors``, the injury feed's status for him is
+    'questionable', he is not sidelined (Availability above SIDELINED_AVAILABILITY) and his total is non-zero.
+    ``info`` maps (Player, Pos, Team) -> {'factor', 'before', 'after', 'status'} for the rows changed."""
+    factors = QUESTIONABLE_WORKLOAD_FACTORS if factors is None else factors
+    if result is None or result.empty or not injury_profiles or 'Model Proj Pts' not in result.columns:
+        return result, {}
+    out = result.copy()
+    status = out['Player'].map(lambda p: str((injury_profiles.get(p) or {}).get('status', '') or '').strip().lower())
+    factor = out['Pos'].map(factors)
+    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
+    pts = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
+    eligible = status.eq('questionable') & factor.notna() & (avail > SIDELINED_AVAILABILITY) & (pts > 0.005)
+    if not eligible.any():
+        return out, {}
+    new = np.round(pts * factor, 2)
+    info = {}
+    for idx in out.index[eligible]:
+        info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
+            'factor': float(factor[idx]), 'before': float(pts[idx]), 'after': float(new[idx]), 'status': 'questionable'}
+    for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
+        if col in out.columns:
+            out.loc[eligible, col] = new[eligible]
+    return out, info
+
+
 def _uncalibrate_sidelined(frame, include_zero_rows=False):
     """Put a SIDELINED row's (Availability <= SIDELINED_AVAILABILITY) point
     total back to its raw, uncalibrated value - in place, returns ``frame``.
@@ -2990,6 +3082,85 @@ def _uncalibrate_sidelined(frame, include_zero_rows=False):
             if col in frame.columns:
                 frame.loc[sidelined, col] = frame.loc[sidelined, 'Raw Model Proj Pts']
     return frame
+
+
+# --- v2_opening_week_stat_calibration -----------------------------------------------------------------------------
+# The opening weeks are a different code path (a cold start reads last season's roles and the depth chart) and the
+# in-season points lines do not describe it: on the harness base-arm board (scripts/calibration_lab.py dump,
+# 2026-10-08) startable players run +1.81 pts high in week 1 (RB +1.97, WR +1.70, TE +2.36, QB +1.33) and +0.11 in
+# week 2 (RB +1.28). It is mostly volume and yards: week-1 startable RBs are projected 14.97 carries for 12.29 actual,
+# TEs 46.7 receiving yards for 31.1. In weeks 3-17 no recalibration of any form (points lines at any strength or pool,
+# a line per stat, a regression on per-stat point components) beats the shipped lines + season anchor held out.
+#
+# So in week 1 (RB/WR/TE) and week 2 (RB) each STAT gets its own line, actual = intercept + slope * projected, fit on
+# rows with a box score (the harness criterion), 0.75 of the way from the identity to the least-squares fit; the
+# points are re-scored from the calibrated line and the points calibration line is not applied on top. Volume stats
+# (carries, targets) are calibrated too, so yards per carry and catches per target stay coherent; they are not scored.
+# Fit on week 1 of 2022-2025 (the seasons with an archived pre-Week-1 depth chart) and week 2 of 2021-2025.
+# Held out (each season predicted by a fit on the others; scripts/eval_opening_week_calibration.py):
+#     week 1  START-ALL RMSE -0.223 (CI -0.336..-0.106), better in 4/4 seasons; RB -0.405 4/4, TE -0.443 4/4,
+#             WR -0.154 3/4; bias +1.81 -> +0.57 (QB unchanged); pairwise accuracy unchanged
+#     week 2  START-ALL -0.058 (CI -0.109..-0.020), 5/5; RB -0.199 5/5
+# QB is left alone: every form tried (lines, per-stat, a level-only ratio) was noise-to-worse. Strength 0.5 was 4/4
+# too but leaves the bias at +1.08; 1.0 is 3/4 with wider intervals. Re-fit with the lab dump whenever the stat
+# pipeline changes: `scripts/calibration_lab.py --mode dump` then `scripts/eval_opening_week_calibration.py`.
+OPENING_WEEK_STAT_CALIBRATION = {
+    1: {
+        'RB': {'rushing_attempts': (0.735, 1.473), 'rushing_yards': (0.756, 4.048), 'rushing_tds': (0.761, 0.057),
+               'targets': (0.598, 0.913), 'receptions': (0.648, 0.642), 'receiving_yards': (0.702, 3.328),
+               'receiving_tds': (0.809, 0.018)},
+        'WR': {'targets': (0.772, 1.032), 'receptions': (0.765, 0.632), 'receiving_yards': (0.744, 7.668),
+               'receiving_tds': (0.550, 0.089)},
+        'TE': {'targets': (0.689, 0.829), 'receptions': (0.693, 0.503), 'receiving_yards': (0.694, 4.138),
+               'receiving_tds': (0.463, 0.053)},
+    },
+    2: {
+        'RB': {'rushing_attempts': (0.840, 1.243), 'rushing_yards': (0.809, 6.388), 'rushing_tds': (0.693, 0.059),
+               'targets': (0.728, 0.521), 'receptions': (0.743, 0.381), 'receiving_yards': (0.723, 3.229),
+               'receiving_tds': (0.903, 0.009)},
+    },
+}
+
+
+def apply_opening_week_stat_calibration(result, week, scoring_mode, table=None):
+    """(result, info): in an opening week listed in ``table`` (default OPENING_WEEK_STAT_CALIBRATION), replace each
+    eligible row's stat line with its calibrated line and its point total with the re-scored line. Eligible: a listed
+    position, not sidelined, a non-zero raw total (the same rows the points line moves). 'Raw Model Proj Pts' keeps
+    the uncalibrated total. ``info`` maps (Player, Pos, Team) -> {'stats': {stat: (before, after)}, 'points_before',
+    'points_after'} for the rows changed."""
+    table = OPENING_WEEK_STAT_CALIBRATION if table is None else table
+    by_pos = table.get(int(week)) if week is not None else None
+    if not by_pos or result is None or result.empty or 'Raw Model Proj Pts' not in result.columns:
+        return result, {}
+    out = result.copy()
+    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
+    raw = pd.to_numeric(out['Raw Model Proj Pts'], errors='coerce').fillna(0.0)
+    info = {}
+    for pos, lines in by_pos.items():
+        rows = out.index[out['Pos'].eq(pos) & (avail > SIDELINED_AVAILABILITY) & (raw > 0.005)]
+        if not len(rows):
+            continue
+        before = {s: pd.to_numeric(out.loc[rows, s], errors='coerce').fillna(0.0) for s in lines if s in out.columns}
+        for stat, (slope, intercept) in lines.items():
+            if stat in before:
+                out.loc[rows, stat] = np.round(np.clip(slope * before[stat] + intercept, 0.0, None), 2)
+        if 'receptions' in before and 'targets' in before:
+            # the RB week-1 targets line is the flatter of the two, so a back projected to catch every target
+            # (none in 2021-2025) could otherwise end with more catches than targets
+            out.loc[rows, 'receptions'] = np.minimum(out.loc[rows, 'receptions'], out.loc[rows, 'targets'])
+        stat_cols = [c for c in _ALL_PROJECTION_STATS if c in out.columns]
+        for idx in rows:
+            line = {c: float(v) for c, v in out.loc[idx, stat_cols].fillna(0.0).items()}
+            new_points = round(max(0.0, score_projected_stats(line, scoring_mode)), 2)
+            info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
+                'stats': {s: (float(before[s][idx]), float(out.at[idx, s])) for s in before},
+                'points_before': float(out.at[idx, 'Model Proj Pts']), 'points_after': new_points,
+                'week': int(week)}
+            for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
+                if col in out.columns:
+                    out.at[idx, col] = new_points
+    return out, info
 
 
 def _played_weeks_before(stats_df, as_of_week):
@@ -12623,11 +12794,29 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         _blank = result['Injury Status'].fillna('').astype(str).eq('')
         result.loc[_ps_rows & _blank, 'Injury Status'] = 'Practice squad'
 
+    # v2_opening_week_stat_calibration: weeks 1-2 only, in place of the points line for the listed positions. After
+    # every pass that rewrites a stat line (capacity, carry budget, vacancy) so it calibrates the line the board shows;
+    # before the season anchor, which cannot fire this early anyway (it needs two games). Tied to 'calibration' so a
+    # calibration dump (CALIBRATION_INPUT_FEATURES) keeps recording the uncalibrated stat line.
+    opening_calibration_info = {}
+    if 'v2_opening_week_stat_calibration' in feats and 'calibration' in feats:
+        result, opening_calibration_info = apply_opening_week_stat_calibration(result, week, scoring_mode)
+        if opening_calibration_info:
+            result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+
     # v2_season_anchor: last step on the points total, after calibration and the sidelined/zero restore.
     season_anchor_info = {}
     if 'v2_season_anchor' in feats and not cold_start:
         result, season_anchor_info = apply_season_anchor(result, hist, name_col)
         if season_anchor_info:
+            result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+
+    # v2_questionable_workload: the very last step on the points total (it was measured on the finished board), for
+    # players the injury feed lists as Questionable and who are projected to play.
+    questionable_info = {}
+    if 'v2_questionable_workload' in feats:
+        result, questionable_info = apply_questionable_workload(result, injury_profiles)
+        if questionable_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
     # Raw per-week slot/wide/inline defense-allowed evidence, grouped for
@@ -12739,9 +12928,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         final_stat_line = {}
         row_capacity_snapshot = post_capacity_snapshot.get(key, {})
         row_carry_budget_snapshot = carry_budget_snapshot.get(key, {})
+        row_opening = opening_calibration_info.get(key, {}).get('stats', {})
         for stat, values in detail.get('stats', {}).items():
             final_value = pd.to_numeric(pd.Series([row.get(stat, 0.0)]), errors='coerce').fillna(0.0).iloc[0]
             final_value = float(final_value)
+            # v2_opening_week_stat_calibration is the last stage on the stat line: the stages below are split against
+            # the line BEFORE it, and its own change is reported separately.
+            opening_delta = 0.0
+            if stat in row_opening:
+                pre_opening, post_opening = row_opening[stat]
+                opening_delta = float(post_opening) - float(pre_opening)
+                final_value = float(pre_opening)
             pre_vacancy = values.get('pre_vacancy_projection')
             pre_vacancy = float(pre_vacancy) if pre_vacancy is not None else final_value
             # Split at the mid-pass snapshot above so each mechanism's own
@@ -12769,6 +12966,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             else:
                 values['pass_capacity_delta'] = 0.0
                 values['vacancy_delta'] = round(final_value - pre_vacancy, 3)
+            values['opening_calibration_delta'] = round(opening_delta, 3)
+            final_value = final_value + opening_delta
             values['final_projection'] = round(final_value, 3)
             # Retain the original field for consumers of the V2 explanation
             # payload while making it agree with ``final_projection``.
@@ -12780,6 +12979,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # The calibration line's own result: with v2_season_anchor the displayed total moves once more after it, and
         # that step is reported separately (detail['season_anchor']), so the two captions chain raw -> line -> anchor.
         line_points = detail['calibrated_points']
+        if key in opening_calibration_info:
+            # the points line was replaced, not applied: the total is the re-scored calibrated stat line
+            detail['opening_week_calibration'] = opening_calibration_info[key]
+        if key in questionable_info:
+            # v2_questionable_workload is the last step on the total, after the anchor
+            detail['questionable_workload'] = questionable_info[key]
+            line_points = questionable_info[key]['before']
         if key in season_anchor_info:
             detail['season_anchor'] = season_anchor_info[key]
             line_points = season_anchor_info[key]['before']

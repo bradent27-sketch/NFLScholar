@@ -4545,3 +4545,205 @@ still drops weekless rows (they carry no date), so the harness-tested path is un
 `test_a_live_board_reads_the_weekless_roster_snapshot_and_a_backtest_does_not`. Live week-5 board on the defaults: Shipley
 12.75 carries / 7.21 pts; Pierce, Steele, Blue 0.68 carries / 1.48 pts each, shown as "Practice squad"; integrity scan clean;
 747 tests pass.
+
+## 2026-10-08 - Calibration rework: per-stat and segment calibration tested; in season nothing beats the shipped lines, the opening weeks do (`v2_opening_week_stat_calibration`, CANDIDATE), and Questionable players are over-projected
+
+User: "look into calibration ... since we are closer to accuracy now ... we may need to get more specific than previously
+... potentially individual stat calibration? ... you decide how this may work best."
+
+**New tooling (one dump, then everything offline).**
+- `scripts/calibration_lab.py --mode dump`: builds EXACTLY the harness v2 base arm (DEFAULT_FEATURES + injury/reserve
+  replay) for 2021-2025 weeks 1-18 and records every stage of the points pipeline: `raw` (score of the final stat line),
+  `final` (what the harness scores), the season anchor's inputs (to-date mean, games, from the build's own `hist`), the
+  projected and actual stat line, and context columns (injury tag, availability, role, snap share, ...). Re-applying the
+  shipped lines + anchor to `raw` reproduces `final` to 0.01; a flag-off board equals the dump exactly. 43,357
+  player-weeks, 27,795 with a box score (`.sweeps/calibration_lab_v7.csv`, ~1h50m). Week 1 needs `--extra-features
+  v2_historical_ourlads` (without it a historical opening board has no depth chart and starting QBs project 0; the
+  archive covers 2022-2025): `.sweeps/calibration_lab_v7_wk1_ourlads.csv` replaces the main dump's week 1.
+- The old `fit_seasonal_calibration.py` dump was quietly wrong since 2026-10-06: CALIBRATION_INPUT_FEATURES contains
+  `v2_season_anchor`, so its "raw" column would have been the anchored total. Its FEATS now drops the anchor.
+- `scripts/eval_calibration_schemes.py`: every scheme refit leave-one-season-out (each season predicted by a fit on the
+  other four) and scored like harness v2 (paired START pools over all rows, played rows, bootstrap CI over weeks)
+  against the shipped board, which is in sample everywhere. `scripts/diag_calibration_segments.py`: the shipped final's
+  signed error by segment, with per-season sign consistency. `scripts/eval_opening_week_calibration.py`: weeks 1-2 by
+  position, and the exact candidate.
+
+**1. Weeks 3-17: no recalibration beats the shipped v4 lines + season anchor** (harness window 2022-2025 wk3-17,
+held-out dRMSE vs shipped; shipped START-ALL 7.667, bias -0.01):
+
+| scheme | START-ALL | ALL | seasons better |
+|---|---|---|---|
+| points line refit, same structure (half / full strength) | +0.006 / +0.004 | +0.007 / -0.000 | 1/5, 2/5 |
+| points line fit on the START pool (half / full) | +0.001 / +0.003 | -0.001 / +0.039 | 2/5, 3/5 |
+| a line per stat, re-scored (half / full / with cold bucket) | +0.008 / +0.012 / +0.006 | +0.007 / +0.006 / +0.002 | 2/5 each |
+| a line per stat fit on the START pool | +0.007 | +0.100 | 3/5 |
+| a ratio per stat (no intercept) | +0.026 | +0.042 | 2/5 |
+| regression of points on per-stat point components (half / full) | +0.004 / +0.002 | +0.005 / -0.002 | 2/5 |
+
+Per-stat lines fit on the whole played pool over-shrink the starters (they are dominated by bench rows); fit on the
+START pool they wreck the bench (ALL +0.10). The component regression's coefficients are collinear (RB rushing-yard
+points x1.22, receptions x0.50) and its implied stat lines are nonsense. This dump already contains `v2_qb_td_blend` and
+`v2_rb_depleted_room_fill`, so it is also the owed calibration re-check for both: the refit does not beat the shipped
+line at any position. **The v4 lines stay.**
+
+**2. The opening weeks are where calibration is wrong.** Shipped board, START pools, played rows:
+
+| | week 1 | week 2 | week 3 | week 4 | week 5 |
+|---|---|---|---|---|---|
+| START-ALL bias | +1.80 | +0.11 | +0.26 | -0.10 | -0.49 |
+
+Week 1 by position: RB +1.97, WR +1.70, TE +2.36, QB +1.33. Mostly volume and yards on a cold start's last-season
+roles: startable RBs 14.97 projected carries for 12.29 actual, rushing yards 65.4 for 51.4; TE targets 6.18 for 4.82,
+receiving yards 46.7 for 31.1; WR receiving yards 63.2 for 50.9 (week-1 efficiency is also lower league-wide). Week 2
+only RB stays high (+1.28).
+
+Candidate `v2_opening_week_stat_calibration`: in week 1 (RB/WR/TE) and week 2 (RB) each stat gets its own line
+(`OPENING_WEEK_STAT_CALIBRATION`, fit on rows with a box score, 0.75 of the way from the identity to the least-squares
+line; volume stats calibrated too so yards per carry and catches per target stay coherent), the points are re-scored
+from the calibrated line, and the points line is not applied on top. Held out (week 1: four seasons 2022-2025; week 2:
+five):
+
+| | dRMSE | 95% CI | seasons better | bias |
+|---|---|---|---|---|
+| week 1 START-ALL | -0.223 | [-0.336, -0.106] | 4/4 | +1.81 -> +0.57 (QB untouched) |
+| week 1 START-RB / TE / WR | -0.405 / -0.443 / -0.154 | | 4/4 / 4/4 / 3/4 | RB +1.97 -> +0.14, TE +2.36 -> +0.88 |
+| week 1 ALL | -0.123 | [-0.155, -0.078] | 4/4 | |
+| week 2 START-ALL (RB only moves) | -0.058 | [-0.109, -0.020] | 5/5 | RB +1.28 -> -0.01 |
+
+Pairwise accuracy unchanged. Every calibrated stat lands closer to the actual mean (week-1 RB carries 14.97 -> 12.47
+vs 12.29 actual). How the scope and strength were chosen: QB got worse or noise under every form tried (points line,
+per stat, a level-only ratio), so it is left alone; in week 2 only RB improved (QB and TE got worse); per stat beat a
+points line at matched strength (half: -0.143 vs -0.109; full: -0.203 vs -0.195) and also fixes the displayed line;
+strength 0.5 was also 4/4 but leaves week 1 at +1.08, 1.0 was 3/4 with wider intervals. End to end (2024 weeks 1-3,
+flag on vs off): week 1 moves 264 RB/WR/TE rows and no QB, week 2 moves 93 RBs only, week 3 is identical; the board
+matches the offline candidate to 0.1 pt (rounding). The decomposition shows it as its own stage ("Opening-week
+calibration Δ"; the points table reads "Calibrated (per stat)"). Weeks 1-2 are outside the harness window, so the
+offline held-out score on the exact base-arm board IS the measurement. Tests: `tests/test_opening_week_stat_calibration.py`
+(8). 755 tests pass. **Status: built, NOT in DEFAULT_FEATURES (awaiting sign-off). It cannot change any 2026 board
+before 2027 week 1.** Ship = add the flag to DEFAULT_FEATURES; it needs `calibration` on.
+
+**3. In season, one segment stands out: Questionable players who play** (weeks 3-17, 2021-2025, shipped final):
+
+| START pool | P(plays \| Questionable) | actual / projection when he plays | healthy players |
+|---|---|---|---|
+| WR | 0.79 | 0.82 (receiving TDs 0.64, yards 0.88) | 0.99 |
+| QB | 0.53 | 0.83 (76 rows) | 0.99 |
+| RB | 0.75 | 0.96 | 1.00 |
+| TE | 0.79 | 0.99 | 1.04 |
+| all | 0.75 | 0.88 | 1.00 |
+
+WR bias +2.30 (t 5.8, high in 5/5 seasons), all positions +1.52 (t 5.2, 5/5); worth about 0.4 of START-WR MSE. In the
+backtests every startable row has Availability 1.0: per the user's standing rule only Out and Doubtful change a
+projection (the old Questionable haircut was removed on purpose; see `_ASSUME_OUT_STATUSES` in
+data/availability_overrides.py). This is a different quantity from that haircut - production GIVEN he plays (a
+"workload if active" factor), which the harness's played-only criterion rewards - but it touches the user's rule, so
+**nothing is built; it is a question for the user.** Other segments: nothing else is both large and consistent (WR with
+4-7 prior games +0.54, t 2.6, 4/5; WRs with no profile source +0.52; TE untagged -0.39, t -2.1) - each worth <0.17 MSE.
+
+### 2026-10-08 (later) - `v2_questionable_workload` built; pre-set bar, written BEFORE the harness run
+
+User: "if this is true yes i want to do it ... is this based simply on this season or past seasons ... does this assume a
+questionable designation heading into the game or early in the week? all of these factors are important."
+
+**What the evidence is (answers to those questions).**
+- *Which seasons:* 2021-2025, every regular-season week 3-17 (the official nflverse report, `load_injuries`), not 2026.
+  The 2026 ledger boards give only 33 Questionable-tagged players who played (14 WR, act/proj 1.03 for WR, 0.92 for all):
+  too few to confirm or contradict anything, so they are not part of the case.
+- *Timing:* the backtest tag is each player's LAST report row before his team's kickoff. 81% are Friday filings, 9%
+  Saturday, 10% Wednesday/Thursday; median 47 h before kickoff, 2% within 24 h (2021-2024; the cached 2025/2026 reports
+  carry no filing timestamp). That is the final designation heading into the game. It does NOT measure an early-week
+  tag: the source keeps one row per player-week, so what a player was listed as on Tuesday or Wednesday cannot be
+  rebuilt, and nothing here says an early "Questionable" (FantasyPros lists them before the official Friday report) is as
+  informative. In the live ledger the Q tags only exist on builds made after the FantasyPros import (the Tue/Wed
+  builds of week 4 carry none), so in practice the factor fires when the tag is real.
+- *Is it the tag or the practice?* Within Questionable WRs: Did-not-practice 0.74 (n 48), Limited 0.85 (189), Full 0.85
+  (49) of projection; untagged WRs on the report: DNP 0.89, Full 0.97, not on the report 0.99. So the tag carries most of
+  it, practice adds a gradient, and the live feed has no practice status. Practice status predicts PLAYING far better
+  (Q start-pool players play 59% / 76% / 91% after DNP / Limited / Full), but the harness scores players who played, and
+  the user's rule keeps play-probability out of the projection.
+- *Why not a probability haircut again:* the 2026-08-29 decision removed a play-PROBABILITY discount because it scored
+  worse than the binary designation. This is production GIVEN that he plays, which the played-only harness does measure.
+  It is also what the v2 build handoff (2026-09, section 12) said to do only "with historical evidence".
+
+**Size and spread (weeks 3-17, 2021-2025, START pool, played, `scripts/diag_questionable_effect.py`):** WR Questionable
+0.827 of projection (CI 0.77-0.89, 289 player-games; by season 0.79 0.79 0.82 1.00 0.78) vs 0.985 for untagged WRs; a
+regression on the projection level gives -2.0 pts (CI -2.8 to -1.2). RB 0.947 (0.88-1.02), TE 0.973 (0.83-1.14), QB
+0.833 (0.67-1.00, 40 rows): not distinguishable from 1. Per stat (WR): targets 0.97, receptions 0.92, yards 0.89, TDs 0.66,
+so it is efficiency and touchdowns, not volume.
+
+**Offline held-out score (each season predicted with a factor fit on the other four; `scripts/eval_questionable_factor.py`):**
+START-ALL RMSE -0.009 (CI -0.018 to -0.001), START-WR -0.022, ALL -0.005, weeks better 35-22, seasons better 4/5 (2024 is
++0.011), Q-tagged WR bias +2.25 -> +0.09. Factor fit without each season: 0.81-0.85, on all five 0.831. The same gain
+from a per-stat WR design (0.92 / 0.87 / 0.61), from a factor on the RAW total before the lines (0.75), and from all
+positions or a shrunk factor per position (RB/TE START RMSE +0.002 to +0.008: slightly worse, so WR only).
+
+**Built:** `v2_questionable_workload` (in MODEL_FEATURES, NOT in DEFAULT_FEATURES). `QUESTIONABLE_WORKLOAD_FACTORS =
+{'WR': 0.83}` scales the final point total (the last step, after the season anchor) of a WR whose injury profile is
+'questionable', who is not sidelined and has a non-zero total. Availability is unchanged: he is still counted as playing,
+vacancy and capacity do not see it, the stat line is the healthy line. Points table: "Questionable tag, x0.83". Tests:
+`tests/test_questionable_workload.py` (6). Checked end to end on 2024 wk8 and 2023 wk11 boards: only Questionable WRs move
+(8 and 14 rows), every one by x0.83, availability unchanged, decomposition chain raw -> calibrated -> anchor -> Questionable
+consistent with the board.
+
+**Pre-set bar for the harness (harness v2, played-only, 2022-2025 wk3-17, replay flags on in both arms,
+`--add v2_questionable_workload`):** it can be recommended for DEFAULT_FEATURES only if (1) START-ALL RMSE is not worse,
+(2) START-WR RMSE improves, (3) no position's START RMSE is worse, (4) bias growth is under 0.3, and (5) the offline
+held-out result above (4 of 5 seasons) stands. The harness arm is in-sample for the factor (fit on 2021-2025 includes the
+window), so the held-out numbers carry the weight, as with the season anchor. Expected size is about -0.01 START-ALL RMSE
+(0.1%): the same order as the other recent ships; the harness's own verdict will very likely read INCONCLUSIVE. Turning it
+on needs the user's explicit go-ahead either way.
+
+### 2026-10-08 (night) - `v2_questionable_workload` harness result: SHIP-ELIGIBLE, bar met, NOT turned on
+
+Harness v2, 2022-2025 wk3-17, replay flags on in both arms, candidate arm vs shipped DEFAULT_FEATURES
+(`.sweeps/harness_questionable_workload_2022-2025_wk3-17.log`), played-only paired pools:
+
+| scope | RMSE base -> flag | CI | bias | weeks better |
+|---|---|---|---|---|
+| START-ALL | 7.629 -> 7.618 (-0.011) | [-0.019, -0.003] | -0.013 -> -0.079 | 36-21 |
+| START-WR | 7.872 -> 7.845 (-0.027) | [-0.047, -0.006] | +0.209 -> +0.044 | 36-21 |
+| WR (all rows) | 6.165 -> 6.152 (-0.013) | [-0.024, -0.002] | +0.014 -> -0.072 | 40-20 |
+| ALL | 6.253 -> 6.248 (-0.005) | [-0.010, -0.001] | -0.267 -> -0.304 | 40-20 |
+| START-QB / RB / TE, QB / RB / TE | exactly unchanged | | | 0-0 |
+
+Pairwise accuracy unchanged (+0.001 START-WR). Bias growth +0.066 (cap 0.3): START-ALL bias moves from -0.01 to -0.08
+because the Questionable WRs it cuts were the ones projected too high, and the board is already a little low overall; the
+START-WR bias, where the cut acts, goes from +0.21 to +0.04. Harness verdict **SHIP-ELIGIBLE** (the first recent candidate
+whose START-ALL and START-WR intervals both exclude zero); Holm p 1.0 on the four "is it worse" tests.
+
+**Pre-set bar (written before the run): all five points met** - START-ALL RMSE not worse (improves), START-WR improves, no
+position worse (QB/RB/TE unchanged to three decimals), bias growth 0.066 < 0.3, offline held-out 4 of 5 seasons (2024 the
+exception, +0.011). Caveat that stays: the factor (0.83) is fit on 2021-2025, which contains this window, so the harness arm
+is in-sample for it; the leave-one-season-out numbers (START-ALL -0.009, START-WR -0.022) are the honest size, and the
+harness number agrees with them. Second caveat, untestable here: the measured tag is the final pre-kickoff designation.
+
+**Status: built and measured, NOT in DEFAULT_FEATURES (still 52).** Turning it on needs the user's explicit go-ahead
+(a DEFAULT_FEATURES change). **To ship: add `'v2_questionable_workload'` to DEFAULT_FEATURES; to undo: remove it.** It is a
+calibration input (WR points move), but it acts after the calibration lines and the anchor, so the v4 lines are unaffected.
+761 tests pass.
+
+## 2026-10-08 (late) - SHIPPED: `v2_opening_week_stat_calibration` and `v2_questionable_workload` (DEFAULT_FEATURES = 54)
+
+User, after the two write-ups above: "both sound good, commit them". Both flags are now in DEFAULT_FEATURES (52 -> 54;
+MODEL_FEATURES 85) and the work is committed on branch `open-items-2026-10-07` (not pushed).
+
+- `v2_opening_week_stat_calibration` - SHIPPED on the held-out evidence (week-1 START-ALL RMSE -0.223, CI -0.34..-0.11, 4/4
+  seasons; week 2 -0.058, 5/5). The harness window is weeks 3-17, so the harness cannot see it and its base arms do not change.
+  It cannot affect a board before 2027 week 1. **Undo: remove the flag from DEFAULT_FEATURES.**
+- `v2_questionable_workload` - SHIPPED on a pre-set bar met in full and a harness verdict of SHIP-ELIGIBLE (START-ALL RMSE
+  7.629 -> 7.618, START-WR -0.027, bias growth +0.066). **The harness base arm moves with it:** a future harness run's base
+  now includes the Questionable cut, so START-ALL reads about 7.62 / bias -0.08 and START-WR about 7.85 / +0.04 (compare a
+  new candidate only against a base arm run on the same defaults, as always). **Undo: remove the flag.**
+
+**Live check on the shipped defaults (2026 week 5, `apply_injury=True`, the FantasyPros feed as imported):** 449 rows, 54
+flags; 23 Questionable WRs move, every one by x0.83 (0.828-0.835 after rounding), nobody else moves (the week-1/2 stat lines
+are inert in week 5, as designed); no non-finite or negative points; 5 of the 41 Questionable-tagged rows are sidelined
+(Availability 0) and keep their totals. Examples: Tee Higgins 16.63 -> 13.80, Zay Flowers 15.58 -> 12.93, DeVonta Smith
+14.75 -> 12.24. Players tagged at a low reported probability (10-18%: Marquise Brown, Tylan Wallace, Ashton Dulin, Jalen
+Nailor) are still projected as playing under the standing rule (only < 10% reads as Out) and now carry the x0.83 on top.
+
+**Housekeeping that came with it:** `CALIBRATION_INPUT_FEATURES` was "defaults minus calibration"; it now also leaves out
+`POST_CALIBRATION_FEATURES` = {season anchor, opening-week stat lines, Questionable cut}, the three steps that act after the
+points line, so a calibration dump records the totals the lines are fitted to (the season anchor had been leaking into it
+since 2026-10-06). Test: `test_post_calibration_steps_are_not_inputs_of_the_calibration_lines`. 762 tests pass. The v4
+points lines are unchanged.

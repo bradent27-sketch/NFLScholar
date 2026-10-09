@@ -732,7 +732,8 @@ def _render_alignment_mix(detail, reference_only=False):
         "The bottom row's multiplier is the blend weighted by this player's own alignment mix (not a "
         "plain average) - it REPLACES 'Defense multiplier' in the table above for this stat when active, "
         "not a second adjustment on top of it. 'Combined' matches the primary table's projected value "
-        "except for team-capacity and vacancy adjustments, which still apply downstream there."
+        "except for team-capacity, vacancy and (weeks 1-2) opening-week calibration adjustments, which still "
+        "apply downstream there."
     )
     evidence_note = (detail.get('role') or {}).get('alignment_note')
     _what_these_mean(
@@ -954,6 +955,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         # v2_rb_carry_budget (RB rushing stats): its own stage, recorded as carry_budget_delta with
         # pass_capacity_delta 0 - it used to be shown nowhere, so the stages stopped short of the final value.
         budget_raw = float(values.get('carry_budget_delta', 0.0) or 0.0)
+        # v2_opening_week_stat_calibration (weeks 1-2): the last stage on the stat line.
+        opening_raw = float(values.get('opening_calibration_delta', 0.0) or 0.0)
 
         raw_avg_val = values.get('raw_prior_rate')
         season_adj_val = values.get('defense_adjusted_prior_rate')
@@ -970,13 +973,15 @@ def _render_decomposition_primary_table(detail, market_detail=None):
                             if after_capacity_val is not None else None)
         after_vacancy_val = (after_budget_val + vacancy_raw
                              if after_budget_val is not None else None)
+        after_opening_val = (after_vacancy_val + opening_raw
+                             if after_vacancy_val is not None else None)
         final_val = values.get('final_projection', values.get('projection'))
         for stage, val in (
             ('raw_average', raw_avg_val), ('season_adj', season_adj_val),
             ('player_projection', player_proj_val), ('after_defense', after_defense_val),
             ('after_context', after_context_val), ('after_capacity', after_capacity_val),
             ('after_budget', after_budget_val),
-            ('after_vacancy', after_vacancy_val), ('final', final_val),
+            ('after_vacancy', after_vacancy_val), ('after_opening', after_opening_val), ('final', final_val),
         ):
             if val is not None and pd.notna(val):
                 stage_totals[stage][stat] = float(val)
@@ -1004,6 +1009,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             'Team capacity Δ': _fmt_stat(stat, capacity_raw, signed=True),
             'Carry budget Δ': _fmt_stat(stat, budget_raw, signed=True),
             'Vacancy Δ': _fmt_stat(stat, vacancy_raw, signed=True),
+            'Opening-week calibration Δ': _fmt_stat(stat, opening_raw, signed=True),
             'Projected value': _fmt_stat(stat, final_val),
             # The de-vigged, reliability-weighted multi-book consensus for the
             # SAME stat (data.odds_projections.market_stat_lines). Dashes when
@@ -1013,6 +1019,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             '_vacancy_raw': vacancy_raw,
             '_capacity_raw': capacity_raw,
             '_budget_raw': budget_raw,
+            '_opening_raw': opening_raw,
             '_defense_mult': matchup_mult,
             '_context_mult': context_mult,
         })
@@ -1022,6 +1029,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     show_capacity = any(abs(v) > 0.0005 for v in capacity_vals)
     budget_vals = table['_budget_raw'].tolist()
     show_budget = any(abs(v) > 0.0005 for v in budget_vals)
+    opening_vals = table['_opening_raw'].tolist()
+    show_opening = any(abs(v) > 0.0005 for v in opening_vals)
     display_cols = ['Stat', 'Previous Avg', 'Previous Adj Avg']
     if has_current_season_data:
         display_cols.append('Current Season Avg')
@@ -1033,6 +1042,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     if show_budget:
         display_cols.append('Carry budget Δ')
     display_cols.append('Vacancy Δ')
+    if show_opening:
+        display_cols.append('Opening-week calibration Δ')
     display_cols.append('Projected value')
     show_market = market_detail is not None and (
         market_detail.get('consensus') or market_detail.get('market_points_partial') is not None)
@@ -1050,7 +1061,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         'Previous Avg': 'raw_average', 'Previous Adj Avg': 'season_adj',
         'Player Projection': 'player_projection', 'Defense multiplier': 'after_defense',
         'Context multiplier': 'after_context', 'Team capacity Δ': 'after_capacity', 'Carry budget Δ': 'after_budget',
-        'Vacancy Δ': 'after_vacancy', 'Projected value': 'final',
+        'Vacancy Δ': 'after_vacancy', 'Opening-week calibration Δ': 'after_opening', 'Projected value': 'final',
     }
     points_row = {'Stat': 'Fantasy points at this stage'}
     for col in display_cols[1:]:
@@ -1101,6 +1112,10 @@ def _render_decomposition_primary_table(detail, market_detail=None):
                 v = budget_vals[i]
                 out.append(f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;')
                 continue
+            elif col == 'Opening-week calibration Δ':
+                v = opening_vals[i]
+                out.append(f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;')
+                continue
             else:
                 out.append('')
                 continue
@@ -1148,6 +1163,13 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         bullets.append(
             "**Carry budget Δ**: the running-back room's carries (and rushing yards; rushing TDs are left as "
             "projected) scaled by one factor to the team's expected carry budget — runs before Vacancy Δ."
+        )
+    if 'Opening-week calibration Δ' in display_cols:
+        bullets.append(
+            "**Opening-week calibration Δ**: in week 1 (RB/WR/TE) and week 2 (RB) each stat is pulled toward what "
+            "players at that projection actually produced in past opening weeks — the model's cold-start lines "
+            "run high, most of all in yards and volume. It is the last step on the stat line, and the point total "
+            "is scored from the result instead of using the usual points calibration line."
         )
     with st.expander("What these columns mean", expanded=False):
         for bullet in bullets:
@@ -1981,20 +2003,36 @@ def _render_points_path(detail):
     listed, and with neither there is nothing to show."""
     calibration = detail.get('calibration', {}) or {}
     anchor = detail.get('season_anchor')
+    opening = detail.get('opening_week_calibration')
+    questionable = detail.get('questionable_workload')
     rows = []
     if calibration.get('enabled'):
         raw = float(calibration.get('raw_points', detail['raw_points']))
         calibrated = float(calibration.get('displayed_points', detail['calibrated_points']))
         rows.append({'Stage': 'Raw model', 'Points': f"{raw:.2f}", 'Change': '—',
                      'Basis': 'Volume × per-opportunity rates × context, before any calibration.'})
-        rows.append({'Stage': 'Calibrated', 'Points': f"{calibrated:.2f}", 'Change': f"{calibrated - raw:+.2f}",
-                     'Basis': (f"Position line fitted on past seasons: {float(calibration.get('slope', 1.0)):.3f} × raw "
-                               f"+ {float(calibration.get('intercept', 0.0)):.3f}.")})
+        if opening:
+            rows.append({'Stage': 'Calibrated (per stat)', 'Points': f"{calibrated:.2f}",
+                         'Change': f"{calibrated - raw:+.2f}",
+                         'Basis': (f"Week {opening.get('week', detail.get('target_week'))} opening-week lines: each stat "
+                                   "pulled toward what past opening weeks produced (see 'Opening-week calibration Δ' "
+                                   "in the stat table), then re-scored. Replaces the position points line.")})
+        else:
+            rows.append({'Stage': 'Calibrated', 'Points': f"{calibrated:.2f}", 'Change': f"{calibrated - raw:+.2f}",
+                         'Basis': (f"Position line fitted on past seasons: "
+                                   f"{float(calibration.get('slope', 1.0)):.3f} × raw "
+                                   f"+ {float(calibration.get('intercept', 0.0)):.3f}.")})
     if anchor:
         before, after = float(anchor['before']), float(anchor['after'])
         rows.append({'Stage': 'Season anchor', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
                      'Basis': (f"Pulled ×{float(anchor['factor']):.2f} of the way toward his own average of "
                                f"{float(anchor['mean']):.1f} pts over {int(anchor['games'])} games this season.")})
+    if questionable:
+        before, after = float(questionable['before']), float(questionable['after'])
+        rows.append({'Stage': 'Questionable tag', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
+                     'Basis': (f"Listed Questionable: receivers who then play have produced about "
+                               f"{1 - float(questionable['factor']):.0%} less than projected, so the total is "
+                               f"×{float(questionable['factor']):.2f}. He is still counted as playing.")})
     if not rows:
         return
     st.markdown("**How the point total is built**")

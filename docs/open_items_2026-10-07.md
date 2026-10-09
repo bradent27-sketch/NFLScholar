@@ -8,8 +8,9 @@ are older and partly stale; where they disagree with this file, this file wins.
 
 ## State at the sweep
 
-- Branch `PreNFL2026_v.02`, pushed, HEAD `001ad1b`. `main` was never touched. 727 tests pass. Nothing is running.
-- `DEFAULT_FEATURES` = 52 flags; `MODEL_FEATURES` = 83. Calibration lines are **v4** (kept twice, 10-01 and 10-06).
+- Work since the sweep sits on branch `open-items-2026-10-07` (LOCAL commits, not pushed; `PreNFL2026_v.02` on origin is at
+  `001ad1b`, `main` was never touched). 762 tests pass. Nothing is running.
+- `DEFAULT_FEATURES` = 54 flags; `MODEL_FEATURES` = 85. Calibration lines are **v4** (kept three times: 10-01, 10-06, 10-08).
 - Newest ships: `v2_season_anchor` (10-06) and `v2_qb_td_blend` (10-06). Both shipped on a pre-set bar although the
   harness's own verdict was INCONCLUSIVE. Undo = remove the flag name from `DEFAULT_FEATURES`.
 - Standing rules: every model change is a named flag; a `DEFAULT_FEATURES` change needs sign-off or a win on a bar written
@@ -48,7 +49,25 @@ are older and partly stale; where they disagree with this file, this file wins.
 5. **`v2_rb_depleted_room_fill` is SHIPPED (2026-10-07, DEFAULT_FEATURES = 52).** Harness run 2: RB RMSE -0.014 (CI excludes 0),
    START-RB -0.019, START-ALL -0.006, bias growth -0.016, QB/WR/TE unchanged. Live PHI: Shipley 4.6 -> 12.8 carries, the three
    practice-squad backs 0.68 carries each ("Practice squad" in the Injury column). Undo = remove the flag. Details and the
-   discarded first run are in the methodology doc, 2026-10-07 entry. A calibration re-check for RB was not done.
+   discarded first run are in the methodology doc, 2026-10-07 entry. The RB calibration re-check was done on 2026-10-08
+   (see item 6): the v4 lines stay.
+
+6. **Calibration rework (2026-10-08, methodology entries of that date): DONE, two flags SHIPPED** (user: "both sound good,
+   commit them"; DEFAULT_FEATURES = 54).
+   - `v2_opening_week_stat_calibration`: week 1 (RB/WR/TE) and week 2 (RB) get a calibration line per stat; the board ran +1.8
+     pts high on startable players in week 1. Held out: week-1 START-ALL RMSE -0.223 (4/4 seasons), week 2 -0.058 (5/5). No
+     effect from week 3 on, so nothing before 2027 week 1. Undo = remove the flag.
+   - `v2_questionable_workload`: a Questionable WR who plays produces ~17% less than projected (0.83 of projection vs 0.99
+     untagged; 2021-2025 final Friday designations, 4 of 5 seasons; RB/TE/QB not distinguishable from 1). WR-only x0.83 on the
+     final points, last step, availability untouched, not a play-probability haircut. Harness SHIP-ELIGIBLE (START-ALL
+     -0.011, START-WR -0.027, bias growth +0.066). Undo = remove the flag. **Open caveat: the history is the final
+     (Friday) designation; an early-week tag is untested (one report row per player-week is kept). Worth re-checking on
+     live 2026 data once a few more weeks of Questionable WRs have played** (compare Q-tagged WR actual/projection on the
+     ledger boards: `scripts/diag_questionable_live.py`; only 14 WR-games so far).
+   - In season (weeks 3-17) no recalibration beats the shipped v4 lines + season anchor, including per-stat lines (22
+     schemes tested held out). Re-check with the lab dump (`scripts/calibration_lab.py`, `scripts/eval_calibration_schemes.py`)
+     after future stat-pipeline ships instead of the old `fit_seasonal_calibration.py` dump. The harness base arm now
+     includes the Questionable cut (see the methodology entry).
 
 ## B. Model leads, ranked by (expected value / effort)
 

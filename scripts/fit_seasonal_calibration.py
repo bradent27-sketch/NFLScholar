@@ -69,6 +69,9 @@ DUMP_PATH = os.path.join('.sweeps', 'seasonal_calibration_predictions.csv')
 POSITIONS = ('QB', 'RB', 'WR', 'TE')
 FIT_YEARS = (2021, 2022, 2023)
 TEST_YEARS = (2024, 2025)
+# CALIBRATION_INPUT_FEATURES already leaves out the steps that act after the points line (the season anchor, the
+# opening-week stat lines, the Questionable cut: POST_CALIBRATION_FEATURES). scripts/calibration_lab.py (2026-10-08) is
+# the newer dump: the exact harness base arm with every pipeline stage recorded.
 FEATS = frozenset(CALIBRATION_INPUT_FEATURES | {'v2_historical_ourlads'})
 REPLAY_FLAGS = frozenset({'v2_historical_injury_replay', 'v2_historical_reserve_replay'})
 

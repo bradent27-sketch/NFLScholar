@@ -906,7 +906,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     rows = []
     stage_totals = {stage: {} for stage in (
         'raw_average', 'season_adj', 'player_projection', 'after_defense',
-        'after_context', 'after_capacity', 'after_budget', 'after_vacancy', 'final')}
+        'after_context', 'after_capacity', 'after_budget', 'after_vacancy', 'after_opening', 'final')}
     raw_average_notes = set()
     prior2_weights = []
     context_ingredients = None
@@ -2030,21 +2030,29 @@ def _render_points_path(detail):
     if questionable:
         before, after = float(questionable['before']), float(questionable['after'])
         rows.append({'Stage': 'Questionable tag', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
-                     'Basis': (f"Listed Questionable: receivers who then play have produced about "
-                               f"{1 - float(questionable['factor']):.0%} less than projected, so the total is "
-                               f"×{float(questionable['factor']):.2f}. He is still counted as playing.")})
+                     'Basis': (f"Listed Questionable: WRs who then play average "
+                               f"{1 - float(questionable['factor']):.0%} below projection (×{float(questionable['factor']):.2f}).")})
     if not rows:
         return
     st.markdown("**How the point total is built**")
     frame = pd.DataFrame(rows)
     st.dataframe(style_plain_dataframe(frame), hide_index=True, width="stretch", height=df_auto_height(len(frame)))
-    if anchor:
-        _what_these_mean(
-            "**Calibration** shrinks the raw model total toward the positional mean with a line fitted on past "
-            "seasons. **Season anchor** exists because the model's week-to-week departures from a player's own "
-            "average run too large, most of all for WR and RB late in the season, so the total is pulled part of the "
-            "way back toward his own average. It applies to the point total only, not to the individual stat lines."
-        )
+    if anchor or questionable:
+        parts = []
+        if anchor:
+            parts.append(
+                "**Calibration** shrinks the raw model total toward the positional mean with a line fitted on past "
+                "seasons. **Season anchor** exists because the model's week-to-week departures from a player's own "
+                "average run too large, most of all for WR and RB late in the season, so the total is pulled part of "
+                "the way back toward his own average. It applies to the point total only, not to the individual stat "
+                "lines.")
+        if questionable:
+            parts.append(
+                "**Questionable tag**: in 2021-2025 a receiver listed Questionable on the final injury report who then "
+                "played scored about 17% below his projection (yards and touchdowns, not targets), where untagged "
+                "receivers matched it. This is not a chance of sitting out: he is still counted as playing, and the "
+                "stat lines above are his healthy lines. Only Out and Doubtful change availability.")
+        _what_these_mean(" ".join(parts))
 
 
 def _render_vacancy_redistribution(detail):

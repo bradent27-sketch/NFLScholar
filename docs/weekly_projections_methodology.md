@@ -4747,3 +4747,16 @@ Nailor) are still projected as playing under the standing rule (only < 10% reads
 points line, so a calibration dump records the totals the lines are fitted to (the season anchor had been leaking into it
 since 2026-10-06). Test: `test_post_calibration_steps_are_not_inputs_of_the_calibration_lines`. 762 tests pass. The v4
 points lines are unchanged.
+
+## 2026-10-11 - Fix: every projection-decomposition dialog raised `KeyError: 'after_opening'` (introduced with the 10-08 ships)
+
+User report: the dialog's main stat table (`_render_decomposition_primary_table`, ui/tabs/rankings.py) crashed at
+`stage_totals[stage][stat] = float(val)`. Cause: the "Opening-week calibration Δ" stage was added to the loop that fills the
+stage totals but not to the dict that holds them, so the loop raised for every stat of every player, not only in weeks 1-2.
+The 10-08 checks rendered the points table and built boards but never rendered this table. Fixed (one name added to the
+stage list); regression tests render the whole stat table with and without the opening-week stage
+(`test_the_main_stat_table_*`, both fail on the old code). Checked in the live app: QB, WR and a Questionable WR (Tee Higgins:
+raw 15.60 -> calibrated 16.11 -> season anchor 16.63 -> Questionable tag 13.80) open with no error. The model is unaffected;
+no projection changed. The Questionable row's basis text was shortened to fit its cell and its explanation moved into the
+"What these mean" dropdown. 764 tests pass. A running app must be restarted to load the change (Streamlit does not reload
+imported modules).

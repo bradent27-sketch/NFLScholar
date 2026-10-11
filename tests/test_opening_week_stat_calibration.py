@@ -161,3 +161,46 @@ def test_points_path_names_the_per_stat_stage(monkeypatch):
     assert list(frame['Stage']) == ['Raw model', 'Calibrated (per stat)']
     assert 'Replaces the position points line' in frame['Basis'].iloc[1]
     assert frame['Points'].iloc[1] == '12.40'
+
+
+def _stat(final, opening=0.0, **extra):
+    base = {'raw_prior_rate': final, 'defense_adjusted_prior_rate': final, 'blended_rate': final,
+            'current_rate': 0.0, 'current_games': 0.0, 'current_weight': 0.0, 'matchup_multiplier': 1.0,
+            'pre_vacancy_projection': final - opening, 'pass_capacity_delta': 0.0, 'vacancy_delta': 0.0,
+            'opening_calibration_delta': opening, 'final_projection': final, 'projection': final}
+    base.update(extra)
+    return base
+
+
+def _render_primary_table(monkeypatch, stats):
+    """Run the decomposition dialog's main stat table against a recording stand-in for ``st``."""
+    import ui.tabs.rankings as rk
+    fake = _FakeSt()
+    monkeypatch.setattr(rk, 'st', fake)
+    rk._render_decomposition_primary_table(
+        {'stats': stats, 'season_year': 2027, 'scoring_mode': 'Full PPR'}, None)
+    styled = next(c[1] for c in fake.calls if c[0] == 'dataframe')
+    return getattr(styled, 'data', styled), fake
+
+
+def test_the_main_stat_table_renders_an_opening_week_stage(monkeypatch):
+    # regression: the stage was added to the loop but not to the stage-totals dict, so every decomposition dialog
+    # raised KeyError('after_opening') the moment the shipped flag was on
+    stats = {'receiving_yards': _stat(44.0, opening=-7.0), 'receptions': _stat(3.5, opening=-0.6),
+             'receiving_tds': _stat(0.25, opening=-0.05), 'targets': _stat(5.0, opening=-1.0)}
+    frame, fake = _render_primary_table(monkeypatch, stats)
+    assert 'Opening-week calibration Δ' in frame.columns
+    assert list(frame.columns).index('Opening-week calibration Δ') < list(frame.columns).index('Projected value')
+    receiving = frame[frame['Stat'] == 'Receiving Yards'].iloc[0]
+    assert receiving['Opening-week calibration Δ'].startswith('-7')
+    points = frame[frame['Stat'] == 'Fantasy points at this stage'].iloc[0]
+    assert points['Opening-week calibration Δ'].endswith('pts') and points['Projected value'].endswith('pts')
+    # the stage is the last step: points after it equal the points of the final stat line
+    assert points['Opening-week calibration Δ'] == points['Projected value']
+    assert any('Opening-week calibration' in str(c[1]) for c in fake.calls if c[0] == 'markdown')
+
+
+def test_the_main_stat_table_has_no_opening_column_from_week_three(monkeypatch):
+    frame, _ = _render_primary_table(monkeypatch, {'receiving_yards': _stat(60.0), 'receptions': _stat(5.0)})
+    assert 'Opening-week calibration Δ' not in frame.columns
+    assert 'Projected value' in frame.columns

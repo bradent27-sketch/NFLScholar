@@ -120,4 +120,7 @@ def test_points_path_lists_the_questionable_step_last(monkeypatch):
     frame = getattr(styled, 'data', styled)
     assert list(frame['Stage']) == ['Raw model', 'Calibrated', 'Season anchor', 'Questionable tag']
     assert frame['Points'].iloc[-1] == '10.40' and frame['Change'].iloc[-1] == '-2.10'
-    assert '×0.83' in frame['Basis'].iloc[-1] and 'still counted as playing' in frame['Basis'].iloc[-1]
+    assert '×0.83' in frame['Basis'].iloc[-1] and '17% below projection' in frame['Basis'].iloc[-1]
+    assert len(frame['Basis'].iloc[-1]) < 90                                    # fits the cell without clipping
+    dropdown = ' '.join(str(c[1]) for c in fake.calls if c[0] == 'markdown')
+    assert 'Questionable tag' in dropdown and 'still counted as playing' in dropdown

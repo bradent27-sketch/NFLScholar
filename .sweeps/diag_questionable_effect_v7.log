@@ -1,0 +1,113 @@
+====================================================================================================
+1. WHEN is the Questionable tag filed? (last report before kickoff; weeks 3-17, n=1,542 Q rows)
+====================================================================================================
+dow_et
+Friday       0.811
+Saturday     0.087
+Wednesday    0.067
+Thursday     0.032
+Sunday       0.002
+Tuesday      0.002
+hours before kickoff: median 47, p10 44, p90 53; share filed < 48h before kickoff 0.63, < 24h 0.02, > 72h 0.00
+Q rows missing a report join (name mismatch): 0.168
+
+====================================================================================================
+2. actual / projection when he plays (shipped final), Q vs healthy-tagged, played rows
+====================================================================================================
+pos  pool          tag     n  proj  actual  act/proj            CI                by season
+ QB START Questionable    40 16.41   13.66     0.833 [0.674,0.997] 0.86 0.95 0.76 0.58 1.05
+ QB START         none  1676 16.99   16.86     0.993 [0.972,1.014] 0.93 0.97 1.01 1.04 1.01
+ QB   ALL Questionable    43 16.23   13.92     0.858 [0.700,1.016] 0.90 0.95 0.82 0.58 1.05
+ QB   ALL         none  1875 16.58   16.36     0.987 [0.967,1.007] 0.94 0.97 1.00 1.03 1.00
+ RB START Questionable   190 13.01   12.32     0.947 [0.880,1.018] 0.94 0.92 0.95 0.91 1.04
+ RB START         none  2696 12.84   12.88     1.003 [0.982,1.024] 0.98 1.00 1.06 0.97 1.01
+ RB   ALL Questionable   277 10.23    9.82     0.959 [0.899,1.024] 0.99 0.92 0.97 0.93 0.96
+ RB   ALL         none  5582  8.11    8.30     1.024 [1.006,1.042] 1.03 1.03 1.06 0.98 1.02
+ WR START Questionable   289 12.98   10.73     0.827 [0.769,0.889] 0.79 0.79 0.82 1.00 0.78
+ WR START         none  3693 12.72   12.52     0.985 [0.966,1.004] 0.95 0.96 1.02 1.03 0.97
+ WR   ALL Questionable   496  9.49    8.00     0.843 [0.788,0.903] 0.75 0.82 0.87 1.00 0.82
+ WR   ALL         none  9063  7.62    7.61     0.999 [0.982,1.015] 0.98 0.98 1.02 1.04 0.98
+ TE START Questionable    74  9.85    9.58     0.973 [0.826,1.143] 0.75 0.76 1.15 1.19 1.09
+ TE START         none  1383  9.95   10.35     1.040 [1.002,1.079] 1.01 1.02 1.04 1.08 1.06
+ TE   ALL Questionable   166  6.84    6.33     0.926 [0.823,1.038] 0.96 0.76 1.02 0.91 1.00
+ TE   ALL         none  4675  5.39    5.74     1.065 [1.038,1.092] 1.02 1.07 1.07 1.08 1.08
+ALL START Questionable   593 12.83   11.29     0.880 [0.837,0.925] 0.86 0.83 0.88 0.95 0.91
+ALL START         none  9448 13.11   13.08     0.998 [0.984,1.012] 0.96 0.98 1.03 1.02 1.00
+ALL   ALL Questionable   982  9.55    8.49     0.889 [0.851,0.928] 0.88 0.84 0.91 0.94 0.90
+ALL   ALL         none 21195  8.05    8.15     1.013 [1.000,1.025] 0.99 1.01 1.03 1.03 1.01
+
+====================================================================================================
+2b. regression actual ~ a + b*projection + c*[Questionable], played rows (c in points; cluster-bootstrap over weeks)
+====================================================================================================
+pos  pool    n  nQ  slope on proj  Q effect (pts)            CI
+ QB START 1716  40          1.070           -2.58 [-5.28,+0.25]
+ QB   ALL 1918  43          1.088           -2.05 [-4.71,+0.70]
+ RB START 2886 190          0.922           -0.72 [-1.73,+0.28]
+ RB   ALL 5859 277          0.958           -0.52 [-1.15,+0.16]
+ WR START 3982 289          0.861           -2.02 [-2.76,-1.21]
+ WR   ALL 9559 496          0.933           -1.36 [-1.88,-0.82]
+ TE START 1457  74          0.768           -0.69 [-2.19,+0.93]
+ TE   ALL 4841 166          0.974           -0.82 [-1.54,-0.12]
+
+====================================================================================================
+3. by the report's own practice status (the same row that carries the tag), START pool, played
+====================================================================================================
+pos          tag            practice    n  act/proj            CI
+ WR Questionable Did Not In Practice   48     0.737 [0.610,0.876]
+ WR Questionable                Full   49     0.846 [0.717,0.987]
+ WR Questionable             Limited  189     0.845 [0.770,0.923]
+ WR         none Did Not In Practice  111     0.891 [0.795,1.002]
+ WR         none                Full  568     0.966 [0.918,1.020]
+ WR         none             Limited  169     0.963 [0.871,1.054]
+ WR         none                none 2845     0.994 [0.974,1.016]
+ RB Questionable             Limited  144     0.961 [0.868,1.065]
+ RB         none Did Not In Practice   26     0.834 [0.633,1.064]
+ RB         none                Full  388     0.966 [0.917,1.017]
+ RB         none             Limited   96     1.012 [0.910,1.120]
+ RB         none                none 2186     1.012 [0.987,1.037]
+ TE Questionable             Limited   58     0.984 [0.809,1.188]
+ TE         none Did Not In Practice   32     0.869 [0.688,1.062]
+ TE         none                Full  187     0.947 [0.868,1.024]
+ TE         none             Limited   34     1.074 [0.831,1.312]
+ TE         none                none 1130     1.060 [1.017,1.106]
+ QB Questionable             Limited   26     0.827 [0.627,1.011]
+ QB         none                Full  295     0.986 [0.932,1.037]
+ QB         none                none 1352     0.994 [0.970,1.018]
+ALL Questionable Did Not In Practice   76     0.784 [0.684,0.886]
+ALL Questionable                Full   90     0.872 [0.775,0.970]
+ALL Questionable             Limited  417     0.900 [0.844,0.958]
+ALL         none Did Not In Practice  176     0.890 [0.817,0.971]
+ALL         none                Full 1438     0.969 [0.944,0.994]
+ALL         none             Limited  321     0.986 [0.917,1.055]
+ALL         none                none 7513     1.007 [0.991,1.022]
+
+P(plays | Questionable, START pool) by practice status:
+                       n  played
+prac                            
+\n                     8   0.875
+Did Not In Practice  130   0.585
+Full                  99   0.909
+Limited              550   0.758
+none                   5   0.600
+
+====================================================================================================
+4. which stat: actual / projected per stat, START pool, played, Q vs none
+====================================================================================================
+pos             stat  Questionable  none
+ WR          targets         0.972 1.048
+ WR       receptions         0.923 1.031
+ WR  receiving_yards         0.886 1.022
+ WR    receiving_tds         0.662 0.979
+ RB rushing_attempts         0.955 1.014
+ RB    rushing_yards         0.957 1.009
+ RB      rushing_tds         0.916 1.004
+ RB          targets         1.008 1.002
+ RB  receiving_yards         0.924 0.987
+ TE          targets         1.051 1.097
+ TE       receptions         1.027 1.085
+ TE  receiving_yards         1.056 1.097
+ TE    receiving_tds         0.921 1.050
+ QB passing_attempts         0.981 0.976
+ QB    passing_yards         0.997 0.974
+ QB      passing_tds         0.781 0.981
+ QB    rushing_yards         0.828 0.942

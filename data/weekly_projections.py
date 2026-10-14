@@ -140,7 +140,7 @@ from data.rb_carry_budget import team_rb_carry_budgets, apply_rb_carry_budget
 from data.qb_volume_blend import blend_qb1_volume
 from data.fantasypros_availability import load_fantasypros_availability
 from data.historical_availability import (
-    historical_injury_profiles, historical_reserve_profiles, merge_reserve_profiles)
+    historical_injury_profiles, historical_reserve_profiles, merge_reserve_profiles, suspended_before)
 from data.matchup_signals import (defense_stat_rank, blended_defense_stat_table,
                                    defense_rank_from_table)
 from data.weekly_distribution import player_distribution
@@ -2087,6 +2087,32 @@ MODEL_FEATURES = (
                              # tags that change availability. Held out by
                              # season: START-ALL RMSE -0.009; harness
                              # v2: START-ALL -0.011, START-WR -0.027.
+    'v2_top_end_yardage',  # SHIPPED 2026-10-13 (was a candidate). From week 3, projected
+                             # yards above 60 (receiving: WR/TE/RB; rushing:
+                             # RB) count only in part (TOP_END_YARDAGE), the
+                             # points are re-scored from that line and the
+                             # points calibration line applies as usual.
+                             # High projections ran far too high: 100-115
+                             # receiving yards got 84; WR ranked 4-8 +1.53
+                             # pts. Held out by season (methodology
+                             # 2026-10-13): every yard bin within 2%,
+                             # START-ALL RMSE -0.008 (CI excludes 0), 4/4
+                             # seasons, WR 4-8 bias +0.73. QB not touched.
+    'v2_suspension_return_full_role',  # SHIPPED 2026-10-14 (user: "give players returning
+                             # from suspension a full role"). A RB/WR/TE with zero games this
+                             # season whose latest earlier weekly-roster row is Reserve/
+                             # Suspended (R40) gets his full active role instead of the
+                             # partial pull (restore_cold_start_returning_role_share's
+                             # full_recovery). 2021-2025: Hopkins, Kamara, Addison each
+                             # scored ~1.85x their projection in the first game back.
+    'v2_qb1_latest_game_starter',  # SHIPPED 2026-10-14 (was a candidate). The in-season QB1
+                             # picker compares QBs on their share of the TEAM's
+                             # most recent game, not each QB's own last game:
+                             # a starter back from injury no longer ties the
+                             # fill-in in his second game back (both 0 points,
+                             # team "selection required"). Backtest 2021-2025:
+                             # returning starters in their 2nd game back
+                             # projected 4.3 and scored 14.5 (5/5 seasons).
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -2627,6 +2653,25 @@ DEFAULT_FEATURES = frozenset({
     # bias growth +0.066, QB/RB/TE exactly unchanged; verdict SHIP-ELIGIBLE.
     # Undo: remove this flag.
     'v2_questionable_workload',
+    # SHIPPED 2026-10-13 (user: "Yes, add in top-end yardage"), after the pre-set bar was met in full: see MODEL_FEATURES
+    # and TOP_END_YARDAGE. From week 3, receiving yards (WR/TE/RB) and RB rushing yards above 60 count in part; QBs are
+    # untouched. Harness v2 2022-2025 wk3-17: START-ALL RMSE 7.630 -> 7.624 (-0.006, CI [-0.012, -0.000]), START-WR -0.014
+    # (CI [-0.026, -0.002]), START-TE -0.006, START-RB -0.001, QB unchanged, bias growth +0.079; verdict SHIP-ELIGIBLE.
+    # A calibration INPUT (not post-calibration): future dumps record the compressed line. Undo: remove this flag.
+    'v2_top_end_yardage',
+    # SHIPPED 2026-10-14 (user: "give players returning from suspension a full role"). A zero-game RB/WR/TE whose latest
+    # earlier weekly-roster row is Reserve/Suspended and who is available this week gets his full active role (see
+    # MODEL_FEATURES and restore_cold_start_returning_role_share's full_recovery). Too rare for the harness (3 return
+    # weeks in 2021-2025: Hopkins, Kamara, Addison, each ~1.85x their projection); checked end to end instead: all 3 closer,
+    # squared error over the rows it changes 908 -> 682. Undo: remove this flag.
+    'v2_suspension_return_full_role',
+    # SHIPPED 2026-10-14 (user: "yes add QB starter fix") after the pre-set bar was met in full: see MODEL_FEATURES and
+    # resolve_inseason_qb1s's latest_game_signal. When two or more recently active QBs each had a full-snap own last game,
+    # the more recent start is the starter (a starter back from injury no longer ties the fill-in in his second game back,
+    # which left the team unresolved and both QBs projected 0). QB1 correct 83.4% -> 86.4% over 2021-2025, 68 team-weeks
+    # fixed, none lost. Harness v2 2022-2025 wk3-17: START-QB RMSE 7.910 -> 7.390 (-0.519, CI [-0.691, -0.356]), START-ALL
+    # -0.092 (CI [-0.122, -0.063]), 34-3 weeks, bias growth -0.081; RB/WR/TE unchanged. Undo: remove this flag.
+    'v2_qb1_latest_game_starter',
 })
 
 
@@ -3160,6 +3205,88 @@ def apply_opening_week_stat_calibration(result, week, scoring_mode, table=None):
             for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
                 if col in out.columns:
                     out.at[idx, col] = new_points
+    return out, info
+
+
+# --- v2_top_end_yardage ----------------------------------------------------------------------------------------------
+# The model's high yardage projections do not happen. On the harness base-arm board (scripts/calibration_lab.py dump,
+# 2021-2025 weeks 3-17, played rows): 100-115 projected receiving yards averaged 84 (only 25% reached the projection),
+# 115+ averaged 77; RB rushing 115+ averaged 99; QB passing 300+ averaged 280. Volume is close (targets 10.4 projected
+# vs 9.7 actual at 100+ receiving yards); the miss is efficiency: projected yards per target 10.6 vs 8.6 actual, and
+# regressing the actual rate on the projected one gives a slope of 0.32 for WR yards/target, 0.48 RB yards/carry, 0.54
+# QB yards/attempt (a hot stretch is carried forward almost at face value). The points line is linear and fit on every
+# row, so it cannot bend the top end: WRs ranked 4-8 at their position run +1.53 pts high, 1-3 +1.31, every season.
+#
+# So above a threshold each projected yard counts only in part: new = yards - b * max(0, yards - knot), fit by least
+# squares on 2021-2025 (actual on projected, rows with volume). The points are re-scored from the compressed line and
+# the points calibration line then applies as usual (the stat columns on the board are what moves, so they are no
+# longer the most inflated number on it - the user reads them against prop lines). Volume and TDs are untouched. A
+# uniform yards-per-opportunity shrink was tested first and does less: it leaves 100+ receiving projections 25% high
+# and is points-neutral, as the 2026-10-06 test also found. Held out (each season predicted by a fit on the others;
+# scripts/eval_efficiency_regression.py and the methodology entry of 2026-10-13):
+#     every receiving / RB rushing yard bin from 60 up within 2% of actual (was -3% to -39%)
+#     START-ALL RMSE -0.008 (CI -0.014..-0.002), better in 4/4 seasons and 39 of 60 weeks; START-WR -0.018,
+#     START-TE -0.006, START-RB +0.001, QB unchanged; WR 4-8 bias +1.53 -> +0.73, WR 1-3 +1.31 -> +0.51; top fifth of
+#     the START pool WR +1.19 -> +0.65, RB +0.66 -> +0.38
+# Knots 50 and 70 score the same. Weeks 1-2 are left to v2_opening_week_stat_calibration (its lines are
+# fit on the uncompressed line) and were not tested here.
+#
+# QB passing is deliberately NOT listed. The same compression (knot 250, b 0.53) fixes the passing-yards column (300+
+# projections land within 0% instead of -11%) but the QB points line (slope 0.738) already compresses QB totals, and the
+# top fifth of startable QBs is already UNDER-projected (-0.58 pts); compressing passing yards takes it to -0.92 for no
+# RMSE gain (START-QB +0.001). The QB passing-yards column therefore still runs high at the top (275+: about -7%).
+TOP_END_YARDAGE = {
+    # stat: (positions, knot, share of each projected yard above the knot that is removed)
+    'receiving_yards': (('WR', 'TE', 'RB'), 60.0, 0.40),
+    'rushing_yards': (('RB',), 60.0, 0.20),
+}
+TOP_END_YARDAGE_FIRST_WEEK = 3
+
+
+def apply_top_end_yardage(result, week, scoring_mode, calibrate=True, table=None):
+    """(result, info): from TOP_END_YARDAGE_FIRST_WEEK on, compress each eligible row's projected yards above the
+    knot (``table``, default TOP_END_YARDAGE), re-score 'Raw Model Proj Pts' from the new line and, with
+    ``calibrate``, re-apply the points calibration line to it. Eligible: a listed position, not sidelined, a non-zero
+    raw total. ``info`` maps (Player, Pos, Team) -> {'stats': {stat: (before, after)}, 'points_before',
+    'points_after'} (raw points) for the rows changed."""
+    table = TOP_END_YARDAGE if table is None else table
+    if week is None or int(week) < TOP_END_YARDAGE_FIRST_WEEK or result is None or result.empty \
+            or 'Raw Model Proj Pts' not in result.columns:
+        return result, {}
+    out = result.copy()
+    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
+    raw = pd.to_numeric(out['Raw Model Proj Pts'], errors='coerce').fillna(0.0)
+    live = (avail > SIDELINED_AVAILABILITY) & (raw > 0.005)
+    moved = {}
+    for stat, (positions, knot, share) in table.items():
+        if stat not in out.columns:
+            continue
+        values = pd.to_numeric(out[stat], errors='coerce').fillna(0.0)
+        rows = out.index[live & out['Pos'].isin(positions) & (values > knot)]
+        for idx in rows:
+            before = float(values[idx])
+            after = round(before - share * (before - knot), 2)
+            out.at[idx, stat] = after
+            moved.setdefault(idx, {})[stat] = (before, after)
+    if not moved:
+        return out, {}
+    stat_cols = [c for c in _ALL_PROJECTION_STATS if c in out.columns]
+    info = {}
+    for idx, stats in moved.items():
+        line = {c: float(v) for c, v in out.loc[idx, stat_cols].fillna(0.0).items()}
+        new_raw = round(max(0.0, score_projected_stats(line, scoring_mode)), 2)
+        info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
+            'stats': stats, 'points_before': float(raw[idx]), 'points_after': new_raw}
+        out.at[idx, 'Raw Model Proj Pts'] = new_raw
+        points = new_raw
+        if calibrate and out.at[idx, 'Pos'] in WEEKLY_CALIBRATION:
+            slope, intercept = _weekly_calibration_for(out.at[idx, 'Pos'], week)
+            line_pts = intercept + slope * new_raw
+            points = min(new_raw, line_pts) if WEEKLY_CALIBRATION_ONE_SIDED else line_pts
+        for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
+            if col in out.columns:
+                out.at[idx, col] = round(max(0.0, points), 2)
     return out, info
 
 
@@ -5563,6 +5690,17 @@ def pre_absence_role_summary(stats_df, name_col, team_col):
     return pd.DataFrame(rows).set_index(name_col)[columns]
 
 
+def suspension_return_mask(names, suspended_keys, availability):
+    """Boolean array over ``names``: in ``suspended_keys`` (data.historical_availability.suspended_before) AND available
+    this week. A player still suspended or listed out has not returned, and giving him a role share would only move
+    his teammates' volume (found 2026-10-14: Hopkins 2022 week 6, suspended, shifted every Arizona receiver)."""
+    names = pd.Series(names)
+    if not suspended_keys:
+        return np.zeros(len(names), dtype=bool)
+    avail = np.asarray(availability, dtype=float)
+    return clean_name_exact(names).isin(suspended_keys).to_numpy(dtype=bool) & (avail > SIDELINED_AVAILABILITY)
+
+
 def restore_cold_start_returning_role_share(whole_season_share, active_game_share,
                                             prior_games, prior_team, current_team, pos,
                                             pre_absence_share=None, depth_rank=None,
@@ -5570,6 +5708,7 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
                                             prior2_games=None, prior2_active_share=None,
                                             role_confidence=None,
                                             allow_new_team_starter=False,
+                                            full_recovery=None,
                                             return_details=False):
     """Continuously recover a proven returning skill player's active role.
 
@@ -5602,6 +5741,12 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
     transferred. Pulled less aggressively than a same-team recovery (capped
     at NEW_TEAM_STARTER_CAP, not COLD_START_RETURNING_ROLE_CAP) since some
     real uncertainty about a new offense remains.
+
+    ``full_recovery`` ('v2_suspension_return_full_role', 2026-10-14): a boolean array; an ELIGIBLE row it marks gets his
+    full active/pre-absence role (``restored``) instead of the alpha pull toward it. A player back from a suspension
+    has no ramp-up to price in (Hopkins 2022, Kamara 2023, Addison 2025 each produced about 1.85x the partial-role
+    projection in their first game back); the eligibility checks are unchanged, so a rookie or a new-team player
+    is not promoted.
     """
     whole = np.asarray(whole_season_share, dtype=float)
     active = np.asarray(active_game_share, dtype=float)
@@ -5728,19 +5873,25 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
         np.maximum(recovered, whole + 0.85 * (restored - whole)),
         recovered,
     )
+    full_rows = np.zeros(len(whole), dtype=bool)
+    if full_recovery is not None:
+        full_rows = np.asarray(full_recovery, dtype=bool) & eligible
+        recovered = np.where(full_rows, np.maximum(recovered, restored), recovered)
     values = np.where(eligible, recovered, whole)
     reasons = np.where(
-        charted_short_sample, 'charted short-sample returning-starter recovery',
+        full_rows, 'suspension return: full active role restored',
         np.where(
-            charted_new_team_starter, 'charted new-team starter recovery',
+            charted_short_sample, 'charted short-sample returning-starter recovery',
             np.where(
-                standard_eligible & fully_proven,
-                'proven multi-year every-down role restored (injury-shortened prior year)',
+                charted_new_team_starter, 'charted new-team starter recovery',
                 np.where(
-                    standard_eligible & prior2_qualifies,
-                    'continuous returning role recovery (multi-year corroborated)',
-                    np.where(standard_eligible,
-                             'continuous returning active/pre-absence role recovery', 'none')))),
+                    standard_eligible & fully_proven,
+                    'proven multi-year every-down role restored (injury-shortened prior year)',
+                    np.where(
+                        standard_eligible & prior2_qualifies,
+                        'continuous returning role recovery (multi-year corroborated)',
+                        np.where(standard_eligible,
+                                 'continuous returning active/pre-absence role recovery', 'none'))))),
     )
     if return_details:
         return values, eligible, reasons
@@ -6766,7 +6917,7 @@ def qb1_returning_inputs(year, as_of_week, stats_df, name_col, team_col,
 def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
                            recent_history, history_name_col, history_team_col,
                            as_of_week, year, overrides=None,
-                           unavailable_players=None, returning=None):
+                           unavailable_players=None, returning=None, latest_game_signal=False):
     """Resolve one expected QB1 per team from explicit choices or real snaps.
 
     An in-season board should not turn a backup's one relief appearance into
@@ -6775,6 +6926,14 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
     snap-based role is clearly a full starter role.  An ambiguous room is
     intentionally left unresolved, so no QB receives invented starter
     volume until the user makes an auditable choice.
+
+    ``latest_game_signal`` ('v2_qb1_latest_game_starter', 2026-10-13): when two or more recently active QBs each had
+    a full-snap OWN last game, the one whose start is more recent is the starter. Without it a starter back from
+    injury tied the fill-in he replaced in his second game back - both full-snap "last games", a week apart - so the
+    team was left unresolved and both projected 0 (2025 CIN week 14: Joe Burrow, 36 attempts, projected 0 next to Joe
+    Flacco). The returning-starter rule only covers the first game back. A first attempt compared QBs on their share
+    of the TEAM's latest game instead; it broke starters whose latest game was a partial one (left out of the history,
+    e.g. 2021 KC Patrick Mahomes after the week-7 exit), so the comparison stays on each QB's own last eligible game.
     """
     empty = {'selected': {}, 'by_team': {}, 'selection_required_teams': set(), 'warnings': []}
     required = {current_name_col, current_team_col}
@@ -6956,6 +7115,20 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
                 'reason': 'no recently active QB with a clear starter role',
             }
             continue
+        if latest_game_signal:
+            # Two or more QBs whose own last game was a full-snap start: the more recent start is the job now.
+            full = recent_available[recent_available['_recent_snap_share'] >= QB1_INSEASON_MIN_SNAP_SHARE]
+            newest = full[full['_last_snap_week'] == full['_last_snap_week'].max()] if len(full) > 1 else full.iloc[0:0]
+            if len(newest) == 1:
+                top = newest.iloc[0]
+                selected[(team, top['_key'])] = 'observed_current_starter'
+                by_team[team] = {
+                    'status': 'observed_current_starter', 'player': top['_player'],
+                    'recent_snap_share': float(top['_recent_snap_share']),
+                    'reason': (f"most recent full-snap start (week {int(top['_last_snap_week'])}) of "
+                               f"{len(full)} QBs whose last game was one"),
+                }
+                continue
         ordered = recent_available.sort_values('_recent_snap_share', ascending=False, kind='stable')
         top = ordered.iloc[0]
         runner = float(ordered.iloc[1]['_recent_snap_share']) if len(ordered) > 1 else 0.0
@@ -9392,6 +9565,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 returning=(qb1_returning_inputs(year, as_of_week, stats_df, name_col, team_col,
                                                 player_prior, prior_name_col, prior_team_col, schedule_df)
                            if _use_returning else None),
+                latest_game_signal=('v2_qb1_latest_game_starter' in feats),
             )
             if _returning_warning:
                 qb1_resolution['warnings'].append(_returning_warning)
@@ -10600,6 +10774,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 zero_games_mask = cur['Games'].fillna(0).to_numpy(dtype=float) <= 0
                 if (pos in COLD_START_RETURNING_ROLE_MIN_GAMES and zero_games_mask.any()
                         and not prior_role_reference.empty):
+                    # v2_suspension_return_full_role: a zero-game player whose latest earlier roster row is
+                    # Reserve/Suspended has no ramp-up to price in, so he gets his full active role.
+                    suspension_return = np.zeros(len(cur), dtype=bool)
+                    if 'v2_suspension_return_full_role' in feats:
+                        suspension_return = suspension_return_mask(
+                            cur[name_col], suspended_before(year, as_of_week), player_availability)
                     restored_share, restored_eligible, restored_reason = restore_cold_start_returning_role_share(
                         player_share, player_prior_share, prior_games, player_prior_teams,
                         team_keys_rv.to_numpy(dtype=object), pos,
@@ -10610,6 +10790,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                         prior2_active_share=player_prior2_active_share,
                         role_confidence=cur['role_confidence'].to_numpy(dtype=float),
                         allow_new_team_starter='v2_new_team_starter_restoration' in feats,
+                        full_recovery=suspension_return,
                         return_details=True,
                     )
                     apply_mask = zero_games_mask & restored_eligible
@@ -12794,6 +12975,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         _blank = result['Injury Status'].fillna('').astype(str).eq('')
         result.loc[_ps_rows & _blank, 'Injury Status'] = 'Practice squad'
 
+    # v2_top_end_yardage: week 3 on, after every pass that rewrites a stat line (capacity, carry budget, vacancy) and
+    # BEFORE the points line, which is re-applied to the re-scored total. Not tied to 'calibration': it changes the
+    # stat line itself, so a calibration dump records the compressed line its lines would then be fit on.
+    top_end_info = {}
+    if 'v2_top_end_yardage' in feats:
+        result, top_end_info = apply_top_end_yardage(result, week, scoring_mode, calibrate=('calibration' in feats))
+        if top_end_info:
+            result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+
     # v2_opening_week_stat_calibration: weeks 1-2 only, in place of the points line for the listed positions. After
     # every pass that rewrites a stat line (capacity, carry budget, vacancy) so it calibrates the line the board shows;
     # before the season anchor, which cannot fire this early anyway (it needs two games). Tied to 'calibration' so a
@@ -12929,16 +13119,23 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         row_capacity_snapshot = post_capacity_snapshot.get(key, {})
         row_carry_budget_snapshot = carry_budget_snapshot.get(key, {})
         row_opening = opening_calibration_info.get(key, {}).get('stats', {})
+        row_top_end = top_end_info.get(key, {}).get('stats', {})
         for stat, values in detail.get('stats', {}).items():
             final_value = pd.to_numeric(pd.Series([row.get(stat, 0.0)]), errors='coerce').fillna(0.0).iloc[0]
             final_value = float(final_value)
-            # v2_opening_week_stat_calibration is the last stage on the stat line: the stages below are split against
-            # the line BEFORE it, and its own change is reported separately.
+            # v2_top_end_yardage then v2_opening_week_stat_calibration are the last stages on the stat line: the
+            # stages below are split against the line BEFORE the first of them, and their own changes are reported
+            # separately (they never fire in the same week).
             opening_delta = 0.0
             if stat in row_opening:
                 pre_opening, post_opening = row_opening[stat]
                 opening_delta = float(post_opening) - float(pre_opening)
                 final_value = float(pre_opening)
+            top_end_delta = 0.0
+            if stat in row_top_end:
+                pre_top_end, post_top_end = row_top_end[stat]
+                top_end_delta = float(post_top_end) - float(pre_top_end)
+                final_value = float(pre_top_end)
             pre_vacancy = values.get('pre_vacancy_projection')
             pre_vacancy = float(pre_vacancy) if pre_vacancy is not None else final_value
             # Split at the mid-pass snapshot above so each mechanism's own
@@ -12966,8 +13163,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             else:
                 values['pass_capacity_delta'] = 0.0
                 values['vacancy_delta'] = round(final_value - pre_vacancy, 3)
+            values['top_end_delta'] = round(top_end_delta, 3)
             values['opening_calibration_delta'] = round(opening_delta, 3)
-            final_value = final_value + opening_delta
+            final_value = final_value + top_end_delta + opening_delta
             values['final_projection'] = round(final_value, 3)
             # Retain the original field for consumers of the V2 explanation
             # payload while making it agree with ``final_projection``.
@@ -12979,6 +13177,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # The calibration line's own result: with v2_season_anchor the displayed total moves once more after it, and
         # that step is reported separately (detail['season_anchor']), so the two captions chain raw -> line -> anchor.
         line_points = detail['calibrated_points']
+        if key in top_end_info:
+            # raw_points above is already the re-scored compressed line; this records the step from the uncompressed one
+            detail['top_end_yardage'] = top_end_info[key]
         if key in opening_calibration_info:
             # the points line was replaced, not applied: the total is the re-scored calibrated stat line
             detail['opening_week_calibration'] = opening_calibration_info[key]

@@ -3385,8 +3385,10 @@ def test_rb_carry_budget_fits_the_room_on_the_real_board_and_rescores():
         wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
             'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
         wp.team_rb_carry_budgets = lambda *a, **k: pd.DataFrame({'budget': {'KC': 12.0}}).rename_axis('team')
-        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_rb_carry_budget'}),
-                           ('flag', wp.DEFAULT_FEATURES | {'v2_rb_carry_budget'})):
+        # v2_top_end_yardage is held off in both arms: it bends rushing yards above 60, and this test checks that the
+        # carry budget scales yards exactly with carries
+        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_rb_carry_budget', 'v2_top_end_yardage'}),
+                           ('flag', (wp.DEFAULT_FEATURES | {'v2_rb_carry_budget'}) - {'v2_top_end_yardage'})):
             wp.build_weekly_projections.clear()
             boards[arm] = wp.build_weekly_projections(
                 2026, 6, 'Full PPR', as_of_week=6, apply_injury=False, features=feats)

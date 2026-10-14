@@ -1,0 +1,60 @@
+Q-tagged live rows: 1786  (WR 845); join misses are untagged
+
+factors fit without each season (WR | all | per-pos shrunk):
+  without 2021: WR 0.852   all 0.868   QB 0.890 RB 0.958 WR 0.926 TE 0.962   wr_raw 0.78   wr_stat receptio 0.92 receivin 0.89 receivin 0.64
+  without 2022: WR 0.847   all 0.889   QB 0.909 RB 0.975 WR 0.924 TE 0.980   wr_raw 0.77   wr_stat receptio 0.93 receivin 0.89 receivin 0.60
+  without 2023: WR 0.818   all 0.860   QB 0.900 RB 0.970 WR 0.909 TE 0.930   wr_raw 0.73   wr_stat receptio 0.91 receivin 0.85 receivin 0.60
+  without 2024: WR 0.812   all 0.866   QB 0.930 RB 0.973 WR 0.906 TE 0.944   wr_raw 0.72   wr_stat receptio 0.90 receivin 0.86 receivin 0.59
+  without 2025: WR 0.829   all 0.862   QB 0.892 RB 0.966 WR 0.915 TE 0.941   wr_raw 0.74   wr_stat receptio 0.91 receivin 0.85 receivin 0.63
+
+======================================================================================================================
+HARNESS WINDOW 2022-2025 wk3-17: held-out (leave-one-year-out) dRMSE vs SHIPPED   [CI over weeks]   bias shipped -> scheme
+======================================================================================================================
+shipped RMSE: START-QB 7.556 (bias -0.08)  START-RB 7.722 (bias -0.06)  START-WR 7.968 (bias +0.21)  START-TE 6.793 (bias -0.46)  START-ALL 7.667 (bias -0.01)  ALL 6.273 (bias -0.27)
+ scheme              START-ALL START-QB START-RB START-WR START-TE                    ALL   bias S-ALL wk W-L
+ wr_pts -0.009 [-0.018,-0.001]   +0.000   +0.000   -0.022   +0.000 -0.005 [-0.009,+0.000] -0.02->-0.08  35-22
+all_pts -0.010 [-0.018,-0.001]   -0.013   +0.002   -0.022   +0.008 -0.005 [-0.010,-0.000] -0.01->-0.10  37-23
+pos_pts -0.008 [-0.013,-0.003]   -0.009   -0.001   -0.017   +0.004 -0.004 [-0.007,-0.002] -0.01->-0.06  39-21
+ wr_raw -0.009 [-0.017,-0.001]   +0.000   +0.000   -0.022   +0.000 -0.005 [-0.009,+0.000] -0.01->-0.07  33-24
+wr_stat -0.009 [-0.017,-0.001]   +0.000   +0.000   -0.022   +0.000 -0.005 [-0.009,-0.000] -0.01->-0.07  35-22
+
+======================================================================================================================
+ALL SEASONS 2021-2025 wk3-17: held-out (leave-one-year-out) dRMSE vs SHIPPED   [CI over weeks]   bias shipped -> scheme
+======================================================================================================================
+shipped RMSE: START-QB 7.571 (bias +0.18)  START-RB 7.724 (bias +0.01)  START-WR 7.934 (bias +0.34)  START-TE 6.853 (bias -0.36)  START-ALL 7.663 (bias +0.12)  ALL 6.299 (bias -0.22)
+ scheme              START-ALL START-QB START-RB START-WR START-TE                    ALL   bias S-ALL wk W-L
+ wr_pts -0.011 [-0.019,-0.004]   +0.000   +0.000   -0.027   +0.000 -0.006 [-0.010,-0.002] +0.12->+0.05  46-25
+all_pts -0.012 [-0.019,-0.004]   -0.012   +0.003   -0.026   +0.003 -0.006 [-0.010,-0.002] +0.12->+0.02  48-27
+pos_pts -0.010 [-0.014,-0.005]   -0.009   -0.002   -0.019   +0.002 -0.005 [-0.008,-0.003] +0.12->+0.07  50-25
+ wr_raw -0.011 [-0.018,-0.004]   +0.000   +0.000   -0.027   +0.000 -0.006 [-0.010,-0.002] +0.12->+0.06  43-28
+wr_stat -0.011 [-0.018,-0.004]   +0.000   +0.000   -0.027   +0.000 -0.006 [-0.010,-0.002] +0.12->+0.06  46-25
+
+======================================================================================================================
+WEEKS 1-17 2021-2025: held-out (leave-one-year-out) dRMSE vs SHIPPED   [CI over weeks]   bias shipped -> scheme
+======================================================================================================================
+shipped RMSE: START-QB 7.569 (bias +0.25)  START-RB 7.714 (bias +0.18)  START-WR 7.972 (bias +0.33)  START-TE 6.720 (bias -0.20)  START-ALL 7.659 (bias +0.20)  ALL 6.302 (bias -0.19)
+ scheme              START-ALL START-QB START-RB START-WR START-TE                    ALL   bias S-ALL wk W-L
+ wr_pts -0.010 [-0.017,-0.003]   +0.000   +0.000   -0.024   +0.000 -0.005 [-0.009,-0.001] +0.20->+0.14  50-30
+all_pts -0.011 [-0.018,-0.004]   -0.011   +0.000   -0.023   +0.002 -0.006 [-0.010,-0.002] +0.20->+0.10  53-31
+pos_pts -0.009 [-0.013,-0.005]   -0.008   -0.002   -0.018   +0.002 -0.005 [-0.007,-0.002] +0.20->+0.15  55-29
+ wr_raw -0.010 [-0.017,-0.003]   +0.000   +0.000   -0.023   +0.000 -0.005 [-0.009,-0.001] +0.20->+0.14  47-33
+wr_stat -0.010 [-0.016,-0.004]   +0.000   +0.000   -0.024   +0.000 -0.005 [-0.009,-0.002] +0.20->+0.14  50-30
+
+START-ALL dRMSE by held-out year (negative = scheme better):
+ scheme   2021   2022   2023   2024   2025 better in
+ wr_pts -0.020 -0.023 -0.011  0.011 -0.014       4/5
+all_pts -0.020 -0.024 -0.009  0.001 -0.006       4/5
+pos_pts -0.015 -0.016 -0.010 -0.000 -0.007       4/5
+ wr_raw -0.018 -0.022 -0.011  0.010 -0.014       4/5
+wr_stat -0.018 -0.021 -0.010  0.008 -0.014       4/5
+
+Q-tagged rows only (played), START pool by the shipped board:
+pos   n  RMSE shipped  bias shipped  RMSE wr_pts  bias wr_pts  RMSE all_pts  bias all_pts  RMSE pos_pts  bias pos_pts  RMSE wr_raw  bias wr_raw  RMSE wr_stat  bias wr_stat
+ QB  40         8.401          2.75        8.401         2.75         7.903          0.61         8.041          1.18        8.401         2.75         8.401          2.75
+ RB 190         7.363          0.70        7.363         0.70         7.403         -1.00         7.335          0.26        7.363         0.70         7.363          0.70
+ WR 289         7.395          2.25        6.974         0.09         6.993          0.57         7.100          1.17        6.984         0.19         6.987          0.27
+ TE  74         7.585          0.26        7.585         0.26         7.645         -1.01         7.628         -0.20        7.585         0.26         7.585          0.26
+ALL 593         7.481          1.54        7.281         0.49         7.273         -0.13         7.310          0.71        7.286         0.54         7.287          0.57
+
+factors fit on all five seasons:
+  WR pts 0.831   all pts 0.869   per-pos shrunk {'QB': 0.904, 'RB': 0.969, 'WR': 0.916, 'TE': 0.952}   wr_raw 0.75   wr_stat {'receptions': 0.916, 'receiving_yards': 0.866, 'receiving_tds': 0.611}

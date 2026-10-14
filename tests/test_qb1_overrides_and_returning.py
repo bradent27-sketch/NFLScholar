@@ -173,3 +173,52 @@ def test_returning_rule_is_gated_on_a_loaded_availability_report():
     use, warning = wp.qb1_returning_gate(flag, {}, 5)
     assert use is False
     assert 'week 5' in warning and 'not applied' in warning
+
+
+# --- v2_qb1_latest_game_starter (2026-10-13) --------------------------------------------------------------------------
+
+def _resolve_latest(history, as_of_week, out_by_week):
+    current = history.sort_values('week').drop_duplicates('name', keep='last')[['name', 'team']]
+    returning = {'out_by_week': out_by_week, 'prior_share': {},
+                 'roster': pd.DataFrame(columns=['_team', '_key', '_player'])}
+    kw = dict(overrides=pd.DataFrame(columns=wp.QB1_OVERRIDE_COLUMNS), unavailable_players=set(), returning=returning)
+    shipped = wp.resolve_inseason_qb1s(current, 'name', 'team', history, 'name', 'team', as_of_week, 2026, **kw)
+    latest = wp.resolve_inseason_qb1s(current, 'name', 'team', history, 'name', 'team', as_of_week, 2026,
+                                      latest_game_signal=True, **kw)
+    return shipped, latest
+
+
+def test_flag_is_registered_and_shipped():
+    assert 'v2_qb1_latest_game_starter' in wp.MODEL_FEATURES
+    assert 'v2_qb1_latest_game_starter' in wp.DEFAULT_FEATURES
+
+
+def test_starter_in_his_second_game_back_is_the_starter_not_a_tie():
+    # 2025 CIN: Burrow starts, misses weeks 3-4 (listed out), returns week 5 (returning-starter rule), and in week 6
+    # both he (week 5) and the fill-in (week 4) have a full-snap last game - a tie that left the team unresolved
+    hist = _history([['Starter', 'CIN', 1, 100], ['Starter', 'CIN', 2, 100], ['Fill In', 'CIN', 3, 100],
+                     ['Fill In', 'CIN', 4, 100], ['Starter', 'CIN', 5, 100]])
+    out = {3: {key('Starter')}, 4: {key('Starter')}, 5: set()}
+    shipped, latest = _resolve_latest(hist, 6, out)
+    assert shipped['by_team']['CIN']['status'] == 'selection_required'
+    assert latest['by_team']['CIN']['player'] == 'Starter'
+    assert latest['by_team']['CIN']['status'] == 'observed_current_starter'
+
+
+def test_a_partial_latest_game_does_not_unseat_the_starter():
+    # the starter's own last eligible game is a full start; the backup's relief outing is not a full-snap game
+    hist = _history([['Starter', 'KC', 5, 100], ['Starter', 'KC', 6, 98], ['Backup', 'KC', 7, 30]])
+    shipped, latest = _resolve_latest(hist, 8, {})
+    assert shipped['by_team']['KC']['player'] == latest['by_team']['KC']['player'] == 'Starter'
+
+
+def test_two_full_starts_in_the_same_week_stay_unresolved():
+    hist = _history([['One', 'NYJ', 3, 100], ['Two', 'NYJ', 3, 95]])
+    _, latest = _resolve_latest(hist, 4, {})
+    assert latest['by_team']['NYJ']['status'] == 'selection_required'
+
+
+def test_a_single_full_starter_resolves_the_same_either_way():
+    hist = _history([['Starter', 'BUF', 1, 100], ['Starter', 'BUF', 2, 100], ['Backup', 'BUF', 2, 5]])
+    shipped, latest = _resolve_latest(hist, 3, {})
+    assert shipped['by_team']['BUF'] == latest['by_team']['BUF']

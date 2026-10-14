@@ -10,7 +10,7 @@ are older and partly stale; where they disagree with this file, this file wins.
 
 - Work since the sweep sits on branch `open-items-2026-10-07` (LOCAL commits, not pushed; `PreNFL2026_v.02` on origin is at
   `001ad1b`, `main` was never touched). 762 tests pass. Nothing is running.
-- `DEFAULT_FEATURES` = 54 flags; `MODEL_FEATURES` = 85. Calibration lines are **v4** (kept three times: 10-01, 10-06, 10-08).
+- `DEFAULT_FEATURES` = 57 flags; `MODEL_FEATURES` = 88 (as of 2026-10-14). Calibration lines are **v4** (kept three times: 10-01, 10-06, 10-08).
 - Newest ships: `v2_season_anchor` (10-06) and `v2_qb_td_blend` (10-06). Both shipped on a pre-set bar although the
   harness's own verdict was INCONCLUSIVE. Undo = remove the flag name from `DEFAULT_FEATURES`.
 - Standing rules: every model change is a named flag; a `DEFAULT_FEATURES` change needs sign-off or a win on a bar written
@@ -68,6 +68,32 @@ are older and partly stale; where they disagree with this file, this file wins.
      schemes tested held out). Re-check with the lab dump (`scripts/calibration_lab.py`, `scripts/eval_calibration_schemes.py`)
      after future stat-pipeline ships instead of the old `fit_seasonal_calibration.py` dump. The harness base arm now
      includes the Questionable cut (see the methodology entry).
+
+7. **2026-10-13 - top-end yardage, Track Record page, live record corrected** (methodology entries of that date).
+   - `v2_top_end_yardage` (receiving / RB rushing yards above 60 count in part; QB untouched): harness **SHIP-ELIGIBLE**
+     (START-ALL -0.006, CI [-0.012, -0.000]; START-WR -0.014, CI excludes 0), pre-set bar met in full. **SHIPPED 2026-10-13
+     (user: "Yes, add in top-end yardage"), DEFAULT_FEATURES = 55.** Undo = remove the flag.
+   - **Correction to item 2 above:** the "model 6.30 / market 6.49 / FantasyPros 6.84" live comparison was wrong twice over
+     (`score_ledger.py` scored FantasyPros in standard scoring against PPR actuals - fixed; and each source on its own
+     pool). Fairly scored (each player's last pre-kickoff board, paired pools, startable, weeks 3-5) the model trails:
+     7.60 vs market 7.32, 7.78 vs FantasyPros 7.44, behind both in every week. Use Weekly Fantasy > Track Record
+     (`data/ledger_scorecard.py`) for the live record from now on.
+   - **Strongest live lead:** players back from missed games (Flowers, Bowers, Adams, Metcalf, Waddle) projected well
+     under the market and scoring like the market said. Also: refresh the injury feed after inactives before the last
+     build (week 5 Chase / McLaurin were Out on the last pre-kickoff board and played).
+   - QB passing yards at the top still run high on the board (275+ about -7%); left out of the top-end flag because it
+     pushed the already under-projected top QBs further down.
+
+8. **2026-10-14 - returning players** (methodology entries 2026-10-13 night and 2026-10-14).
+   - **`v2_qb1_latest_game_starter` SHIPPED 2026-10-14 (user: "yes add QB starter fix"), DEFAULT_FEATURES = 57.** Harness
+     START-QB RMSE 7.910 -> 7.390 (-0.519, CI [-0.691, -0.356]), START-ALL -0.092 (CI [-0.122, -0.063]), 34-3 weeks; QB1 pick
+     correct 83.4% -> 86.4% over 2021-2025. A starter back from injury was projected 0 in his second game back (picker tie
+     with the fill-in). No live effect week 6 (every team already has a QB1). Undo = remove the flag.
+   - **`v2_suspension_return_full_role` SHIPPED (user decision), DEFAULT_FEATURES = 56.** Verified end to end on the 3 return
+     weeks in 2021-2025; no live effect this week. Roster cache staleness fixed (6 h refresh).
+   - Rejected: a "first game back" factor for skill players (too rare, -0.001). Open, not built: season debuts after injury
+     (PUP/NFI debuts ran 0.44x their projection, IR debuts 1.32x, too mixed to fit), and a suspended player who has no row on the
+     board at all.
 
 ## B. Model leads, ranked by (expected value / effort)
 

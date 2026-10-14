@@ -28,10 +28,12 @@ time-valid version of the same one to a build that could not previously use
 it in a backtest at all.
 """
 import os
+import time
 
 import pandas as pd
 
 from data.availability_overrides import _ASSUME_OUT_STATUSES
+from data.utils import clean_name_exact
 
 CACHE_DIR = os.path.join('data', 'cache')
 
@@ -77,23 +79,44 @@ def load_injury_reports(season):
 RESERVE_ROSTER_STATUSES = frozenset({'RES', 'EXE', 'RET'})
 
 
+# A finished season's roster file never changes; a partial one (the live season) is refetched once it is this old. Before
+# 2026-10-14 the live file was cached forever: on 2026-10-14 it stopped at week 4 while the feed had week 6, so the
+# reserve-list reads of the QB returning-starter rule and the suspension rule missed every recent week.
+ROSTER_CACHE_MAX_AGE_HOURS = 6.0
+_REGULAR_SEASON_LAST_WEEK = 18
+
+
+def _roster_cache_is_stale(df, path):
+    try:
+        if pd.to_numeric(df['week'], errors='coerce').max() >= _REGULAR_SEASON_LAST_WEEK:
+            return False
+        return (time.time() - os.path.getmtime(path)) > ROSTER_CACHE_MAX_AGE_HOURS * 3600.0
+    except Exception:
+        return False
+
+
 def load_weekly_rosters(season):
     """nflverse weekly rosters for one season (REG only, the columns the
     reserve replay needs), cached to data/cache/rosters_weekly_{season}.parquet.
-    Never raises - an unreachable source returns an empty frame."""
+    A partial season's cache is refreshed when older than ROSTER_CACHE_MAX_AGE_HOURS;
+    a failed refresh keeps the cached copy. Never raises - an unreachable source
+    with no cache returns an empty frame."""
     cache_path = os.path.join(CACHE_DIR, f'rosters_weekly_{season}.parquet')
+    cached = None
     if os.path.exists(cache_path):
         try:
-            return pd.read_parquet(cache_path)
+            cached = pd.read_parquet(cache_path)
         except Exception:
-            pass
+            cached = None
+        if cached is not None and not _roster_cache_is_stale(cached, cache_path):
+            return cached
     try:
         import nflreadpy
         df = nflreadpy.load_rosters_weekly([season]).to_pandas()
     except Exception:
-        return pd.DataFrame()
+        return cached if cached is not None else pd.DataFrame()
     if df is None or df.empty:
-        return pd.DataFrame()
+        return cached if cached is not None else pd.DataFrame()
     if 'game_type' in df.columns:
         df = df[df['game_type'].astype(str).str.upper() == 'REG']
     keep = [c for c in ('season', 'week', 'team', 'full_name', 'gsis_id', 'position', 'status',
@@ -135,6 +158,35 @@ def historical_reserve_profiles(season, week):
         return out
     except Exception:
         return {}
+
+
+# nflverse's weekly-roster code for a player on the Reserve/Suspended list (Hopkins 2022 wk1-6, Kamara 2023 wk1-3, Addison
+# 2025 wk1-3, Watson 2022, Rice 2025 wk1-6, Metcalf 2025 wk17-18 all carry it for their suspensions).
+SUSPENDED_ROSTER_CODE = 'R40'
+
+
+def suspended_before(season, week, rosters=None):
+    """Set of clean_name_exact keys of every player whose LATEST weekly-roster row in a week before ``week`` is the
+    Reserve/Suspended code - 'was suspended through last week', the rule v2_suspension_return_full_role reads. Only weeks
+    before ``week`` decide who was suspended, and a player still on the suspended list in ``week``'s own row (when it
+    exists - the live feed publishes it at the start of the week) is dropped: he has not returned. Anyone whose latest
+    earlier row is anything else (activated, cut, injured reserve) is not in the set. Empty on any failure."""
+    try:
+        r = load_weekly_rosters(season) if rosters is None else rosters
+        if r is None or r.empty or 'week' not in r.columns or 'status_description_abbr' not in r.columns:
+            return set()
+        r = r.copy()
+        r['_week'] = pd.to_numeric(r['week'], errors='coerce')
+        r['_key'] = clean_name_exact(r['full_name'].astype(str))
+        is_susp = r['status_description_abbr'].astype(str).eq(SUSPENDED_ROSTER_CODE)
+        earlier = r[r['_week'] < float(week)]
+        if earlier.empty:
+            return set()
+        latest = earlier.sort_values('_week').groupby('_key', sort=False).tail(1)
+        out = set(latest.loc[is_susp.reindex(latest.index), '_key'])
+        return out - set(r.loc[(r['_week'] == float(week)) & is_susp, '_key'])
+    except Exception:
+        return set()
 
 
 def merge_reserve_profiles(injury_profiles, reserve_profiles):

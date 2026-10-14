@@ -6,7 +6,7 @@ Runs data.weekly_projections.resolve_inseason_qb1s directly - the same inputs
 build_weekly_projections gives it (played-weeks history annotated for
 interrupted games, the target week's official injury report + reserve list as
 the unavailable set) - for every team-week, with and without the returning-
-starter rule, and with NO manual overrides (the model's own logic; the
+starter rule, and (2026-10-13) with 'v2_qb1_latest_game_starter' on top ('latest'), and with NO manual overrides (the model's own logic; the
 override file only exists for 2026). The actual starter is the team's QB with
 the most pass attempts that week.
 
@@ -69,15 +69,15 @@ def run(years, weeks):
             returning = wp.qb1_returning_inputs(year, week, stats_df, name_col, team_col,
                                                 player_prior, prior_name_col, prior_team_col, schedule)
             res = {}
-            for arm, ret in (('base', None), ('flag', returning)):
+            for arm, ret, latest in (('base', None, False), ('flag', returning, False), ('latest', returning, True)):
                 res[arm] = wp.resolve_inseason_qb1s(current_qbs, name_col, team_col, player_hist, name_col, team_col,
                                                     week, year, overrides=empty, unavailable_players=unavailable,
-                                                    returning=ret)
+                                                    returning=ret, latest_game_signal=latest)
             teams = sorted(set(starters.loc[week].index) if week in starters.index.get_level_values(0) else [])
             for team in teams:
                 actual = starters.get((week, team))
                 rec = {'year': year, 'week': week, 'team': team, 'actual': actual}
-                for arm in ('base', 'flag'):
+                for arm in ('base', 'flag', 'latest'):
                     info = res[arm]['by_team'].get(team, {})
                     rec[f'{arm}_status'] = info.get('status', 'none')
                     rec[f'{arm}_pick'] = info.get('player')
@@ -100,7 +100,7 @@ def main():
     d.to_parquet(a.out, index=False)
     pd.set_option('display.width', 200)
     n = len(d)
-    for arm in ('base', 'flag'):
+    for arm in ('base', 'flag', 'latest'):
         resolved = d[f'{arm}_pick'].notna()
         print(f"{arm}: team-weeks {n} | resolved {resolved.sum()} | correct {d[f'{arm}_ok'].sum()} "
               f"({d[f'{arm}_ok'].mean():.1%} of all) | wrong {(resolved & ~d[f'{arm}_ok']).sum()} | unresolved {(~resolved).sum()}")

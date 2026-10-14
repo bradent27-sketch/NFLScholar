@@ -4760,3 +4760,360 @@ raw 15.60 -> calibrated 16.11 -> season anchor 16.63 -> Questionable tag 13.80) 
 no projection changed. The Questionable row's basis text was shortened to fit its cell and its explanation moved into the
 "What these mean" dropdown. 764 tests pass. A running app must be restarted to load the change (Streamlit does not reload
 imported modules).
+
+## 2026-10-13 - Top-end projections run high: `v2_top_end_yardage` (CANDIDATE); pre-set bar written BEFORE the harness run
+
+User (asked where the model feels wrong): "Top end players feel a hair overprojected… projections for >115 yards are
+generally unrealistic… not impossible but unlikely." The board is used for start/sit and for **prop betting**, so the stat
+columns matter on their own, not only the point total.
+
+**It is true, and it is efficiency, not volume** (lab dump `.sweeps/calibration_lab_v7*.csv`, the harness base-arm board,
+2021-2025 weeks 3-17, played rows):
+
+| projected | n | actual average | reached the projection |
+|---|---|---|---|
+| receiving yards 100-115 | 64 | 84 (proj 106) | 25% |
+| receiving yards 115+ | 14 | 77 (proj 126) | 29% |
+| RB rushing yards 115+ | 17 | 98 (proj 122) | 29% |
+| QB passing yards 300+ | 110 | 275 (proj 316) | 23% |
+
+At 100+ projected receiving yards, targets are close (10.4 projected, 9.7 actual) and yards per target is the miss (10.6
+vs 8.6). Regressing the actual per-opportunity rate on the projected one: slope 0.32 WR yards/target, 0.30 TE, 0.48 RB
+yards/carry, 0.54 QB yards/attempt - too extreme at both ends, as the 2026-10-06 test found. Points: WRs ranked 4-8 at
+their position run +2.05 pts high (2021-2025; +1.53 in the harness window), positive in every season; WR 1-3 +1.26, every
+season; RB 1-3 +0.93 (mixed by season); QB and TE top ends are fine. E[actual | shown points] for WRs is flat up to 16
+points and then bends (16-18: -2.09, 20+: -2.36): the linear points line cannot follow that. Two things stack for a hot
+WR early in the season: the current-season weight on yards is high after 3-5 games (London week 6: 64% on 121.6 yards/game,
+implied 13.2 yards per target), and the season anchor then pulls toward the same hot average (WR 4-8: line 16.67 ->
+anchored 17.22, actual 15.58). WR 16+ points with 3-5 games played: -2.92; with 10+: -1.49.
+
+Live 2026 (ledger, weeks 1-5): the 8 receiving projections of 100+ averaged 116 projected, market 83, actual 90 (JSN week
+4: 154 / market 93 / actual 76). Ledger weeks 3-5: where model and market differ by 2+ points the market is closer 58% of
+the time (135 player-weeks; RB 57% model, WR 38%, TE 38% at a 3+ gap).
+
+**Variants tested offline** (`scripts/eval_efficiency_regression.py` plus scratch variants; every parameter fit
+leave-one-season-out; points re-scored, then the SHIPPED points lines + season anchor; paired START pools, harness window
+2022-2025 weeks 3-17, dRMSE vs shipped with the bootstrap CI over weeks):
+
+| variant | START-ALL | START-WR | seasons | WR 4-8 bias | top yard bins |
+|---|---|---|---|---|---|
+| shipped | | | | +1.53 | rec 100-115 -21%, 115+ -39%; pass 300+ -11% |
+| yards-per-opportunity shrink (lam fit on yards: WR 0.57, TE 0.50, RB-rec 0.42, RB-rush 0.85, QB 0.68) | -0.000 [-0.006,+0.006] | -0.005 | 1/4 | +1.04 | rec 100-115 still -25%, pass 300+ -10% |
+| season anchor pull grows with games, g/(g+4) | -0.005 [-0.015,+0.003] | -0.013 | 3/4 | +1.43 | (points only) |
+| points hinge on WR above 15 | -0.011 [-0.024,+0.001] | -0.026 | 3/4 | +0.58 | (points only; WR 1-3 -1.03, over-corrected) |
+| **yards hinge 60/60/250 (candidate)** | **-0.008 [-0.015,-0.001]** | **-0.018** | **4/4** | **+0.73** | **every bin within 2%** |
+| yards hinge + anchor g/(g+4) | -0.013 [-0.029,+0.001] | -0.031 | 3/4 | +0.59 | |
+
+Yards hinge knots 50/50/240 and 70/70/260 score the same (-0.006 to -0.008, 4/4); half strength leaves the 80+ receiving
+bin -8%.
+
+**QB passing is dropped from the candidate.** Decomposing the offline bias by position and tier (START pools, harness
+window): the top fifth of startable QBs is already UNDER-projected (-0.58 pts, the QB points line has slope 0.738), and the
+passing compression takes it to -0.92 for no RMSE gain (START-QB +0.001); WR top fifth +1.19 -> +0.65, RB +0.66 -> +0.38,
+TE +0.09 -> -0.02. Without QB the points result is the same (START-ALL -0.008 [-0.014,-0.002], 39-21 weeks, 4/4 seasons;
+START-WR -0.018, START-TE -0.006, START-RB +0.001, QB +0.000). The cost: the QB passing-yards column still runs high at the
+top (275+ about -7%, 300+ about -11%) - worth knowing when reading passing-yard props against the board.
+
+**Candidate `v2_top_end_yardage`** (`TOP_END_YARDAGE`, `apply_top_end_yardage`): from week 3, for every non-sidelined row,
+`new = yards - b * max(0, yards - knot)` for receiving yards (WR/TE/RB, knot 60, b 0.40) and RB rushing yards (knot 60,
+b 0.20); b is least squares on all of 2021-2025 (per season: receiving 0.24-0.54, rushing 0.10-0.49). QBs and volume and
+TDs are untouched. Raw points are re-scored from the compressed line and the
+points line is re-applied; it runs after capacity/carry budget/vacancy and before the opening-week lines (weeks 1-2, not
+touched), the season anchor and the Questionable cut. It is NOT a post-calibration step: a calibration dump with it on
+records the compressed line. The decomposition shows it as its own stage ("Top-end yardage Δ" in the stat table, a
+"Top-end yardage" row in the points table). Tests: `tests/test_top_end_yardage.py` (10). 774 tests pass.
+
+Live week 6 (2026, defaults + flag vs defaults, built 2026-10-13 on the injury feed as imported that morning; with the
+flag off the board equals a build of the pre-change code): 28 rows move (WR 15, RB 12, TE 1, no QB), mean -0.46 pts, at
+most -1.40. Drake London 111.9 -> 91.1 receiving yards (18.90 -> 17.50 pts), Smith-Njigba 107.7 -> 88.6, Nacua 92.2 ->
+79.3, Kenneth Walker 112.7 -> 102.1 rushing, James Cook 111.9 -> 101.5. The decomposition chains raw 19.90 -> top-end
+17.80 -> line 18.24 -> anchor 17.50 for London.
+
+**Pre-set bar (written before the harness run).** Ship-eligible only if all three hold:
+1. Stat columns (offline, held out by season, met): every projected receiving / RB rushing yardage bin from 60 up with
+   n >= 20 lands within 5% of the actual average.
+2. Top end (offline, held out, met): the WR rank 4-8 over-projection in the harness window is at most half of shipped
+   (+1.53 -> <= +0.77), and the top fifth of each position's START pool moves toward zero or stays (met: WR, RB, TE
+   closer, QB unchanged).
+3. Harness v2 (2022-2025 weeks 3-17, injury/reserve replay, played-only, base arm = DEFAULT_FEATURES): verdict not REJECT;
+   START-ALL dRMSE <= 0 with the CI's upper end below +0.010; no position's START RMSE worse by more than +0.010; bias
+   growth within the harness's own limit (0.3).
+
+On clause 3's bias part: a first draft of this bar (same day, before any harness run) said bias growth <= +0.05. Offline
+the candidate moves START-ALL bias -0.01 -> -0.09 (|growth| +0.08), and the decomposition above shows why: the shipped
+near-zero START-ALL bias is the over-projected top (WR top fifth +1.19) cancelling the under-projected rest (TE -0.60, RB
+-0.23). Removing the top-end error exposes the rest; that is the error-cancellation case, so the bias test is per segment
+(clause 2) and START-ALL bias growth is held to the harness's own limit. If clause 3 fails it is recorded as a reject.
+Shipping still needs the user's sign-off.
+
+### 2026-10-13 (night) - `v2_top_end_yardage` harness result: SHIP-ELIGIBLE, pre-set bar met in full, NOT turned on
+
+Harness v2, 2022-2025 weeks 3-17, injury/reserve replay, base arm = DEFAULT_FEATURES (54)
+(`.sweeps/harness_top_end_yardage_2022-2025_wk3-17.log`):
+
+| scope | RMSE base -> flag | dRMSE (CI) | bias | weeks better |
+|---|---|---|---|---|
+| START-ALL | 7.630 -> 7.624 | -0.006 [-0.012, -0.000] | -0.076 -> -0.155 | 37-23 |
+| START-WR | 7.877 -> 7.863 | -0.014 [-0.026, -0.002] | +0.041 -> -0.088 | 38-22 |
+| START-TE | 6.634 -> 6.628 | -0.006 [-0.014, +0.002] | -0.467 -> -0.489 | 31-18 |
+| START-RB | 7.637 -> 7.636 | -0.001 [-0.010, +0.008] | -0.055 -> -0.140 | 33-27 |
+| START-QB | 7.463 -> 7.463 | 0 | unchanged | |
+| ALL | 6.249 -> 6.246 | -0.003 [-0.006, -0.000] | -0.303 -> -0.338 | 37-23 |
+
+Pairwise accuracy unchanged everywhere. Verdict **SHIP-ELIGIBLE** (bias growth +0.079, Holm-adjusted per-position p 1.0).
+Against the pre-set bar: (1) stat columns within 5% - met offline; (2) WR 4-8 bias halved and every position's START top
+fifth closer to zero or unchanged - met offline; (3) not REJECT, START-ALL dRMSE <= 0 with the CI's upper end below
++0.010 (-0.000), no position worse by more than +0.010 (worst +0.000), bias growth within 0.3 (+0.079) - met. The harness
+agrees with the offline estimate (START-ALL -0.008, START-WR -0.018). **Status: built, NOT in DEFAULT_FEATURES; awaiting
+the user's sign-off.** Ship = add the flag to DEFAULT_FEATURES. If shipped, a future harness base arm and calibration dump
+include it (it is a calibration input, not a post-calibration step).
+
+## 2026-10-13 - Track Record page; the live record re-scored fairly (the model trails the market and FantasyPros); `score_ledger.py` FantasyPros bug fixed
+
+User asked for a track-record page in the app (idea 5) and for the WR/TE disagreement check to be re-run after the top-end
+work (idea 6).
+
+**New: `data/ledger_scorecard.py` + Weekly Fantasy > Track Record (`ui/tabs/track_record.py`).** Scores the saved boards
+(data/ledger) against what happened, with two rules the command-line scorer did not follow:
+- each player is scored from the **last board saved before his own game kicked off** (schedule kickoff for his team,
+  US Eastern -> UTC). `score_ledger.py` uses the week's latest file, which for week 5 was built Monday night after
+  Sunday's games. Weeks 1-2 of 2026 have no pre-kickoff board at all (rebuilt 09-24) and are left out of the live record;
+- every model-vs-benchmark number is on **paired pools** (the players both projected; a market total covering < 90% of a
+  player's line is dropped). The CLI scored each source on its own pool, and the model's pool is padded with easy
+  low-projection players the market never prices - that is where the model's earlier "win" came from.
+The page shows: week-by-week error / bias / ranking accuracy vs the market or FantasyPros (startable or everyone, by
+position), the "when the model and market disagree, who was closer" table, stat-by-stat error, and the model's leans
+against the market's stat numbers (over/under hit rate). The scoring format is inferred per ledger file from its stat
+lines (not stored; all 2026 files are Full PPR). Tests: `tests/test_ledger_scorecard.py` (8). Checked in the running app:
+renders at desktop width, no server errors; no board was built (no ledger file written).
+
+**Bug fixed in `scripts/score_ledger.py`:** the FantasyPros column was the first `FP Proj Pts*` column = **standard**
+scoring, scored against PPR actuals, so FantasyPros was charged about a point per projected catch (its WR bias read -3 to
+-5). Every live comparison made with the script before today under-credited FantasyPros (e.g. the "weeks 3-4: model 6.30 /
+market 6.49 / FantasyPros 6.84" line in docs/open_items_2026-10-07.md). It now reads the column for the scoring being
+scored; regression test added. Its docstring no longer claims a paired pool.
+
+**The live record, re-scored (2026 weeks 3-5, pre-kickoff boards, startable pools, Full PPR):**
+
+| | n | model RMSE | benchmark RMSE | weeks model closer | ranking accuracy model / benchmark |
+|---|---|---|---|---|---|
+| vs market | 436 | 7.60 | 7.32 | 0 of 3 | 66.6% / 68.2% |
+| vs FantasyPros | 453 | 7.78 | 7.44 | 0 of 3 | 64.9% / 66.8% |
+
+By position vs the market: WR 8.09 vs 7.58 (179), TE 7.53 vs 7.37 (69), RB 7.22 vs 7.11 (112). Where model and market
+differ by 2+ points the market ends closer about 60% of the time. Stat by stat (paired): passing yards are the clearest
+model loss (82.8 vs 69.4 yards RMSE, model bias -16.8); receiving yards 29.6 vs 28.4; rushing yards, TDs level. These are
+three weeks and earlier boards came from earlier model versions, but the direction is the same every week and against
+both benchmarks: **the model is not ahead of the market or FantasyPros live.** (Market and FantasyPros stay benchmarks
+only - no blending, per the standing rule.)
+
+**Idea 6 - the disagreements with `v2_top_end_yardage` applied** to the same live boards (yards compressed, points moved by
+line slope x anchor share; 112 of 1,017 rows move, -0.39 pts): the "model 4+ above the market" group shrinks 11 -> 7 and
+the model is closer in 44% of 3+-above cases (was 37%), but startable error vs the market barely moves (7.601 -> 7.599 vs
+7.32). The top-end fix is real but small live; most of the gap is elsewhere. What the remaining big "model below the
+market" cases are:
+- **Players listed Out who then played:** Ja'Marr Chase and Terry McLaurin, week 5. The FantasyPros feed went
+  Questionable 21%/23% (Thu) -> Out (Fri, and Sunday 9:11 ET, the last pre-kickoff board) -> Questionable 83%/57% (Sunday
+  4:13 ET, after kickoff). They scored 19.7 and 12.2 against a board of 0. Those two rows alone are about 0.08 of the
+  0.28-point gap. Not a model change: the injury feed was stale at build time - refresh it after the inactives (~90 min
+  before kickoff) before the last build.
+- **Players back from missed games** (0-2 games this season): Zay Flowers (0 games, model 9.7 / market 15.9 / actual
+  25.8), Brock Bowers (0-1), Davante Adams, DK Metcalf, Jaylen Waddle (2). The model leans on a short or empty 2026 log
+  plus a prior; the market prices the healthy role. This is the returning-from-absence lead noted on 10-06 (Kamara,
+  Addison) and the clearest model lead the live record shows.
+- **Questionable tags**: Justin Jefferson (67%), Jaylen Warren, Kenyon Sadiq - partly the 10-08 Questionable WR cut doing
+  what it was measured to do, which only further live weeks can judge.
+
+### 2026-10-13 (late) - SHIPPED: `v2_top_end_yardage` (DEFAULT_FEATURES = 55)
+
+User: "Yes, add in top-end yardage." Added to DEFAULT_FEATURES on the pre-set bar met in full and a harness verdict of
+SHIP-ELIGIBLE (START-ALL 7.630 -> 7.624, START-WR -0.014). It is a calibration input (in `CALIBRATION_INPUT_FEATURES`), so
+a future calibration dump and harness base arm include it; the v4 points lines were fit on the uncompressed line and stay
+as they are (the harness scored exactly that combination). One existing test isolates the RB carry budget by checking that
+rushing yards scale exactly with carries; it now holds the top-end flag off in both arms
+(`test_rb_carry_budget_fits_the_room_on_the_real_board_and_rescores`). 782 tests pass. Undo: remove the flag.
+
+## 2026-10-13 (night) - Players back from missed games: what the backtest says, and `v2_qb1_latest_game_starter` (CANDIDATE, pre-set bar written BEFORE the harness run)
+
+User: "start looking back into players coming back from missed games and how we need to adjust for that." The live record
+showed the model well under the market on Flowers, Bowers, Adams, Metcalf (short or empty 2026 logs).
+
+**Backtest** (`scripts/diag_returning_players.py`; lab dump = harness base-arm board with the shipped late steps
+re-applied, 2021-2025 weeks 3-17, played rows; segment = where the player stands in HIS season at projection time,
+from box scores before the week):
+
+| segment (START pool) | n | shown | actual | shown - actual | seasons same sign |
+|---|---|---|---|---|---|
+| healthy (played last game, 3+ games) | 8,658 | 13.03 | 13.12 | -0.09 | |
+| missed last 1 game | 245 | 11.35 | 11.45 | -0.10 | |
+| missed last 2-3 | 125 | 11.45 | 10.52 | +0.93 | 4/5 |
+| missed last 4+ | 68 | 12.04 | 9.49 | **+2.55** (t 3.05) | **5/5** |
+| 2nd game back (after 2+ missed) | 210 | 11.53 | 11.24 | +0.29 | |
+
+Because the START pool is itself chosen by the projection, the same split was redone on every played row grouped by
+last season's points per game (4+ games), which does not depend on this week's projection. Three different things show
+up:
+1. **QBs back from missed games are badly UNDER-projected** (prior 12+ ppg): 2nd game back -10.13 pts (projected 4.34,
+   scored 14.48, n 38, t -6.2, 5/5 seasons), 4+ missed -5.88, 2-3 missed -4.32. Almost every row is a projection of
+   exactly 0: the QB1 picker left the team unresolved or picked the fill-in (2025: Burrow wk14 0 vs 23.4, Stroud wk14,
+   Lamar wk10, Daniels wk6; 2024 Love wk4-5). Cause below.
+2. **Skill players' first game back after 4+ missed is OVER-projected** about 15-20% (RB +2.85, WR +2.40 in the START pool,
+   actual/projected 0.77-0.80; WR 5/5 seasons; prior-12+ rows RB +1.81, WR +2.11). Volume is the start of it (WR targets
+   0.86 of projection), TDs the bulk (0.39). n is small (68 START rows).
+3. **Season debuts (no game yet by week 3+) are UNDER-projected**, small n: prior 8-12 ppg WRs -1.86 (n 20, 5/5, actual /
+   projected 1.49), prior 12+ all positions -1.94 (n 14). The model gives a debuting player a reduced snap share (about
+   0.5-0.6 for an established starter; 0.01-0.10 for some: Odell Beckham 2021, Christian Kirk 2025, Marquise Brown 2024),
+   and outcomes are mixed (suspension returns like Addison 2025 produce fully; injury returns like Hockenson 2024 ramp
+   up). This matches the live cases (Flowers week 4, Bowers week 3) but is too thin to fit on yet.
+
+**The QB cause.** `resolve_inseason_qb1s` compares each QB's snap share in HIS OWN last eligible game. A starter back from
+injury is picked by the returning-starter rule in his first game back; in his second, he and the fill-in he replaced both
+have a full-snap "last game" (a week apart), the lead test fails, the team is "selection required" and both QBs project 0.
+Live this shows as a team needing a manual QB1 pick.
+
+**Candidate `v2_qb1_latest_game_starter`:** when two or more recently active QBs each had a full-snap own last game, the
+more recent start wins; anything else falls through to the existing rule unchanged. A first version compared QBs on the
+team's latest game instead and broke 55 correct picks (starters whose latest game was a partial one, left out of the
+history - 2021 KC Mahomes week 8); the shipped form only breaks ties. QB1 picks against the actual starter
+(`scripts/diag_qb1_resolution.py`, 2021-2025 weeks 3-17, no overrides, 2,234 team-weeks):
+
+| | correct | wrong | unresolved |
+|---|---|---|---|
+| shipped (returning-starter rule) | 1,863 (83.4%) | 151 | 220 |
+| + latest-start tie-break | 1,931 (86.4%) | 162 | 141 |
+
+68 unresolved team-weeks fixed, 0 correct picks lost, better in 5/5 seasons; 11 previously unresolved team-weeks now get
+the wrong QB (mostly a regular starter back without having been listed out, e.g. 2021 BAL Lamar Jackson week 12), where
+both QBs had projected 0 before. Tests: 5 in `tests/test_qb1_overrides_and_returning.py`.
+
+**Pre-set bar (written before the harness run).** Ship-eligible only if:
+1. QB1 resolution (offline, met): more correct picks in every season and no correct pick lost.
+2. Harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base arm = DEFAULT_FEATURES (55, incl. top-end yardage)):
+   verdict not REJECT; START-QB dRMSE <= 0; START-ALL dRMSE <= +0.003; no other position's START RMSE worse by more than
+   +0.010; bias growth within the harness's limit (0.3).
+
+**Skill players, first game back (finding 2): a factor is NOT worth it (rejected, `scripts/eval_returning_factor.py`).**
+A point-total factor for RB/WR/TE in their first game after missing their team's previous 4+ games, fit like the
+Questionable factor (least squares through the origin on the shipped board, leave-one-season-out, harness-style paired
+START pools, 2022-2025 weeks 3-17): RB/WR held-out factors 0.76-0.92, START-ALL -0.0013 (CI [-0.004, +0.001]), 3/4 seasons,
+16-13 weeks; per position with TE -0.0007; after 2-3 missed games it gets worse (+0.0022 to +0.0038, 2/4). The
+over-projection is real but too rare to move the board's accuracy. Not built.
+
+**Season debuts (finding 3): mechanism found, not changed.** A RB/WR/TE with zero games this season by week 3+ goes
+through `restore_cold_start_returning_role_share` (the preseason returning-role recovery, reused in-season for zero-game
+players). It pulls `whole + alpha * (active - whole)` with alpha about 0.57 for a full prior season; preseason `whole` is
+last season's whole-calendar participation, but in-season it is the player's share of THIS season's games so far - about
+0 for a debut. Live: Zay Flowers week 4 projected at 52.5% snaps (86% last season, 83% before the absence; targets 7.1 ->
+3.9), Brock Bowers week 3 at 63.5% (86% / 97%; targets 7.4 -> 5.4). The backtest leans the same way (established
+debuts produced 1.2-1.5x their projection) but has about 34 such rows, and the outcomes split by reason: suspension
+returns (Hopkins 2022, Kamara 2023, Addison 2025) produced fully at once, long-injury returns (Hockenson 2024, Godwin 2025)
+ramped up. A fix needs that distinction (or a judgment call on how much ramp-up to assume); it is the user's call.
+
+**Why they were out matters (weekly roster status in the missed weeks, `load_weekly_rosters`: R40 = reserve/suspended,
+R01/R48 = injured reserve, R04/R05/R27 = PUP / non-football injury). Returning RB/WR/TE with 8+ points per game last
+season, played rows, 2021-2025:**
+
+| segment | why out | n | shown | actual | actual / shown |
+|---|---|---|---|---|---|
+| debut | suspended | 3 | 10.30 | 19.03 | 1.85 (Hopkins 2022, Kamara 2023, Addison 2025) |
+| debut | injured reserve | 8 | 5.15 | 6.80 | 1.32 (mixed: Kupp 19.8, Jefferson 0.0) |
+| debut | PUP / NFI | 5 | 5.64 | 2.47 | 0.44 (J. Taylor 2023, Hockenson 2024) |
+| debut | inactive, no reserve list | 25 | 5.45 | 5.70 | 1.05 |
+| back 4+ | injured reserve | 39 | 8.96 | 8.60 | 0.96 |
+| back 4+ | inactive, no reserve list | 34 | 9.25 | 6.08 | 0.66 |
+
+The partial-role restoration is roughly right for injury returns taken together (they ramp up, some more than the model
+assumes); it is clearly wrong for suspensions, where there is no ramp-up - but 3 rows cannot fit anything. Candidate idea
+(not built, user's call): a debut whose absence was a suspension gets his full active role. Live this needs a suspension
+signal for the current season (the weekly roster feed's R40 code, or "Suspended" in the injury feed).
+
+### 2026-10-14 - `v2_qb1_latest_game_starter` harness result: SHIP-ELIGIBLE, pre-set bar met in full, NOT turned on
+
+Harness v2, 2022-2025 weeks 3-17, injury/reserve replay, base arm = DEFAULT_FEATURES (55)
+(`.sweeps/harness_qb1_latest_game_starter_2022-2025_wk3-17.log`):
+
+| scope | RMSE base -> flag | dRMSE (CI) | bias | weeks better |
+|---|---|---|---|---|
+| START-QB | 7.910 -> 7.390 | **-0.519 [-0.691, -0.356]** | -0.574 -> -0.067 | 32-1 |
+| START-ALL | 7.696 -> 7.604 | **-0.092 [-0.122, -0.063]** | -0.246 -> -0.165 | 34-3 |
+| ALL | 6.244 -> 6.188 | -0.057 [-0.074, -0.040] | -0.338 -> -0.297 | 35-2 |
+| QB (all) | 8.381 -> 7.965 | -0.416 [-0.542, -0.292] | -1.447 -> -0.989 | 34-1 |
+| START-RB / WR / TE | 7.631 -> 7.631 / 7.856 -> 7.852 / 6.620 -> 6.620 | +0.000 / -0.004 / +0.000 | | |
+
+Pairwise accuracy +0.004 (CI [+0.002, +0.005]) on START-ALL. Verdict SHIP-ELIGIBLE (bias growth -0.081). Against the pre-set
+bar: QB1 resolution better in 5/5 seasons with no correct pick lost (met offline); START-QB dRMSE <= 0 (-0.519); START-ALL
+dRMSE <= +0.003 (-0.092); no other position's START RMSE worse by more than +0.010 (worst +0.000); bias growth within 0.3
+(-0.081). The largest single improvement of the month - bigger than every earlier ship because a starting QB projected at
+exactly 0 is a 14-20 point miss, and it is a bug fix, not a tuning change. **Status: built, NOT in DEFAULT_FEATURES;
+awaiting the user's sign-off.** Ship = add the flag. If shipped, the harness base arm moves (START-QB about 7.39).
+
+## 2026-10-14 - `v2_suspension_return_full_role`: a player back from a suspension gets his full role (user decision; pre-set bar written BEFORE the check)
+
+User, on the debut finding above: "Yeah, give players returning from suspension a full role."
+
+**Rule.** A RB/WR/TE with ZERO games this season who clears the existing returning-role eligibility
+(`restore_cold_start_returning_role_share`: a real prior sample, same team, a role of 35%+) and whose latest weekly-roster row
+before the target week is Reserve/Suspended (status RES, code R40; Hopkins 2022, Kamara 2023, Addison 2025, Watson, Rice and
+Metcalf all carry it for their suspensions) gets his full active/pre-absence role (`restored`, capped at 0.95) instead of the
+partial pull (`whole + alpha * (restored - whole)`, alpha about 0.57). Nobody else changes; a suspended player the
+restoration does not cover (rookie, new team, small role: Jameson Williams 2023, Demarcus Robinson 2025) is untouched.
+Room conservation still takes the added share from his teammates. Past seasons use the real weekly rosters; the live board
+needs the current season's roster file, whose cache stopped at week 4 on 2026-10-14 (the feed has week 6), so
+`load_weekly_rosters` now refreshes a partial season's cache when it is more than 6 hours old (a finished season never is;
+a failed fetch keeps the cached copy). That staleness also affected the QB returning-starter rule's reserve-list reads.
+
+**Evidence is thin by nature:** 2021-2025 has exactly 3 return weeks the rule covers (DeAndre Hopkins 2022 wk7: projected
+10.87, scored 20.3; Kamara 2023 wk4: 11.91 vs 21.4; Addison 2025 wk4: 8.11 vs 15.4), so the harness (about 25,000 player-weeks) cannot
+resolve it and is not run. It is a logic fix on a user decision, checked end to end instead.
+
+**Pre-set bar.**
+1. Mechanism: on a real board, the flag changes only the listed players' role shares and, through room conservation, their
+   teammates'; every other row is identical flag-on and flag-off.
+2. End to end, on every 2021-2025 board where the rule fires (the 3 known weeks plus any other): each of the three known
+   cases lands closer to the actual points flag-on than flag-off, and the sum of squared error over every row the flag
+   changes (flagged players and the teammates whose share shrinks) falls.
+3. Tests for the rule, the stale-cache refresh and the decomposition's role text; the full suite passes.
+Shipping into DEFAULT_FEATURES follows the user's instruction above once 1-3 hold; undo = remove the flag.
+
+### 2026-10-14 (later) - SHIPPED: `v2_suspension_return_full_role` (DEFAULT_FEATURES = 56); end-to-end result against the pre-set bar
+
+`scripts/check_suspension_return.py` builds the harness base-arm board (DEFAULT_FEATURES + injury/reserve replay) flag on and
+off for every 2021-2025 week where a zero-game RB/WR/TE had been suspended through the week before (2022 wk6-7, 2023 wk4-5,
+2025 wk4), diffs the whole board and scores every changed row. The build is deterministic (two flag-off builds are identical).
+
+| return week | projected off -> on | actual |
+|---|---|---|
+| DeAndre Hopkins 2022 wk7 | 10.87 -> 18.24 (snap share 0.57 -> 0.89) | 20.3 |
+| Alvin Kamara 2023 wk4 | 11.91 -> 15.18 (0.45 -> 0.71) | 21.4 |
+| Jordan Addison 2025 wk4 | 8.11 -> 12.42 (0.55 -> 0.88) | 15.4 |
+
+Bar 1 (mechanism): met, with one fix and one caveat. First run: a player still suspended (Hopkins 2022 wk6) also got the
+full role injected, which moved every Arizona receiver 0.1-0.5 points with nobody returning; the rule now requires the player
+to be available this week and not still on the suspended list in the target week's own roster row (`suspension_return_mask`,
+`suspended_before`), and wk6 and 2023 wk5 now change zero rows. What remains: the returning player, his teammates through room
+conservation (Jefferson -1.4, Nailor -1.0 when Addison returned), and tiny spillover on other teams (stat lines move by
+about 0.01-0.1, one row by 0.23 points; a league-level normalizer, not a role change).
+Bar 2: all three known cases closer (sum of squared error 232 -> 52); over every changed row with a box score (n 21) 908 -> 682,
+teammates 676 -> 631 (closer on 13 of 18). Bar 3: 11 tests (`tests/test_suspension_return.py`), 798 pass.
+
+**Live (2026-10-14, week 6 board): zero rows change.** The only suspended 2026 skill player is a deep-bench WR (Brock
+Rechsteiner, NO, suspended weeks 1-5), below the restoration's eligibility. The rule matters when an established receiver or back
+returns from a suspension.
+
+**Also fixed:** `load_weekly_rosters` kept the live season's roster file forever; on 2026-10-14 it was 207 hours old and
+stopped at week 4 while the feed had week 6, so the reserve-list reads used by `v2_qb1_returning_starter` (weeks before the
+target week) and by this rule missed the last two weeks. A partial season's file is now refetched when more than 6 hours old
+(a finished season never; a failed fetch keeps the cached copy). The file refreshed to week 6 during the check. Tests cover
+refresh, no-refetch and failure.
+
+**Known gap:** a suspended player with no row on the board (Rashee Rice 2025, suspended weeks 1-6, is absent from the 2025
+weeks 7+ dump; his 2024 sample was 4 games) never reaches the restoration. Not changed.
+
+### 2026-10-14 (night) - SHIPPED: `v2_qb1_latest_game_starter` (DEFAULT_FEATURES = 57)
+
+User: "yes add QB starter fix." Added to DEFAULT_FEATURES on the pre-set bar met in full and a harness verdict of SHIP-ELIGIBLE
+(START-QB RMSE 7.910 -> 7.390, START-ALL -0.092 [-0.122, -0.063], 34-3 weeks). **The harness base arm moves with it:** a future
+run's base now includes this, so START-QB reads about 7.39 / bias -0.07 and START-ALL about 7.60 / bias -0.17 (compare a new
+candidate only against a base arm run on the same defaults, as always). Live check (2026 week 6, `apply_injury=True`, flag on
+vs off): zero rows change - every team already has a QB1 resolved (the `data/qb1_overrides.csv` choices cover the ambiguous
+ones), so today it is a backstop for the weeks a tie appears with no override. 798 tests pass. Undo: remove the flag.

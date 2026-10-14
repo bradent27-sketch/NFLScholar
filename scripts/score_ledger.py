@@ -1,16 +1,20 @@
 """
 Score the prediction ledger (data.prediction_ledger) against real outcomes -
 model vs. market vs. FantasyPros, per position, points and stat, using
-harness_v2's metrics on the SAME paired pool for all three sources. This is
+harness_v2's metrics. Each source is scored on the rows where IT has a number,
+so the model, market and FantasyPros n differ (the market prices fewer, mostly
+higher-variance players) - for a like-for-like record use
+data.ledger_scorecard (paired pools, each player's last PRE-KICKOFF board),
+which the app's Track Record page shows. This is
 the live counterpart to scripts/backtest_component.py: that script rebuilds
 historical boards; this one scores whatever real live boards were actually
 saved to data/ledger/ (see docs/model_improvement_plan_2026-09-23.md item 2c
 - the ledger exists precisely because the live market/FP numbers for a week
 that has already happened are gone once that week's board is overwritten).
 
-Uses the LATEST ledger file for each (year, week) - data.prediction_ledger's
-own "one build per hour" throttle already keeps that close to the last
-pre-kickoff build; a week is only scored once real actuals exist for it.
+Uses the LATEST ledger file for each (year, week), which can be a build made
+after some of that week's games (week 5 of 2026: Monday night); a week is only
+scored once real actuals exist for it.
 
 Usage:
     python scripts/score_ledger.py --year 2026
@@ -37,14 +41,19 @@ SOURCES = {
 }
 
 
-def _fp_points_col(ledger):
-    for c in ledger.columns:
-        if c.startswith('FP Proj Pts'):
-            return c
-    return None
+# FantasyPros' points column per scoring mode. Fixed 2026-10-13: this used to take the FIRST 'FP Proj Pts*' column,
+# which is 'FP Proj Pts' = STANDARD scoring, and score it against PPR actuals - FantasyPros was charged about one point
+# per projected catch (its WR bias read -3 to -5). Every live comparison made with this script before that date
+# under-credited FantasyPros.
+FP_POINTS_COL = {'Full PPR': 'FP Proj Pts PPR', 'Half-PPR': 'FP Proj Pts Half', 'Standard': 'FP Proj Pts'}
 
 
-def _score_week(year, week, ledger, stats_df, name_col, scoring_col):
+def _fp_points_col(ledger, scoring='Full PPR'):
+    col = FP_POINTS_COL.get(scoring)
+    return col if col in ledger.columns else None
+
+
+def _score_week(year, week, ledger, stats_df, name_col, scoring_col, scoring='Full PPR'):
     actual = (stats_df[pd.to_numeric(stats_df['week'], errors='coerce') == week]
              .groupby(name_col, observed=True)[scoring_col].sum())
     if actual.empty:
@@ -55,7 +64,7 @@ def _score_week(year, week, ledger, stats_df, name_col, scoring_col):
     actual_by_key.index = clean_name_exact(pd.Series(actual.index))
     ledger = ledger.set_index('_key')
 
-    fp_col = _fp_points_col(ledger)
+    fp_col = _fp_points_col(ledger, scoring)
     source_cols = {'Model': 'Model Proj Pts', 'Market': 'Mkt Market Pts', 'FantasyPros': fp_col}
 
     print(f"\n{'=' * 78}\n{year} week {week}  (ledger n={len(ledger)}, actuals n={len(actual_by_key)})"
@@ -146,7 +155,7 @@ def main():
     for week in weeks:
         path = latest[(args.year, week)]
         ledger = pd.read_parquet(path)
-        if _score_week(args.year, week, ledger, stats_df, name_col, scoring_col):
+        if _score_week(args.year, week, ledger, stats_df, name_col, scoring_col, args.scoring):
             scored_any = True
         else:
             print(f"\n{args.year} week {week}: no actuals yet (not played, or stats not loaded) - skipped")

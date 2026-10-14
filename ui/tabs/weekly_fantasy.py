@@ -1,8 +1,9 @@
 """
-Weekly Fantasy tab: Risers/Waiver Wire, Rookie Watch and Weekly Rankings,
-combined into one tab with sub-tabs - all three answer some version of
-"what should I do about my roster this week", which used to be spread
-across three separate top-level tabs.
+Weekly Fantasy tab: Weekly Rankings, Track Record, Risers/Waiver Wire and
+Rookie Watch, combined into one tab with sub-tabs - they answer some version
+of "what should I do about my roster this week" (and, for Track Record, how
+far to trust the board), which used to be spread across separate top-level
+tabs. Track Record was added 2026-10-13.
 
 No "WEEKLY FANTASY" heading here, same convention Draft HQ's own render()
 uses for its sub-tabbed layout: the tab you clicked to get here is already
@@ -16,10 +17,10 @@ function, and only one sub-tab is ever visible at a time.
 """
 import streamlit as st
 
-from ui.tabs import risers, rookie_watch, rankings
+from ui.tabs import risers, rookie_watch, rankings, track_record
 
-_SUB_LABELS = ["Weekly Rankings", "Risers / Waiver Wire", "Rookie Watch"]
-_SUB_MODULES = [rankings, risers, rookie_watch]
+_SUB_LABELS = ["Weekly Rankings", "Track Record", "Risers / Waiver Wire", "Rookie Watch"]
+_SUB_MODULES = [rankings, track_record, risers, rookie_watch]
 
 
 def render():

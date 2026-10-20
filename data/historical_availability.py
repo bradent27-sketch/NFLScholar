@@ -51,7 +51,10 @@ def _partial_season_cache_is_stale(df, path):
     """True for a cached season file that has not reached the last regular-season week AND is older than
     CACHE_MAX_AGE_HOURS - the only kind that can have fallen behind the feed."""
     try:
-        if pd.to_numeric(df['week'], errors='coerce').max() >= _REGULAR_SEASON_LAST_WEEK:
+        # seasons through 2020 had 17 weeks, so their finished files top out at 17 (they must not refetch every 6 h)
+        season = pd.to_numeric(df['season'], errors='coerce').max() if 'season' in df.columns else float('nan')
+        last_week = 17 if season <= 2020 else _REGULAR_SEASON_LAST_WEEK
+        if pd.to_numeric(df['week'], errors='coerce').max() >= last_week:
             return False
         return (time.time() - os.path.getmtime(path)) > CACHE_MAX_AGE_HOURS * 3600.0
     except Exception:

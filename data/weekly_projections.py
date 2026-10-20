@@ -139,6 +139,7 @@ from data.pass_capacity_allocator import apply_pass_capacity_conservation, SIDEL
 from data.rb_carry_budget import team_rb_carry_budgets, apply_rb_carry_budget
 from data.qb_volume_blend import blend_qb1_volume
 from data.fantasypros_availability import load_fantasypros_availability
+from data.expected_points import expected_points_luck_table
 from data.historical_availability import (
     historical_injury_profiles, historical_reserve_profiles, merge_reserve_profiles, suspended_before)
 from data.matchup_signals import (defense_stat_rank, blended_defense_stat_table,
@@ -2128,6 +2129,13 @@ MODEL_FEATURES = (
                              # starter before v2_qb1_latest_game_starter, 2.4% after it
                              # (most with a single available QB). The team stays listed
                              # as "QB1 selection required".
+    'v2_expected_points_luck',  # CANDIDATE (2026-10-20, backlog N1). Last step on the points total:
+                             # a WR/TE whose results ran ahead of what his usage was
+                             # worth (nflverse ff_opportunity expected points) in his
+                             # earlier games this season is pulled back, one who ran
+                             # behind is pushed up: +b x mean(actual - expected points
+                             # per earlier game), b = -0.18 WR, -0.16 TE. See
+                             # EXPECTED_POINTS_LUCK and apply_expected_points_luck.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -2722,6 +2730,7 @@ def resolve_model_features(features=None):
 # Three flags act AFTER the points line and are not inputs to it: the season anchor (2026-10-06), the opening-week
 # per-stat lines and the Questionable-tag cut (both 2026-10-08). A dump built with them on would record already
 # adjusted totals as the "raw" the lines are fitted to, so they are left out of the input set.
+# When 'v2_expected_points_luck' (candidate 2026-10-20) ships it is a fourth post-calibration step and must be added here.
 POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat_calibration',
                                        'v2_questionable_workload'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
@@ -3115,6 +3124,52 @@ def apply_questionable_workload(result, injury_profiles, factors=None):
     for idx in out.index[eligible]:
         info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
             'factor': float(factor[idx]), 'before': float(pts[idx]), 'after': float(new[idx]), 'status': 'questionable'}
+    for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
+        if col in out.columns:
+            out.loc[eligible, col] = new[eligible]
+    return out, info
+
+
+# --- v2_expected_points_luck ----------------------------------------------------------------------------------------
+# nflverse's ff_opportunity gives every player-game an EXPECTED point total from the context of his touches. A receiver
+# whose earlier games ran ahead of that ("luck" = actual - expected, per game) is over-projected the next week, one that ran
+# behind is under-projected. 2021-2025 weeks 3-17, shipped board, played rows: the miss (actual - projected) moves by -0.18
+# points per point of mean luck for WR (every season, CI [-0.26, -0.10]) and -0.16 for TE (4 of 5 seasons); RB shows nothing
+# (-0.06, CI spans 0) and a QB correction made START-QB worse in held-out runs, so only WR and TE are corrected. Held out by
+# season (scripts/eval_expected_points.py, b fit on the other four seasons, harness-style paired START pools): START-ALL
+# -0.0055 [-0.013, +0.001], START-WR -0.010, START-TE -0.010, ALL -0.0045 [-0.009, -0.000], better in 4 of 4 seasons. No
+# games-played shrink was best (a K of 4 or 8 only lost gain). Points total only, like the anchor and the Questionable cut: the
+# stat line is untouched. A player with no expected-points row yet this season (a rookie debut, a name the feed lacks) is left
+# alone. Caveat: the expectation model is trained on all seasons, so past-season luck is in-sample for it.
+EXPECTED_POINTS_LUCK = {'WR': -0.18, 'TE': -0.16}
+
+
+def apply_expected_points_luck(result, table, factors=None):
+    """(result, info): add ``factors[pos] * luck_pg`` to the point total of each eligible row. ``table`` is
+    data.expected_points.luck_per_game (index = clean player name, columns games / luck_pg). Eligible: a position in
+    ``factors``, at least one earlier game in the table, not sidelined (Availability above SIDELINED_AVAILABILITY) and a
+    non-zero total. ``info`` maps (Player, Pos, Team) -> {'luck_pg', 'games', 'factor', 'before', 'after'} for the rows
+    changed."""
+    factors = EXPECTED_POINTS_LUCK if factors is None else factors
+    if result is None or result.empty or table is None or len(table) == 0 or 'Model Proj Pts' not in result.columns:
+        return result, {}
+    out = result.copy()
+    keys = clean_name_exact(out['Player'].astype(str))
+    luck = keys.map(table['luck_pg'])
+    games = keys.map(table['games']).fillna(0)
+    factor = out['Pos'].map(factors)
+    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
+    pts = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
+    eligible = luck.notna() & factor.notna() & (games >= 1) & (avail > SIDELINED_AVAILABILITY) & (pts > 0.005)
+    if not eligible.any():
+        return out, {}
+    new = np.round(np.clip(pts + factor * luck, 0.0, None), 2)
+    info = {}
+    for idx in out.index[eligible]:
+        info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
+            'luck_pg': float(luck[idx]), 'games': int(games[idx]), 'factor': float(factor[idx]),
+            'before': float(pts[idx]), 'after': float(new[idx])}
     for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
         if col in out.columns:
             out.loc[eligible, col] = new[eligible]
@@ -13080,6 +13135,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if questionable_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
+    # v2_expected_points_luck: after the Questionable cut, the same place it was measured (on the finished board).
+    luck_info = {}
+    if 'v2_expected_points_luck' in feats and not cold_start:
+        result, luck_info = apply_expected_points_luck(
+            result, expected_points_luck_table(year, as_of_week, scoring_mode))
+        if luck_info:
+            result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+
     # Raw per-week slot/wide/inline defense-allowed evidence, grouped for
     # per-player lookup by (defense_team, position) - the pre-shrinkage
     # ingredients behind alignment_scheme_evidence's season-aggregate
@@ -13254,6 +13317,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if key in opening_calibration_info:
             # the points line was replaced, not applied: the total is the re-scored calibrated stat line
             detail['opening_week_calibration'] = opening_calibration_info[key]
+        if key in luck_info:
+            # v2_expected_points_luck is the very last step, after the Questionable cut
+            detail['expected_points_luck'] = luck_info[key]
+            line_points = luck_info[key]['before']
         if key in questionable_info:
             # v2_questionable_workload is the last step on the total, after the anchor
             detail['questionable_workload'] = questionable_info[key]

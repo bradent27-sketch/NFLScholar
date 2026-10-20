@@ -210,3 +210,11 @@ def test_a_failed_injury_refresh_keeps_the_cached_copy(tmp_path, monkeypatch):
     (tmp_path / 'injuries_2026.parquet').unlink()
     _fake_injuries(monkeypatch, boom=True)
     assert ha.load_injury_reports(2026).empty
+
+
+def test_a_finished_17_week_season_is_never_refetched(tmp_path, monkeypatch):
+    monkeypatch.setattr(ha, 'CACHE_DIR', str(tmp_path))
+    _write_cache(tmp_path, 2020, 17, age_hours=24 * 200)
+    calls = _fake_nflreadpy(monkeypatch, _rosters([]))
+    assert pd.to_numeric(ha.load_weekly_rosters(2020)['week']).max() == 17
+    assert calls == []

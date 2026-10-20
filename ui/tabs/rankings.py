@@ -2057,6 +2057,7 @@ def _render_points_path(detail):
     opening = detail.get('opening_week_calibration')
     questionable = detail.get('questionable_workload')
     top_end = detail.get('top_end_yardage')
+    luck = detail.get('expected_points_luck')
     rows = []
     if calibration.get('enabled'):
         raw = float(calibration.get('raw_points', detail['raw_points']))
@@ -2092,12 +2093,19 @@ def _render_points_path(detail):
         rows.append({'Stage': 'Questionable tag', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
                      'Basis': (f"Listed Questionable: WRs who then play average "
                                f"{1 - float(questionable['factor']):.0%} below projection (×{float(questionable['factor']):.2f}).")})
+    if luck:
+        before, after = float(luck['before']), float(luck['after'])
+        ahead = float(luck['luck_pg']) > 0
+        rows.append({'Stage': 'Usage vs results', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
+                     'Basis': (f"Over {int(luck['games'])} earlier games he scored {abs(float(luck['luck_pg'])):.1f} pts per game "
+                               f"{'more' if ahead else 'less'} than his usage was worth (nflverse expected points); "
+                               f"{abs(float(luck['factor'])):.2f} of that comes back.")})
     if not rows:
         return
     st.markdown("**How the point total is built**")
     frame = pd.DataFrame(rows)
     st.dataframe(style_plain_dataframe(frame), hide_index=True, width="stretch", height=df_auto_height(len(frame)))
-    if anchor or questionable or top_end:
+    if anchor or questionable or top_end or luck:
         parts = []
         if top_end:
             parts.append(
@@ -2118,6 +2126,12 @@ def _render_points_path(detail):
                 "played scored about 17% below his projection (yards and touchdowns, not targets), where untagged "
                 "receivers matched it. This is not a chance of sitting out: he is still counted as playing, and the "
                 "stat lines above are his healthy lines. Only Out and Doubtful change availability.")
+        if luck:
+            parts.append(
+                "**Usage vs results**: a receiver whose results ran ahead of what his targets and touches were worth "
+                "(nflverse's expected points) tends to give some of it back, and one that ran behind tends to rebound. "
+                "In 2021-2025 the next week's miss moved about 0.18 points against each point of per-game difference for "
+                "WRs and 0.16 for TEs. It applies to the point total only.")
         _what_these_mean(" ".join(parts))
 
 

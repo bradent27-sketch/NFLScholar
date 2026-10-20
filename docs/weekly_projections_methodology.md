@@ -5329,3 +5329,59 @@ User: "Great all good on commit. Turn on QB fallback". Added to DEFAULT_FEATURES
 SHIP-ELIGIBLE (result entry above). Live effect: a team whose QB room is unresolved but has a QB not listed out is projected from a
 probability-weighted guess (the board warning names the QBs and percentages and keeps the jump buttons); PHI week 6 (Hurts Out,
 Dalton 0.0) is the case it fixes. Undo: remove the flag from DEFAULT_FEATURES. Test: `tests/test_qb1_probable_starter.py`.
+
+
+## 2026-10-20 - `v2_expected_points_luck` (CANDIDATE, pre-set bar written BEFORE the harness run; backlog N1)
+
+User: "do the luck correction harness". **What it is.** nflverse ff_opportunity gives each player-game the points his touches were
+worth given their context (target depth, field position, down and distance); luck = actual minus expected points. On the shipped
+board the miss moves against earlier-games luck: WR -0.18 points per point of mean per-game luck (every season, CI [-0.26, -0.10]),
+TE -0.16 (4 of 5 seasons), QB -0.16 but a QB correction made START-QB worse held out, RB nothing (-0.06, CI spans 0). Re-measured
+on the current-model board file (2026-10-20) with the identical result as the 10-19 first read. The flag adds
+`b x luck_pg` to the finished point total of WR (b = -0.18) and TE (b = -0.16), where luck_pg is the mean of actual minus expected
+over his earlier games this season (regular-season weeks before the target week only), after the Questionable cut, the place it was
+measured. No games-played shrink: K = 0 was best held out (K = 4 and 8 only lost gain). A player with no expected-points row yet is
+left alone; sidelined and zero rows are left alone. Points total only: the stat line is untouched. Under Half-PPR/Standard the
+reception part of luck is scaled to the mode. The decomposition shows a "Usage vs results" row. Code: `data/expected_points.py`
+(cached weekly feed, 6 h refresh for the live season, as-of luck table), `apply_expected_points_luck` in
+`data/weekly_projections.py`, the row in `ui/tabs/rankings.py`; tests `tests/test_expected_points_luck.py` (8). Checked end to end
+on 2025 week 8 (flag off vs on, same code): only WR 124 and TE 71 rows change, largest move 1.04 points, all 195 equal the hand
+calculation. Also fixed: seasons through 2020 have 17 weeks, so their finished cache files must not look partial (they would have
+refetched every 6 h); one test added.
+
+**Offline expectation (held out by season, b fit on the other four, 2022-2025 weeks 3-17, `scripts/eval_expected_points.py --board`):**
+START-ALL -0.0055 [-0.013, +0.001], START-WR -0.0102, START-TE -0.0100, ALL -0.0045 [-0.009, -0.000], better in 4 of 4 seasons, 33-27
+weeks, bias -0.174 -> -0.207. This is the honest size of the effect: the harness run below uses b fit on ALL five seasons (the two
+constants were fit on the same rows it scores), so expect it to read a little better than the held-out figure.
+
+**Pre-set bar (written before the harness run).** Ship-eligible only if, on harness v2 (2022-2025 weeks 3-17, injury/reserve replay,
+base arm = DEFAULT_FEATURES (58)): verdict not REJECT; START-ALL dRMSE <= -0.003; START-WR and START-TE each <= 0; START-QB and
+START-RB each within +0.010 (unchanged by construction); bias growth within the harness limit (0.3). Caveats to state with any
+result: nflverse's expectation model is trained on all seasons, so past-season expected points are in-sample for it; the clean check is
+the live 2026 weeks (an out-of-sample read is added once the harness is done). Shipping into DEFAULT_FEATURES needs the user's sign-off.
+
+**Out-of-sample read on the live 2026 weeks (2026-10-20, weeks 3-6, each player's last pre-kickoff board from `data/ledger`, luck from the
+2026 ff_opportunity feed, b fixed at the 2021-2025 fit, not scored by the harness).** Slope of the miss on luck: WR -0.194 (n = 467; the
+2021-25 fit was -0.18), TE -0.458 (n = 263; larger than -0.16, noisy). On the paired START pool (WR + TE, 308 rows that also have a
+market line): model 7.691 -> 7.617 with the correction (WR 7.694 -> 7.625, TE 7.683 -> 7.594), market 7.406, so the WR/TE gap to the
+market narrows from 0.285 to 0.211. Four weeks, directional only; mean absolute correction 0.38 points on the 892 rows it touches.
+
+
+### 2026-10-20 - `v2_expected_points_luck` harness result: pre-set bar met in full, harness verdict INCONCLUSIVE, NOT turned on
+
+Harness v2, 2022-2025 weeks 3-17, injury/reserve replay, base arm = DEFAULT_FEATURES (58): START-ALL RMSE 7.611 -> 7.605 (-0.007, CI
+[-0.015, +0.000], 33-27 weeks), START-WR 7.827 -> 7.814 (-0.013, CI [-0.030, +0.002], 35-25), START-TE 6.631 -> 6.621 (-0.010, CI
+[-0.026, +0.005], 37-23), START-QB and START-RB 0.000 (untouched by construction), ALL 6.165 -> 6.160 (-0.005, CI [-0.010, -0.000]);
+pairwise accuracy unchanged; bias growth +0.032 (START-WR bias -0.160 -> -0.224, START-TE -0.571 -> -0.615: the correction lowers WR/TE a
+little on average, since the players with expected-points rows ran slightly ahead of expectation). Verdict INCONCLUSIVE (the START-ALL
+interval touches 0). Bar: not REJECT (met), START-ALL <= -0.003 (met), START-WR and START-TE <= 0 (met), QB/RB within +0.010 (met), bias
+growth <= 0.3 (met). The coefficients were fit on all five seasons, so this is mildly in-sample; the held-out figure is START-ALL -0.0055.
+Same footing as `v2_season_anchor` and `v2_qb_td_blend`, which shipped on a met bar with an INCONCLUSIVE harness verdict. Shipping needs
+the user's sign-off; on shipping it joins POST_CALIBRATION_FEATURES.
+
+### 2026-10-20 - Calibration audit (read only)
+
+Which factors and weights were never tuned on the current harness: see `docs/improvement_backlog.md` section C (C1-C16). The largest:
+the PFF alignment WR/TE matchup (its shrinkage, clip and confidence weights are labelled "starting defaults, not fitted" in the code and it
+has no recency weighting), DEFENSE_PRIOR_GAMES doing two jobs (neutral games inside every profile and the current-vs-last-season blend
+weight) that were only ever swept together, and defense recency reusing the player decay.

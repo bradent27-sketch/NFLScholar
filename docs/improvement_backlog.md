@@ -42,7 +42,7 @@ Where it comes from: the receivers. WR ordering is right 62% of the time vs the 
 
 | ID | Item | Why | Source | Size | Status |
 |---|---|---|---|---|---|
-| N1 | **Expected stats (`ff_opportunity`).** Expected receptions, yards, TDs per player-game from usage (targets, air yards, field position). | **First read 2026-10-19: real but small.** Luck (actual minus expected points, earlier games this season) predicts the board's miss: WR -0.19 per point (5/5 seasons), TE -0.18, QB -0.16, RB none. Held out, WR/TE only: START-ALL -0.005 [-0.013, +0.002], WR and TE START -0.009 each, ALL -0.0044 [-0.009, -0.000], 4/4 seasons; QB and RB versions are worse. About a third of the season anchor's gain. Caveat: nflverse's expectation model is in-sample for past games; 2026 weeks are the clean check. | `nflreadpy.load_ff_opportunity`, 2006 to now, weekly, keyed by player id | medium (loader, id match, 2026 refresh, one harness run) | TODO, LOW priority (`scripts/eval_expected_points.py`; methodology 2026-10-19) |
+| N1 | **Expected stats (`ff_opportunity`): usage-vs-results correction.** | Luck (actual minus expected points, earlier games this season) predicts the board's miss: WR -0.18 per point (5/5 seasons), TE -0.16 (4/5), QB -0.16 (held-out version worse), RB none. Re-confirmed 2026-10-20 on the current-model board. Held out by season, WR/TE only, no games shrink: START-ALL -0.0055 [-0.013, +0.001], START-WR/TE -0.010, ALL -0.0045 [-0.009, -0.000], 4/4 seasons. Caveat: nflverse's expectation model is in-sample for past seasons; 2026 is the clean check. | `nflreadpy.load_ff_opportunity` | medium | SHIP-ELIGIBLE on the pre-set bar (harness 2026-10-20: START-ALL -0.007 CI [-0.015, +0.000], START-WR -0.013, START-TE -0.010, QB/RB 0.000, ALL -0.005 CI [-0.010, -0.000], bias growth +0.032; harness verdict INCONCLUSIVE). Candidate flag `v2_expected_points_luck`, NOT in DEFAULT_FEATURES; awaiting the user's sign-off (on shipping it also joins POST_CALIBRATION_FEATURES). |
 | N2 | **Routes run and targets per route run (WR/TE).** | Our PFF exports already have `routes`, `route_rate`, `yprr`, but they only feed role confidence. **First read 2026-10-19: no signal.** On 4,145 WR/TE rows (PFF weekly 2024-2025) a hot targets-per-route rate is not over-trusted (WR slope +0.09, i.e. slightly under-trusted; TE -0.10 n.s.; points nothing). Only 2 seasons of weekly routes exist locally. | PFF exports (live); nflverse `load_participation` for more history | - | REJECTED for now (`scripts/eval_routes_targets.py`); revisit only if more PFF weekly history is added |
 | N3 | **Weekly depth charts.** | 141 backtest team-weeks have no resolved QB1; backtests only have a real depth chart in week 1; could cut manual QB1 overrides live. **Tested 2026-10-19: no.** The depth chart lists injured starters as QB1: right 87% (2025) and 90% (2026, weeks 2+) against 88% and 91% for simply taking the last game's starter; on the 76 team-weeks the last-starter rule misses it is right on 31 and wrong on 38 of the 587 it gets. | `nflreadpy.load_depth_charts` (official weekly through 2024, ESPN daily from 2025) | - | REJECTED as a QB1 source |
 | N4 | **Trade dates.** | Fixes the traded-player team leak (D6b) cleanly. | `nflreadpy.load_trades` | small | TODO |
@@ -70,6 +70,38 @@ Where it comes from: the receivers. WR ordering is right 62% of the time vs the 
 |---|---|---|---|---|
 | P1 | **Calibrated stat lines for props (display only).** The points are calibrated by the points line; the stat lines a prop bettor reads (yards, receptions, TDs) are not, and they are over-dispersed. | Slope of actual on projected, START pool 2021-25 (re-measured 2026-10-20 on the current model): QB passing yards 0.71, QB attempts 0.73, QB rush yards 0.80, RB rush yards 0.95 and WR yards 0.93 (top-end yardage already fixed most of those), RB/TE receiving yards 0.70/0.76, receptions 0.76/0.82/0.75, TDs 0.33-0.72. A fitted line per stat (leave-one-season-out) cuts stat RMSE by 0.3-1.1% (QB pass yards -0.85 of 74, 5/5 seasons; QB rush yards -0.29 of 17.9, 5/5; RB/WR/TE yards 4/5 to 5/5 but about 0 MAE gain). Small for accuracy, larger for edge-hunting: the tails (300+ passing yards, top-quintile TDs) are where projection minus line is biggest and least real. | medium | PARKED until the user wants the prop view (deferred idea 2): include calibrated lines and over/under probabilities there. Points and ranking stay untouched. |
 | P2 | **User-deferred ideas:** 2 prop view, 3 Sleeper "my team", 4 "why" column. | - | - | WAITING on the user |
+
+## C. Calibration audit (2026-10-20): factors and weights never tuned on the current harness
+
+Read from the code comments, the sweep outputs in `.sweeps/` and the methodology doc. "Old sweep" = tested once in Aug-Sep 2026 on the
+pre-v2 harness (MAE, narrow windows, an older model): not comparable to today's gate. Nothing here has been started.
+
+| ID | Factor (value) | What it decides | Status |
+|---|---|---|---|
+| C1 | **PFF alignment WR/TE matchup**: shrinkage 4 games, no recency weighting, raw clip 0.50-1.75, final clip 0.75-1.30, event half-weight 20, confidence half-weight 60 (`data/pff_alignment.py`) | The WR/TE targets/receptions/yards matchup wherever PFF weekly data exists (2024-25 backtests, every 2026 live board) | NEVER TUNED ("starting defaults, not fitted" in the code). Prior-season blend (0.20 alignment / 0.40 scheme, G0 6) old sweep. Highest priority: WR/TE is the gap to the market. Only 2024-25 can test it. |
+| C2 | **DEFENSE_PRIOR_GAMES 12** used twice | (a) neutral league-average games mixed into every defense profile, (b) how fast this season's defense replaces last season's | Old sweep moved both together; the two roles never tested apart |
+| C3 | **Defense recency per game** (reuses RECENCY_DECAY 0.85) | How much recent defensive games outweigh older ones | Never tuned for defenses (old sweep moved player and defense decay together, no signal) |
+| C4 | **PRIOR_SEASON_DEFENSE_RECENCY_FLOOR 0.80** | How much last season's late games outweigh its early games | User preference; old sweep, no signal |
+| C5 | **Matchup strength** (multiplier applied at full strength) and **MATCHUP_CLIP 0.82-1.22** | How much of a defense rating reaches the projection | Strength never checked; clip from a one-season absolute-MAE scan without a CI |
+| C6 | **Role matchups**: ROLE_MATCHUP_K 10, ROLE_MIN_EVENTS, tercile buckets | Possession vs deep receiver, receiving vs rushing back | K old sweep, no signal; the rest never tested |
+| C7 | **Blowout discount** (28 points, x0.5) and **OFFENSE_PRIOR_GAMES 6** (RB only) | Decided games in a defense's history; the early-season offense baseline | Old sweeps |
+| C8 | **Pace**: PACE_PRIOR_GAMES 12, PACE_CLIP 0.85-1.15 | Opponent pace effect | Prior copied from the defense value, clip never tested (the 0.15 cap is measured) |
+| C9 | **Within-season recency RECENCY_DECAY 0.85** | How much a player's recent games outweigh earlier ones | Old sweep, no signal |
+| C10 | **K_EFFECTIVE_RANGE 0.7-1.3** | Role confidence speeding up / slowing trust in this season's rate | Never tested. Testable from the M2 capture with no new builds. |
+| C11 | **ROLE_CHANGE_K_REDUCTION 0.5** | How much a detected role change speeds trust in new volume | Only the RB version tested (0.0); the general 0.5 never. Testable from the M2 capture. |
+| C12 | **Two-seasons-back blend** (base 0.20, cap 0.55, damping 0.35, 8-game fade; the QB blend's own copy) | How much a season two years back counts | Never tested |
+| C13 | **QB volume/efficiency blends** (volume K 60, pass efficiency 100, rush efficiency 5, rush TD 40, style 10, starter floor 20/game) | Team vs personal QB volume and efficiency | No sweep on record |
+| C14 | **TD priors**: two-year TD weight 0.30 and band 0.60-1.67, credibility K (130/55/200), one-season cap 0.70, longevity bonus; xTD event K 6/8, prior TD weight 0.7, share K 4 | Touchdown rates | Credibility K adjusted once after an ablation; the rest seeded or hand-set (xTD scoring rates themselves are fitted) |
+| C15 | **Partial-game and blowout exclusions** (0.65 / 0.50 / 0.60 snap shares; 28 points, 0.65 / 0.75) | Which past games count in a player's rate | Hand-set |
+| C16 | **Injured-teammate redistribution** (survival 0.85 / 0.80 / 0.80, growth cap 2.0) and cold-start vacancy weights | Where an injured player's volume goes | Mostly hand-set (some guards swept) |
+
+Already calibrated (no action): points calibration lines v4, season anchor, Questionable cut, opening-week lines, top-end yardage, wind,
+per-stat game-total elasticity, WR/TE and RB participation, RB carry budget, QB TD blend, rematch weight (measured twice), pace cap,
+per-stat current-season weights (STAT_K, M2).
+
+Plan when approved: (1) a defense-profile capture (one ~80 min run) so C2-C5 and C8 re-score offline in minutes each, winner to the
+harness; (2) C1 the same way on 2024-25; (3) C10-C11 from the existing M2 capture; (4) C12 and C14 with a small extra capture;
+(5) C15-C16 as on/off checks.
 
 ## W. Watch items (nothing to build yet)
 

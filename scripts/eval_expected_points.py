@@ -183,9 +183,18 @@ def report(d, variants, window):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--board', default='', help='a board file from the CURRENT model (scripts/capture_stat_blend_traces.py): '
+                    'its final points are the shipped board, so no late steps are re-applied')
+    a = ap.parse_args()
     pd.set_option('display.width', 230)
-    d = load_dump('.sweeps/calibration_lab_v7.csv', '.sweeps/calibration_lab_v7_wk1_ourlads.csv')
-    d['shown'] = shipped_board(d)
+    if a.board:
+        d = load_dump(a.board)
+        d['shown'] = d['final']
+    else:
+        d = load_dump('.sweeps/calibration_lab_v7.csv', '.sweeps/calibration_lab_v7_wk1_ourlads.csv')
+        d['shown'] = shipped_board(d)
     feats = luck_features(load_ff())
     d = attach(d, feats)
     played = (d['played'] & d['actual'].notna() & d['week'].between(3, 17)).to_numpy()

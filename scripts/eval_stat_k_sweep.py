@@ -59,6 +59,9 @@ def load_joined(trace_path, weeks=(3, 17)):
     t = t[t['week'].between(*weeks) & t['build_path'].astype(str).str.startswith('direct')]
     t = t.merge(d[KEYS].assign(_row=np.arange(len(d))), on=KEYS, how='inner')
     t = t.drop_duplicates(KEYS + ['stat'], keep=False)
+    # Steps after these late ones that do not depend on the stat line (v2_expected_points_luck, 2026-10-20) are carried as
+    # a fixed per-row offset, so a variant only moves what its own stat change moves.
+    d['_late_offset'] = d['final'].to_numpy(float) - late_steps(d, d['raw'].to_numpy(float))
     return d, t
 
 
@@ -110,7 +113,7 @@ def variant_board(d, t, scales):
                     & (d['week'].to_numpy()[rows] >= 3))
             new = np.where(live & (pre2 > knot), pre2 - share * (pre2 - knot), pre2)
         raw[rows] += WEIGHTS.get(stat, 0.0) * (new - final)
-    return late_steps(d, raw)
+    return late_steps(d, raw) + d['_late_offset'].to_numpy(float)
 
 
 def paired_pool(d, a, b):

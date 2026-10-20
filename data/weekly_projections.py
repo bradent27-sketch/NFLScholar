@@ -295,6 +295,15 @@ QB_PASSING_TD_LEAGUE_RATE = 1.46      # passing TDs per game, QB starters who pl
 # prior). Bounded so role confidence can move K at most 40% either way -
 # it's a nudge on top of sample size, not a replacement for it.
 K_EFFECTIVE_RANGE = (0.7, 1.3)
+# 'v2_role_confidence_reversed_wrte' (CANDIDATE 2026-10-20, calibration audit C10): for WR/TE receiving volume the direction
+# above is backwards. Re-scored from the 2021-2025 stat-blend capture (scripts/eval_blend_modifiers.py, exact re-score of the
+# blend, paired START pools): removing the role-confidence effect improves START-ALL by 0.0029 (CI excludes 0, 5/5 seasons),
+# and mirroring it (an established role leans MORE on last season, an uncertain one trusts this season sooner) by 0.0049
+# [-0.0077, -0.0023] for WR/TE only (WR -0.008, TE -0.0125, 5/5 seasons); widening the shipped direction hurts in step. RB
+# got slightly worse when mirrored, QB was flat, so only WR/TE targets/receptions/receiving yards are mirrored. TD rates
+# (the xTD path) were not part of the test and keep the shipped direction.
+ROLE_CONFIDENCE_REVERSED_POSITIONS = frozenset({'WR', 'TE'})
+ROLE_CONFIDENCE_REVERSED_STATS = frozenset({'targets', 'receptions', 'receiving_yards'})
 
 # Per-game recency decay for a player's OWN within-season history (see the
 # module docstring's "THIS SEASON'S OWN GAME LOG..." section) - most recent
@@ -2129,6 +2138,12 @@ MODEL_FEATURES = (
                              # starter before v2_qb1_latest_game_starter, 2.4% after it
                              # (most with a single available QB). The team stays listed
                              # as "QB1 selection required".
+    'v2_role_confidence_reversed_wrte',  # CANDIDATE (2026-10-20, calibration audit C10). For WR/TE targets,
+                             # receptions and receiving yards, role confidence moves the
+                             # current-vs-prior blend the other way: an established role
+                             # leans more on last season, an uncertain one trusts this
+                             # season sooner (K_EFFECTIVE_RANGE mirrored). See
+                             # ROLE_CONFIDENCE_REVERSED_POSITIONS.
     'v2_expected_points_luck',  # SHIPPED 2026-10-20 (was a candidate, backlog N1). Last step on the points total:
                              # a WR/TE whose results ran ahead of what his usage was
                              # worth (nflverse ff_opportunity expected points) in his
@@ -5451,7 +5466,8 @@ def projection_channel(position, stat):
 
 
 def _current_blend_weight(cur_games, stat, role_confidence, role_change_confidence=None,
-                          role_change_reduction=ROLE_CHANGE_K_REDUCTION, pos=None, k_override=None):
+                          role_change_reduction=ROLE_CHANGE_K_REDUCTION, pos=None, k_override=None,
+                          reverse_confidence=False):
     """The current-season weight used by ``_blended_rate`` (also traced).
 
     ``role_change_reduction`` lets a caller use a smaller (or zero) trust-
@@ -5464,6 +5480,9 @@ def _current_blend_weight(cur_games, stat, role_confidence, role_change_confiden
     STAT_K), or leave it None to use the shared STAT_K exactly as before -
     the caller decides this by whether 'v2_stat_k_by_pos' is in its feature
     set, not this function.
+
+    ``reverse_confidence`` ('v2_role_confidence_reversed_wrte') mirrors K_EFFECTIVE_RANGE: a confident role gets the
+    LARGER K (leans on last season) and an uncertain one the smaller (trusts this season sooner).
     """
     games = np.maximum(np.asarray(cur_games, dtype=float), 0.0)
     confidence = np.clip(np.asarray(role_confidence, dtype=float), 0.0, 1.0)
@@ -5471,7 +5490,7 @@ def _current_blend_weight(cur_games, stat, role_confidence, role_change_confiden
     base_k = STAT_K_BY_POS.get(pos, {}).get(stat, STAT_K.get(stat, 3)) if pos else STAT_K.get(stat, 3)
     if k_override is not None:
         base_k = float(k_override)
-    k_eff = base_k * (hi - (hi - lo) * confidence)
+    k_eff = base_k * ((lo + (hi - lo) * confidence) if reverse_confidence else (hi - (hi - lo) * confidence))
     if role_change_confidence is not None and stat in {'targets', 'rushing_attempts'}:
         change = np.clip(np.asarray(role_change_confidence, dtype=float), 0.0, 1.0)
         k_eff = k_eff * (1.0 - role_change_reduction * change)
@@ -5543,7 +5562,7 @@ def prior2_blend_weight(games_2025, games_2024, current, prior2_value, games_202
 
 def _blended_rate(cur_rate, cur_games, prior_rate, pos_rate, stat, role_confidence,
                   role_change_confidence=None, role_change_reduction=ROLE_CHANGE_K_REDUCTION,
-                  pos=None, k_override=None):
+                  pos=None, k_override=None, reverse_confidence=False):
     """
     The one shrinkage formula every stat in this module goes through - see
     the module docstring. All arguments are numpy arrays (vectorized over
@@ -5557,7 +5576,7 @@ def _blended_rate(cur_rate, cur_games, prior_rate, pos_rate, stat, role_confiden
     prior = np.where(np.isnan(prior_rate), pos_rate, prior_rate)
     prior = np.where(np.isnan(prior), 0.0, prior)
     w_current = _current_blend_weight(cur_games, stat, role_confidence, role_change_confidence,
-                                      role_change_reduction, pos, k_override)
+                                      role_change_reduction, pos, k_override, reverse_confidence)
     return w_current * cur_rate + (1 - w_current) * prior
 
 
@@ -11674,6 +11693,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 if (pos == 'RB' and stat in ('rushing_attempts', 'targets')
                     and 'v2_role_change_by_stat' in feats)
                 else ROLE_CHANGE_K_REDUCTION)
+            _reverse_role_confidence = ('v2_role_confidence_reversed_wrte' in feats
+                                        and pos in ROLE_CONFIDENCE_REVERSED_POSITIONS
+                                        and stat in ROLE_CONFIDENCE_REVERSED_STATS)
             blended = _blended_rate(in_season_rate, cur_games, prior_rate, pos_rate_arr, stat,
                                     cur['role_confidence'].to_numpy(dtype=float),
                                     (cur['role_change_confidence'].to_numpy(dtype=float)
@@ -11682,7 +11704,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                     pos=(pos if 'v2_stat_k_by_pos' in feats else None),
                                     k_override=(QB_PASSING_TD_K if (
                                         ('v2_qb_passing_td_k' in feats or 'v2_qb_td_blend' in feats)
-                                        and pos == 'QB' and stat == 'passing_tds') else None))
+                                        and pos == 'QB' and stat == 'passing_tds') else None),
+                                    reverse_confidence=_reverse_role_confidence)
             if 'v2_xtd' in feats and stat in XTD_ZONE_STATS:
                 # Replaces the standard blend above for exactly these two
                 # stats (see 'v2_xtd''s own comment block) - passing_tds is
@@ -11872,7 +11895,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 role_change_reduction, pos=(pos if 'v2_stat_k_by_pos' in feats else None),
                 k_override=(QB_PASSING_TD_K if (
                     ('v2_qb_passing_td_k' in feats or 'v2_qb_td_blend' in feats)
-                    and pos == 'QB' and stat == 'passing_tds') else None))
+                    and pos == 'QB' and stat == 'passing_tds') else None),
+                reverse_confidence=_reverse_role_confidence)
             stat_trace[stat] = {
                 'build_path': np.full(len(cur), 'direct rate'),
                 'current_rate': in_season_rate,

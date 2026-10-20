@@ -5395,3 +5395,48 @@ anchor and the QB TD blend shipped on). Live effect: every WR/TE with expected-p
 -0.16 (TE) times his mean per-game luck, typically under half a point; the decomposition shows it as "Usage vs results". The 2026
 expected-points feed is cached in `data/cache/ff_opportunity_2026.parquet` and refreshed after 6 h; when the feed is unreachable the
 step is skipped. Undo: remove the flag from DEFAULT_FEATURES and POST_CALIBRATION_FEATURES.
+
+
+## 2026-10-20 - Calibration audit, first results: C10 role-confidence direction (CANDIDATE, pre-set bar below), C11 closed
+
+User: "turn it on and start the next steps" (the calibration audit, backlog section C). Read from the 2021-2025 stat-blend capture
+with `scripts/eval_blend_modifiers.py` (k_eff rebuilt from the shipped formula matches the traced weight to rounding, median gap 0.003;
+blend re-scored exactly; points through the shipped late steps; paired START pools; weekly bootstrap CI).
+
+**C10, role confidence on the blend weight (K_EFFECTIVE_RANGE 0.7-1.3): backwards for WR/TE receiving.** START-ALL dRMSE by range (lo, hi):
+mirrored (1.3, 0.7) -0.0046 [-0.0081, -0.0013] 5/5 seasons; (1.15, 0.85) -0.0039; no effect (1.0, 1.0) -0.0029 [-0.0049, -0.0011] 5/5;
+(0.85, 1.15) -0.0017; shipped 0; wider (0.5, 1.5) +0.0031, (0.3, 1.7) +0.0080: a clean monotone dose-response. Mirrored for WR/TE only:
+-0.0049 [-0.0077, -0.0023], WR -0.0079, TE -0.0125, 5/5 seasons, QB and RB untouched (mirroring RB made it +0.0011 worse). It is not just
+"slower for starters": role confidence is spread wide (WR/TE receiving rows: 10th pct 0.07, median 0.50, 90th 0.86), and a plain slower
+WR/TE receiving blend (K x1.5 / x2 / x3) gave -0.0033 / -0.0040 / -0.0034 with wider intervals and 3-4 of 5 seasons. Reading: an
+established role makes last season's rate a good guide (same role, bigger sample), while an uncertain or changing role is better read
+off this season. No new number: the candidate mirrors the shipped range. Built as `v2_role_confidence_reversed_wrte` (WR/TE targets,
+receptions, receiving yards; TD rates through xTD keep the shipped direction), `tests/test_role_confidence_reversed.py` (3).
+
+**C11, role-change speed-up (ROLE_CHANGE_K_REDUCTION 0.5, QB/WR/TE targets and rushing attempts): no effect, closed.** Stat-level RMSE
+of WR/TE targets 2.4439-2.4444 and QB rushing attempts 2.7484 at every reduction from 0 to 1; only 2.8% of blend rows carry a
+role-change confidence above 0.05.
+
+**Pre-set bar for `v2_role_confidence_reversed_wrte` (written before its harness run).** First confirmed offline on the fresh
+current-model capture (`.sweeps/defense_capture.parquet`, DEFAULT_FEATURES 59), then ship-eligible only if, on harness v2 (2022-2025
+weeks 3-17, injury/reserve replay, base arm = DEFAULT_FEATURES (59)): verdict not REJECT; START-ALL dRMSE <= -0.003; START-WR and START-TE
+each <= 0; START-QB and START-RB each within +0.010; bias growth within 0.3. Shipping needs the user's sign-off.
+
+
+### 2026-10-20 - Calibration audit C2-C5 (defense-allowed profile): the shipped settings hold; C10 confirmed on the fresh capture
+
+`scripts/capture_stat_blend_traces.py --defense-variants` (2021-2025 weeks 3-17, DEFAULT_FEATURES 59; boards identical to a plain
+build, the shipped ratings replayed exactly from the recorded variants) and `scripts/eval_defense_variants.py` (a player's matchup
+multiplier moves by the change in his opponent's overall rating, an upper bound where a role rating also feeds it; re-clipped; points
+through the shipped late steps; paired START pools; 85% of trace rows movable, the rest are WR/TE PFF-alignment rows, C1). One knob at a
+time, START-ALL dRMSE: neutral games this season Kc 4 / 8 / 20: 0.0000 / -0.0001 / +0.0011; recency decay 0.75 +0.0017 (CI excludes 0,
+worse), 0.95 -0.0004 (3/5); last-season neutral games Kp 4 / 20: +0.0014 / +0.0002; late-season floor 0.6 / 1.0: +0.0003 / -0.0001;
+blend games Kb 6 / 20 / 30: -0.0002 / +0.0012 / +0.0025; matchup strength 0.5 / 0.75 / 1.25: +0.0026 / +0.0005 / +0.0010. The three jobs
+of DEFENSE_PRIOR_GAMES apart (Kc x Kp x Kb, 48 settings): best -0.0004 (CI [-0.0015, +0.0008], 3/5). Nothing beats the shipped settings
+beyond noise, and matchup strength is right as shipped (weaker and stronger are both worse), so the defense profile is now verified at
+about its best: C2-C5 CLOSED, no change. No held-out grid was run (it would only choose noise).
+
+C10 on the fresh capture (current defaults incl. the luck correction): mirrored range for WR/TE targets/receptions/yards START-ALL
+-0.0038 [-0.0066, -0.0011], 4/5 seasons, WR -0.0051, TE -0.0128, QB/RB 0 (the earlier capture read -0.0049; the luck correction now
+takes part of the WR signal). The same monotone pattern over all seven ranges. Harness run queued behind the C1 capture, against the bar
+written above (START-ALL <= -0.003).

@@ -126,6 +126,31 @@ def install_alignment_variant_hooks(store):
     wp.alignment_defense_residual_multiplier = mult
 
 
+# --xtd-variants (2026-10-20, calibration audit C14): the opportunity-based expected-TD blend for rushing/receiving TDs,
+# c * own_rate + (1 - c) * xTD with c = events / (events + XTD_TD_EVENT_K) and events = this season's TDs + 0.7 x last
+# season's. The inputs and the output are recorded per player, so the event K, the 0.7 and the own-rate blend re-score offline.
+def install_xtd_hooks(store):
+    import data.weekly_projections as wp
+    orig = wp.xtd_blended_rate
+
+    def xtd(stat, pos, own_rate, cur_games, cur_td_total, prior_td_total, player_names, player_teams, *args, **kw):
+        out = orig(stat, pos, own_rate, cur_games, cur_td_total, prior_td_total, player_names, player_teams, *args, **kw)
+        try:
+            own = np.nan_to_num(np.asarray(own_rate, dtype=float), nan=0.0)
+            cur_td = np.nan_to_num(np.asarray(cur_td_total, dtype=float), nan=0.0)
+            pri_td = np.nan_to_num(np.asarray(prior_td_total, dtype=float), nan=0.0)
+            res = np.asarray(out, dtype=float)
+            for i in range(len(res)):
+                store['xtd_rows'].append({'year': store['year'], 'week': store['week'], 'player': str(player_names[i]),
+                                          'pos': str(pos), 'team': str(player_teams[i]), 'stat': stat, 'own': float(own[i]),
+                                          'cur_td': float(cur_td[i]), 'pri_td': float(pri_td[i]), 'out': float(res[i])})
+        except Exception:
+            pass
+        return out
+
+    wp.xtd_blended_rate = xtd
+
+
 def install_defense_variant_hooks(store):
     """Wrap the defense estimator and the current/prior blend in data.weekly_projections. The board is unchanged (the
     original result is always returned); the variants go to ``store['rows']`` as long records."""
@@ -187,6 +212,7 @@ def main():
     ap.add_argument('--scoring', default='Full PPR')
     ap.add_argument('--defense-variants', action='store_true', help='also record the defense profile under other settings')
     ap.add_argument('--alignment-variants', action='store_true', help='also record the PFF alignment WR/TE matchup variants')
+    ap.add_argument('--xtd-variants', action='store_true', help='also record the expected-TD blend inputs per player')
     a = ap.parse_args()
     years = [int(y) for y in a.years.split(',')]
     lo, hi = a.weeks.split('-') if '-' in a.weeks else (a.weeks, a.weeks)
@@ -196,7 +222,10 @@ def main():
     board_path = a.out + '.board.csv'
     defense_path = a.out + '.defense.parquet'
     align_path = a.out + '.alignment.parquet'
-    store = {'rows': [], 'pending': {}, 'year': None, 'week': None, 'align_rows': []}
+    xtd_path = a.out + '.xtd.parquet'
+    store = {'rows': [], 'pending': {}, 'year': None, 'week': None, 'align_rows': [], 'xtd_rows': []}
+    if a.xtd_variants:
+        install_xtd_hooks(store)
     if a.defense_variants:
         install_defense_variant_hooks(store)
     if a.alignment_variants:
@@ -284,6 +313,8 @@ def main():
                 pd.DataFrame(store['rows']).to_parquet(defense_path, index=False)
             if a.alignment_variants and store['align_rows']:
                 pd.DataFrame(store['align_rows']).to_parquet(align_path, index=False)
+            if a.xtd_variants and store['xtd_rows']:
+                pd.DataFrame(store['xtd_rows']).to_parquet(xtd_path, index=False)
             print(f'{year} w{week}: {n} stat rows, {len(rows)} total, {time.time() - t0:.0f}s', flush=True)
     print('done', len(rows), flush=True)
 

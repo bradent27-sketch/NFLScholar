@@ -10,7 +10,7 @@ are older and partly stale; where they disagree with this file, this file wins.
 
 - Work since the sweep sits on branch `open-items-2026-10-07` (LOCAL commits, not pushed; `PreNFL2026_v.02` on origin is at
   `001ad1b`, `main` was never touched). 762 tests pass. Nothing is running.
-- `DEFAULT_FEATURES` = 57 flags; `MODEL_FEATURES` = 88 (as of 2026-10-14). Calibration lines are **v4** (kept three times: 10-01, 10-06, 10-08).
+- `DEFAULT_FEATURES` = 58 flags; `MODEL_FEATURES` = 89 (as of 2026-10-20). The model leads now live in `docs/improvement_backlog.md`. Calibration lines are **v4** (kept three times: 10-01, 10-06, 10-08).
 - Newest ships: `v2_season_anchor` (10-06) and `v2_qb_td_blend` (10-06). Both shipped on a pre-set bar although the
   harness's own verdict was INCONCLUSIVE. Undo = remove the flag name from `DEFAULT_FEATURES`.
 - Standing rules: every model change is a named flag; a `DEFAULT_FEATURES` change needs sign-off or a win on a bar written
@@ -91,6 +91,9 @@ are older and partly stale; where they disagree with this file, this file wins.
      with the fill-in). No live effect week 6 (every team already has a QB1). Undo = remove the flag.
    - **`v2_suspension_return_full_role` SHIPPED (user decision), DEFAULT_FEATURES = 56.** Verified end to end on the 3 return
      weeks in 2021-2025; no live effect this week. Roster cache staleness fixed (6 h refresh).
+   - **`v2_qb1_probable_starter_fallback` SHIPPED 2026-10-20 (user: "Turn on QB fallback"), DEFAULT_FEATURES = 58.** An unresolved QB room
+     with a QB not listed out gets a probability-weighted starter instead of zeros (PHI week 6). Harness START-QB -0.126, START-ALL -0.028,
+     no position worse. Undo = remove the flag.
    - Rejected: a "first game back" factor for skill players (too rare, -0.001). Open, not built: season debuts after injury
      (PUP/NFI debuts ran 0.44x their projection, IR debuts 1.32x, too mixed to fit), and a suspended player who has no row on the
      board at all.
@@ -140,6 +143,14 @@ small wins. The large unexplained variance is touchdowns and boom/bust games.
    them live. Blending is rejected permanently. TD compression and yards-per-opportunity shrinkage did not help points.
 
 ## C. Product, UI and data items
+
+- **Phone exports (2026-10-18).** Weekly Rankings > Export for phone (after Build board): a game-report PDF (every game in
+  kickoff order: kickoff, venue, line / O/U, implied team totals on the team bars, weather, each team's QB / top-2 RB / top-3
+  WR / top TE with projections and injury tags, three games a page) and a bare-bones board PDF (per position: rank, player,
+  team, opponent with @ for away, projection, injury tag). Download buttons, or save both into a folder - defaults to
+  `OneDrive\NFL Scholar`, which syncs to the phone. `ui/report_export.py` (matplotlib, no new dependency),
+  `tests/test_report_export.py`. The breakdown header's matchup rank is now its own full-size metric tile ("27/32",
+  green easiest / red toughest).
 
 - **Box score inside the projection breakdown (shipped 10-06).** Verified end to end in a browser, but on a
   ledger-stubbed private copy and with a test-driver run that re-pulled the props cache. Worth one click-through in

@@ -5117,3 +5117,215 @@ run's base now includes this, so START-QB reads about 7.39 / bias -0.07 and STAR
 candidate only against a base arm run on the same defaults, as always). Live check (2026 week 6, `apply_injury=True`, flag on
 vs off): zero rows change - every team already has a QB1 resolved (the `data/qb1_overrides.csv` choices cover the ambiguous
 ones), so today it is a backstop for the weeks a tie appears with no override. 798 tests pass. Undo: remove the flag.
+
+## 2026-10-19 - Improvement hunt, first reads: injury-cache bug fixed; QB passing volume, expected stats, routes, PROE and rest tested (`docs/improvement_backlog.md`)
+
+User: "week 7 is coming to a close ... look into finding new places to improve the models accuracy" (data accuracy, data bugs,
+calibration, additional data from sources we already have, a cheap or free reliable new source, or a new look at current data).
+Baseline (2026 live, weeks 3-6, each player's last pre-kickoff board, paired pools, startable): model 7.39, market 7.12,
+FantasyPros 7.21 RMSE; the gap is the receivers (WR +0.47 vs both, TE +0.20/+0.36, RB +0.09/+0.06, QB +0.03/+0.13); WR order
+62% vs the market's 66%. All numbers below are first reads on the lab dump (harness base arm + the shipped late steps) unless
+stated; none changed a projection except the cache fix.
+
+**1. SHIPPED (bug fix): `load_injury_reports` cached the live season forever.** The 2026 file stopped at week 4 (341 hours
+old) while the feed had week 6; the QB returning-starter rule reads the official report for the weeks before the target week.
+Same fix as the roster cache: a partial season's file is refetched when over 6 hours old (shared helper, a failed fetch
+keeps the cached copy); the live file refreshed to week 6. 3 tests (refresh, no re-fetch of a young or finished cache,
+failure keeps the copy). Backtests are unaffected (finished seasons never refetch).
+
+**2. QB passing volume tracks the league environment: REJECTED (no build).** Hypothesis: 2026 teams throw 33.7 passes a game
+(weeks 1-6) against 32.1-32.7 in 2024-25 and the board projected starting QBs at 31.5 attempts against 33-36 actual (weeks
+3-6; FantasyPros 32.0-32.4), so scale last season's rates by the league shift. History says no: (a) in 2021-2025 the model's
+QB attempt miss does not follow the league shift (weeks 3-6 correlation 0.12, all phases 0.13; in 2024, with league passing
+-8.5% early, the miss was +1.5%); the model's attempts are 2-3% HIGH in every season and phase (actual/projected 0.93-1.02);
+(b) the league's weekly passing level has no persistence (next-week deviation = 0.13 x the last three weeks' deviation,
+correlation 0.06, 2020-2025) and the model's QB miss is not related to it (correlation -0.10, 70 weeks). What 2026 shows is a
+week-to-week surge: league attempts per team 31.1, 31.8, then 34.5, 34.3, 33.8, 37.0 (weeks 3-6 are +8% on 2025's same
+weeks, about 3.5 standard deviations of a four-week mean), which the season-average rates cannot follow and history says
+will not persist. The week-6 board's stages: prior 32.2 -> current-season rate 32.8 -> blend 32.5 -> final 31.7; the
+-0.7 attempts after the blend (about 2.3%) is the team pass budget, in line with the backtest's 2.5% over-projection.
+**Watch item:** if starters keep out-throwing their projections by more than 5% through week 10 on the Track Record page,
+revisit with in-season recency weights for volume (item M2).
+
+**3. Expected stats (`ff_opportunity`, backlog N1): real but small.** Luck = actual minus expected PPR points, averaged over
+the player's earlier games this season. Slope of the board's miss (actual - shown) on luck, weeks 3-17 played, 2021-2025:
+WR -0.19 per point [-0.26, -0.10] (5/5 seasons), TE -0.18 [-0.30, -0.08] (4/5), QB -0.16 [-0.31, -0.00] (4/5), RB -0.06
+[-0.19, +0.06] (3/5); the WR slope holds for touchdown luck (-0.28) and for the rest (-0.23) alike. Prior-season luck:
+nothing for WR/TE (+0.07, +0.04). The player's results ahead of his usage regress; the board over-reads them. Held out
+(leave-one-season-out b, harness window 2022-2025 weeks 3-17, paired START pools, vs the shipped board): WR/TE only, no
+shrink: START-ALL -0.0050 [-0.013, +0.002], START-WR -0.0093, START-TE -0.0092, ALL -0.0044 [-0.009, -0.000], 4/4 seasons, 33-27
+weeks, bias -0.158 -> -0.192; with a games/(games+K) shrink the gain falls (K=4: -0.0035, K=8: -0.0027); adding QB makes it
+worse (START-QB +0.0275), adding RB worse (+0.0072); touchdown luck alone -0.0050 (3/4), non-TD luck alone +0.0047 (worse).
+Caveats: nflverse's expectation model is trained on all seasons (in-sample for past games, so 2026 weeks are the clean check);
+the effect (about 0.4 points of correction for a +2 points-per-game lucky receiver against a 7-point error) caps the gain
+near 0.005 RMSE, a third of the season anchor's. **Status: first read done, TODO at low priority** (a WR/TE-only luck
+correction on the points total, after the anchor; needs the loader, a player-id match and 2026 weekly refresh).
+`scripts/eval_expected_points.py`.
+
+**4. Routes and targets per route run (backlog N2): no signal (first read, REJECTED for now).** WR/TE, PFF weekly exports
+2024-2025 (the only seasons we hold), weeks 3-17, 4,145 rows: z = routes per game x (targets per route to date - position
+mean). Slope on the target miss: WR +0.09 [+0.02, +0.18] (a hot rate is, if anything, under-trusted), TE -0.10 [-0.26,
++0.05]; on points nothing (WR +0.10 [-0.10, +0.30]); correlations 0.05 and -0.04. The model is not over-trusting hot target
+rates. Read together with item 3: volume (targets) looks slightly under-weighted on the current-season rate while efficiency
+and touchdowns are over-weighted - a lead for the per-stat current-season weights (M2), not for new routes data.
+`scripts/eval_routes_targets.py`.
+
+**5. Pass rate over expected (PROE, from play-by-play `xpass`, backlog N6): no signal (first read).** Team-week, 2021-2025 weeks
+3-17, 1,974 team-weeks: PROE over the team's earlier games predicts the miss of the board's team pass attempts at 0.015
+attempts per PROE point [-0.05, +0.08] (correlation 0.009); the prior season's PROE 0.075 [-0.01, +0.16] (0.04); the sign is not
+stable by season (2021 -0.13, 2024 +0.23). The model's team pass volume already carries pass tendency. `scripts/eval_proe.py`.
+
+**6. Days of rest (schedule, backlog N7): no consistent effect (first read).** The model does not use `home_rest`/`away_rest`.
+Board miss (actual - shown) by days of rest, 13,710 rows with a projection of 5+: nothing for QB/RB/TE; WR 8-9 days -0.73 +-
+0.32 and post-bye (10+) -0.58 +- 0.24 (about 2.4 sigma, one of 16 cells), rest differential flat. Not a lead.
+
+**Added to the backlog from the data audit** (no test yet): the weekly-roster-based suspension lead (done), the PFF
+week-5-in-a-week-6-row manifest mislabel (D3), a reminder to rebuild after inactives (D2), and the live floor/ceiling check (D8).
+
+
+## 2026-10-19 (evening) - `v2_qb1_probable_starter_fallback` (CANDIDATE, pre-set bar written BEFORE the harness run; backlog M6)
+
+**Found two ways.** (1) Live: the week-6 board built 10-18 had no QB for PHI. Hurts was listed Out and Andy Dalton (one relief
+game this season) projected 0 because the resolver leaves a room unresolved unless one QB has a clear full-snap role; the user
+has to pick a QB1 by hand (the board says so and links to the picker). (2) Backtest, lab dump 2021-2025 weeks 3-17 (built before
+`v2_qb1_latest_game_starter`): 129 of 2,052 team-weeks (6.3%) where someone actually started (15+ attempts) had no projected
+starter; those starters scored 14.3 on average against a shown 0.0 (RMSE 16.4 as shown vs 8.6 at a flat 17). **Corrected scope,
+same evening:** the dump is older than the QB1 latest-start ship. On the current model (the stat-blend capture, 2021-23 so
+far) 19 of 807+ team-weeks (2.4%) still have no projected starter, 14 of them with a single available QB (the fallback pick is
+certain) and 5 multi-QB cases where the top candidate started every time. So the harness gain will be much smaller than the 6.3%
+figure suggests; the weights 0.62 / 0.35 / 0.03 come from the older, larger unresolved set and matter little for what is left. The skill players on those teams are not biased (+0.35), so the
+cost is the QB row itself, and the harness START-QB pool (top 24 by projection over both arms) is where it shows.
+
+**What the candidate does.** A room the resolver leaves unresolved, with at least one QB not listed Out who has a real-snap game
+this season, gets a probability-weighted starter instead of zeros: QBs ordered by games played this season, then the more recent
+game, weights 0.62 / 0.35 / 0.03 (a sole available QB 1.0), applied as the QB volume factor (workload as a full starter, stats
+scaled by the weight). The weights are the measured hit rates of that ordering on the 94 multi-QB cases (rank 1 started 62%,
+rank 2 35%, rank 3+ 3%; rank 1 by season 76/56/59/52/68%); a sole available QB was the starter 35 of 35 times. The team stays in
+`selection_required_teams`: the board still shows a QB1 warning, now worded as a probability-weighted guess with the names and
+percentages, and the jump buttons stay. A manual choice, the returning-starter rule and a clear full-snap starter all win first.
+Not tried: the ESPN depth chart as a source (N3, rejected: it lists injured starters, 87-90% right vs 88-91% for the last
+game's starter).
+
+**Honesty about the harness.** The backtest has no manual overrides (the override file exists only for 2026), so the harness
+will show a larger START-QB gain than live use: live, the user fills most of these rooms by hand. Live value is the weeks the
+override is missing or late (PHI week 6).
+
+**Pre-set bar (written before the harness run).** Ship-eligible only if, on harness v2 (2022-2025 weeks 3-17, injury/reserve
+replay, base arm = DEFAULT_FEATURES (57)): verdict not REJECT; START-QB dRMSE <= 0; START-ALL dRMSE <= +0.003; no other
+position's START RMSE worse by more than +0.010; bias growth within the harness limit (0.3). Shipping into DEFAULT_FEATURES
+needs the user's sign-off (it changes what the board shows for an unconfirmed QB room). Tests: `tests/test_qb1_probable_starter.py` (8).
+
+
+## 2026-10-19 (evening) - Backlog pass: what the checks found (no DEFAULT_FEATURES change)
+
+All read-only checks on the lab dump (2021-2025, weeks 3-17 unless stated) except where noted. Scripts are inline; the results
+are the record.
+
+**M3, TD levels: fine.** START pool, played, shipped stack: projected vs actual TDs per game, WR 0.366 vs 0.349 (+4.8%), TE 0.297
+vs 0.310 (-4.2%), RB 0.421 vs 0.421, QB 1.542 vs 1.507 (+2.3%); no drift across weeks 3-17. Season swings are luck (WR 2021-22
++15/+21%, 2024 -9.5%; TE 2025 -23%). Dispersion is the miss: top-quintile TD projections run 20-43% high and bottom-quintile 30-41%
+low (slope of actual on projected 0.33 TE, 0.46 WR, 0.64 RB, 0.72 QB). TD compression for points is already closed.
+
+**M4, QB passing yards at the top: real, display-only.** 1,918 starter-weeks: projected 275-300 yards +13.5 (+5%), 300+ +36 (+13%;
+24% beat the projection), under 200 -12 (-6%); slope 0.72. A top-end shrink (knot 225, share 0.3) cuts yards RMSE 0.75 of 76 in
+5 of 5 held-out seasons. QB points stay as they are. Across all stat lines the slope of actual on projected is 0.69-0.87 for
+yards and receptions (a fitted line per stat, leave-one-season-out: RMSE -0.3% to -1.1%), so the displayed stat lines are
+over-dispersed while the points are calibrated by the points line. Backlog P1: calibrated stat lines and over/under
+probabilities belong in the prop view (deferred idea 2); nothing built.
+
+**D7, retractable roofs (SHIPPED, data fix).** ARI/ATL/DAL/HOU were closed in 143 of 167 home games 2021-2025 (68 of 68 in 2024-25).
+The schedule posts the roof only after the game, so before kickoff the live path read a blank roof as open air (week 5 TB @ DAL
+showed 79.6 F "outdoor" and was played indoors). `data/weather.py::game_is_outdoor`: a blank roof at those four home stadiums (at
+their own venue, not an international site) counts as closed; a posted roof always wins. Backtests post the roof, so the harness
+is unaffected. 3 tests.
+
+**D2, injury freshness note (SHIPPED, presentation).** `ui/freshness.py` + a line under the Build board button: the injury
+file's age against the next kickoff (US Eastern), a warning within 5 h when the file predates the inactives window (90 min
+before kickoff). Week 5 Chase and McLaurin were Out on the last pre-kickoff board and played. 6 tests.
+
+**D8, Range-of-outcomes bands: calibrated.** Starter tier, weeks 5-17: share of actuals below P10/P25/P50/P75/P90 is 8-12 /
+22-29 / 47-55 / 75-80 / 89-93% in both the 2021-23 fit window and the held-out 2024-25. RB bench lower tail is optimistic (19-22%
+below P10). No refit.
+
+**M9, per-player width: worse than the tier bands.** Pinball loss (mean over P10-P90) on 7,479 Starter-tier rows: tier 2.076,
+role-confidence heuristic 2.088, shipped personalized 2.097; below-P10 15.4% (target 10), P90 88.0%. Own variance carries a weak
+signal (correlation 0.03 with the size of the miss; realised spread +14% from lowest to highest own-variance quintile) while the
+scale averages 0.873 (sd 0.23). Recentred to mean 1 with a quarter of its spread: 2.075. Candidate fix (display only, the user's
+call): recentre and shrink `player_width_scale`.
+
+**N3, depth charts as a QB1 source: rejected.** ESPN daily charts list injured starters as QB1: right 87% (2025) and 90% (2026)
+vs 88% / 91% for the last game's starter; on the 76 team-weeks the last-starter rule misses, the chart is right on 31, and it is
+wrong on 38 of the 587 the rule gets right.
+
+**D3 and D5.** D3: the 2026 PFF manifest row for the 10-13 export says week 6, the folder and data are week 5 (read as
+unverified-but-allowed, harmless); fixing it edits the user's live data, so it waits for the user. D5: Rice 2025 weeks 7-8 have no
+board row; the live path gives suspension returns a row (Jeshaun Jones, 2026 week 4), so it is a backtest artifact of D6a.
+
+**M2 status.** `scripts/capture_stat_blend_traces.py` (every stat of every projected player, 2021-25 weeks 3-17; the blend
+identity is exact for volume, receptions and yards and within rounding for yardage, not for TDs) is running; the offline sweep
+`scripts/eval_stat_k_sweep.py` (per games-played optimum, one group at a time through the shipped late steps, leave-one-season-out
+joint) is ready. Result and pre-set bar for any harness arm follow in a separate entry.
+
+
+## 2026-10-19 (night) - `v2_venue_mult` harness queued (CANDIDATE, pre-set bar written BEFORE the run; backlog M7)
+
+The indoor/outdoor venue scaling alone (QB 1.049 indoor / 0.981 outdoor, TE 1.037 / 0.986, WR 1.028 / 0.989, RB 1.0; indoor =
+roof dome or closed, league-frequency-weighted to 1.0 at about 28% indoors) was unbundled from `game_env` when that bundle was
+rejected (+0.012 MAE) and was never measured on its own. One harness arm, run after the M6 arm (one heavy job at a time).
+
+**Pre-set bar.** Ship-eligible only if, on harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base arm =
+DEFAULT_FEATURES (57)): verdict not REJECT; START-ALL dRMSE <= -0.003 (the multiplier is small, so a real effect has to show);
+no position's START RMSE worse by more than +0.010; bias growth within 0.3. If it ships, the live path needs the
+retractable-roof default of D7 as well (this scaling reads the schedule roof in `weekly_projections.py`, where a blank roof
+still reads as outdoor). Shipping needs the user's sign-off.
+
+
+### 2026-10-19 (night) - The lab dump (v7, 10-08) is out of step with the current model; M2 now records its own board file
+
+While joining the M2 traces to `.sweeps/calibration_lab_v7.csv` the two disagreed on many rows: 28% of 2022 QB attempt projections
+differ (mostly by about 0.5, 2021 almost none), 27% of receiving-yards rows (top-end yardage shipped after the dump), and about 3%
+of QB team-weeks (the QB1 latest-start fix). The cause of the broad small 2022 drift was not isolated (code since the dump, or a
+cached input). Consequence: the M2 capture was restarted to write a board-level file (`.sweeps/stat_blend_traces.parquet.board.csv`,
+the same columns as a lab dump) from the very same builds, and `scripts/eval_stat_k_sweep.py` reads that; its late-step engine
+reproduces the board's final points to within 0.008. Today's checks that used the old dump (M3 TD levels, M4/P1 stat-line slopes, D8
+band coverage, M9 band widths, the M6 sizing) are directional; they are re-run on the fresh board file when the capture finishes and
+this entry is updated if any number moves materially. The M6 sizing was already corrected to the current-model figures above.
+
+
+## 2026-10-20 - Results: `v2_qb1_probable_starter_fallback` SHIP-ELIGIBLE (not turned on), `v2_venue_mult` inconclusive, M2 per-stat weights rejected as a broad lever
+
+**`v2_qb1_probable_starter_fallback`: SHIP-ELIGIBLE, pre-set bar met in full, NOT in DEFAULT_FEATURES (needs the user's sign-off).**
+Harness v2, 2022-2025 weeks 3-17, injury/reserve replay, base arm = DEFAULT_FEATURES (57): START-QB RMSE 7.610 -> 7.485 (-0.126, CI
+[-0.255, -0.023], better in 9 of 13 weeks-var), START-ALL 7.643 -> 7.615 (-0.028, CI [-0.051, -0.010], 29-7 weeks), START-WR -0.009
+(CI [-0.016, -0.002]), START-RB -0.003, START-TE -0.000; pairwise accuracy unchanged; bias growth -0.007; verdict SHIP-ELIGIBLE.
+Bar: verdict not REJECT (met), START-QB <= 0 (met), START-ALL <= +0.003 (met), no position worse by > +0.010 (met), bias growth
+<= 0.3 (met). Caveats: the backtest has no manual QB1 overrides, so live gain is smaller (it covers weeks the override is missing
+or late, e.g. PHI week 6); the weights 0.62/0.35/0.03 come from the older, larger unresolved set. Undo: remove the flag.
+
+**`v2_venue_mult`: INCONCLUSIVE, stays unshipped.** START-ALL 7.594 -> 7.594 (0.000, CI [-0.008, +0.008], 31-29 weeks), START-QB
++0.014, START-TE +0.011, START-WR -0.006, START-RB -0.003; bar (START-ALL <= -0.003) not met. Backlog M7 closed.
+
+**M2, current-season weights per stat: rejected as a broad lever.** Offline sweep of every group's blend weight (k_eff x 0.33 to 3,
+`scripts/eval_stat_k_sweep.py`, 36,865 player-weeks, exact re-score through the shipped late steps): (1) the hint that WR targets
+are under-weighted is not there: WR targets best scale 1.0 (0.5-0.75 at 6+ games gains under 0.2% MSE), and trusting the current
+season sooner (scale 0.5) makes WR/TE receptions and yards worse in 0 of 5 seasons; (2) slowing the blend helps a little in places
+(TE receiving yards x2: dRMSE -0.011, CI [-0.019, -0.002], 5 of 5 seasons; WR yards x2 -0.005; RB rushing yards x0.33 -0.013), but
+choosing each group's best scale on four seasons and applying all of them to the fifth is worse than doing nothing (+0.007 START-ALL
+mean, better in 1 of 5), so those single-group wins are selection noise across 18 groups x 6 scales. (An earlier version of this
+held-out step picked "no change" because it summed squared error over pools of different sizes; fixed to per-row error.) The one
+candidate left is TE receiving yards K x2 (STAT_K_BY_POS TE receiving_yards 3 -> 6), worth at most about -0.002 START-ALL; not run.
+
+**Re-run of the 10-19 read-only checks on the fresh board file (current model): same conclusions.** TD levels WR +4.8%, TE -4.3%, RB 0.0%,
+QB +2.7%; QB passing yards 300+ run +12.8% and the top-end shrink gains 0.84 yards RMSE in 5 of 5 held-out seasons; Starter-tier band
+coverage in range (held-out below-P10 8-12%, P90 89-92%); band width: tier 2.076, heuristic 2.089, personalized 2.098 (below-P10
+15.4%). One change: the yardage slopes of actual on projected are now WR 0.93 and RB rushing 0.95 (top-end yardage, shipped since the
+old dump, removed most of that over-dispersion); still over-dispersed: QB passing yards 0.71, QB rushing 0.80, RB receiving yards 0.70,
+TE yards 0.76, receptions 0.75-0.83, TDs 0.33-0.73.
+
+
+### 2026-10-20 - SHIPPED: `v2_qb1_probable_starter_fallback` (DEFAULT_FEATURES = 58)
+
+User: "Great all good on commit. Turn on QB fallback". Added to DEFAULT_FEATURES on the pre-set bar met in full and a harness verdict of
+SHIP-ELIGIBLE (result entry above). Live effect: a team whose QB room is unresolved but has a QB not listed out is projected from a
+probability-weighted guess (the board warning names the QBs and percentages and keeps the jump buttons); PHI week 6 (Hurts Out,
+Dalton 0.0) is the case it fixes. Undo: remove the flag from DEFAULT_FEATURES. Test: `tests/test_qb1_probable_starter.py`.

@@ -399,6 +399,10 @@ SEVERE_BLOWOUT_RELATIVE_MAX_SHARE = 0.75
 # the user selects a QB1 rather than granting live volume to every backup.
 QB1_INSEASON_MIN_SNAP_SHARE = 0.70
 QB1_INSEASON_MIN_LEAD = 0.20
+# 'v2_qb1_probable_starter_fallback' (candidate, 2026-10-19): for a room the resolver leaves unresolved, the chance each QB not
+# listed out is the one who starts, best candidate first (more games this season, then the more recent game). Measured on the
+# 94 multi-QB team-weeks of 2021-2025 that had no projected starter: the top candidate started 62%, the second 35%, the rest 3%.
+QB1_FALLBACK_WEIGHTS = (0.62, 0.35, 0.03)
 # An old starter's last active appearance should not compete with the QB who
 # has actually handled the club's most recent games.  Two team games leaves
 # room for a bye or one missed outing but does not revive a September starter
@@ -2113,6 +2117,17 @@ MODEL_FEATURES = (
                              # team "selection required"). Backtest 2021-2025:
                              # returning starters in their 2nd game back
                              # projected 4.3 and scored 14.5 (5/5 seasons).
+    'v2_qb1_probable_starter_fallback',  # SHIPPED 2026-10-20 (was a candidate, backlog M6). A team whose QB room the
+                             # resolver leaves unresolved (no QB with a clear full-snap role)
+                             # but that has one or more QBs not listed out gets a
+                             # probability-weighted starter instead of a QB projected at 0:
+                             # QBs ordered by games played this season, then most recent
+                             # game, weighted 0.62 / 0.35 / 0.03 (a sole QB 1.0), the
+                             # weights measured on 2021-2025 (the top QB started 62% of
+                             # multi-QB cases). Scope: 6.3% of team-weeks had no projected
+                             # starter before v2_qb1_latest_game_starter, 2.4% after it
+                             # (most with a single available QB). The team stays listed
+                             # as "QB1 selection required".
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -2672,6 +2687,14 @@ DEFAULT_FEATURES = frozenset({
     # fixed, none lost. Harness v2 2022-2025 wk3-17: START-QB RMSE 7.910 -> 7.390 (-0.519, CI [-0.691, -0.356]), START-ALL
     # -0.092 (CI [-0.122, -0.063]), 34-3 weeks, bias growth -0.081; RB/WR/TE unchanged. Undo: remove this flag.
     'v2_qb1_latest_game_starter',
+    # SHIPPED 2026-10-20 (user: "Turn on QB fallback") after the pre-set bar was met in full: see MODEL_FEATURES and
+    # resolve_inseason_qb1s's fallback. A QB room left unresolved (no QB with a clear full-snap role) that still has a QB not
+    # listed out gets a probability-weighted starter (sole QB 1.0; several 0.62 / 0.35 / 0.03 by games played, then recency)
+    # instead of every QB projected at 0; the team stays listed as "QB1 selection required" and the board says it is a guess.
+    # Harness v2 2022-2025 wk3-17: START-QB RMSE 7.610 -> 7.485 (-0.126, CI [-0.255, -0.023]), START-ALL -0.028 (CI [-0.051,
+    # -0.010]), START-WR -0.009, no position worse, bias growth -0.007. A manual choice, the returning-starter rule and a clear
+    # full-snap starter all win first. Undo: remove this flag.
+    'v2_qb1_probable_starter_fallback',
 })
 
 
@@ -6917,7 +6940,7 @@ def qb1_returning_inputs(year, as_of_week, stats_df, name_col, team_col,
 def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
                            recent_history, history_name_col, history_team_col,
                            as_of_week, year, overrides=None,
-                           unavailable_players=None, returning=None, latest_game_signal=False):
+                           unavailable_players=None, returning=None, latest_game_signal=False, fallback=False):
     """Resolve one expected QB1 per team from explicit choices or real snaps.
 
     An in-season board should not turn a backup's one relief appearance into
@@ -6934,8 +6957,13 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
     Flacco). The returning-starter rule only covers the first game back. A first attempt compared QBs on their share
     of the TEAM's latest game instead; it broke starters whose latest game was a partial one (left out of the history,
     e.g. 2021 KC Patrick Mahomes after the week-7 exit), so the comparison stays on each QB's own last eligible game.
+
+    fallback ('v2_qb1_probable_starter_fallback', candidate 2026-10-19): a room left unresolved that still has a QB not
+    listed out is given a probability-weighted starter (QB1_FALLBACK_WEIGHTS by games played, then recency) in the returned
+    'weights' instead of projecting every QB at zero; the team stays in selection_required_teams so the board still asks
+    for a confirmed choice. A manual choice, the returning-starter rule and a clear full-snap starter all win first.
     """
-    empty = {'selected': {}, 'by_team': {}, 'selection_required_teams': set(), 'warnings': []}
+    empty = {'selected': {}, 'by_team': {}, 'selection_required_teams': set(), 'warnings': [], 'weights': {}}
     required = {current_name_col, current_team_col}
     if current_qbs is None or current_qbs.empty or not required.issubset(current_qbs.columns):
         return empty
@@ -7032,7 +7060,7 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
     returning_picks = (_returning_qb_starters(current, returning, qb_week_snaps, team_played_weeks,
                                               as_of_week, unavailable)
                        if returning is not None else {})
-    selected, by_team, requires_selection = {}, {}, set()
+    selected, by_team, requires_selection, weights = {}, {}, set(), {}
     _teams = sorted(set(current['_team']) | set(returning_picks))
     for team in _teams:
         room = current[current['_team'].eq(team)]
@@ -7114,6 +7142,8 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
                 'status': 'selection_required',
                 'reason': 'no recently active QB with a clear starter role',
             }
+            if fallback:
+                _apply_probable_qb1_fallback(team, available, qb_week_snaps, selected, by_team, weights)
             continue
         if latest_game_signal:
             # Two or more QBs whose own last game was a full-snap start: the more recent start is the job now.
@@ -7149,11 +7179,42 @@ def resolve_inseason_qb1s(current_qbs, current_name_col, current_team_col,
                 'reason': 'no single recent full-snap QB starter',
                 'top_recent_snap_share': top_share,
             }
+            if fallback:
+                _apply_probable_qb1_fallback(team, available, qb_week_snaps, selected, by_team, weights)
     return {
         'selected': selected,
         'by_team': by_team,
         'selection_required_teams': requires_selection,
         'warnings': warnings,
+        'weights': weights,
+    }
+
+
+def _apply_probable_qb1_fallback(team, available, qb_week_snaps, selected, by_team, weights):
+    """Give an unresolved room a probability-weighted starter (see QB1_FALLBACK_WEIGHTS). The QBs not listed out are
+    ordered by games with real snaps this season, then by the more recent game; a QB with no real-snap game is not a
+    candidate, and a room with none stays unresolved. The team keeps its selection_required status."""
+    if available is None or available.empty:
+        return
+    if qb_week_snaps is not None and not qb_week_snaps.empty:
+        games = qb_week_snaps[qb_week_snaps['_team'].eq(team)].groupby('_key')['_week'].nunique()
+    else:
+        games = pd.Series(dtype=float)
+    ranked = available.assign(_games=available['_key'].map(games).fillna(0.0))
+    ranked = ranked[ranked['_games'] > 0].sort_values(
+        ['_games', '_last_snap_week', '_key'], ascending=[False, False, True], kind='stable')
+    ranked = ranked.iloc[:len(QB1_FALLBACK_WEIGHTS)]
+    if ranked.empty:
+        return
+    w = np.asarray(QB1_FALLBACK_WEIGHTS[:len(ranked)], dtype=float)
+    w = w / w.sum()
+    for (_, row), weight in zip(ranked.iterrows(), w):
+        selected[(team, row['_key'])] = 'probable_starter'
+        weights[(team, row['_key'])] = float(weight)
+    by_team[team] = {
+        'status': 'probable_starter',
+        'players': ranked['_player'].tolist(), 'weights': [round(float(x), 3) for x in w],
+        'reason': 'no clear QB1: probability-weighted guess from games played this season (select a QB1 to confirm)',
     }
 
 
@@ -9566,6 +9627,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                                 player_prior, prior_name_col, prior_team_col, schedule_df)
                            if _use_returning else None),
                 latest_game_signal=('v2_qb1_latest_game_starter' in feats),
+                fallback=('v2_qb1_probable_starter_fallback' in feats),
             )
             if _returning_warning:
                 qb1_resolution['warnings'].append(_returning_warning)
@@ -9587,6 +9649,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             'manual_qb1_overrides_plus_unambiguous_recent_full_snap_starters'
             if 'qb1_override' in feats else 'qb1_override_feature_disabled'
         )
+        source_contract['qb1_probable_starters'] = {
+            team: dict(zip(info['players'], info['weights']))
+            for team, info in qb1_resolution['by_team'].items() if info.get('status') == 'probable_starter'}
         source_contract['qb1_selection_required_teams'] = sorted(qb1_resolution['selection_required_teams'])
         source_contract['qb1_override_warnings'] = list(qb1_resolution['warnings'])
     prior_max_week = None
@@ -10534,12 +10599,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                      else 'Automatic prior-season incumbent' if selected_qb1s.get((team, key)) == 'prior_season_incumbent'
                      else 'Automatic recent full-snap starter' if selected_qb1s.get((team, key)) == 'observed_current_starter'
                      else 'Starter back from injury' if selected_qb1s.get((team, key)) == 'returning_starter'
+                     else 'Automatic probable starter (unconfirmed)' if selected_qb1s.get((team, key)) == 'probable_starter'
                      else 'QB1 selection required' if team in required_teams
                      else 'QB non-starter')
                     for team, key in zip(team_keys_rv, name_keys_rv)
                 ], dtype=object)
                 qb_projected_starter = qb1_workload_override.copy()
-                qb_nonstarter_volume_factor = qb_projected_starter.astype(float)
+                _probable_weights = qb1_resolution.get('weights', {})
+                qb_nonstarter_volume_factor = np.asarray([
+                    _probable_weights.get((team, key), 1.0) if (team, key) in selected_qb1s else 0.0
+                    for team, key in zip(team_keys_rv, name_keys_rv)
+                ], dtype=float)
             else:
                 qb1_workload_source = np.full(len(cur), 'QB1 selection feature disabled', dtype=object)
         role_scale = np.ones(len(cur), dtype=float)
@@ -12635,6 +12705,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'qb1_workload_override': bool(row['QB1 Workload Override']),
                     'qb1_selection_required': bool(row['QB1 Selection Required']),
                     'qb_projected_starter': bool(row['QB Projected Starter']),
+                    'qb1_start_probability': float(qb_nonstarter_volume_factor[i]),
                     'starter_source': row['QB1 Workload Source'],
                     'partial_game_exclusions': int(row['Partial-Game Exclusions']),
                     'returning_role_restored': bool(returning_role_restored[i]),

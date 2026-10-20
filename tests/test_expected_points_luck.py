@@ -1,4 +1,4 @@
-"""v2_expected_points_luck (candidate 2026-10-20, backlog N1): WR/TE points pulled against how far earlier results ran
+"""v2_expected_points_luck (shipped 2026-10-20, backlog N1): WR/TE points pulled against how far earlier results ran
 ahead of the expected points their usage was worth."""
 import os
 import sys
@@ -25,10 +25,11 @@ def _ff(rows):
                                        'receptions', 'receptions_exp'])
 
 
-def test_flag_is_registered_and_not_yet_default():
-    # when it ships it must also join POST_CALIBRATION_FEATURES (a calibration dump must not record already-adjusted totals)
+def test_flag_is_shipped_as_a_post_calibration_step():
+    # a calibration dump must not record already-adjusted totals, so it is also a post-calibration feature
     assert 'v2_expected_points_luck' in wp.MODEL_FEATURES
-    assert 'v2_expected_points_luck' not in wp.DEFAULT_FEATURES
+    assert 'v2_expected_points_luck' in wp.DEFAULT_FEATURES
+    assert 'v2_expected_points_luck' in wp.POST_CALIBRATION_FEATURES
     assert 'v2_expected_points_luck' not in wp.CALIBRATION_INPUT_FEATURES
 
 

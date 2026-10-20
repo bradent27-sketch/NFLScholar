@@ -2129,7 +2129,7 @@ MODEL_FEATURES = (
                              # starter before v2_qb1_latest_game_starter, 2.4% after it
                              # (most with a single available QB). The team stays listed
                              # as "QB1 selection required".
-    'v2_expected_points_luck',  # CANDIDATE (2026-10-20, backlog N1). Last step on the points total:
+    'v2_expected_points_luck',  # SHIPPED 2026-10-20 (was a candidate, backlog N1). Last step on the points total:
                              # a WR/TE whose results ran ahead of what his usage was
                              # worth (nflverse ff_opportunity expected points) in his
                              # earlier games this season is pulled back, one who ran
@@ -2703,6 +2703,13 @@ DEFAULT_FEATURES = frozenset({
     # -0.010]), START-WR -0.009, no position worse, bias growth -0.007. A manual choice, the returning-starter rule and a clear
     # full-snap starter all win first. Undo: remove this flag.
     'v2_qb1_probable_starter_fallback',
+    # SHIPPED 2026-10-20 (user: "turn it on") after the pre-set bar was met in full: see MODEL_FEATURES and
+    # EXPECTED_POINTS_LUCK. The finished WR/TE point total moves against how far his earlier games this season ran ahead of
+    # (or behind) the nflverse expected points his usage was worth: + b x mean(actual - expected), b = -0.18 WR, -0.16 TE.
+    # Harness v2 2022-2025 wk3-17: START-ALL RMSE 7.611 -> 7.605 (-0.007, CI [-0.015, +0.000]), START-WR -0.013, START-TE
+    # -0.010, QB/RB untouched, bias growth +0.032; verdict INCONCLUSIVE (held out by season: -0.0055). Post-calibration step
+    # (POST_CALIBRATION_FEATURES). Undo: remove this flag.
+    'v2_expected_points_luck',
 })
 
 
@@ -2730,9 +2737,8 @@ def resolve_model_features(features=None):
 # Three flags act AFTER the points line and are not inputs to it: the season anchor (2026-10-06), the opening-week
 # per-stat lines and the Questionable-tag cut (both 2026-10-08). A dump built with them on would record already
 # adjusted totals as the "raw" the lines are fitted to, so they are left out of the input set.
-# When 'v2_expected_points_luck' (candidate 2026-10-20) ships it is a fourth post-calibration step and must be added here.
 POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat_calibration',
-                                       'v2_questionable_workload'})
+                                       'v2_questionable_workload', 'v2_expected_points_luck'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 

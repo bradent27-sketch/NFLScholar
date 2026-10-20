@@ -5385,3 +5385,13 @@ Which factors and weights were never tuned on the current harness: see `docs/imp
 the PFF alignment WR/TE matchup (its shrinkage, clip and confidence weights are labelled "starting defaults, not fitted" in the code and it
 has no recency weighting), DEFENSE_PRIOR_GAMES doing two jobs (neutral games inside every profile and the current-vs-last-season blend
 weight) that were only ever swept together, and defense recency reusing the player decay.
+
+
+### 2026-10-20 - SHIPPED: `v2_expected_points_luck` (DEFAULT_FEATURES = 59)
+
+User: "turn it on". Added to DEFAULT_FEATURES and to POST_CALIBRATION_FEATURES (it acts on the finished total, so a calibration dump
+must not record it) on the pre-set bar met in full (result entry above; harness verdict INCONCLUSIVE, the same footing the season
+anchor and the QB TD blend shipped on). Live effect: every WR/TE with expected-points rows earlier this season moves by -0.18 (WR) or
+-0.16 (TE) times his mean per-game luck, typically under half a point; the decomposition shows it as "Usage vs results". The 2026
+expected-points feed is cached in `data/cache/ff_opportunity_2026.parquet` and refreshed after 6 h; when the feed is unreachable the
+step is skipped. Undo: remove the flag from DEFAULT_FEATURES and POST_CALIBRATION_FEATURES.

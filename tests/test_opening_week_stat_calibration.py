@@ -49,10 +49,10 @@ def test_flag_is_registered_and_shipped():
 
 
 def test_post_calibration_steps_are_not_inputs_of_the_calibration_lines():
-    # a calibration dump (CALIBRATION_INPUT_FEATURES) must record the totals BEFORE these three acted
+    # a calibration dump (CALIBRATION_INPUT_FEATURES) must record the totals BEFORE these four acted
     from data.weekly_projections import CALIBRATION_INPUT_FEATURES, POST_CALIBRATION_FEATURES
     assert POST_CALIBRATION_FEATURES == {'v2_season_anchor', 'v2_opening_week_stat_calibration',
-                                         'v2_questionable_workload'}
+                                         'v2_questionable_workload', 'v2_expected_points_luck'}
     assert POST_CALIBRATION_FEATURES <= DEFAULT_FEATURES
     assert not (CALIBRATION_INPUT_FEATURES & POST_CALIBRATION_FEATURES)
     assert 'calibration' not in CALIBRATION_INPUT_FEATURES

@@ -5440,3 +5440,18 @@ C10 on the fresh capture (current defaults incl. the luck correction): mirrored 
 -0.0038 [-0.0066, -0.0011], 4/5 seasons, WR -0.0051, TE -0.0128, QB/RB 0 (the earlier capture read -0.0049; the luck correction now
 takes part of the WR signal). The same monotone pattern over all seven ranges. Harness run queued behind the C1 capture, against the bar
 written above (START-ALL <= -0.003).
+
+
+### 2026-10-20 - Calibration audit C1 (PFF alignment WR matchup): no robust gain, closed; TE scheme channel split out (C1b)
+
+`scripts/capture_stat_blend_traces.py --alignment-variants` (2024-2025 weeks 3-17, the seasons with PFF weekly exports; boards
+identical to a plain build; the shipped multiplier replayed exactly; every WR row joined by player) and
+`scripts/eval_alignment_variants.py` (unclipped multiplier per variant, then clip and strength offline; points through the shipped late
+steps; paired START pools). One knob at a time, START-ALL dRMSE: this-season shrinkage 1 / 2 / 8 / 12 / 20 games (shipped 4): +0.0020 /
++0.0009 / -0.0005 / -0.0005 / -0.0001; prior-season weight 0 / 0.4 (shipped 0.2): 0.0000 / +0.0001; final clip 0.82-1.22 / 0.88-1.14
+(shipped 0.75-1.30): -0.0008 [-0.0020, +0.0002] 2/2 / -0.0015 1/2; strength 0.5 / 0.75: -0.0009 / -0.0011 [-0.0037, +0.0014] 2/2. Best of
+the 162-point grid -0.0021 (CI spans 0); chosen on one season and scored on the other: -0.0012 (2024) and +0.0011 (2025). The "starting
+defaults" are not hurting and two seasons cannot pick anything better; the only consistent hints (a clip matching the broad matchup's
+0.82-1.22, a 0.75 strength) are worth under 0.0011. CLOSED; revisit when more PFF weekly seasons exist. TE: its receiving matchup comes
+from the man/zone SCHEME multiplier (it replaces alignment wherever scheme evidence exists), so the alignment test barely touches TE;
+the scheme channel's own settings (shrinkage, prior weight 0.40) are a separate item, C1b.

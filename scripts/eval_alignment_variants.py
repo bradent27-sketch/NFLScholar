@@ -42,14 +42,12 @@ def load(trace_path):
     t['opp'] = d['opp'].astype(str).to_numpy()[t['_row'].to_numpy()]
     al = pd.read_parquet(trace_path + '.alignment.parquet')
     al['stat'] = al['stat'].map(STAT_NAME)
-    al['_m'] = al['shipped'].round(3)              # the trace keeps the multiplier to 3 decimals
-    keys = ['year', 'week', 'pos', 'defense', 'stat', '_m']
-    al = al.drop_duplicates(keys, keep=False)             # two players with the same multiplier vs one defense: ambiguous
-    t['_m'] = t['matchup_multiplier'].round(3)
     t['_i'] = np.arange(len(t))
-    j = t[['_i', 'year', 'week', 'pos', 'opp', 'stat', '_m']].merge(
-        al.rename(columns={'defense': 'opp'}), on=['year', 'week', 'pos', 'opp', 'stat', '_m'], how='inner')
-    j = j.drop_duplicates('_i', keep=False)
+    keys = ['year', 'week', 'player', 'pos', 'team', 'stat']
+    al = al.drop_duplicates(keys, keep=False)
+    j = t[['_i', 'matchup_multiplier'] + keys].merge(al, on=keys, how='inner')
+    # move a row only where the board really used the alignment multiplier (a TE's scheme multiplier can replace it)
+    j = j[(j['matchup_multiplier'] - j['shipped']).abs() < 6e-4].drop(columns='matchup_multiplier')
     return d, t, j
 
 
@@ -86,10 +84,10 @@ def main():
     res = pd.DataFrame(rows)
     show = res.drop(columns='_var')
     print('\n=== one knob at a time (others shipped) ===')
-    one = show[((show.w0 == 0.2) & (show.clip == '0.75-1.3') & (show.strength == 1.0))
-               | ((show.shrink == 4.0) & (show.clip == '0.75-1.3') & (show.strength == 1.0))
+    one = show[((show.w0 == 0.2) & (show['clip'] == '0.75-1.3') & (show.strength == 1.0))
+               | ((show.shrink == 4.0) & (show['clip'] == '0.75-1.3') & (show.strength == 1.0))
                | ((show.shrink == 4.0) & (show.w0 == 0.2) & (show.strength == 1.0))
-               | ((show.shrink == 4.0) & (show.w0 == 0.2) & (show.clip == '0.75-1.3'))]
+               | ((show.shrink == 4.0) & (show.w0 == 0.2) & (show['clip'] == '0.75-1.3'))]
     print(one.round(4).to_string(index=False))
     print('\n=== best 12 of the full grid ===')
     print(show.sort_values('START-ALL').head(12).round(4).to_string(index=False))

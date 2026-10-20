@@ -89,13 +89,35 @@ def install_alignment_variant_hooks(store):
         variants = store.get('align_variants') or {}
         if not variants or not out.get('candidate_available', False):
             return out
-        rec = {'year': store['year'], 'week': store['week'], 'pos': str(kw.get('position')),
+        # Only the forward matchup loop (one call per player and stat) gets variants; the same function also serves the
+        # per-past-game evidence views, where 18 variants per call would cost hours. That loop's locals name the player.
+        caller = sys._getframe(1).f_locals
+        if 'preview_columns' not in caller or 'row_index' not in caller or 'cur' not in caller:
+            return out
+        try:
+            cur_frame, row_index = caller['cur'], caller['row_index']
+            player = str(cur_frame.at[row_index, caller.get('name_col', 'Player')])
+            team = str(cur_frame.at[row_index, 'Team'])
+        except Exception:
+            return out
+        rec = {'year': store['year'], 'week': store['week'], 'player': player, 'pos': str(kw.get('position')), 'team': team,
                'defense': str(kw.get('defense_team')), 'stat': str(kw.get('stat')),
                'shipped': float(out.get('candidate_multiplier', 1.0)), 'shipped_raw': float(out.get('raw_residual', np.nan))}
+        # The lookup keeps a ONE-slot index cache keyed on the profile object; alternating 19 frames would rebuild the
+        # index (thousands of rows) on every call. Give each variant its own prebuilt index, then restore the shipped one.
+        import data.pff_alignment as pa
+        cache = pa._ALIGNMENT_PROFILE_INDEX_CACHE
+        shipped_cache = (cache['profiles'], cache['index'])
+        idx_store = store.setdefault('align_idx', {})
         for (k, w), prof in variants.items():
+            if (k, w) not in idx_store or idx_store[(k, w)][0] is not prof:
+                cache['profiles'] = None
+                idx_store[(k, w)] = (prof, pa._alignment_profile_index(prof))
+            cache['profiles'], cache['index'] = prof, idx_store[(k, w)][1]
             alt = orig_mult(prof, **kw)
             rec[f'raw_{k:g}_{w:g}'] = (float(alt.get('raw_residual', np.nan)) if alt.get('candidate_available', False)
                                        else np.nan)
+        cache['profiles'], cache['index'] = shipped_cache
         store['align_rows'].append(rec)
         return out
 
@@ -214,7 +236,7 @@ def main():
             actual_pts = _actual_points(stats_df, name_col, week, scoring_col)
             build_weekly_projections.clear()
             store['year'], store['week'], store['pending'] = year, week, {}
-            store['align_cur'], store['align_variants'] = {}, {}
+            store['align_cur'], store['align_variants'], store['align_idx'] = {}, {}, {}
             board, meta = build_weekly_projections(year, week, a.scoring, as_of_week=week, apply_injury=False, features=feats)
             build_weekly_projections.clear()
             if board.empty:

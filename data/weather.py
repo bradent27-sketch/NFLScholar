@@ -143,6 +143,28 @@ def _roof_is_outdoor(roof: object) -> bool:
     return True  # unknown roof string -> assume outdoor (conservative: weather can apply)
 
 
+# Retractable-roof stadiums played with the roof CLOSED in 143 of 167 home games 2021-2025 (68 of 68 in 2024-2025). The
+# schedule posts `roof` only after the game, so before kickoff it is blank; a blank roof at one of these venues reads as
+# closed, not as open air (backlog D7, 2026-10-19: a forecast 79.6 F "outdoor" game in Dallas that was played indoors).
+RETRACTABLE_HOME_TEAMS = frozenset({"ARI", "ATL", "DAL", "HOU"})
+
+
+def _roof_unposted(roof: object) -> bool:
+    return str(roof if roof is not None else "").strip().lower() in {"", "nan", "none", "<na>", "nat"}
+
+
+def game_is_outdoor(game) -> bool:
+    """True when weather applies to one schedule row: the posted roof decides; a blank roof at a retractable-roof home
+    stadium (played at its own venue, not an international site) counts as closed."""
+    roof = game.get("roof")
+    if _roof_unposted(roof):
+        home = game.get("home_team")
+        venue = game_venue(game)
+        if home in RETRACTABLE_HOME_TEAMS and venue is not None and venue[0] == home:
+            return False
+    return _roof_is_outdoor(roof)
+
+
 def recorded_game_weather(schedule_df: pd.DataFrame, week: int) -> dict[str, GameWeather]:
     """{team: GameWeather} from the schedule's post-game `temp`/`wind`/`roof`."""
     if schedule_df is None or schedule_df.empty:
@@ -153,7 +175,7 @@ def recorded_game_weather(schedule_df: pd.DataFrame, week: int) -> dict[str, Gam
     wk = schedule_df[pd.to_numeric(schedule_df["week"], errors="coerce") == week]
     out: dict[str, GameWeather] = {}
     for _, g in wk.iterrows():
-        outdoor = _roof_is_outdoor(g.get("roof"))
+        outdoor = game_is_outdoor(g)
         temp = pd.to_numeric(pd.Series([g.get("temp")]), errors="coerce").iloc[0]
         wind = pd.to_numeric(pd.Series([g.get("wind")]), errors="coerce").iloc[0]
         obs = GameWeather(
@@ -314,7 +336,7 @@ def forecast_game_weather(schedule_df: pd.DataFrame, week: int,
         if venue is None:
             continue
         vkey, lat, lon = venue
-        outdoor = _roof_is_outdoor(g.get("roof"))
+        outdoor = game_is_outdoor(g)
         if not outdoor:
             obs = GameWeather(is_outdoor=False, source=f"{prov.name}-roof")
         elif vkey in cache:
@@ -446,7 +468,7 @@ def resolve_game_precip(schedule_df: pd.DataFrame, week: int, use_cache: bool = 
         if venue is None:
             continue
         vkey, lat, lon = venue
-        if not _roof_is_outdoor(g.get("roof")):
+        if not game_is_outdoor(g):
             bucket = None
         elif vkey in cache:
             bucket = cache[vkey]

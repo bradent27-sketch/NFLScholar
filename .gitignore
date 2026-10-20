@@ -125,3 +125,6 @@ external_data/ourlads_archive/*
 # scripts/import_ourlads_historical.py actually parses - those .html pages ARE
 # tracked, same as the 2022-2025 set.
 external_data/OurLads Historical Depth Charts - Week Before Season 0901/*.mhtml
+
+# Phone exports (ui/report_export.py) when no OneDrive folder exists - regenerated from a built board on demand.
+/exports/

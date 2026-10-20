@@ -152,3 +152,61 @@ def test_a_failed_refresh_keeps_the_cached_copy(tmp_path, monkeypatch):
     assert pd.to_numeric(ha.load_weekly_rosters(2026)['week']).max() == 4
     _fake_nflreadpy(monkeypatch, _rosters([]))                       # an empty answer also keeps the cache
     assert pd.to_numeric(ha.load_weekly_rosters(2026)['week']).max() == 4
+
+
+# --- the injury-report cache (2026-10-19) ----------------------------------------------------------------------------
+
+def _write_injury_cache(tmp_path, season, max_week, age_hours):
+    rows = [[season, w, 'NO', 'P', 'Out'] for w in range(1, max_week + 1)]
+    path = tmp_path / f'injuries_{season}.parquet'
+    pd.DataFrame(rows, columns=['season', 'week', 'team', 'full_name', 'report_status']).to_parquet(path, index=False)
+    old = time.time() - age_hours * 3600
+    os.utime(path, (old, old))
+    return path
+
+
+def _fake_injuries(monkeypatch, frame=None, boom=False):
+    calls = []
+
+    def load_injuries(seasons):
+        calls.append(seasons)
+        if boom:
+            raise OSError('offline')
+        return _Polars(frame)
+    monkeypatch.setitem(sys.modules, 'nflreadpy', types.SimpleNamespace(load_injuries=load_injuries))
+    return calls
+
+
+def test_a_partial_injury_cache_is_refreshed_when_old(tmp_path, monkeypatch):
+    monkeypatch.setattr(ha, 'CACHE_DIR', str(tmp_path))
+    _write_injury_cache(tmp_path, 2026, 4, age_hours=30)
+    fresh = pd.DataFrame([[2026, w, 'NO', 'P', 'Out', 'REG'] for w in range(1, 7)],
+                         columns=['season', 'week', 'team', 'full_name', 'report_status', 'game_type'])
+    calls = _fake_injuries(monkeypatch, fresh)
+    assert pd.to_numeric(ha.load_injury_reports(2026)['week']).max() == 6
+    assert len(calls) == 1
+    assert pd.to_numeric(ha.load_injury_reports(2026)['week']).max() == 6      # fresh on disk now: no second fetch
+    assert len(calls) == 1
+
+
+def test_a_young_partial_or_finished_injury_cache_is_not_refetched(tmp_path, monkeypatch):
+    monkeypatch.setattr(ha, 'CACHE_DIR', str(tmp_path))
+    _write_injury_cache(tmp_path, 2026, 4, age_hours=1)
+    _write_injury_cache(tmp_path, 2025, 18, age_hours=24 * 200)
+    calls = _fake_injuries(monkeypatch, pd.DataFrame())
+    assert pd.to_numeric(ha.load_injury_reports(2026)['week']).max() == 4
+    assert pd.to_numeric(ha.load_injury_reports(2025)['week']).max() == 18
+    assert calls == []
+
+
+def test_a_failed_injury_refresh_keeps_the_cached_copy(tmp_path, monkeypatch):
+    monkeypatch.setattr(ha, 'CACHE_DIR', str(tmp_path))
+    _write_injury_cache(tmp_path, 2026, 4, age_hours=30)
+    _fake_injuries(monkeypatch, boom=True)
+    assert pd.to_numeric(ha.load_injury_reports(2026)['week']).max() == 4
+    _fake_injuries(monkeypatch, pd.DataFrame())
+    assert pd.to_numeric(ha.load_injury_reports(2026)['week']).max() == 4
+    # no cache at all and no source: still an empty frame, never an exception
+    (tmp_path / 'injuries_2026.parquet').unlink()
+    _fake_injuries(monkeypatch, boom=True)
+    assert ha.load_injury_reports(2026).empty

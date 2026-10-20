@@ -38,24 +38,52 @@ from data.utils import clean_name_exact
 CACHE_DIR = os.path.join('data', 'cache')
 
 
+# A finished season's file never changes; a partial one (the live season) is refetched once it is this old. Before
+# 2026-10-14 the live roster file was cached forever (207 hours old, week 4 of a feed at week 6) and before 2026-10-19 so
+# was the official injury report (stopped at week 4 on 2026-10-19 with the feed at week 6): the reserve-list and
+# out-last-week reads of the QB returning-starter rule and the suspension rule missed every recent week.
+CACHE_MAX_AGE_HOURS = 6.0
+ROSTER_CACHE_MAX_AGE_HOURS = CACHE_MAX_AGE_HOURS        # the name the roster tests and docs use
+_REGULAR_SEASON_LAST_WEEK = 18
+
+
+def _partial_season_cache_is_stale(df, path):
+    """True for a cached season file that has not reached the last regular-season week AND is older than
+    CACHE_MAX_AGE_HOURS - the only kind that can have fallen behind the feed."""
+    try:
+        if pd.to_numeric(df['week'], errors='coerce').max() >= _REGULAR_SEASON_LAST_WEEK:
+            return False
+        return (time.time() - os.path.getmtime(path)) > CACHE_MAX_AGE_HOURS * 3600.0
+    except Exception:
+        return False
+
+
+_roster_cache_is_stale = _partial_season_cache_is_stale
+
+
 def load_injury_reports(season):
     """The official week-by-week injury report for one season, REG only,
-    cached to data/cache/injuries_{season}.parquet. Never raises - an
-    unreachable source returns an empty frame, same degrade-gracefully
-    convention as every other historical loader in this app."""
+    cached to data/cache/injuries_{season}.parquet. A partial season's cache
+    is refreshed when older than CACHE_MAX_AGE_HOURS (a failed refresh keeps
+    the cached copy). Never raises - an unreachable source with no cache
+    returns an empty frame, same degrade-gracefully convention as every
+    other historical loader in this app."""
     cache_path = os.path.join(CACHE_DIR, f'injuries_{season}.parquet')
+    cached = None
     if os.path.exists(cache_path):
         try:
-            return pd.read_parquet(cache_path)
+            cached = pd.read_parquet(cache_path)
         except Exception:
-            pass
+            cached = None
+        if cached is not None and not _partial_season_cache_is_stale(cached, cache_path):
+            return cached
     try:
         import nflreadpy
         df = nflreadpy.load_injuries([season]).to_pandas()
     except Exception:
-        return pd.DataFrame()
+        return cached if cached is not None else pd.DataFrame()
     if df is None or df.empty:
-        return pd.DataFrame()
+        return cached if cached is not None else pd.DataFrame()
     if 'game_type' in df.columns:
         df = df[df['game_type'].astype(str).str.upper() == 'REG'].copy()
     try:
@@ -77,22 +105,6 @@ def load_injury_reports(season):
 # wk3-17: of ~2,000 board player-weeks carrying one of these statuses, zero
 # recorded a stat that week (the status is a pre-game snapshot).
 RESERVE_ROSTER_STATUSES = frozenset({'RES', 'EXE', 'RET'})
-
-
-# A finished season's roster file never changes; a partial one (the live season) is refetched once it is this old. Before
-# 2026-10-14 the live file was cached forever: on 2026-10-14 it stopped at week 4 while the feed had week 6, so the
-# reserve-list reads of the QB returning-starter rule and the suspension rule missed every recent week.
-ROSTER_CACHE_MAX_AGE_HOURS = 6.0
-_REGULAR_SEASON_LAST_WEEK = 18
-
-
-def _roster_cache_is_stale(df, path):
-    try:
-        if pd.to_numeric(df['week'], errors='coerce').max() >= _REGULAR_SEASON_LAST_WEEK:
-            return False
-        return (time.time() - os.path.getmtime(path)) > ROSTER_CACHE_MAX_AGE_HOURS * 3600.0
-    except Exception:
-        return False
 
 
 def load_weekly_rosters(season):

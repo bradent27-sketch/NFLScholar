@@ -219,3 +219,42 @@ def test_a_fixed_dome_stadium_name_still_resolves_through_the_roof_column():
     ])
     out = wx.forecast_game_weather(sch, 7, provider=wx.WeatherProvider(), use_cache=False)
     assert not out["NO"].is_outdoor and not out["PIT"].is_outdoor
+
+
+# --- retractable roofs with no posted roof (2026-10-19, backlog D7) ----------------------------------------------------
+
+def test_a_blank_roof_at_a_retractable_stadium_counts_as_closed():
+    for home in ("ARI", "ATL", "DAL", "HOU"):
+        assert not wx.game_is_outdoor({"home_team": home, "away_team": "XXX", "roof": None})
+        assert not wx.game_is_outdoor({"home_team": home, "away_team": "XXX", "roof": float("nan")})
+    # a posted roof always wins, in both directions
+    assert wx.game_is_outdoor({"home_team": "DAL", "away_team": "XXX", "roof": "open"})
+    assert not wx.game_is_outdoor({"home_team": "GB", "away_team": "XXX", "roof": "dome"})
+
+
+def test_a_blank_roof_elsewhere_stays_outdoor_and_so_does_an_international_site():
+    assert wx.game_is_outdoor({"home_team": "GB", "away_team": "XXX", "roof": float("nan")})
+    # Dallas as the nominal home team in London: played at Tottenham, not at AT&T Stadium
+    assert wx.game_is_outdoor({"home_team": "DAL", "away_team": "XXX", "roof": float("nan"),
+                               "stadium": "Tottenham Hotspur Stadium"})
+
+
+def test_the_forecast_path_skips_an_unposted_retractable_game(monkeypatch):
+    sch = _schedule([
+        {"season": 2026, "week": 8, "home_team": "DAL", "away_team": "ARI", "roof": float("nan"),
+         "gameday": "2026-10-25", "gametime": "13:00"},
+        {"season": 2026, "week": 8, "home_team": "GB", "away_team": "CHI", "roof": float("nan"),
+         "gameday": "2026-10-25", "gametime": "13:00"},
+    ])
+    calls = []
+
+    class Fake(wx.WeatherProvider):
+        name = "fake"
+
+        def fetch(self, lat, lon, when_utc):
+            calls.append(round(lat))
+            return 10.0, 40.0
+    out = wx.forecast_game_weather(sch, 8, provider=Fake(), use_cache=False)
+    assert not out["DAL"].is_outdoor and not out["ARI"].is_outdoor
+    assert out["GB"].is_outdoor and out["GB"].wind_mph == 10.0
+    assert calls == [44]                                  # only Green Bay was fetched

@@ -19,6 +19,7 @@ one number - same "show market lines next to this board, don't merge them"
 convention Draft HQ already uses.
 """
 import datetime
+import os
 
 import numpy as np
 import pandas as pd
@@ -45,6 +46,10 @@ from data.pass_capacity_allocator import (
     PASS_CAPACITY_DEADBAND, PASS_CAPACITY_TRUSTED_TIER, PASS_CAPACITY_TRUSTED_TIER_RB)
 from data.loaders import load_schedule
 from data.weather import resolve_game_weather, resolve_game_precip
+from data.game_slate import load_slate, slate_team_bridge
+from ui import freshness
+from ui.report_export import (board_pdf, default_export_dir, export_file_names, game_report_pdf,
+                              save_exports)
 from ui.charts import sparkline_data_uri, C as _CHART_COLORS
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
                         get_diverging_color, get_multiplier_color, get_team_style)
@@ -546,17 +551,9 @@ def _render_decomposition_header(detail):
     _render_decomposition_navigation(detail)
     raw, calibrated = detail['raw_points'], detail['calibrated_points']
     status = canonical_status(detail.get('availability', {}).get('status'))
-    if detail.get('calibration', {}).get('enabled'):
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Raw model", f"{raw:.2f} pts")
-        c2.metric("Displayed projection", f"{calibrated:.2f} pts")
-        c3.metric("Availability", status.title())
-    else:
-        c1, c2 = st.columns(2)
-        c1.metric("Projected points", f"{calibrated:.2f} pts")
-        c2.metric("Availability", status.title())
 
     matchup = detail.get('defense_matchup')
+    toughness_rank = of = tier = None
     if matchup:
         allowed_rank, of = matchup['rank'], matchup['of']
         # data.matchup_signals.defense_stat_rank's own rank is 1 = allows
@@ -570,13 +567,29 @@ def _render_decomposition_header(detail):
         toughness_rank = of - allowed_rank + 1
         tier = ("toughest" if toughness_rank <= of / 3
                else "easiest" if toughness_rank > 2 * of / 3 else "middling")
-        st.markdown(
-            f"**{detail['opponent']} defense vs {detail['position']}: {tier} matchup** — "
-            f"#{toughness_rank} of {of} toughest (allows {matchup['value']:.1f} pts/game to the "
-            f"position, league avg {matchup['league_avg']:.1f})."
-        )
-        st.caption(f"Source: {matchup.get('source', 'unknown')}. Full breakdown in the Deep Dive tabs below.")
+
+    # The matchup rank is its own metric tile, the same size as the point totals (2026-10-18 request: it was a line
+    # of body text, small next to the projection numbers and the stat table).
+    calibration_on = bool(detail.get('calibration', {}).get('enabled'))
+    cols = st.columns(4 if calibration_on else 3)
+    if calibration_on:
+        cols[0].metric("Raw model", f"{raw:.2f} pts")
+        cols[1].metric("Displayed projection", f"{calibrated:.2f} pts")
     else:
+        cols[0].metric("Projected points", f"{calibrated:.2f} pts")
+    cols[-2].metric("Availability", status.title())
+    matchup_help = (f"Where {detail['opponent']}'s defense ranks against {detail['position']}s in fantasy points "
+                    "allowed per game: 1 = toughest in the league, the last number = easiest.")
+    if matchup:
+        cols[-1].metric(
+            "Matchup", f"{toughness_rank}/{of}", delta=f"{tier} vs {detail['position']}", delta_arrow='off',
+            delta_color={'easiest': 'normal', 'toughest': 'inverse', 'middling': 'off'}[tier], help=matchup_help)
+        st.caption(
+            f"{detail['opponent']} defense vs {detail['position']}: #{toughness_rank} of {of} toughest (allows "
+            f"{matchup['value']:.1f} pts/game to the position, league avg {matchup['league_avg']:.1f}). "
+            f"Source: {matchup.get('source', 'unknown')}. Full breakdown in the Deep Dive tabs below.")
+    else:
+        cols[-1].metric("Matchup", "—", help=matchup_help)
         st.caption("Defense matchup rank: not enough prior weeks of data yet to rank this opponent against this position.")
 
 
@@ -1521,7 +1534,10 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
             f"QB TD blend: his prior-season TD rate is regressed {values['td_prior_regress']:.0%} toward the league's "
             f"per-game rate before it is blended with this season's, and this season's rate carries "
             f"{values.get('current_weight', 0.0):.0%} (a slow weight - a QB's TD rate is among the noisiest rates).")
-    if values.get('qb1_selection_required'):
+    if values.get('qb1_workload_override') and (values.get('qb_nonstarter_volume_factor') or 1.0) < 0.999:
+        notes.append(f"Probable QB1 — {values['qb_nonstarter_volume_factor']:.0%} chance he starts; volume is scaled to "
+                     "that chance until a QB1 is selected.")
+    elif values.get('qb1_selection_required'):
         notes.append("QB1 selection required — volume held at zero until selected.")
     elif not values.get('qb_projected_starter', True):
         notes.append("Not the expected starter — normal QB volume held at zero.")
@@ -1718,11 +1734,22 @@ def _render_pipeline_diagnostics(model_meta):
                     st.caption(f"• {issue}")
 
     needs_qb1 = contract.get('qb1_selection_required_teams')
+    guessed_qb1 = contract.get('qb1_probable_starters') or {}
+    if guessed_qb1:
+        st.warning(
+            "QB1 not confirmed for: " + "; ".join(
+                f"{team} ({', '.join(f'{name} {weight:.0%}' for name, weight in players.items())})"
+                for team, players in guessed_qb1.items()) +
+            " - projected as a probability-weighted guess from games played; select a QB1 to confirm."
+        )
+    all_needs_qb1 = list(needs_qb1 or [])
+    needs_qb1 = [team for team in all_needs_qb1 if team not in guessed_qb1]
     if needs_qb1:
         st.warning(
             "QB1 selection required for: " + ", ".join(needs_qb1) +
             " - those teams' QB rooms receive no normal QB volume until one player is selected."
         )
+    if all_needs_qb1:
         # The fix lives on a different tab (Depth Charts' own "Weekly
         # projection QB1 selection" expander) with no other link to it from
         # here - explicit gap report (2026-09-14): "no QB created til
@@ -1733,8 +1760,8 @@ def _render_pipeline_diagnostics(model_meta):
         # and Season pickers before its QB1 expander renders (which then
         # opens itself, since status is still 'selection_required' there).
         jump_year = (model_meta or {}).get('year')
-        cols = st.columns(min(len(needs_qb1), 4) or 1)
-        for i, team in enumerate(needs_qb1):
+        cols = st.columns(min(len(all_needs_qb1), 4) or 1)
+        for i, team in enumerate(all_needs_qb1):
             with cols[i % len(cols)]:
                 st.button(
                     f"🏈 Select {team} QB1", key=f"wr_nav_qb1_{team}", width="stretch",
@@ -2204,7 +2231,11 @@ def _render_decomposition_audit_body(detail):
 
     _render_role_confidence_table(role)
 
-    if detail.get('position') == 'QB' and role.get('qb_projected_starter'):
+    if (detail.get('position') == 'QB' and role.get('qb_projected_starter')
+            and (role.get('qb1_start_probability') or 1.0) < 0.999):
+        st.info(f"Probable QB1: {role['qb1_start_probability']:.0%} chance he starts; projected at that share of a "
+                "starter's workload. Select a QB1 on the Depth Charts tab to confirm.")
+    elif detail.get('position') == 'QB' and role.get('qb_projected_starter'):
         st.success(f"Expected QB1: full workload from {role.get('starter_source', 'QB1 selection')}.")
     elif detail.get('position') == 'QB' and role.get('qb1_selection_required'):
         st.warning("QB1 selection required: this room receives no normal QB volume until one player is selected.")
@@ -3105,6 +3136,24 @@ def _render_pff_weekly_alignment_upload(wk_year, wk_week):
         st.caption(f"No weekly archive saved for {wk_year} yet.")
 
 
+def _injury_freshness_caption(wk_year, wk_week):
+    """How old the saved injury report is against the next kickoff (backlog D2): inactives post about 90 minutes
+    before each game, and a board built before them keeps listing a late-activated player as Out."""
+    try:
+        now = datetime.datetime.now(freshness.EASTERN)
+        path = FANTASYPROS_INJURY_PATH
+        saved_at = (datetime.datetime.fromtimestamp(os.path.getmtime(path), freshness.EASTERN)
+                    if os.path.exists(path) else None)
+        kickoff = freshness.next_kickoff(load_schedule(wk_year), int(wk_week), now)
+        text, level = freshness.injury_report_note(saved_at, kickoff, now)
+    except Exception:
+        return
+    if level == "warn":
+        st.warning(text)
+    else:
+        st.caption(text)
+
+
 def _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring):
     """The "has this actually been pulled, and when" indicator - explicit
     request. Distinguishes a live pull FOR this exact year/week/scoring
@@ -3517,6 +3566,46 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, name_
     return fp_weekly, market_df
 
 
+def _render_phone_export(wk_year, wk_week, wk_scoring, model_df, weather_by_team, precip_by_team):
+    """Two PDFs of the built board for reading on a phone away from this PC (requested 2026-10-18): the week's games
+    with their context and each team's key players, and a bare-bones board. Built on request (not on every rerun -
+    drawing them takes a second or two) and kept for this exact board in session state; each can be downloaded or
+    saved straight into a folder such as OneDrive, which syncs it to the phone. See ui/report_export.py."""
+    with st.expander("📤 Export for phone (PDF)", expanded=False):
+        st.caption("**Game report**: every game in kickoff order with the line, implied team totals, weather and each "
+                   "team's key players and projections. **Board**: a plain list of projections by position.")
+        board_key = (wk_year, wk_week, wk_scoring, len(model_df),
+                     round(float(pd.to_numeric(model_df['Model Proj Pts'], errors='coerce').sum()), 2))
+        if st.button("Create PDFs", key="wr_export_make"):
+            with st.spinner("Drawing the PDFs…"):
+                games, _ = load_slate(wk_year, wk_week)
+                bridge = slate_team_bridge(games) if not games.empty else {}
+                built = datetime.datetime.now().strftime('%b %d, %I:%M %p').replace(' 0', ' ')
+                subtitle = f"NFL Scholar model projections, {wk_scoring} · built {built}"
+                st.session_state['wr_export_files'] = (board_key, {
+                    'games': game_report_pdf(games, model_df, f"{wk_year} Week {wk_week} · games", subtitle,
+                                             weather_by_team, precip_by_team, bridge),
+                    'board': board_pdf(model_df, f"{wk_year} Week {wk_week} · board", subtitle, games, bridge),
+                })
+        stash = st.session_state.get('wr_export_files')
+        if not stash or stash[0] != board_key:
+            return
+        files, names = stash[1], export_file_names(wk_year, wk_week, wk_scoring)
+        c1, c2 = st.columns(2)
+        c1.download_button("⬇️ Game report", data=files['games'], file_name=names['games'], mime='application/pdf',
+                           key="wr_export_dl_games", on_click="ignore", width="stretch")
+        c2.download_button("⬇️ Board", data=files['board'], file_name=names['board'], mime='application/pdf',
+                           key="wr_export_dl_board", on_click="ignore", width="stretch")
+        folder = st.text_input("Or save both to a folder (a OneDrive folder syncs them to your phone)",
+                               value=default_export_dir(), key="wr_export_dir")
+        if st.button("💾 Save to folder", key="wr_export_save"):
+            try:
+                paths = save_exports(files, folder, names)
+                st.success("Saved: " + " · ".join(paths))
+            except OSError as exc:
+                st.error(f"Could not save to {folder}: {exc}")
+
+
 def render():
     st.markdown("<div class='custom-section-header'>WEEKLY RANKINGS</div>", unsafe_allow_html=True)
 
@@ -3571,6 +3660,7 @@ def render():
         model_meta=st.session_state.get('weekly_rank_last_model_meta'),
         stats_df=df_stats, team_col=t_col, name_col=n_col)
     _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring)
+    _injury_freshness_caption(wk_year, wk_week)
 
     build_key = (wk_year, wk_week, wk_scoring)
     if st.button("🧮 Build board", key="weekly_rank_build", type="primary"):
@@ -4238,6 +4328,7 @@ def render():
                 "their analysts' number, pulled live above. Independent reads, shown side by side, "
                 "never blended."
             )
+        _render_phone_export(wk_year, wk_week, wk_scoring, model_df, weather_by_team, precip_by_team)
         _render_board()
 
     if form_df.empty:

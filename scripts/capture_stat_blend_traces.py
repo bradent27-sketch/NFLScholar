@@ -366,6 +366,67 @@ def install_qb_blend_hooks(store):
 
     wp.blend_qb1_volume = blend
 
+# --scheme-variants (2026-10-21, calibration audit C1b): the PFF man/zone scheme TE matchup (it replaces the broad and
+# alignment matchups for TE targets/receptions/yards wherever man and zone evidence both exist; 2024+ PFF weekly seasons).
+# This season's scheme-defense profiles are rebuilt at other shrinkage values, re-blended with last season's at other weights,
+# and each player's unclipped multiplier is recorded under every variant, so shrinkage, prior weight and clip re-score offline.
+SCHEME_SHRINKAGE = (1.0, 2.0, 4.0, 8.0, 12.0, 20.0)
+SCHEME_PRIOR_W0 = (0.0, 0.2, 0.4, 0.6)
+
+
+def install_scheme_variant_hooks(store):
+    import data.weekly_projections as wp
+    orig_load, orig_blend = wp.load_weekly_scheme_defense_profiles, wp.blend_defense_profiles_toward_prior
+    orig_mult = wp.scheme_defense_residual_multiplier
+
+    def load(year, as_of_week, schedule_df, *args, **kw):
+        out = orig_load(year, as_of_week, schedule_df, *args, **kw)
+        if int(year) == int(store['year']) and 'shrinkage_games' not in kw:
+            from data.pff_alignment import aggregate_scheme_defense_profiles
+            tg = out.team_games
+            store['scheme_cur'] = {k: (out.profiles if k == 4.0 or tg is None or tg.empty
+                                       else aggregate_scheme_defense_profiles(tg, shrinkage_games=k))
+                                   for k in SCHEME_SHRINKAGE}
+            # no prior blend happens at a cold start: every w0 is then the unblended profile
+            store['scheme_variants'] = {(k, w): prof for k, prof in store['scheme_cur'].items() for w in SCHEME_PRIOR_W0}
+        return out
+
+    def blend(current, prior, split_col, w0, *args, **kw):
+        out = orig_blend(current, prior, split_col, w0, *args, **kw)
+        if split_col == 'scheme' and store.get('scheme_cur'):
+            store['scheme_variants'] = {(k, w): orig_blend(prof, prior, split_col, w, *args, **kw)
+                                        for k, prof in store['scheme_cur'].items() for w in SCHEME_PRIOR_W0}
+        return out
+
+    def mult(profiles, **kw):
+        out = orig_mult(profiles, **kw)
+        variants = store.get('scheme_variants') or {}
+        if (not variants or not out.get('candidate_available', False)
+                or str(kw.get('position', '')).upper() not in wp.SCHEME_MATCHUP_SCORING_POSITIONS):
+            return out
+        caller = sys._getframe(1).f_locals
+        if 'scheme_preview_columns' not in caller or 'row_index' not in caller or 'cur' not in caller:
+            return out
+        try:
+            cur_frame, row_index = caller['cur'], caller['row_index']
+            player = str(cur_frame.at[row_index, caller.get('name_col', 'Player')])
+            team = str(cur_frame.at[row_index, 'Team'])
+        except Exception:
+            return out
+        rec = {'year': store['year'], 'week': store['week'], 'player': player, 'pos': str(kw.get('position')), 'team': team,
+               'defense': str(kw.get('defense_team')), 'stat': str(kw.get('stat')),
+               'shipped': float(out.get('candidate_multiplier', 1.0)), 'shipped_raw': float(out.get('raw_residual', np.nan))}
+        for (k, w), prof in variants.items():
+            alt = orig_mult(prof, **kw)
+            rec[f'raw_{k:g}_{w:g}'] = (float(alt.get('raw_residual', np.nan)) if alt.get('candidate_available', False)
+                                       else np.nan)
+        store['scheme_rows'].append(rec)
+        return out
+
+    wp.load_weekly_scheme_defense_profiles = load
+    wp.blend_defense_profiles_toward_prior = blend
+    wp.scheme_defense_residual_multiplier = mult
+
 def install_defense_variant_hooks(store):
     """Wrap the defense estimator and the current/prior blend in data.weekly_projections. The board is unchanged (the
     original result is always returned); the variants go to ``store['rows']`` as long records."""
@@ -430,6 +491,7 @@ def main():
     ap.add_argument('--xtd-variants', action='store_true', help='also record the expected-TD blend inputs per player')
     ap.add_argument('--matchup-variants', action='store_true', help='also record role-overlay and blowout matchup variants')
     ap.add_argument('--qb-blend-variants', action='store_true', help='also record the QB1 prior-rate blend under other K values')
+    ap.add_argument('--scheme-variants', action='store_true', help='also record the PFF man/zone TE matchup variants')
     ap.add_argument('--recency-variants', action='store_true', help='also record each current rate under other decays')
     a = ap.parse_args()
     years = [int(y) for y in a.years.split(',')]
@@ -444,10 +506,11 @@ def main():
     recency_path = a.out + '.recency.parquet'
     matchup_path, qb_rating_path = a.out + '.matchup.parquet', a.out + '.qbratings.parquet'
     qb_blend_path = a.out + '.qbblend.parquet'
+    scheme_path = a.out + '.scheme.parquet'
     install_snap_guard()
     store = {'rows': [], 'pending': {}, 'year': None, 'week': None, 'align_rows': [], 'xtd_rows': [],
              'recency_frames': [], 'matchup_frames': [], 'qb_rating_frames': [], 'mpending': {}, 'overall_var': {},
-             'blowout_sources': [], 'qb_blend_frames': []}
+             'blowout_sources': [], 'qb_blend_frames': [], 'scheme_rows': []}
     if a.xtd_variants:
         install_xtd_hooks(store)
     if a.recency_variants:
@@ -456,6 +519,8 @@ def main():
         install_matchup_variant_hooks(store)
     if a.qb_blend_variants:
         install_qb_blend_hooks(store)
+    if a.scheme_variants:
+        install_scheme_variant_hooks(store)
     if a.defense_variants:
         install_defense_variant_hooks(store)
     if a.alignment_variants:
@@ -497,6 +562,7 @@ def main():
             store['year'], store['week'], store['pending'] = year, week, {}
             store['align_cur'], store['align_variants'], store['align_idx'] = {}, {}, {}
             store['mpending'], store['overall_var'], store['blowout_sources'] = {}, {}, []
+            store['scheme_cur'], store['scheme_variants'] = {}, {}
             board, meta = build_weekly_projections(year, week, a.scoring, as_of_week=week, apply_injury=False, features=feats)
             build_weekly_projections.clear()
             if board.empty:
@@ -548,6 +614,8 @@ def main():
                 pd.DataFrame(store['xtd_rows']).to_parquet(xtd_path, index=False)
             if a.recency_variants and store['recency_frames']:
                 pd.concat(store['recency_frames'], ignore_index=True).to_parquet(recency_path, index=False)
+            if a.scheme_variants and store['scheme_rows']:
+                pd.DataFrame(store['scheme_rows']).to_parquet(scheme_path, index=False)
             if a.qb_blend_variants and store['qb_blend_frames']:
                 pd.concat(store['qb_blend_frames'], ignore_index=True).to_parquet(qb_blend_path, index=False)
             if a.matchup_variants and store['matchup_frames']:

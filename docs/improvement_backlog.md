@@ -88,7 +88,7 @@ pre-v2 harness (MAE, narrow windows, an older model): not comparable to today's 
 | C7 | **Blowout discount** (28 points, x0.5) and **OFFENSE_PRIOR_GAMES 6** (RB only) | Decided games in a defense's history; the early-season offense baseline | Old sweeps |
 | C8 | **Pace**: PACE_PRIOR_GAMES 12, PACE_CLIP 0.85-1.15 | Opponent pace effect | Prior copied from the defense value, clip never tested (the 0.15 cap is measured) |
 | C9 | **Within-season recency RECENCY_DECAY 0.85** | How much a player's recent games outweigh earlier ones | Old sweep, no signal |
-| C10 | **K_EFFECTIVE_RANGE 0.7-1.3** | Role confidence speeding up / slowing trust in this season's rate | CANDIDATE: offline -0.0049 (old capture), -0.0038 [-0.0066, -0.0011] 4/5 on the fresh capture; harness queued (bar START-ALL <= -0.003). |
+| C10 | **K_EFFECTIVE_RANGE 0.7-1.3** | Role confidence speeding up / slowing trust in this season's rate | CANDIDATE, MEETS BAR: offline -0.0038 [-0.0066, -0.0011] 4/5; harness 2026-10-20 SHIP-ELIGIBLE, START-ALL -0.004 [-0.007, -0.001], WR -0.008, TE -0.007, QB/RB 0.000, bias +0.002. Awaiting sign-off to ship `v2_role_confidence_reversed_wrte`. |
 | C11 | **ROLE_CHANGE_K_REDUCTION 0.5** | How much a detected role change speeds trust in new volume | CLOSED 2026-10-20: no effect (WR/TE target and QB carry RMSE flat at every reduction 0-1; 2.8% of rows touched). |
 | C12 | **Two-seasons-back blend** (base 0.20, cap 0.55, damping 0.35, 8-game fade; the QB blend's own copy) | How much a season two years back counts | Never tested |
 | C13 | **QB volume/efficiency blends** (volume K 60, pass efficiency 100, rush efficiency 5, rush TD 40, style 10, starter floor 20/game) | Team vs personal QB volume and efficiency | No sweep on record |

@@ -5455,3 +5455,23 @@ defaults" are not hurting and two seasons cannot pick anything better; the only 
 0.82-1.22, a 0.75 strength) are worth under 0.0011. CLOSED; revisit when more PFF weekly seasons exist. TE: its receiving matchup comes
 from the man/zone SCHEME multiplier (it replaces alignment wherever scheme evidence exists), so the alignment test barely touches TE;
 the scheme channel's own settings (shrinkage, prior weight 0.40) are a separate item, C1b.
+
+
+### 2026-10-20 - C10 harness result: `v2_role_confidence_reversed_wrte` meets its pre-set bar (awaiting sign-off)
+
+Harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base arm DEFAULT_FEATURES (59), candidate added; log
+`.sweeps/harness_role_confidence_reversed_2022-2025_wk3-17.log`). VERDICT (add): SHIP-ELIGIBLE. dRMSE:
+
+| Pool | n | RMSE | dRMSE [95% CI] | weeks better-worse |
+|---|---|---|---|---|
+| START-ALL | 8109 | 7.624 -> 7.620 | -0.004 [-0.007, -0.001] | 40-20 |
+| START-WR | 3234 | 7.843 -> 7.835 | -0.008 [-0.014, -0.003] | 37-23 |
+| START-TE | 1172 | 6.662 -> 6.655 | -0.007 [-0.016, +0.001] | 32-28 |
+| START-RB | 2321 | 7.628 -> 7.628 | 0.000 [-0.002, +0.002] | 29-31 |
+| START-QB | 1382 | 7.506 -> 7.506 | 0.000 | 0-0 |
+| ALL | 18577 | 6.160 -> 6.158 | -0.002 [-0.004, -0.001] | 36-24 |
+
+Against the bar: verdict not REJECT (SHIP-ELIGIBLE), START-ALL -0.004 <= -0.003, START-WR -0.008 and START-TE -0.007 both <= 0, START-QB
+and START-RB 0.000 (within +0.010), bias growth +0.002 (within 0.3): every condition met. The harness agrees with the offline re-score
+(-0.0038 START-ALL, WR and TE carrying it, QB/RB untouched). START-WR pairwise accuracy +0.001 (CI excludes 0); TE bias -0.655 -> -0.658
+(a 0.003 drift, inside the bar). Not shipped yet: promoting it to DEFAULT_FEATURES needs the user's sign-off.

@@ -5559,3 +5559,19 @@ CLOSED, no change.
 C9 check on clean data: the recency capture's 2025 top-up snap download had partly failed (2025 snap coverage 0.962 vs 0.964; 244
 of 7,540 2025 rows slightly off, mostly TE snap shares). Re-scored on 2021-2024 only, the same U: 0.75 +0.0020, 0.80 0.0000, 0.90
 +0.0025, 0.95 +0.0078, 1.0 +0.0158 START-ALL. The C9 result stands.
+
+
+### 2026-10-21 - Calibration audit C13 (QB1 prior-rate blend, data/qb_volume_blend.py): no change, closed
+
+`scripts/capture_stat_blend_traces.py --qb-blend-variants --xtd-variants` (guarded; 2021-2025 weeks 3-17, DEFAULT_FEATURES 60; boards
+identical to the matchup capture; 1,855 QB1-weeks, every QB1's replaced prior rate recorded per stat and matching the traced prior,
+passing TDs after the 25% pull to the league rate) and `scripts/eval_qb_blend_variants.py` (the prior enters with weight 1 - w; points
+through the shipped late steps, paired START pools). START-QB dRMSE [CI], seasons better:
+- style K (pass/rush split, shipped 10): 5 +0.0008, 20 -0.0006, 40 -0.0012 [-0.0030, +0.0005], 5 of 5 - consistent but worth 0.0002
+  START-ALL.
+- volume K (own vs team dropbacks, 60): 30 / 120 / 240: +0.0012 / -0.0002 / +0.0006, mixed seasons.
+- pass efficiency K (100): 50 +0.0070 (worse); 200 -0.0046, 400 -0.0057 [-0.0225, +0.0095], 3 of 5: large gains in 2021 and 2025 and
+  losses in 2023-24 (+0.016 at 400). Not robust.
+- rush efficiency K (5), rush TD K (40), starter floor (20): all within +-0.0024, mixed.
+Nothing clears noise or comes close to a harness bar (START-ALL within +-0.0012 for every setting). CLOSED, no change; the style-K
+direction (5/5, tiny) is noted, not worth a run.

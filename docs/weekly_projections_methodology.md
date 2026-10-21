@@ -5624,3 +5624,42 @@ through `data/cache/snap_counts_{year}.parquet` with the injury-report contract 
 downloaded again; partial season refreshed when older than 6 h; a failed or empty refresh keeps the cached copy; never raises).
 Output is unchanged when the download works: the snap table built from the cache equals the downloaded one for 2021-2025, and
 2026 is cached and refreshing. `tests/test_snap_counts_cache.py` (6). The running app picks it up on its next restart.
+
+
+### 2026-10-21 - Calibration audit C15 result: the partial-game history filter stays (switching it off hurts TEs)
+
+Harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base DEFAULT_FEATURES (60), snap-guarded) with `v2_no_history_exclusions`
+added: VERDICT INCONCLUSIVE. START-ALL 7.596 -> 7.603 (+0.007, CI [-0.012, +0.025], 24-36 weeks), START-TE +0.047 (CI [+0.010, +0.087],
+21-39 weeks), START-WR +0.009, START-RB +0.002, START-QB -0.027 (CI [-0.096, +0.037]); bias growth +0.204 (every position projected
+lower with the excluded games counted). Against the pre-set bar: switching the filter off is not SHIP-ELIGIBLE and is worse overall,
+clearly so for TEs, so the filter stays as shipped; the QB lean (counting QB-split games) is inside noise. Its thresholds were not
+swept (each setting would be its own harness run); the on/off check shows the mechanism earns its place. CLOSED.
+(Pool sizes differ between harness runs because the START pool is the union of both arms' top players, so a candidate that moves
+projections more widens it; base RMSEs are comparable within a run, not across runs.)
+
+
+### 2026-10-21 - C13 follow-up: QB pass/rush split K (QB_STYLE_BLEND_K 10): candidate K = 80, pre-set bar
+
+User (2026-10-21): the style-K hint is "worth following up on... these small benefits are important at this stage". Extended capture
+(`capture_stat_blend_traces.py --qb-blend-variants --qb-style-grid --xtd-variants`, guarded, 2021-2025 weeks 3-17, DEFAULT_FEATURES
+60) re-scored with `scripts/eval_qb_blend_variants.py` (K 40 reproduces the first capture's -0.0012 exactly). START-QB dRMSE, seasons
+better: 40 -0.0012 5/5, 60 -0.0014 5/5, 80 -0.0017 [-0.0044, +0.0009] 5/5, 120 -0.0020 4/5, 160 -0.0022 4/5, 240 -0.0024 3/5. The gain
+keeps growing but stops holding in every season past 80, so the candidate is K = 80 (`v2_qb_style_blend_k80`, off by default;
+`tests/test_qb_style_blend_k80.py` (2)). START-ALL effect about -0.0003 (QB only).
+
+**Pre-set bar (written before its harness run).** Harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base DEFAULT_FEATURES (60),
+snap-guarded): verdict not REJECT; START-QB dRMSE <= -0.001 and START-QB better in at least as many weeks as worse; START-RB, START-WR
+and START-TE each within +0.002; START-ALL <= 0; bias growth within 0.3. (The usual START-ALL <= -0.003 cannot apply to a QB-only
+change worth ~0.0003 overall; the user asked for small, consistent gains.) Shipping needs the user's sign-off.
+
+
+### 2026-10-21 - App speed pass: output-neutral caching inside the board build (no model change)
+
+At the user's request (navigation speed; see docs/app_audit_2026-10-21.md). Changes inside the build path are pure speed: the four
+weekly PFF loaders memoized in-process and on disk (keyed by arguments, PFF file sizes/mtimes, schedule matchups, the module file
+and its constants), per-table column maps for the per-player PFF lookups, an in-process memo of the partial-game history filter,
+Deep Dive records from one object array, scalar player-ID cleaning. Verified identical to the committed code on a live board (2026
+week 7) and a harness-style board (2025 week 8, replay on): every board number equal, every explanation record equal apart from
+row order in two Deep Dive logs (the display sorts by week) and last-digit float noise in one display field. A 2026 data fix rides
+along (rows with no player_id dropped from the nflverse weekly-stats download, as the local-file path already did): every board
+number unchanged. Live rebuild after an override ~107 s -> ~20 s; harness/capture builds speed up the same way.

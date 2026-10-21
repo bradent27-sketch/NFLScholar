@@ -14,7 +14,7 @@ from data.transforms import (
 )
 from data.loaders import (load_pff_data_with_fallback, load_schedule, load_saved_odds_api_key,
                           fetch_nfl_player_props)
-from data.weekly_projections import build_weekly_projections
+from ui import board_session
 from data.coverage_radar import list_receivers, list_coverage_teams
 from data.utils import (
     calculate_exact_age, parse_height, parse_weight, clean_name_exact, clean_name_for_merge,
@@ -27,6 +27,7 @@ from ui.components import (
     render_fpts_week_strip, render_matchup_heat_strip, render_game_links, skeleton_loader,
 )
 from ui.player_snapshot import build_player_snapshot, render_percentile_bars_figure, render_percentile_radar_grid, split_snapshot_for_display
+from ui.components import default_season_index
 
 
 def _get_upcoming_opponent(team_abbr, year):
@@ -207,7 +208,7 @@ def render():
 
     c_t1_year, c_t1_team = st.columns(2)
     with c_t1_year:
-        t1_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_tab1")
+        t1_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=default_season_index(), key="year_tab1")
     with c_t1_team:
         team_filter = st.selectbox(
             "Team filter (optional)", team_options, index=0, key="player_search_team_filter",
@@ -701,34 +702,22 @@ def render():
         elif not opponent_abbr:
             st.caption("No upcoming game found on the schedule to project against.")
         else:
-            # THE WEEKLY MODEL, not a second projection system.
-            #
-            # This block used to call data.transforms.build_player_projection -
-            # a much simpler estimator (season-average x allowed-matrix x pace
-            # x a sharp-coverage alignment multiplier) that existed before the
-            # weekly model did. The result was two different models projecting
-            # the same player in two different tabs, disagreeing, with the
-            # weaker one shown here. Switched 2026-09-02 so Player Search and
-            # Weekly Rankings can never quote different numbers for the same
-            # player-week.
-            #
-            # Cheap in practice despite build_weekly_projections being the
-            # expensive call in the app: it is @st.cache_data'd on
-            # (year, week, scoring, as_of_week, ...), and Weekly Rankings has
-            # almost always populated that exact key already. This also
-            # removes the last projection-path consumer of the 2025-frozen
-            # sharp-coverage export - it still powers the coverage radar and
-            # positional vulnerability, which are descriptive panels, but no
-            # longer feeds a number anyone drafts or starts on.
-            model_proj = {}
-            try:
-                weekly_df, _weekly_meta = build_weekly_projections(
-                    int(t1_target_year), int(opponent_week), t1_scoring_rule,
-                    as_of_week=int(opponent_week), apply_injury=False,
-                )
-            except Exception:
-                weekly_df = pd.DataFrame()
-            if not weekly_df.empty:
+            # THE WEEKLY MODEL, not a second projection system (switched 2026-09-02 from an older, simpler estimator, so
+            # Player Search and Weekly Rankings quote the same numbers). 2026-10-21: it reads the board Weekly Rankings
+            # built this session for the same season/week/scoring (same injuries, same calibrated points) instead of
+            # building a second, differently-keyed board - that call used apply_injury=False, so it never shared the
+            # cache, cost a full league build (minutes) the first time a player was opened, and showed healthy-player
+            # numbers for injured players. With no board built, a button builds it (the same build Weekly Rankings uses).
+            # The market line is shown beside the model, never blended into it (benchmark only).
+            _kept = board_session.kept_board(int(t1_target_year), int(opponent_week), t1_scoring_rule)
+            weekly_df = _kept['df'] if _kept else None
+            if weekly_df is None:
+                st.caption(f"Week {opponent_week} isn't built yet this session (Weekly Rankings builds it, a few minutes).")
+                if st.button(f"🧮 Build the week {opponent_week} board", key="ps_build_weekly_board"):
+                    with st.spinner('Building the weekly board...'):
+                        weekly_df = board_session.build_board(int(t1_target_year), int(opponent_week), t1_scoring_rule)['df']
+            model_proj, model_pts = {}, None
+            if weekly_df is not None and not weekly_df.empty:
                 match = weekly_df[weekly_df['Player'].astype(str) == str(selected_player)]
                 if not match.empty:
                     row = match.iloc[0]
@@ -737,8 +726,11 @@ def render():
                         for stat in OFFENSE_PROJECTION_STATS[pos]
                         if stat in match.columns and pd.notna(row[stat])
                     }
+                    model_pts = float(row['Model Proj Pts']) if pd.notna(row.get('Model Proj Pts')) else None
 
-            if not model_proj:
+            if weekly_df is None:
+                pass
+            elif not model_proj:
                 st.caption(
                     "The weekly model has no projection for this player-week yet — "
                     "usually a player with no current role, or a season/week the "
@@ -755,38 +747,25 @@ def render():
                     market_stats = build_market_projection(st.session_state['ps_props_data'], selected_player)
 
                 rows = []
-                blended_stats = dict(model_proj)
-                used_market = False
                 for stat in OFFENSE_PROJECTION_STATS[pos]:
                     if stat not in model_proj:
                         continue
-                    model_val = model_proj[stat]
                     market_val = market_stats.get(stat)
-                    if market_val is not None:
-                        # Weighted toward the market on purpose - live prop
-                        # odds already price in injuries, weather, game
-                        # script, and sharper opponent context than this
-                        # model can reconstruct from box scores alone.
-                        final_val = round(0.7 * market_val + 0.3 * model_val, 1)
-                        blended_stats[stat] = final_val
-                        used_market = True
-                    else:
-                        final_val = model_val
                     rows.append({
                         'Stat': stat.replace('_', ' ').title(),
-                        'Model': model_val,
+                        'Model': model_proj[stat],
                         'Market Line': market_val if market_val is not None else '--',
-                        'Projection': final_val,
                     })
-
-                blended_fpts = score_projected_stats(blended_stats, t1_scoring_rule)
                 anytime_td_prob = market_stats.get('anytime_td_prob')
 
                 proj_df = pd.DataFrame(rows).set_index('Stat')
                 st.dataframe(style_plain_dataframe(proj_df), width="stretch", height=df_auto_height(len(rows)))
 
-                source_note = "blended with live sportsbook prop lines" if used_market else "model-only - load prop lines above to blend in live market odds"
                 opp_display = TEAM_CONFIG.get(opponent_abbr, {}).get('name', opponent_abbr)
-                st.caption(f"**{blended_fpts:.1f} projected fantasy points** vs {opp_display} (Wk {opponent_week}) - {source_note}.")
+                pts = model_pts if model_pts is not None else score_projected_stats(model_proj, t1_scoring_rule)
+                market_note = ("market lines shown for comparison" if market_stats
+                               else "load prop lines above to compare with the market")
+                st.caption(f"**{pts:.1f} projected fantasy points** vs {opp_display} (Wk {opponent_week}), the same "
+                           f"number as the Weekly Rankings board - {market_note}.")
                 if anytime_td_prob is not None:
                     st.caption(f"Market anytime-TD probability: {anytime_td_prob * 100:.0f}%")

@@ -32,7 +32,7 @@ from data.transforms import (load_and_merge_data, build_recent_form_rank, build_
                              score_projected_stats)
 from data.rankings import parse_fantasypros_upload, parse_custom_rankings, build_rankings_comparison
 from data.utils import calculate_percentile, clean_name_exact, clean_name_for_merge
-from data.weekly_projections import build_weekly_projections, season_snap_share, DEFAULT_FEATURES
+from data.weekly_projections import season_snap_share, DEFAULT_FEATURES
 from data.prediction_ledger import record_board
 from data.odds_weekly import weekly_props, weekly_market_projection, weekly_market_book_lines, snapshot_is_for_week
 from ui.box_view import (
@@ -41,13 +41,12 @@ from ui.box_view import (
 )
 from data.draft_projections import PROJECTED_STATS as _MARKET_PROJECTED_STATS
 from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
-from data.availability_overrides import availability_fingerprint, AVAILABILITY_OVERRIDE_PATH
 from data.pass_capacity_allocator import (
     PASS_CAPACITY_DEADBAND, PASS_CAPACITY_TRUSTED_TIER, PASS_CAPACITY_TRUSTED_TIER_RB)
 from data.loaders import load_schedule
 from data.weather import resolve_game_weather, resolve_game_precip
 from data.game_slate import load_slate, slate_team_bridge
-from ui import freshness
+from ui import board_session, freshness
 from ui.report_export import (board_pdf, default_export_dir, export_file_names, game_report_pdf,
                               save_exports)
 from ui.charts import sparkline_data_uri, C as _CHART_COLORS
@@ -58,6 +57,21 @@ from ui.components import (position_group_buttons, apply_position_group, skeleto
 
 _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing_yards',
                     'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds']
+
+_BOARD_AGE_NUDGE_HOURS = 3.0
+
+
+def _board_age_caption(built_at, now=None):
+    """When the board on screen was built; a nudge to rebuild once it is a few hours old."""
+    now = now or datetime.datetime.now()
+    minutes = max(0, int((now - built_at).total_seconds() // 60))
+    age = 'just now' if minutes < 1 else (f'{minutes} min ago' if minutes < 90 else f'{minutes / 60:.1f} h ago')
+    text = (f"Board built at {built_at.strftime('%I:%M %p').lstrip('0')} ({age}). It stays as built until you click "
+            "**🧮 Build board** or change an injury or QB1 override.")
+    if minutes >= _BOARD_AGE_NUDGE_HOURS * 60:
+        st.warning(text + " Rebuild before kickoff to pick up the latest injury and roster news.")
+    else:
+        st.caption(text)
 
 # The stat line the model projects, shown alongside Model Proj Pts instead
 # of just the point total - explicit request, so the number can be read
@@ -3306,18 +3320,18 @@ def _attach_by_name(base_df, other_df, value_cols, prefix):
     """
     if other_df is None or other_df.empty or 'Player' not in other_df.columns:
         return base_df
-    exact_map = {clean_name_exact(pd.Series([p])).iloc[0]: p for p in other_df['Player']}
-    loose_map = {clean_name_for_merge(pd.Series([p])).iloc[0]: p for p in other_df['Player']}
+    # Whole-column key cleaning (2026-10-21, app speed): this used to clean one name at a time through the Series
+    # cleaners, ~3,500 calls and about 3 s of every full Weekly Rankings rerun. Same matching: the exact key first, the
+    # suffix-stripped key as the fallback, the last source row winning a duplicate key.
+    source_names = other_df['Player']
+    exact_map = dict(zip(clean_name_exact(source_names), source_names))
+    loose_map = dict(zip(clean_name_for_merge(source_names), source_names))
     lookup = other_df.set_index('Player')
-
-    def _match(name):
-        key = clean_name_exact(pd.Series([name])).iloc[0]
-        if key in exact_map:
-            return exact_map[key]
-        key = clean_name_for_merge(pd.Series([name])).iloc[0]
-        return loose_map.get(key)
-
-    matched = base_df['Player'].map(_match)
+    exact_keys = clean_name_exact(base_df['Player'])
+    loose_keys = clean_name_for_merge(base_df['Player'])
+    matched = pd.Series(
+        [exact_map[e] if e in exact_map else loose_map.get(k) for e, k in zip(exact_keys, loose_keys)],
+        index=base_df.index, dtype=object)
     out = base_df.copy()
     for col in value_cols:
         if col in lookup.columns:
@@ -3513,7 +3527,7 @@ def _render_qb1_overrides_hub(wk_year, current_stats, team_col, name_col):
     'selection_required'), so scanning 32 of these means seeing just the
     ones that actually need a call, not every team's box open at once.
     """
-    from ui.tabs.depth_charts import _render_projection_qb1_control
+    from ui.tabs.depth_charts import _render_projection_qb1_control, projection_qb1_resolution
     st.caption(
         "Your call on who starts under center overrides this app's own incumbent/depth-chart guess "
         "for that team's projection. Every team is listed here so a late-breaking change doesn't "
@@ -3523,8 +3537,10 @@ def _render_qb1_overrides_hub(wk_year, current_stats, team_col, name_col):
     if current_stats.empty or team_col not in current_stats.columns:
         st.caption("No stats loaded yet for this season.")
         return
+    # One league-wide resolution shared by all 32 controls (it used to run once per team on every full page rerun).
+    _resolved = projection_qb1_resolution(wk_year, current_stats, team_col, name_col)
     for _team in MASTER_TEAMS_LIST:
-        _render_projection_qb1_control(wk_year, _team, current_stats, team_col, name_col)
+        _render_projection_qb1_control(wk_year, _team, current_stats, team_col, name_col, resolved=_resolved)
 
 
 def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, name_pool,
@@ -3677,34 +3693,41 @@ def render():
     _injury_freshness_caption(wk_year, wk_week)
 
     build_key = (wk_year, wk_week, wk_scoring)
-    if st.button("🧮 Build board", key="weekly_rank_build", type="primary"):
+    build_clicked = st.button("🧮 Build board", key="weekly_rank_build", type="primary")
+    if build_clicked:
         st.session_state['weekly_rank_built_for'] = build_key
-    board_ready = st.session_state.get('weekly_rank_built_for') == build_key
+    # A board already built this session for these selectors shows again without a click (switching week or scoring
+    # back and forth no longer needs a rebuild); a new selection still waits for Build board.
+    board_ready = (st.session_state.get('weekly_rank_built_for') == build_key
+                   or board_session.has_board(wk_year, wk_week, wk_scoring))
 
     model_df, model_meta = pd.DataFrame(), {}
     avail_fp = None
     if board_ready:
-        with skeleton_loader("table", n_rows=10, n_cols=7):
-            # Real cache-key input, not read inside build_weekly_projections -
-            # see availability_fingerprint's own docstring. Lets a saved
-            # override or FantasyPros pull invalidate just THIS week's cached
-            # board instead of the blanket build_weekly_projections.clear()
-            # this used to require (which evicted every other cached week too).
-            avail_fp = availability_fingerprint(
-                wk_year, wk_week, AVAILABILITY_OVERRIDE_PATH, FANTASYPROS_INJURY_PATH)
-            model_df, model_meta = build_weekly_projections(
-                wk_year, wk_week, wk_scoring, availability_fingerprint=avail_fp)
+        # The board stays as built until Build board is clicked or an input it depends on changes - an injury/availability
+        # override or FantasyPros pull for this week, or a QB1 choice (ui/board_session.py; 2026-10-21, user: "this isn't
+        # necessary if i built the board within an hour or two before"). The build cache expires after an hour, and every
+        # full page rerun after that used to rebuild the whole league silently.
+        entry = None if build_clicked else board_session.kept_board(wk_year, wk_week, wk_scoring)
+        if entry is None:
+            with skeleton_loader("table", n_rows=10, n_cols=7):
+                entry = board_session.build_board(wk_year, wk_week, wk_scoring)
+            st.session_state['weekly_rank_built_for'] = build_key
+            # A permanent record of this real board build (data.prediction_ledger)
+            # - once per build, not per page rerun or fragment rerun (a
+            # position/matchup click inside the board). market_df/fp_weekly are
+            # whatever was staged in the Live data pulls hub above, live at click
+            # time; the ledger's own throttle (one file per (year, week, feature
+            # set) per hour) makes re-clicking Build board harmless. Never raises -
+            # see record_board's own docstring.
+            record_board(wk_year, wk_week, entry['df'], market_df=market_df,
+                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES)
+        model_df, model_meta = entry['df'], entry['meta']
+        # (availability fingerprint, QB1 signature): what the open player breakdown below checks to re-resolve after a
+        # rebuild
+        avail_fp = entry['inputs']
         st.session_state['weekly_rank_last_model_meta'] = model_meta
-        # A permanent record of this real board build (data.prediction_ledger)
-        # - once per explicit "Build board" click, not per fragment rerun a
-        # position/matchup click inside it causes (this line sits outside
-        # _render_board's fragment below). market_df/fp_weekly are whatever
-        # was staged in the Live data pulls hub above, live at click time;
-        # the ledger's own throttle (one file per (year, week, feature set)
-        # per hour) makes re-clicking Build board harmless. Never raises -
-        # see record_board's own docstring.
-        record_board(wk_year, wk_week, model_df, market_df=market_df,
-                     fp_weekly=fp_weekly, feats=DEFAULT_FEATURES)
+        _board_age_caption(entry['built_at'])
 
     # Computed once per real board build (not per fragment-internal rerun -
     # see _render_board's own closure over this below) since it only

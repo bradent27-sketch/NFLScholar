@@ -137,7 +137,7 @@ from data.availability_overrides import (
 )
 from data.pass_capacity_allocator import apply_pass_capacity_conservation, SIDELINED_AVAILABILITY
 from data.rb_carry_budget import team_rb_carry_budgets, apply_rb_carry_budget
-from data.qb_volume_blend import blend_qb1_volume
+from data.qb_volume_blend import blend_qb1_volume, QB_STYLE_BLEND_K, QB_STYLE_BLEND_K_CANDIDATE
 from data.fantasypros_availability import load_fantasypros_availability
 from data.expected_points import expected_points_luck_table
 from data.historical_availability import (
@@ -2145,6 +2145,10 @@ MODEL_FEATURES = (
                              # leans more on last season, an uncertain one trusts this
                              # season sooner (K_EFFECTIVE_RANGE mirrored). See
                              # ROLE_CONFIDENCE_REVERSED_POSITIONS.
+    'v2_qb_style_blend_k80',  # CANDIDATE (2026-10-21, calibration audit C13 follow-up). A QB1's
+                             # own pass/rush split shrinks toward the league mean with
+                             # K = 80 dropbacks instead of 10 (see
+                             # data/qb_volume_blend.QB_STYLE_BLEND_K_CANDIDATE).
     'v2_no_history_exclusions',  # CANDIDATE (2026-10-21, calibration audit C15), an ON/OFF check of a shipped
                              # mechanism: every recorded game counts in a player's
                              # history (current, last and two seasons back), i.e. the
@@ -7634,6 +7638,17 @@ def _player_snap_seed(eligible_history, name_col, n=PARTIAL_GAME_REFERENCE_APPEA
     return {player: g['_snap'].tail(n).tolist() for player, g in df.groupby('_player', observed=True)}
 
 
+def _frame_records(frame):
+    """frame.to_dict('records') for the Deep Dive game logs, from one object array: the same records (checked value and
+    type on all ~2,400 frames of a live build) about 9x faster - to_dict ran ~2,400 times per board build (~9 s)."""
+    if not isinstance(frame, pd.DataFrame):
+        return []
+    if frame.empty or not frame.columns.is_unique:
+        return frame.to_dict('records')
+    cols = list(frame.columns)
+    return [dict(zip(cols, row)) for row in frame.to_numpy(dtype=object).tolist()]
+
+
 def _keep_every_history_game(annotated):
     """'v2_no_history_exclusions' (candidate, calibration audit C15): every recorded game counts in a player's history."""
     out = annotated.copy()
@@ -7642,7 +7657,7 @@ def _keep_every_history_game(annotated):
     return out
 
 
-def annotate_player_history_participation(history, name_col, team_col, schedule_df=None, prior_reference=None):
+def _annotate_player_history_participation_uncached(history, name_col, team_col, schedule_df=None, prior_reference=None):
     """Mark only clearly interrupted player-games as unusable rate evidence.
 
     Weekly box scores do not include a trustworthy timestamped injury/bench
@@ -7845,6 +7860,43 @@ def annotate_player_history_participation(history, name_col, team_col, schedule_
     annotated['_player_history_eligible'] = ~excluded
     annotated['_player_history_reason'] = reasons
     return annotated
+
+
+# In-process memo for annotate_player_history_participation (2026-10-21, app speed): it ran three times per board build
+# (~14 s) on history that mostly does not change between builds (last season's never does). Keyed by a content hash of
+# its inputs and the thresholds it reads; each call gets its own copy. Unhashable input skips the memo.
+_ANNOTATE_MEMO = {}
+_ANNOTATE_MEMO_MAX = 24
+_ANNOTATE_CONSTANT_PREFIXES = ('PARTIAL_', 'QB_SPLIT_', 'SEVERE_BLOWOUT_')
+
+
+def _annotate_memo_key(history, name_col, team_col, schedule_df, prior_reference):
+    import hashlib
+    parts = [repr((name_col, team_col, list(history.columns), [str(t) for t in history.dtypes])),
+             pd.util.hash_pandas_object(history, index=True).to_numpy().tobytes()]
+    if schedule_df is not None and len(schedule_df):
+        parts.append(repr((list(schedule_df.columns), len(schedule_df))))
+        parts.append(pd.util.hash_pandas_object(schedule_df, index=True).to_numpy().tobytes())
+    parts.append(repr(sorted((str(k), tuple(v)) for k, v in (prior_reference or {}).items())))
+    parts.append(repr(sorted((n, repr(v)) for n, v in globals().items() if n.startswith(_ANNOTATE_CONSTANT_PREFIXES))))
+    digest = hashlib.sha1()
+    for part in parts:
+        digest.update(part if isinstance(part, bytes) else part.encode())
+    return digest.hexdigest()
+
+
+def annotate_player_history_participation(history, name_col, team_col, schedule_df=None, prior_reference=None):
+    """Mark which past player-games count as history (see _annotate_player_history_participation_uncached)."""
+    try:
+        key = _annotate_memo_key(history, name_col, team_col, schedule_df, prior_reference)
+    except Exception:
+        return _annotate_player_history_participation_uncached(history, name_col, team_col, schedule_df, prior_reference)
+    if key not in _ANNOTATE_MEMO:
+        if len(_ANNOTATE_MEMO) >= _ANNOTATE_MEMO_MAX:
+            _ANNOTATE_MEMO.pop(next(iter(_ANNOTATE_MEMO)))
+        _ANNOTATE_MEMO[key] = _annotate_player_history_participation_uncached(
+            history, name_col, team_col, schedule_df, prior_reference)
+    return _ANNOTATE_MEMO[key].copy()
 
 
 def _player_history_exclusion_summary(annotated, name_col):
@@ -11460,7 +11512,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             qb_blend_rates, qb_blend_audit = blend_qb1_volume(
                 identity_keys_rv.to_numpy(dtype=object), team_keys_rv.to_numpy(dtype=object),
                 qb1_workload_override, player_prior, prior2_history=player_prior2,
-                prior_history_team=prior_stats)
+                prior_history_team=prior_stats,
+                k=(QB_STYLE_BLEND_K_CANDIDATE if 'v2_qb_style_blend_k80' in feats else QB_STYLE_BLEND_K))
 
         # Display-only "Previous Adj Avg" ingredient - see
         # _defense_adjusted_prior_average's own docstring. player_game_log_
@@ -12708,8 +12761,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             _pgl_prior, _odl_prior = player_game_log_prior[i], opponent_defense_log_prior[i]
             _pgl_prior2, _odl_prior2 = player_game_log_prior2[i], opponent_defense_log_prior2[i]
 
-            def _records(frame):
-                return frame.to_dict('records') if isinstance(frame, pd.DataFrame) else []
+            _records = _frame_records
 
             explanations[(player, pos, row['Team'])] = {
                 'player': player, 'position': pos, 'team': row['Team'], 'opponent': row['Opponent'],

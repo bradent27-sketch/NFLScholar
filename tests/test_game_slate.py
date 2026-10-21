@@ -301,6 +301,19 @@ def test_default_week_is_the_last_one_with_a_played_game():
     assert default_week_index(weeks) == 1
 
 
+def test_a_completed_week_hands_over_to_the_next_one():
+    weeks = [
+        {'week': 5, 'games': 14, 'any_played': True, 'completed': True},
+        {'week': 6, 'games': 14, 'any_played': True, 'completed': True},
+        {'week': 7, 'games': 15, 'any_played': False, 'completed': False},
+    ]
+    assert default_week_index(weeks) == 2
+    weeks[2]['any_played'] = True          # the Thursday game is in: still week 7
+    assert default_week_index(weeks) == 2
+    last = [{'week': 18, 'games': 16, 'any_played': True, 'completed': True}]
+    assert default_week_index(last) == 0   # nothing after the final week
+
+
 def test_a_season_with_nothing_played_opens_on_the_first_week_not_an_empty_screen():
     weeks = [{'week': w, 'games': 16, 'any_played': False} for w in (1, 2, 3)]
     assert default_week_index(weeks) == 0

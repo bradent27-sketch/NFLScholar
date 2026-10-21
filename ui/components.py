@@ -135,7 +135,10 @@ def build_player_search_labels(stats_df, n_col, t_col, bye_weeks, team_filter="A
     """
     label_cols = [n_col, t_col] + (['position'] if 'position' in stats_df.columns else [])
     all_players = stats_df[label_cols].dropna(subset=[n_col]).drop_duplicates(subset=[n_col])
-    all_players = all_players[all_players[n_col].astype(str).str.strip().ne('')]
+    # Only real text names: a playerless feed row once arrived as the number 0 and crashed the sort below on 2026
+    # (Player Search, Player Compare and Matchup Analyzer all failed for the current season; 2026-10-21 app audit).
+    all_players = all_players[all_players[n_col].map(lambda v: isinstance(v, str))]
+    all_players = all_players[all_players[n_col].str.strip().ne('')]
     if team_filter and team_filter != "All Teams":
         all_players = all_players[all_players[t_col].astype(str).str.upper() == team_filter]
     if position_group and 'position' in all_players.columns:
@@ -1234,7 +1237,12 @@ def check_data_health():
             checks.append((label, os.path.join(year_dir, f'{base_filename}*.csv'), False, None))
 
     for yr in [2024, 2025, 2026]:
-        check_file(f"Weekly stats {yr}", [f"stats_player_week_{yr}.csv"])
+        if os.path.exists(f"stats_player_week_{yr}.csv"):
+            check_file(f"Weekly stats {yr}", [f"stats_player_week_{yr}.csv"])
+        else:
+            cached = os.path.join('data', 'cache', f'player_stats_{yr}.parquet')
+            checks.append((f"Weekly stats {yr} (nflverse download, cached)", cached, os.path.exists(cached),
+                           _file_rows(cached) if os.path.exists(cached) and cached.endswith('.csv') else None))
         check_file(f"Rosters {yr}", [f"roster_weekly_{yr}.csv"])
         # Snap counts are OPTIONAL and were reported as a scary "not found"
         # for every season but 2025, which is exactly the false alarm this
@@ -1251,9 +1259,10 @@ def check_data_health():
         else:
             checks.append((f"Snap counts {yr} (nflverse — no local supplement needed)",
                            "nflverse load_snap_counts", True, None))
-    check_pff_file("PFF receiving summary (2025)", "receiving_summary", 2025)
-    check_pff_file("PFF passing summary (2025)", "passing_summary", 2025)
-    check_pff_file("PFF rushing summary (2025)", "rushing_summary", 2025)
+    for _pff_year in (_season_being_prepared(), _season_being_prepared() - 1):
+        check_pff_file(f"PFF receiving summary ({_pff_year})", "receiving_summary", _pff_year)
+        check_pff_file(f"PFF passing summary ({_pff_year})", "passing_summary", _pff_year)
+        check_pff_file(f"PFF rushing summary ({_pff_year})", "rushing_summary", _pff_year)
 
     # --- COVERAGE checks, not just presence -----------------------------
     # Added 2026-09-01 after a real failure: a depth-chart import silently
@@ -1265,8 +1274,7 @@ def check_data_health():
     # _current_nfl_season() is "in progress or most recently completed"; the
     # depth-chart/PFF question is about the season being PREPARED for, which
     # from August onward is the next one.
-    import datetime as _dt
-    season = _current_nfl_season() + (1 if _dt.date.today().month >= 8 else 0)
+    season = _season_being_prepared()
     try:
         from data.ourlads_depth_charts import OURLADS_IMPORT_PATH
         import pandas as _pd
@@ -1297,6 +1305,41 @@ def check_data_health():
             checks.append((f"PFF weekly archive {yr} (scheme features inert without it)",
                            os.path.join(wk_dir, '{1..18}'), False, None))
     return checks
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def season_has_played_games(season):
+    """True once a season has at least one completed game on its schedule."""
+    try:
+        from data.loaders import load_schedule
+        schedule = load_schedule(int(season))
+    except Exception:
+        return False
+    if schedule is None or schedule.empty:
+        return False
+    scores = [c for c in ('home_score', 'away_score', 'result') if c in schedule.columns]
+    return bool(scores) and bool(pd.to_numeric(schedule[scores[0]], errors='coerce').notna().any())
+
+
+def default_season_index(options=None):
+    """Index of the season a page should open on: the newest one once it has a game played, else the one before.
+
+    Every page used to hard-code index=1 (skip the upcoming season, which has no stats before kickoff), which kept them
+    opening on last season all through the current one (2026-10-21 app audit)."""
+    from config import AVAILABLE_SEASONS_WITH_UPCOMING
+    options = list(options or AVAILABLE_SEASONS_WITH_UPCOMING)
+    if len(options) < 2:
+        return 0
+    return 0 if season_has_played_games(options[0]) else 1
+
+
+def _season_being_prepared(today=None):
+    """The season the depth-chart/PFF imports are for: from March on, this calendar year's; in January and February
+    (playoffs) still last year's. It used to be the current season + 1 from August on, which in October 2026 checked the
+    imports for 2027 (2026-10-21 app audit)."""
+    import datetime
+    today = today or datetime.date.today()
+    return today.year if today.month >= 3 else today.year - 1
 
 
 def _current_nfl_season():
@@ -1330,6 +1373,16 @@ def _local_stats_max_week(season, file_mtime):
         return None
 
 
+@st.cache_data(show_spinner=False)
+def _cached_stats_max_week(path, file_mtime):
+    """Highest week in the cached nflverse weekly-stats download (file_mtime is only the cache key)."""
+    try:
+        weeks = pd.to_numeric(pd.read_parquet(path, columns=['week'])['week'], errors='coerce')
+    except Exception:
+        return None
+    return int(weeks.max()) if weeks.notna().any() else None
+
+
 def check_current_season_freshness():
     """
     In-season staleness check: compares the latest COMPLETED week on the
@@ -1360,6 +1413,17 @@ def check_current_season_freshness():
     mtime = os.path.getmtime(path) if os.path.exists(path) else 0
     local_max = _local_stats_max_week(season, mtime)
     if local_max is None:
+        cache_path = os.path.join('data', 'cache', f'player_stats_{season}.parquet')
+        cache_max = (_cached_stats_max_week(cache_path, os.path.getmtime(cache_path))
+                     if os.path.exists(cache_path) else None)
+        if cache_max is not None:
+            if cache_max < latest_completed_week:
+                return 'stale', (
+                    f"{season} weekly stats (nflverse download) end at week {cache_max}, but games through week "
+                    f"{latest_completed_week} are complete. The download refreshes every 6 hours; nflverse usually "
+                    "posts a week's stats within a day of the last game."
+                )
+            return 'fresh', f"{season} weekly stats (nflverse download) are current through week {cache_max}."
         return 'missing', (
             f"No local weekly stats file for the {season} season yet "
             f"(games through week {latest_completed_week} are complete). The app is "

@@ -394,14 +394,20 @@ def slate_weeks(season):
 
 def default_week_index(weeks):
     """
-    The week to open on: the last one with a played game, else the first.
+    The week to open on: the last one with a played game, else the first -
+    except that once that week is fully complete the next week opens instead
+    (2026-10-21 app audit: between Tuesday and the Thursday game the slate
+    sat on last week while Weekly Rankings was already on the upcoming one).
 
     Guarded deliberately. A brand-new season has no completed week, and
     opening on an empty screen is the failure the porting notes call out.
     """
     if not weeks:
         return 0
-    return max((i for i, w in enumerate(weeks) if w['any_played']), default=0)
+    last = max((i for i, w in enumerate(weeks) if w['any_played']), default=0)
+    if weeks[last].get('completed') and last + 1 < len(weeks):
+        return last + 1
+    return last
 
 
 def load_slate(season, week):

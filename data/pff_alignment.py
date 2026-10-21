@@ -1503,6 +1503,112 @@ def _unique_issues(issues: Sequence[str]) -> list[str]:
     return list(dict.fromkeys(issue for issue in issues if issue))
 
 
+# --- load memo (2026-10-21, app speed) ---------------------------------------------------------------------------------
+# Every board build re-read and re-aggregated every weekly PFF export - about 115 s of a 4-minute live build - even last
+# season's, which never changes, and the same load ran more than once per build. The four weekly loaders below are memoized
+# in-process and on disk (data/cache/pff_loads), keyed by their arguments, the size and modification time of every file in
+# that season's PFF folder, the schedule's matchups, this module's own file and its module constants (so a changed export,
+# a code edit or a sweep that patches a constant always recomputes). Every call gets its own copy of the result's frames.
+_LOAD_MEMO: dict[str, Any] = {}
+_LOAD_MEMO_MAX = 64
+_LOAD_MEMO_DIR = Path("data") / "cache" / "pff_loads"
+
+
+def _files_signature(pff_root: str | Path, year: Any) -> tuple:
+    root = Path(pff_root)
+    base = root / str(int(year))
+    entries = []
+    for folder, recursive in ((root, False), (base, True)):
+        if not folder.exists():
+            continue
+        for path in sorted(folder.rglob("*") if recursive else folder.glob("*")):
+            if path.is_file():
+                stat = path.stat()
+                entries.append((path.as_posix(), stat.st_size, stat.st_mtime_ns))
+    return tuple(entries)
+
+
+def _schedule_signature(schedule_df: pd.DataFrame | None) -> str:
+    if schedule_df is None or len(schedule_df) == 0:
+        return "none"
+    frame = _normalise_column_names(schedule_df, _SCHEDULE_ALIASES)
+    cols = [c for c in ("week", "home_team", "away_team", "season_type") if c in frame.columns]
+    hashed = pd.util.hash_pandas_object(frame[cols].astype(str), index=False).to_numpy()
+    return hashlib.sha1(hashed.tobytes() + repr(cols).encode()).hexdigest()
+
+
+def _module_constants_signature() -> str:
+    simple = (int, float, str, bool, tuple, frozenset, type(None))
+    items = sorted((name, repr(value)) for name, value in globals().items()
+                   if name.isupper() and not name.startswith("_")
+                   and (isinstance(value, simple) or isinstance(value, dict)))
+    code = Path(__file__).stat()
+    return hashlib.sha1(repr((items, code.st_size, code.st_mtime_ns)).encode()).hexdigest()
+
+
+def _copy_load_result(result: Any) -> Any:
+    import copy
+    import dataclasses
+    changes = {f.name: (getattr(result, f.name).copy() if isinstance(getattr(result, f.name), pd.DataFrame)
+                        else copy.deepcopy(getattr(result, f.name)))
+               for f in dataclasses.fields(result)}
+    return dataclasses.replace(result, **changes)
+
+
+def _memoized_load(fn):
+    import inspect
+    import pickle
+    signature = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            parts = []
+            for name, value in bound.arguments.items():
+                if name == "schedule_df":
+                    parts.append((name, _schedule_signature(value)))
+                elif isinstance(value, Path):
+                    parts.append((name, value.as_posix()))
+                else:
+                    parts.append((name, repr(value)))
+            arguments = dict(bound.arguments)
+            key = hashlib.sha1(repr((fn.__name__, parts,
+                                     _files_signature(arguments.get("pff_root", DEFAULT_PFF_ROOT), arguments["year"]),
+                                     _module_constants_signature())).encode()).hexdigest()
+        except Exception:
+            return fn(*args, **kwargs)
+        if key in _LOAD_MEMO:
+            return _copy_load_result(_LOAD_MEMO[key])
+        path = _LOAD_MEMO_DIR / f"{fn.__name__}_{key}.pkl"
+        result = None
+        if path.exists():
+            try:
+                with open(path, "rb") as handle:
+                    result = pickle.load(handle)
+            except Exception:
+                result = None
+        if result is None:
+            result = fn(*args, **kwargs)
+            try:
+                _LOAD_MEMO_DIR.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(".tmp")
+                with open(tmp, "wb") as handle:
+                    pickle.dump(result, handle, protocol=pickle.HIGHEST_PROTOCOL)
+                tmp.replace(path)
+            except Exception:
+                pass
+        if len(_LOAD_MEMO) >= _LOAD_MEMO_MAX:
+            _LOAD_MEMO.pop(next(iter(_LOAD_MEMO)))
+        _LOAD_MEMO[key] = result
+        return _copy_load_result(result)
+
+    wrapper.uncached = fn
+    return wrapper
+
+
+@_memoized_load
 def load_weekly_alignment_profiles(
     year: int,
     as_of_week: int,
@@ -1596,6 +1702,7 @@ def load_weekly_alignment_profiles(
     return AlignmentLoadResult(profiles, archives, _unique_issues(issues), metadata)
 
 
+@_memoized_load
 def load_weekly_scheme_profiles(
     year: int,
     as_of_week: int,
@@ -2266,6 +2373,7 @@ def aggregate_alignment_defense_profiles(
     return pd.DataFrame(records, columns=ALIGNMENT_DEFENSE_PROFILE_COLUMNS) if records else empty_alignment_defense_profiles()
 
 
+@_memoized_load
 def load_weekly_alignment_defense_profiles(
     year: int,
     as_of_week: int,
@@ -3062,6 +3170,7 @@ def aggregate_scheme_defense_profiles(
     return pd.DataFrame(records, columns=SCHEME_DEFENSE_PROFILE_COLUMNS) if records else empty_scheme_defense_profiles()
 
 
+@_memoized_load
 def load_weekly_scheme_defense_profiles(
     year: int,
     as_of_week: int,
@@ -3163,15 +3272,12 @@ def lookup_scheme_defense_profile(
     required = set(wanted)
     if not required.issubset(profiles.columns):
         return neutral_scheme_defense_profile("Scheme-defense profile schema is unavailable", **wanted)
-    matches = profiles.copy()
+    normalizers = {"defense_team": _canonical_team_key, "position": _normalise_position, "scheme": _scheme_key,
+                   "stat": _normalise_alignment_stat}
+    mask = pd.Series(True, index=profiles.index)
     for column, value in wanted.items():
-        normalizer = {
-            "defense_team": _canonical_team_key,
-            "position": _normalise_position,
-            "scheme": lambda v: _clean_text(v).lower(),
-            "stat": _normalise_alignment_stat,
-        }[column]
-        matches = matches[matches[column].map(normalizer).eq(value)]
+        mask &= _mapped_column(profiles, column, normalizers[column]).eq(value)
+    matches = profiles[mask]
     if len(matches) == 1:
         return matches.iloc[0].to_dict()
     reason = "No matching scheme-defense profile" if matches.empty else "Ambiguous scheme-defense profile"
@@ -3636,8 +3742,31 @@ def blend_alignment_profile_toward_prior2(
     return out
 
 
+# Per-table column maps for the per-player lookups below (2026-10-21, app speed): each lookup used to copy the whole
+# profile table and re-normalize a column across every row, ~3,500 times per board build. The normalized column is
+# computed once per table object and reused while that same object is passed in (tables are never modified after load).
+_MAPPED_COLUMN_CACHE: dict[tuple, tuple] = {}
+_MAPPED_COLUMN_CACHE_MAX = 96
+
+
+def _mapped_column(frame: pd.DataFrame, column: str, fn) -> pd.Series:
+    key = (id(frame), column, fn)
+    hit = _MAPPED_COLUMN_CACHE.get(key)
+    if hit is not None and hit[0] is frame and hit[1].index.equals(frame.index):
+        return hit[1]
+    series = frame.get(column, pd.Series("", index=frame.index)).map(fn)
+    if len(_MAPPED_COLUMN_CACHE) >= _MAPPED_COLUMN_CACHE_MAX:
+        _MAPPED_COLUMN_CACHE.clear()
+    _MAPPED_COLUMN_CACHE[key] = (frame, series)
+    return series
+
+
+def _scheme_key(value: Any) -> str:
+    return _clean_text(value).lower()
+
+
 def _name_and_position_matches(frame: pd.DataFrame, name_key_fn, player: str, position: str | None) -> pd.DataFrame:
-    matches = frame[frame.get("player", pd.Series("", index=frame.index)).map(name_key_fn).eq(name_key_fn(player))]
+    matches = frame[_mapped_column(frame, "player", name_key_fn).eq(name_key_fn(player))]
     if position:
         matches = matches[matches.get("position", pd.Series("", index=matches.index))
                           .map(_normalise_position).eq(_normalise_position(position))]
@@ -3673,10 +3802,10 @@ def lookup_alignment_profile(
     """
     if profiles is None or profiles.empty:
         return neutral_alignment_profile()
-    frame = profiles.copy()
+    frame = profiles
     if player_id is not None and "player_id" in frame.columns:
         desired_id = _clean_id(player_id)
-        id_matches = frame[frame["player_id"].map(_clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
+        id_matches = frame[_mapped_column(frame, "player_id", _clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
         if len(id_matches) == 1:
             return id_matches.iloc[0].to_dict()
         if len(id_matches) > 1:
@@ -3752,10 +3881,10 @@ def lookup_scheme_profile(
     docstring for why."""
     if profiles is None or profiles.empty:
         return neutral_scheme_profile()
-    frame = profiles.copy()
+    frame = profiles
     if player_id is not None and "player_id" in frame.columns:
         desired_id = _clean_id(player_id)
-        id_matches = frame[frame["player_id"].map(_clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
+        id_matches = frame[_mapped_column(frame, "player_id", _clean_id).eq(desired_id)] if desired_id else frame.iloc[0:0]
         if len(id_matches) == 1:
             return id_matches.iloc[0].to_dict()
         if len(id_matches) > 1:

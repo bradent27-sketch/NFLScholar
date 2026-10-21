@@ -6,18 +6,25 @@ from data.transforms import load_and_merge_data, build_risers_report, build_rece
 from data.utils import calculate_percentile_qualified
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config
 from ui.components import switch_tab, skeleton_loader
+from ui.components import default_season_index
 
 
 def render():
     st.markdown("<div class='custom-section-header'>RISERS &amp; WAIVER WIRE — BIGGEST WEEK-OVER-WEEK JUMPS</div>", unsafe_allow_html=True)
-    # index=1, not 0 - same convention as Depth Charts/Player Search/Player
-    # Compare: the upcoming season is selectable but isn't the default
-    # landing view while it has no played games yet to compute a
-    # week-over-week jump from.
-    t4_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_tab4")
+    # Opens on the newest season once it has a game played (default_season_index), the one before until then - an
+    # upcoming season has no week-over-week jump to compute yet.
+    t4_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=default_season_index(), key="year_tab4")
     with skeleton_loader("table", n_rows=10, n_cols=7):
         df_t4_stats, t4_t_col, t4_n_col, _ = load_and_merge_data(t4_year, "Full PPR")
-    risers = build_risers_report(df_t4_stats, t4_n_col, t4_t_col, t4_year)
+    risers = build_risers_report(df_t4_stats, t4_n_col, t4_t_col, t4_year, top_n=80)
+    if not risers.empty and 'Pos' in risers.columns:
+        # Kickers stay available for leagues that roster them, but no longer lead a skill-position waiver list by
+        # default (2026-10-21 app audit: four of the top 16 were kickers).
+        pos_options = [p for p in ('QB', 'RB', 'WR', 'TE', 'K') if p in set(risers['Pos'])]
+        shown = st.multiselect("Positions", pos_options, default=[p for p in pos_options if p != 'K'],
+                               key="risers_positions")
+        risers = (risers[risers['Pos'].isin(shown)].head(25).reset_index(drop=True) if shown
+                  else risers.iloc[0:0])
     if not risers.empty:
         jump_pct = calculate_percentile_qualified(
             risers, 'Pct Jump', position_col='Pos', snap_col='Season Snap %', group_by_position=False

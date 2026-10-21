@@ -355,6 +355,9 @@ def _merge_redzone_share(df, _stats_df, stats_name_col, year, out_name_col='Play
     if pos_col in df.columns:
         df.loc[~df[pos_col].isin(['WR', 'TE']), 'RZ Tgt Share %'] = np.nan
         df.loc[df[pos_col] != 'RB', 'RZ Rush Share %'] = np.nan
+    # Numeric, so a blank shows blank (an object column printed the word "None" on Rookie Watch; 2026-10-21 app audit).
+    for col in ('RZ Tgt Share %', 'RZ Rush Share %'):
+        df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
 
 
@@ -1115,7 +1118,14 @@ def build_rookie_watch(_stats_df, name_col, team_col, global_rookie_names, year)
     from config import OFFENSE_SKILL_POSITIONS
     if 'position' in df.columns:
         df = df[df['position'].isin(OFFENSE_SKILL_POSITIONS)]
-    df['is_rookie'] = df[name_col].astype(str).str.lower().isin(global_rookie_names)
+    # Each row's own rookie_year where the roster merge supplied it (a name is not unique: see load_year_data's
+    # rookie-name note), the name list only for rows without one.
+    by_name = df[name_col].astype(str).str.lower().isin(global_rookie_names)
+    if 'rookie_year' in df.columns:
+        rookie_year = pd.to_numeric(df['rookie_year'], errors='coerce')
+        df['is_rookie'] = (rookie_year == float(year)).where(rookie_year.notna(), by_name)
+    else:
+        df['is_rookie'] = by_name
     rookies = df[df['is_rookie']]
     if rookies.empty:
         return pd.DataFrame()

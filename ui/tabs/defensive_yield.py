@@ -25,6 +25,7 @@ from data.coverage_radar import (
 from ui.styling import style_plain_dataframe, df_auto_height, build_column_help_config, get_pff_color, get_matchup_color
 from ui.components import (render_matchup_title, render_percentile_metric_tiles,
                            render_back_button, skeleton_loader)
+from ui.components import default_season_index
 
 # Sharp Football's coverage-tendency export keys teams by bare nickname
 # (e.g. "Dolphins"), while build_points_allowed_matrix keys by nflverse
@@ -88,7 +89,7 @@ def render():
     render_back_button()
     c_t3_year, c_t3_score = st.columns(2)
     with c_t3_year:
-        t3_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_tab3")
+        t3_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=default_season_index(), key="year_tab3")
     with c_t3_score:
         t3_scoring_rule = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="score_tab3")
 
@@ -236,6 +237,8 @@ def _render_oline_pressure(target_year):
             break
     if source_year != target_year:
         st.caption(f"No PFR data posted yet for {target_year} - showing {source_year}, the most recent season with data.")
+    elif pfr_pass_df.attrs.get('source') == 'weekly' or pfr_def_df.attrs.get('source') == 'weekly':
+        st.caption(f"PFR posts its {target_year} season summary after the season; these are summed from its weekly game logs.")
 
     oc1, oc2 = st.columns(2)
     with oc1:

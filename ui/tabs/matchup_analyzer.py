@@ -54,6 +54,7 @@ from ui.components import (
 )
 from ui.player_snapshot import build_player_snapshot
 from ui.styling import get_matchup_color, get_pff_color
+from ui.components import default_season_index
 
 C = THEME['colors']
 
@@ -99,10 +100,8 @@ def render():
 
     c_season, c_team, c_player, c_defense = st.columns([1, 1.3, 1.7, 1.4])
     with c_season:
-        # index=1, not 0 - same convention as Depth Charts/Player Search/
-        # Player Compare: the upcoming season is selectable but isn't the
-        # default landing view while it has no played games yet.
-        season = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="ma_season")
+        # The newest season once it has a game played, the one before until then (default_season_index).
+        season = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=default_season_index(), key="ma_season")
 
     with skeleton_loader("tiles", n=8):
         stats_df, team_col, name_col, _ = load_and_merge_data(season, _scoring())

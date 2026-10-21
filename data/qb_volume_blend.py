@@ -88,6 +88,12 @@ from data.player_aliases import stable_roster_identity_keys
 # scripts/check_volume_conservation.py / scripts/compare_model_vs_market.py
 # if this ever needs retuning.
 QB_STYLE_BLEND_K = 10.0
+# 'v2_qb_style_blend_k80' (CANDIDATE 2026-10-21, calibration audit C13 follow-up): K = 80 instead of 10. Re-scored on the
+# 2021-2025 QB-blend capture (scripts/eval_qb_blend_variants.py, exact): START-QB dRMSE 40 / 60 / 80 / 120 / 160 / 240 =
+# -0.0012 / -0.0014 / -0.0017 / -0.0020 / -0.0022 / -0.0024, better in 5/5 seasons up to 80 (4/5 at 120-160, 3/5 at 240):
+# a QB's own pass/rush split leans harder on the league mean until he has a starter's sample (600 dropbacks: weight 0.88
+# instead of 0.98).
+QB_STYLE_BLEND_K_CANDIDATE = 80.0
 
 # A QB needs at least this many career dropback-equivalents on record before
 # his own rush share counts toward the LEAGUE mean used to shrink everyone

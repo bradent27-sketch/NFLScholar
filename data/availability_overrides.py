@@ -69,8 +69,19 @@ def _bool(value: Any) -> bool:
         return False
 
 
+def _scalar_text(value: Any) -> str:
+    """_text for one value without building a Series (it ran ~11,000 times per board build at ~1 ms each)."""
+    if value is None or value is pd.NA:
+        return ""
+    try:
+        missing = bool(pd.isna(value))
+    except (TypeError, ValueError):
+        missing = False
+    return "" if missing else str(value).strip()
+
+
 def _id_key(value: Any) -> str:
-    text = _text([value]).iloc[0]
+    text = _scalar_text(value)
     if text.lower() in {"", "nan", "none", "<na>", "0"}:
         return ""
     return f"id:{text.removesuffix('.0')}"
@@ -89,7 +100,7 @@ def _probability(status: Any, supplied: Any = np.nan, honor_supplied: bool = Tru
         explicit = pd.to_numeric(pd.Series([supplied]), errors="coerce").iloc[0]
         if pd.notna(explicit):
             return float(np.clip(explicit, 0.0, 1.0))
-    label = _text([status]).str.lower().iloc[0]
+    label = _scalar_text(status).lower()
     if label in _ASSUME_OUT_STATUSES:
         return 0.0
     return float(_STATUS_PROBABILITY.get(label, 1.0))

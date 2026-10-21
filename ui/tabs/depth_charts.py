@@ -7,7 +7,7 @@ from config import (MASTER_TEAMS_LIST, TEAM_CONFIG, TAB_PLAYER_SEARCH,
 from data.transforms import load_and_merge_data, fetch_intelligent_depth_chart
 from data.loaders import build_veteran_database, load_pff_data_with_fallback
 from data.utils import clean_name_exact, clean_name_for_merge
-from data.weekly_projections import (resolve_preseason_qb1s, resolve_inseason_qb1s,
+from data.weekly_projections import (DEFAULT_FEATURES, resolve_preseason_qb1s, resolve_inseason_qb1s,
                                      save_qb1_override, clear_qb1_override,
                                      _all_played_weeks, _invalidate_weekly_projection_cache)
 from data.ourlads_depth_charts import (
@@ -17,6 +17,7 @@ from data.ourlads_depth_charts import (
 )
 from ui.styling import style_depth_chart_table, df_auto_height
 from ui.components import switch_tab, render_team_banner, skeleton_loader
+from ui.components import default_season_index
 
 
 @st.cache_data
@@ -154,13 +155,59 @@ def _make_cell_click_callback(source_df, table_key, year, team):
     return _on_cell_select
 
 
-def _render_projection_qb1_control(year, team, current_stats, team_col, name_col):
+# The imported Ourlads chart orders a new season's depth chart until this many weeks have been played; from then on the
+# season's own snap shares do.
+OURLADS_ORDER_MAX_PLAYED_WEEKS = 3
+
+
+def projection_qb1_resolution(year, current_stats, team_col, name_col):
+    """The league-wide QB1 resolution the per-team control reads, and the week a saved choice starts applying from.
+
+    Split out 2026-10-21 so the Weekly Rankings QB1 hub resolves the league ONCE for its 32 team controls instead of once
+    per team (32 full resolutions on every full page rerun). Returns (resolution, upcoming_week)."""
+    observed_weeks = pd.to_numeric(current_stats.get('week', pd.Series(dtype=float)), errors='coerce')
+    latest_observed = observed_weeks[observed_weeks > 0].max() if (observed_weeks > 0).any() else None
+    current_qbs = current_stats[current_stats['position'].astype(str).str.upper().eq('QB')]
+    if latest_observed is not None:
+        # The same shipped QB1 rules the board uses (2026-10-21 app audit: without them the control called a room
+        # unresolved that the board had already resolved, e.g. PHI week 7, McKee's most recent full-snap start).
+        resolution = resolve_inseason_qb1s(
+            current_qbs, name_col, team_col, current_stats, name_col, team_col,
+            int(latest_observed) + 1, year,
+            latest_game_signal='v2_qb1_latest_game_starter' in DEFAULT_FEATURES,
+            fallback='v2_qb1_probable_starter_fallback' in DEFAULT_FEATURES,
+        )
+    else:
+        try:
+            prior_stats, prior_team_col, prior_name_col, _ = load_and_merge_data(year - 1, 'Full PPR')
+        except Exception:
+            prior_stats, prior_team_col, prior_name_col = pd.DataFrame(), team_col, name_col
+        ourlads_qb1s = pd.DataFrame()
+        snapshot, snapshot_problem = load_ourlads_snapshot(year)
+        if snapshot_problem is None and not snapshot.empty:
+            signal = build_ourlads_projection_signal(snapshot, current_stats, name_col, team_col)
+            ourlads_qb1s = signal['qb_starters']
+        resolution = resolve_preseason_qb1s(
+            current_qbs, name_col, team_col, _all_played_weeks(prior_stats), prior_name_col, prior_team_col, year,
+            ourlads_qb1s=ourlads_qb1s,
+        )
+    # The week a saved choice starts applying from: the next unplayed week.
+    # Earlier weeks keep whatever was chosen for them (data/qb1_overrides.csv
+    # from_week/through_week), so a fill-in picked for an injury does not get
+    # written back over the weeks the regular starter actually played.
+    upcoming_week = int(latest_observed) + 1 if latest_observed is not None else 1
+    return resolution, upcoming_week
+
+
+def _render_projection_qb1_control(year, team, current_stats, team_col, name_col, resolved=None):
     """Small, explicit upcoming-game QB1 control for weekly projections.
 
     The generated chart below remains a roster-browsing aid.  It is not a
     source of truth for a new-season QB starter because its ordering comes
     from historical snaps.  This control instead records a named selection
     whenever current evidence cannot identify one clear starter.
+
+    ``resolved`` is projection_qb1_resolution's (resolution, upcoming_week), passed by a caller that renders many teams.
     """
     required = {name_col, team_col, 'position'}
     if current_stats.empty or not required.issubset(current_stats.columns):
@@ -171,34 +218,8 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
     ][[name_col, team_col]].dropna(subset=[name_col]).drop_duplicates(subset=[name_col])
     if qbs.empty:
         return
-    try:
-        prior_stats, prior_team_col, prior_name_col, _ = load_and_merge_data(year - 1, 'Full PPR')
-    except Exception:
-        prior_stats, prior_team_col, prior_name_col = pd.DataFrame(), team_col, name_col
-    observed_weeks = pd.to_numeric(current_stats.get('week', pd.Series(dtype=float)), errors='coerce')
-    latest_observed = observed_weeks[observed_weeks > 0].max() if (observed_weeks > 0).any() else None
-    current_qbs = current_stats[current_stats['position'].astype(str).str.upper().eq('QB')]
-    if latest_observed is not None:
-        resolution = resolve_inseason_qb1s(
-            current_qbs, name_col, team_col, current_stats, name_col, team_col,
-            int(latest_observed) + 1, year,
-        )
-    else:
-        ourlads_qb1s = pd.DataFrame()
-        snapshot, snapshot_problem = load_ourlads_snapshot(year)
-        if snapshot_problem is None and not snapshot.empty:
-            signal = build_ourlads_projection_signal(snapshot, current_stats, name_col, team_col)
-            ourlads_qb1s = signal['qb_starters']
-        resolution = resolve_preseason_qb1s(
-            current_qbs, name_col, team_col, _all_played_weeks(prior_stats), prior_name_col, prior_team_col, year,
-            ourlads_qb1s=ourlads_qb1s,
-        )
+    resolution, upcoming_week = resolved or projection_qb1_resolution(year, current_stats, team_col, name_col)
     status = resolution['by_team'].get(str(team).upper(), {})
-    # The week a saved choice starts applying from: the next unplayed week.
-    # Earlier weeks keep whatever was chosen for them (data/qb1_overrides.csv
-    # from_week/through_week), so a fill-in picked for an injury does not get
-    # written back over the weeks the regular starter actually played.
-    upcoming_week = int(latest_observed) + 1 if latest_observed is not None else 1
     player_options = qbs[name_col].astype(str).sort_values().tolist()
     selected = status.get('player')
     selected_index = player_options.index(selected) if selected in player_options else 0
@@ -229,6 +250,11 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
             st.info(
                 f"Automatic in-season starter: {selected} "
                 f"({status.get('recent_snap_share', 0):.0%} recent snap share)."
+            )
+        elif status.get('status') == 'probable_starter':
+            st.warning(
+                f"Automatic probable starter (unconfirmed): {selected}. No QB has a clear full-snap role, so the board "
+                "splits the QB workload by each one's chance of starting. Select the expected QB1 to project him fully."
             )
         else:
             st.warning('No unambiguous QB starter. Select the expected QB1 before relying on this room’s projection.')
@@ -471,7 +497,7 @@ def render():
         st.session_state['year_tab2'] = _jump_year
     c_year, c_team = st.columns(2)
     with c_year:
-        t2_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_tab2")
+        t2_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=default_season_index(), key="year_tab2")
     with c_team:
         sel_team_t2 = st.selectbox("Team", MASTER_TEAMS_LIST, key="team_sel_t2",
                                    format_func=lambda a: f"{TEAM_CONFIG.get(a, {}).get('name', a)} ({a})")
@@ -502,7 +528,11 @@ def render():
     # PFF grade / snap % / GP shown in each cell stay each player's own data.
     # Past seasons pass nothing - their full-season snaps are authoritative.
     ourlads_rank_map, ourlads_sig = {}, ""
-    if t2_target_year not in AVAILABLE_SEASONS:
+    # Until a season has a few weeks of its own snaps (2026-10-21 app audit: it used to apply to the whole of any season
+    # not yet in AVAILABLE_SEASONS, so a mid-season chart still followed August's preseason order).
+    _played_weeks = pd.to_numeric(df_t2_stats.get('week', pd.Series(dtype=float)), errors='coerce')
+    _played_weeks = int(_played_weeks[_played_weeks > 0].nunique()) if not df_t2_stats.empty else 0
+    if t2_target_year not in AVAILABLE_SEASONS and _played_weeks < OURLADS_ORDER_MAX_PLAYED_WEEKS:
         _ol_snap, _ol_problem = load_ourlads_snapshot(t2_target_year)
         if _ol_problem is None and not _ol_snap.empty:
             ourlads_rank_map = _ourlads_rank_map_for(_ol_snap, sel_team_t2)

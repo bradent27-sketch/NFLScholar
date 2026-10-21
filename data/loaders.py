@@ -165,6 +165,11 @@ def _load_raw_weekly_stats(year):
     # breaks every weekly/per-game view downstream.
     if stats.empty:
         for f in os.listdir():
+            # A file named for a different season cannot hold this one's rows (2026-10-21: every cold load of the
+            # current season, which has no local export, opened all fourteen 2019-2025 stats CSVs before downloading).
+            named_years = {int(y) for y in re.findall(r'(?<!\d)(?:19|20)\d{2}(?!\d)', f)}
+            if named_years and year not in named_years:
+                continue
             if re.search(r'(stats_player|player_stats|player_summary)', f.lower()) and f.endswith('.csv'):
                 try:
                     tmp_stats = pd.read_csv(f, low_memory=False)
@@ -180,11 +185,41 @@ def _load_raw_weekly_stats(year):
                 except: pass
 
     if stats.empty:
-        try:
-            stats = nflreadpy.load_player_stats([year]).to_pandas().fillna(0)
-        except Exception:
-            stats = pd.DataFrame(columns=['player_id'])
+        stats = _load_player_stats_download(year)
+        # Same filter as the local files above: a row with no player_id is not a player (nflverse publishes a few, one
+        # per week; filled with 0 they became a player named 0 that crashed every 2026 player picker, 2026-10-21).
+        if 'player_id' in stats.columns:
+            stats = stats[stats['player_id'].notna()]
+        stats = stats.fillna(0) if not stats.empty else pd.DataFrame(columns=['player_id'])
     return stats
+
+
+def _load_player_stats_download(year):
+    """nflreadpy.load_player_stats for one season, cached to data/cache/player_stats_{year}.parquet (2026-10-21), same
+    contract as _load_snap_counts_raw: a finished season is read from disk, a partial season's copy refreshes when older
+    than CACHE_MAX_AGE_HOURS, a failed or empty refresh keeps the copy, and nothing raises."""
+    from data.historical_availability import CACHE_DIR, _partial_season_cache_is_stale
+    cache_path = os.path.join(CACHE_DIR, f'player_stats_{int(year)}.parquet')
+    cached = None
+    if os.path.exists(cache_path):
+        try:
+            cached = pd.read_parquet(cache_path)
+        except Exception:
+            cached = None
+        if cached is not None and not cached.empty and not _partial_season_cache_is_stale(cached, cache_path):
+            return cached
+    try:
+        raw = nflreadpy.load_player_stats([year]).to_pandas()
+    except Exception:
+        return cached if cached is not None else pd.DataFrame(columns=['player_id'])
+    if raw is None or raw.empty:
+        return cached if cached is not None else pd.DataFrame(columns=['player_id'])
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        raw.to_parquet(cache_path, index=False)
+    except Exception:
+        pass
+    return raw
 
 
 def load_box_score_stats(year):
@@ -473,6 +508,12 @@ def load_year_data(year):
         rosters_clean['is_rookie_flag'] = False
 
     global_rookie_names = set(rosters_clean[rosters_clean['is_rookie_flag']]['full_name'].dropna().str.lower().unique()) if 'full_name' in rosters_clean.columns else set()
+    # A name a veteran also carries is not a rookie name (2026-10-21 app audit: a 2026 rookie DB "Devonta Smith" put the
+    # 2021 WR DeVonta Smith on Rookie Watch and gave him an "RK" tag). Name-keyed consumers lose the rookie in that case,
+    # the safer miss; Rookie Watch itself reads each row's own rookie_year.
+    if global_rookie_names and 'full_name' in rosters_clean.columns:
+        veteran_names = set(rosters_clean[~rosters_clean['is_rookie_flag'].astype(bool)]['full_name'].dropna().str.lower())
+        global_rookie_names -= veteran_names
 
     overlaps = [c for c in rosters_clean.columns if c in stats.columns and c != 'gsis_id']
     stats = stats.drop(columns=overlaps, errors='ignore')
@@ -1032,9 +1073,10 @@ def load_pfr_pass_block(year):
         # PFR uses placeholder codes ("2TM", "3TM") for a player's combined
         # row across multiple teams in-season - not a real team, and would
         # otherwise sometimes outrank the actual starter for team assignment.
-        return df[~df['team'].isin(['2TM', '3TM'])] if 'team' in df.columns else df
+        df = df[~df['team'].isin(['2TM', '3TM'])] if 'team' in df.columns else df
     except Exception:
-        return pd.DataFrame()
+        df = pd.DataFrame()
+    return df if not df.empty else _pfr_pass_season_from_weeks(year)
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
@@ -1042,9 +1084,59 @@ def load_pfr_def_pressure(year):
     """PFR advanced defensive stats (season level) - per-player pressures/sacks/hurries/knockdowns, aggregated by team below into a defense's pressure rate generated."""
     try:
         df = nflreadpy.load_pfr_advstats([year], stat_type='def', summary_level='season').to_pandas()
-        return df[~df['tm'].isin(['2TM', '3TM'])] if 'tm' in df.columns else df
+        df = df[~df['tm'].isin(['2TM', '3TM'])] if 'tm' in df.columns else df
+    except Exception:
+        df = pd.DataFrame()
+    return df if not df.empty else _pfr_def_season_from_weeks(year)
+
+
+# PFR's SEASON summaries are only published after a season ends, so both panels above were empty for the season in
+# progress (2026-10-21 app audit). Until then the season rows are summed from PFR's weekly game logs (REG only), in the
+# season summary's own column names. Checked on 2025 against the published summary: starters' pressure % within 0.4
+# points on average (25 QBs), team pressures generated within ~2%. df.attrs['source'] = 'weekly' marks the fallback.
+def _pfr_weekly(year, stat_type):
+    try:
+        weekly = nflreadpy.load_pfr_advstats([year], stat_type=stat_type, summary_level='week').to_pandas()
     except Exception:
         return pd.DataFrame()
+    if weekly.empty:
+        return weekly
+    if 'game_type' in weekly.columns:
+        weekly = weekly[weekly['game_type'].astype(str).str.upper().eq('REG')]
+    return weekly
+
+
+def _pfr_pass_season_from_weeks(year):
+    weekly = _pfr_weekly(year, 'pass')
+    if weekly.empty or not {'pfr_player_name', 'team', 'times_pressured', 'times_pressured_pct'}.issubset(weekly.columns):
+        return pd.DataFrame()
+    pressured = pd.to_numeric(weekly['times_pressured'], errors='coerce').fillna(0.0)
+    share = pd.to_numeric(weekly['times_pressured_pct'], errors='coerce')
+    # a game's dropbacks = pressures / pressure share (the weekly feed carries no attempt count)
+    dropbacks = np.where(share > 0, pressured / share.where(share > 0, 1.0), np.nan)
+    rolled = (weekly.assign(_pressured=pressured, _dropbacks=dropbacks)
+              .groupby(['pfr_player_name', 'team'], observed=True)
+              .agg(times_pressured=('_pressured', 'sum'), pass_attempts=('_dropbacks', 'sum')).reset_index()
+              .rename(columns={'pfr_player_name': 'player'}))
+    rolled = rolled[rolled['pass_attempts'] > 0]
+    rolled['pressure_pct'] = (100.0 * rolled['times_pressured'] / rolled['pass_attempts']).round(1)
+    rolled['pass_attempts'] = rolled['pass_attempts'].round(0)
+    rolled.attrs['source'] = 'weekly'
+    return rolled
+
+
+def _pfr_def_season_from_weeks(year):
+    weekly = _pfr_weekly(year, 'def')
+    needed = {'pfr_player_name', 'team', 'def_pressures', 'def_sacks', 'def_times_hurried', 'def_times_hitqb'}
+    if weekly.empty or not needed.issubset(weekly.columns):
+        return pd.DataFrame()
+    values = weekly[sorted(needed - {'pfr_player_name', 'team'})].apply(pd.to_numeric, errors='coerce').fillna(0.0)
+    rolled = (pd.concat([weekly[['pfr_player_name', 'team']], values], axis=1)
+              .groupby(['pfr_player_name', 'team'], observed=True).sum().reset_index()
+              .rename(columns={'pfr_player_name': 'player', 'team': 'tm', 'def_pressures': 'prss', 'def_sacks': 'sk',
+                               'def_times_hurried': 'hrry', 'def_times_hitqb': 'qbkd'}))
+    rolled.attrs['source'] = 'weekly'
+    return rolled
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)

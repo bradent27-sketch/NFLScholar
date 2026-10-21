@@ -20,6 +20,7 @@ from ui.player_snapshot import (
     build_player_snapshot, render_percentile_radar_grid_compare, render_percentile_bars_figure_compare,
     position_branch_group,
 )
+from ui.components import default_season_index
 
 # Same C/F/R aliases ui.components uses, so the inline HTML below reads as
 # token lookups rather than a wall of THEME['...']['...'] subscripts.
@@ -211,7 +212,7 @@ def render():
 
     c_year, c_score = st.columns(2)
     with c_year:
-        cmp_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=1, key="year_cmp")
+        cmp_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=default_season_index(), key="year_cmp")
     with c_score:
         cmp_scoring = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="score_cmp")
 

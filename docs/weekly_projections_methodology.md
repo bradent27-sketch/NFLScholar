@@ -5600,3 +5600,18 @@ stronger (1.25: -0.011 / -0.009 / -0.007; 1.5: -0.018 / -0.010 / -0.004), the sa
 artifact that shows on the board: players marked Out who played are 0.0-0.2% every season, Questionable shares are similar, and 2021's
 extra Reserve rows are the COVID list. No change (a strength chosen on four seasons swings with whichever pair is held out); parked
 as watch item W5. The survival weights and growth cap were not swept one by one (this strength test covers their combined size).
+
+
+### 2026-10-21 - Calibration audit C15 (partial-game history exclusions): on/off harness, pre-set bar
+
+The partial-game filter (`annotate_player_history_participation`: QB splits, abrupt established-role exits, paired partial
+replacements, severe blowout rest; thresholds 0.65 / 0.50 / 0.60 snap share and 28 points / 0.65 / 0.75, all hand-set) decides which
+past games count everywhere in a build, so it cannot be re-scored from traces. Built `v2_no_history_exclusions` (CANDIDATE, off by
+default; every recorded game counts in current, last and two-seasons-back history), `tests/test_no_history_exclusions.py` (2), and
+run as an add-candidate on harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base arm DEFAULT_FEATURES (60)), through
+`scripts/run_guarded_harness.py` (the snap-count guard of the captures, so a failed download cannot degrade the run).
+
+**Pre-set bar (written before the run).** The filter stays as shipped (VERIFIED) unless switching it off is SHIP-ELIGIBLE with
+START-ALL dRMSE <= -0.003, no position's START dRMSE above +0.010, and bias growth within 0.3. If switching it off is worse (START-ALL
+> 0 with a CI excluding 0) the filter is verified as helping; anything in between is recorded as "no measurable effect" and the
+filter stays (it was built for reported live cases). Any change to DEFAULT_FEATURES needs the user's sign-off.

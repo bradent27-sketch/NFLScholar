@@ -2145,6 +2145,12 @@ MODEL_FEATURES = (
                              # leans more on last season, an uncertain one trusts this
                              # season sooner (K_EFFECTIVE_RANGE mirrored). See
                              # ROLE_CONFIDENCE_REVERSED_POSITIONS.
+    'v2_no_history_exclusions',  # CANDIDATE (2026-10-21, calibration audit C15), an ON/OFF check of a shipped
+                             # mechanism: every recorded game counts in a player's
+                             # history (current, last and two seasons back), i.e. the
+                             # partial-game filter of annotate_player_history_participation
+                             # (QB splits, abrupt established-role exits, paired partial
+                             # replacements, severe blowout rest) is switched off.
     'v2_expected_points_luck',  # SHIPPED 2026-10-20 (was a candidate, backlog N1). Last step on the points total:
                              # a WR/TE whose results ran ahead of what his usage was
                              # worth (nflverse ff_opportunity expected points) in his
@@ -7628,6 +7634,14 @@ def _player_snap_seed(eligible_history, name_col, n=PARTIAL_GAME_REFERENCE_APPEA
     return {player: g['_snap'].tail(n).tolist() for player, g in df.groupby('_player', observed=True)}
 
 
+def _keep_every_history_game(annotated):
+    """'v2_no_history_exclusions' (candidate, calibration audit C15): every recorded game counts in a player's history."""
+    out = annotated.copy()
+    out['_player_history_eligible'] = True
+    out['_player_history_reason'] = ''
+    return out
+
+
 def annotate_player_history_participation(history, name_col, team_col, schedule_df=None, prior_reference=None):
     """Mark only clearly interrupted player-games as unusable rate evidence.
 
@@ -9620,11 +9634,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     prior_schedule_df = load_schedule(year - 1) if not prior_played.empty else pd.DataFrame()
     prior_annotated = annotate_player_history_participation(
         prior_played, prior_name_col, prior_team_col, prior_schedule_df)
+    if 'v2_no_history_exclusions' in feats:
+        prior_annotated = _keep_every_history_game(prior_annotated)
     player_prior = prior_annotated[prior_annotated['_player_history_eligible']].copy()
 
     hist_annotated = annotate_player_history_participation(
         hist, name_col, team_col, schedule_df,
         prior_reference=_player_snap_seed(player_prior, prior_name_col))
+    if 'v2_no_history_exclusions' in feats:
+        hist_annotated = _keep_every_history_game(hist_annotated)
     player_hist = hist_annotated[hist_annotated['_player_history_eligible']].copy()
 
     def _blowout_weeks_for_matchup(schedule_frame, matchup_year):
@@ -9672,6 +9690,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                           if not prior2_played.empty else pd.DataFrame())
     prior2_annotated = annotate_player_history_participation(
         prior2_played, prior2_name_col, prior2_team_col, prior2_schedule_df)
+    if 'v2_no_history_exclusions' in feats:
+        prior2_annotated = _keep_every_history_game(prior2_annotated)
     player_prior2 = prior2_annotated[prior2_annotated['_player_history_eligible']].copy()
     source_contract['partial_game_history_filter'] = (
         'exclude only snap-confirmed QB splits, abrupt established-role exits, '

@@ -5539,3 +5539,23 @@ stand. The capture script now reads snap counts through a disk cache (`.sweeps/s
 capture degraded boards (a guarded build of 2022 week 3 is identical to the plain one). The bad matchup output and the QB-blend
 capture that had just started without the guard were moved to `.sweeps/stale` and both re-run. Backlog D9 proposes the same cache in
 the app's loader for completed seasons.
+
+
+### 2026-10-21 - Calibration audit C6 + C7 (role overlay on the matchup, defense blowout handling, RB offense prior): no change, closed
+
+Guarded re-run of `scripts/capture_stat_blend_traces.py --matchup-variants` (2021-2025 weeks 3-17, DEFAULT_FEATURES 60; snap coverage
+normal every season; boards identical to the recency capture for 2021-2024 and to a plain build for 2025 week 8) and
+`scripts/eval_matchup_variants.py` (each player's forward matchup multiplier recorded under every variant; QB passing from the
+variant overall ratings; a row moves only where the board used that multiplier: 167,741 of 191,222 trace rows; points through the
+shipped late steps, paired START pools). START-ALL dRMSE [CI], seasons better:
+- C6 role overlay K (shipped 10): 2.5 +0.0033 [+0.0001, +0.0063] (worse), 5 +0.0013, 20 -0.0006, 40 -0.0008, overlay off -0.0010
+  [-0.0033, +0.0015], 3 of 5. A weaker overlay helps only in 2021-22 (-0.004 / -0.006 off) and hurts in 2023-24 (+0.003 / +0.001); WR
+  -0.003 vs TE +0.003 when off. Not robust; the role overlay adds little either way.
+- C7 blowout discount (shipped 0.5 on a defense's 28+ point games, RB/QB/TE): drop those games +0.0008, 0.25 +0.0004, 0.75 -0.0002,
+  no discount -0.0004 [-0.0013, +0.0005]; margin 21 +0.0006, 35 -0.0005 [-0.0012, +0.0001]. Every setting within +-0.0008.
+- C7 RB offense prior games (shipped 6): 3 -0.0002 [-0.0003, -0.0000], 12 +0.0002. Negligible.
+CLOSED, no change.
+
+C9 check on clean data: the recency capture's 2025 top-up snap download had partly failed (2025 snap coverage 0.962 vs 0.964; 244
+of 7,540 2025 rows slightly off, mostly TE snap shares). Re-scored on 2021-2024 only, the same U: 0.75 +0.0020, 0.80 0.0000, 0.90
++0.0025, 0.95 +0.0078, 1.0 +0.0158 START-ALL. The C9 result stands.

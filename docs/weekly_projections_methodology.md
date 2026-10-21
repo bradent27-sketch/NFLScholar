@@ -5587,3 +5587,16 @@ One knob at a time, START-TE dRMSE: this-season shrinkage 1 / 2 / 8 / 12 / 20 ga
 +0.0023. Best of the 288-point grid (shrinkage 20, prior weight 0.6, strength 1.5) -0.0137 START-TE [-0.0389, +0.0119], START-ALL
 -0.0018; chosen on one season and scored on the other: -0.0074 (2024) and +0.0259 (2025). The only consistent hint is more
 shrinkage and more prior weight (both seasons, CIs span 0). CLOSED, no change; revisit with more PFF weekly seasons (with C1).
+
+
+### 2026-10-21 - Calibration audit C16 (injured-teammate redistribution): strength at its five-season optimum; recent seasons want more (W5)
+
+Offline from the QB-blend capture's traces (2021-2025 weeks 3-17, DEFAULT_FEATURES 60): each row's vacancy step (`vacancy_delta`,
+the stat a player gains or loses from teammates' absences; 76,118 of 191,222 trace rows move) scaled by a strength s, points through
+the shipped late steps, paired START pools. START-ALL dRMSE by s, all positions: 0 (no redistribution) +0.0751 [+0.0521, +0.0986],
+0.5 +0.0202, 0.75 +0.0058, 1.25 +0.0018, 1.5 +0.0124. Redistribution is a large, real gain and the shipped strength is the
+five-season optimum. By season, though, the split is systematic: 2021-22 prefer weaker (0.75: -0.012 / -0.008) and 2023-25 prefer
+stronger (1.25: -0.011 / -0.009 / -0.007; 1.5: -0.018 / -0.010 / -0.004), the same for RB, WR and TE separately (QB ~0). Not a data
+artifact that shows on the board: players marked Out who played are 0.0-0.2% every season, Questionable shares are similar, and 2021's
+extra Reserve rows are the COVID list. No change (a strength chosen on four seasons swings with whichever pair is held out); parked
+as watch item W5. The survival weights and growth cap were not swept one by one (this strength test covers their combined size).

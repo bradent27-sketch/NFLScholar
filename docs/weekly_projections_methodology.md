@@ -5511,3 +5511,17 @@ cap 0.70, longevity bonus, xTD share K 4 (C14b, low priority).
 
 C8 (pace): no sweep needed. The opponent-pace weight is capped at PACE_ALPHA_CAP 0.15 (measured: team-game slope +0.136, t 3.4), which
 binds from a defense's second game, so PACE_PRIOR_GAMES almost never acts, and PACE_CLIP 0.85-1.15 times 0.15 is at most +-2.3%.
+
+
+### 2026-10-20 - Calibration audit C9 (within-season recency, RECENCY_DECAY 0.85): verified at its optimum, closed
+
+`scripts/capture_stat_blend_traces.py --recency-variants --xtd-variants` (2021-2025 weeks 3-17, DEFAULT_FEATURES 60; boards
+identical to a plain build; every player's current-season rate re-computed under decays 0.70-1.0, the shipped one matching the traced
+rate to 3-decimal rounding) and `scripts/eval_recency_variants.py` (the blend's game count is the raw count, so only the current rate
+moves: blended' = blended + w x (cur' - cur), and for rushing/receiving TDs the expected-TD step passes c x that; 179,911 of 191,222
+trace rows moved; points through the shipped late steps, paired START pools). START-ALL dRMSE, one decay everywhere: 0.70 +0.0075,
+0.75 +0.0027, 0.80 +0.0002, 0.90 +0.0024, 0.95 +0.0078 (CI excludes 0, worse), 1.0 (flat season average) +0.0158 (CI excludes 0,
+worse). One position at a time, no decay beats 0.85 beyond noise (best: RB 0.75 -0.0036 [-0.0147, +0.0081], TE 0.90 -0.0018, WR 0.80
+-0.0001); by stat family the same. Each position's decay chosen on four seasons and scored on the fifth: +0.0028 START-ALL, better
+in 2 of 5. The shipped 0.85 sits at the bottom of a clear U (the earlier "no signal" sweep is now a measured optimum). CLOSED, no
+change. (Volume stats - targets, attempts - carry no points while every stat is a direct rate, so the points test reads them as 0.)

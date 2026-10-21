@@ -1,4 +1,4 @@
-"""v2_role_confidence_reversed_wrte (candidate 2026-10-20, calibration audit C10): for WR/TE receiving volume an
+"""v2_role_confidence_reversed_wrte (shipped 2026-10-20, calibration audit C10): for WR/TE receiving volume an
 established role leans more on last season and an uncertain one trusts this season sooner."""
 import os
 import sys
@@ -10,9 +10,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import data.weekly_projections as wp  # noqa: E402
 
 
-def test_flag_is_registered_and_not_default():
+def test_flag_is_registered_and_default():
     assert 'v2_role_confidence_reversed_wrte' in wp.MODEL_FEATURES
-    assert 'v2_role_confidence_reversed_wrte' not in wp.DEFAULT_FEATURES
+    assert 'v2_role_confidence_reversed_wrte' in wp.DEFAULT_FEATURES
+    assert 'v2_role_confidence_reversed_wrte' in wp.CALIBRATION_INPUT_FEATURES
     assert wp.ROLE_CONFIDENCE_REVERSED_POSITIONS == {'WR', 'TE'}
     assert wp.ROLE_CONFIDENCE_REVERSED_STATS == {'targets', 'receptions', 'receiving_yards'}
 

@@ -5475,3 +5475,15 @@ Against the bar: verdict not REJECT (SHIP-ELIGIBLE), START-ALL -0.004 <= -0.003,
 and START-RB 0.000 (within +0.010), bias growth +0.002 (within 0.3): every condition met. The harness agrees with the offline re-score
 (-0.0038 START-ALL, WR and TE carrying it, QB/RB untouched). START-WR pairwise accuracy +0.001 (CI excludes 0); TE bias -0.655 -> -0.658
 (a 0.003 drift, inside the bar). Not shipped yet: promoting it to DEFAULT_FEATURES needs the user's sign-off.
+
+
+### 2026-10-20 - SHIPPED `v2_role_confidence_reversed_wrte` (DEFAULT_FEATURES = 60)
+
+User: "yes ship it", after the harness result above met the pre-set bar in full. For WR/TE targets, receptions and receiving yards the
+role-confidence range on the blend K is mirrored (an established role leans more on last season, an uncertain one trusts this season
+sooner); TD rates, QB and RB keep the shipped direction. No new number. It acts before the points line, so it is a calibration input
+(in CALIBRATION_INPUT_FEATURES) and the WR/TE lines take it in at their next re-fit; the harness gain (START-ALL -0.004, WR -0.008,
+TE -0.007) was measured with the current lines. Test suite 841 passed. Undo: remove the flag from DEFAULT_FEATURES.
+
+Note for C14: the expected-TD capture now running was started on the 59-flag defaults (before this ship). C10 does not touch TD rates,
+so the TD-blend comparison is unaffected apart from the small change in the receiving-yard points around it.

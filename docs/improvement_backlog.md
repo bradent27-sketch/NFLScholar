@@ -88,7 +88,7 @@ pre-v2 harness (MAE, narrow windows, an older model): not comparable to today's 
 | C7 | **Blowout discount** (28 points, x0.5) and **OFFENSE_PRIOR_GAMES 6** (RB only) | Decided games in a defense's history; the early-season offense baseline | Old sweeps |
 | C8 | **Pace**: PACE_PRIOR_GAMES 12, PACE_CLIP 0.85-1.15 | Opponent pace effect | Prior copied from the defense value, clip never tested (the 0.15 cap is measured) |
 | C9 | **Within-season recency RECENCY_DECAY 0.85** | How much a player's recent games outweigh earlier ones | Old sweep, no signal |
-| C10 | **K_EFFECTIVE_RANGE 0.7-1.3** | Role confidence speeding up / slowing trust in this season's rate | CANDIDATE, MEETS BAR: offline -0.0038 [-0.0066, -0.0011] 4/5; harness 2026-10-20 SHIP-ELIGIBLE, START-ALL -0.004 [-0.007, -0.001], WR -0.008, TE -0.007, QB/RB 0.000, bias +0.002. Awaiting sign-off to ship `v2_role_confidence_reversed_wrte`. |
+| C10 | **K_EFFECTIVE_RANGE 0.7-1.3** | Role confidence speeding up / slowing trust in this season's rate | SHIPPED 2026-10-20 (user: "yes ship it"), DEFAULT_FEATURES = 60, as `v2_role_confidence_reversed_wrte` (WR/TE receiving volume mirrored). Offline -0.0038 [-0.0066, -0.0011] 4/5; harness SHIP-ELIGIBLE, START-ALL -0.004 [-0.007, -0.001], WR -0.008, TE -0.007, QB/RB 0.000, bias +0.002. |
 | C11 | **ROLE_CHANGE_K_REDUCTION 0.5** | How much a detected role change speeds trust in new volume | CLOSED 2026-10-20: no effect (WR/TE target and QB carry RMSE flat at every reduction 0-1; 2.8% of rows touched). |
 | C12 | **Two-seasons-back blend** (base 0.20, cap 0.55, damping 0.35, 8-game fade; the QB blend's own copy) | How much a season two years back counts | Never tested |
 | C13 | **QB volume/efficiency blends** (volume K 60, pass efficiency 100, rush efficiency 5, rush TD 40, style 10, starter floor 20/game) | Team vs personal QB volume and efficiency | No sweep on record |
@@ -127,7 +127,7 @@ play-probability haircut; `v2_own_tempo_regression`; `v2_pace_alpha_cap` ablatio
 
 2026-10-19 data fixes (not model flags): injury-report cache refresh (D1), retractable-roof default (D7), injury freshness note (D2).
 
-`v2_expected_points_luck` (2026-10-20, `DEFAULT_FEATURES` = 59); `v2_qb1_probable_starter_fallback` (2026-10-20, 58);
+`v2_role_confidence_reversed_wrte` (2026-10-20, `DEFAULT_FEATURES` = 60); `v2_expected_points_luck` (2026-10-20, `DEFAULT_FEATURES` = 59); `v2_qb1_probable_starter_fallback` (2026-10-20, 58);
 `v2_top_end_yardage`, `v2_suspension_return_full_role`, `v2_qb1_latest_game_starter` (2026-10-13/14, `DEFAULT_FEATURES` = 57);
 `v2_opening_week_stat_calibration`, `v2_questionable_workload` (10-08); `v2_rb_depleted_room_fill` (10-07);
 `v2_season_anchor`, `v2_qb_td_blend` (10-06).

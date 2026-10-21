@@ -295,13 +295,14 @@ QB_PASSING_TD_LEAGUE_RATE = 1.46      # passing TDs per game, QB starters who pl
 # prior). Bounded so role confidence can move K at most 40% either way -
 # it's a nudge on top of sample size, not a replacement for it.
 K_EFFECTIVE_RANGE = (0.7, 1.3)
-# 'v2_role_confidence_reversed_wrte' (CANDIDATE 2026-10-20, calibration audit C10): for WR/TE receiving volume the direction
+# 'v2_role_confidence_reversed_wrte' (SHIPPED 2026-10-20, calibration audit C10): for WR/TE receiving volume the direction
 # above is backwards. Re-scored from the 2021-2025 stat-blend capture (scripts/eval_blend_modifiers.py, exact re-score of the
 # blend, paired START pools): removing the role-confidence effect improves START-ALL by 0.0029 (CI excludes 0, 5/5 seasons),
 # and mirroring it (an established role leans MORE on last season, an uncertain one trusts this season sooner) by 0.0049
 # [-0.0077, -0.0023] for WR/TE only (WR -0.008, TE -0.0125, 5/5 seasons); widening the shipped direction hurts in step. RB
 # got slightly worse when mirrored, QB was flat, so only WR/TE targets/receptions/receiving yards are mirrored. TD rates
-# (the xTD path) were not part of the test and keep the shipped direction.
+# (the xTD path) were not part of the test and keep the shipped direction. Harness v2 2022-2025 wk3-17: START-ALL -0.004
+# [-0.007, -0.001], START-WR -0.008, START-TE -0.007, QB/RB 0.000, bias growth +0.002 (SHIP-ELIGIBLE).
 ROLE_CONFIDENCE_REVERSED_POSITIONS = frozenset({'WR', 'TE'})
 ROLE_CONFIDENCE_REVERSED_STATS = frozenset({'targets', 'receptions', 'receiving_yards'})
 
@@ -2138,7 +2139,7 @@ MODEL_FEATURES = (
                              # starter before v2_qb1_latest_game_starter, 2.4% after it
                              # (most with a single available QB). The team stays listed
                              # as "QB1 selection required".
-    'v2_role_confidence_reversed_wrte',  # CANDIDATE (2026-10-20, calibration audit C10). For WR/TE targets,
+    'v2_role_confidence_reversed_wrte',  # SHIPPED 2026-10-20 (calibration audit C10). For WR/TE targets,
                              # receptions and receiving yards, role confidence moves the
                              # current-vs-prior blend the other way: an established role
                              # leans more on last season, an uncertain one trusts this
@@ -2725,6 +2726,14 @@ DEFAULT_FEATURES = frozenset({
     # -0.010, QB/RB untouched, bias growth +0.032; verdict INCONCLUSIVE (held out by season: -0.0055). Post-calibration step
     # (POST_CALIBRATION_FEATURES). Undo: remove this flag.
     'v2_expected_points_luck',
+    # SHIPPED 2026-10-20 (user: "yes ship it") after the pre-set bar was met in full: see MODEL_FEATURES and
+    # ROLE_CONFIDENCE_REVERSED_POSITIONS. For WR/TE targets, receptions and receiving yards K_EFFECTIVE_RANGE is mirrored: an
+    # established role leans more on last season, an uncertain one trusts this season sooner (calibration audit C10, found
+    # by an exact offline re-score of the blend: -0.0038 START-ALL, 4/5 seasons). Harness v2 2022-2025 wk3-17: START-ALL RMSE
+    # 7.624 -> 7.620 (-0.004, CI [-0.007, -0.001]), START-WR -0.008 (CI [-0.014, -0.003]), START-TE -0.007, QB/RB 0.000, bias
+    # growth +0.002, 40-20 weeks. No new number. A calibration input (it acts before the points line), so it is folded into
+    # the next WR/TE calibration re-fit; the harness gain was measured with the current lines. Undo: remove this flag.
+    'v2_role_confidence_reversed_wrte',
 })
 
 

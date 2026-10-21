@@ -5663,3 +5663,14 @@ week 7) and a harness-style board (2025 week 8, replay on): every board number e
 row order in two Deep Dive logs (the display sorts by week) and last-digit float noise in one display field. A 2026 data fix rides
 along (rows with no player_id dropped from the nflverse weekly-stats download, as the local-file path already did): every board
 number unchanged. Live rebuild after an override ~107 s -> ~20 s; harness/capture builds speed up the same way.
+
+
+### 2026-10-21 - C13 follow-up result: `v2_qb_style_blend_k80` fails its pre-set bar, not shipped
+
+Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (60), snap-guarded; 46 min with the new build caches): VERDICT
+INCONCLUSIVE. START-QB 7.504 -> 7.503 (-0.001, CI [-0.004, +0.003], 29-31 weeks), START-RB +0.001, START-WR +0.001, START-TE +0.002,
+START-ALL +0.001 (CI [-0.000, +0.002], 26-34 weeks), bias growth -0.003. Against the bar: START-QB better in fewer weeks than worse
+and START-ALL above 0, so it fails; the flag stays a candidate (off). Why the offline re-score (-0.0017 START-QB, 5/5 seasons) did not
+carry: it moved only the QB's own stat rows, but a QB1's pass/rush split also sets his team's passing volume, which the pass
+catchers' and backs' target shares read (pass-capacity conservation), and those downstream moves cancel the QB gain. Lesson for
+the remaining QB knobs: a QB-blend change has to be scored on full builds, not on QB rows alone. CLOSED.

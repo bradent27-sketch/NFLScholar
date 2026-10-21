@@ -324,8 +324,12 @@ QB_BLEND_VARIANTS = (('QB_STYLE_BLEND_K', 5.0), ('QB_STYLE_BLEND_K', 20.0), ('QB
                      ('QB_VOLUME_STARTER_FLOOR_DROPBACKS_PER_GAME', 15.0),
                      ('QB_VOLUME_STARTER_FLOOR_DROPBACKS_PER_GAME', 25.0))
 
+# --qb-style-grid (2026-10-21, C13 follow-up): QB_STYLE_BLEND_K was best at the edge of the first grid (40), so this run
+# records only that constant, further out.
+QB_STYLE_GRID = tuple(('QB_STYLE_BLEND_K', k) for k in (40.0, 60.0, 80.0, 120.0, 160.0, 240.0))
 
-def install_qb_blend_hooks(store):
+
+def install_qb_blend_hooks(store, variants_grid=QB_BLEND_VARIANTS):
     import data.qb_volume_blend as qvb
     import data.weekly_projections as wp
     orig = wp.blend_qb1_volume
@@ -338,7 +342,7 @@ def install_qb_blend_hooks(store):
         if cur_frame is None or not rates or len(cur_frame) != len(qb1_mask):
             return out
         variants = {}
-        for name, val in QB_BLEND_VARIANTS:
+        for name, val in variants_grid:
             if name == 'QB_STYLE_BLEND_K':      # a default argument, bound when the function was defined
                 variants[(name, val)] = orig(identity_keys, team_keys, qb1_mask, prior_history, *args, **dict(kw, k=val))[0]
                 continue
@@ -492,6 +496,7 @@ def main():
     ap.add_argument('--matchup-variants', action='store_true', help='also record role-overlay and blowout matchup variants')
     ap.add_argument('--qb-blend-variants', action='store_true', help='also record the QB1 prior-rate blend under other K values')
     ap.add_argument('--scheme-variants', action='store_true', help='also record the PFF man/zone TE matchup variants')
+    ap.add_argument('--qb-style-grid', action='store_true', help='with --qb-blend-variants: only QB_STYLE_BLEND_K, 40-240')
     ap.add_argument('--recency-variants', action='store_true', help='also record each current rate under other decays')
     a = ap.parse_args()
     years = [int(y) for y in a.years.split(',')]
@@ -518,7 +523,7 @@ def main():
     if a.matchup_variants:
         install_matchup_variant_hooks(store)
     if a.qb_blend_variants:
-        install_qb_blend_hooks(store)
+        install_qb_blend_hooks(store, QB_STYLE_GRID if a.qb_style_grid else QB_BLEND_VARIANTS)
     if a.scheme_variants:
         install_scheme_variant_hooks(store)
     if a.defense_variants:

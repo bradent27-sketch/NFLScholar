@@ -151,6 +151,43 @@ def install_xtd_hooks(store):
     wp.xtd_blended_rate = xtd
 
 
+# --recency-variants (2026-10-20, calibration audit C9): a player's own within-season rate weights his games by
+# RECENCY_DECAY ** (games ago - 1). The weighted rates are re-computed under other decays and recorded per player and stat,
+# so the decay re-scores offline (the blend's game count is the raw count, so only the current rate moves).
+RECENCY_GRID = (0.70, 0.75, 0.80, 0.90, 0.95, 1.0)
+
+
+def install_recency_hooks(store):
+    import data.weekly_projections as wp
+    orig = wp._weighted_player_rates
+
+    def rates(hist_pos, name_col, stats, as_of_week, *args, **kw):
+        out = orig(hist_pos, name_col, stats, as_of_week, *args, **kw)
+        shipped = out[0]
+        if shipped is None or shipped.empty:
+            return out
+        try:
+            pos = str(hist_pos['position'].astype(str).str.upper().mode().iloc[0])
+        except Exception:
+            return out
+        saved, variants = wp.RECENCY_DECAY, {}
+        try:
+            for decay in RECENCY_GRID:
+                wp.RECENCY_DECAY = decay
+                variants[decay] = orig(hist_pos, name_col, stats, as_of_week, *args, **kw)[0]
+        finally:
+            wp.RECENCY_DECAY = saved
+        for stat in [c for c in shipped.columns if c != 'weight_sum']:
+            frame = pd.DataFrame({'player': shipped.index.astype(str), 'shipped': shipped[stat].to_numpy(float)})
+            for decay, v in variants.items():
+                frame[f'cur_{decay:g}'] = v[stat].reindex(shipped.index).to_numpy(float)
+            frame['year'], frame['week'], frame['pos'], frame['stat'] = store['year'], store['week'], pos, stat
+            store['recency_frames'].append(frame)
+        return out
+
+    wp._weighted_player_rates = rates
+
+
 def install_defense_variant_hooks(store):
     """Wrap the defense estimator and the current/prior blend in data.weekly_projections. The board is unchanged (the
     original result is always returned); the variants go to ``store['rows']`` as long records."""
@@ -213,6 +250,7 @@ def main():
     ap.add_argument('--defense-variants', action='store_true', help='also record the defense profile under other settings')
     ap.add_argument('--alignment-variants', action='store_true', help='also record the PFF alignment WR/TE matchup variants')
     ap.add_argument('--xtd-variants', action='store_true', help='also record the expected-TD blend inputs per player')
+    ap.add_argument('--recency-variants', action='store_true', help='also record each current rate under other decays')
     a = ap.parse_args()
     years = [int(y) for y in a.years.split(',')]
     lo, hi = a.weeks.split('-') if '-' in a.weeks else (a.weeks, a.weeks)
@@ -223,9 +261,13 @@ def main():
     defense_path = a.out + '.defense.parquet'
     align_path = a.out + '.alignment.parquet'
     xtd_path = a.out + '.xtd.parquet'
-    store = {'rows': [], 'pending': {}, 'year': None, 'week': None, 'align_rows': [], 'xtd_rows': []}
+    recency_path = a.out + '.recency.parquet'
+    store = {'rows': [], 'pending': {}, 'year': None, 'week': None, 'align_rows': [], 'xtd_rows': [],
+             'recency_frames': []}
     if a.xtd_variants:
         install_xtd_hooks(store)
+    if a.recency_variants:
+        install_recency_hooks(store)
     if a.defense_variants:
         install_defense_variant_hooks(store)
     if a.alignment_variants:
@@ -315,6 +357,8 @@ def main():
                 pd.DataFrame(store['align_rows']).to_parquet(align_path, index=False)
             if a.xtd_variants and store['xtd_rows']:
                 pd.DataFrame(store['xtd_rows']).to_parquet(xtd_path, index=False)
+            if a.recency_variants and store['recency_frames']:
+                pd.concat(store['recency_frames'], ignore_index=True).to_parquet(recency_path, index=False)
             print(f'{year} w{week}: {n} stat rows, {len(rows)} total, {time.time() - t0:.0f}s', flush=True)
     print('done', len(rows), flush=True)
 

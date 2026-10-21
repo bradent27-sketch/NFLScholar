@@ -188,6 +188,102 @@ def install_recency_hooks(store):
     wp._weighted_player_rates = rates
 
 
+# --matchup-variants (2026-10-20, calibration audit C6 + C7): the role overlay on the matchup (ROLE_MATCHUP_K 10: role
+# evidence / (evidence + K) blends a defense's role rating into its overall one) and the defense estimator's blowout handling
+# (DEFENSE_BLOWOUT_WEIGHT_DISCOUNT 0.5 at a 28-point DEFENSE_BLOWOUT_MARGIN, RB/QB/TE) and RB offense prior
+# (OFFENSE_PRIOR_GAMES 6). Each player's forward matchup multiplier is recorded under every variant; QB passing (overall
+# rating only) gets the variant ratings instead.
+ROLE_K_GRID = (2.5, 5.0, 20.0, 40.0, 1e9)
+EST_VARIANTS = (('disc', 0.0), ('disc', 0.25), ('disc', 0.75), ('disc', 1.0), ('margin', 21.0), ('margin', 35.0),
+                ('oprior', 3.0), ('oprior', 12.0))
+
+
+def install_matchup_variant_hooks(store):
+    import data.weekly_projections as wp
+    orig_est, orig_blend = wp.build_team_game_quality_adjusted_matchup, wp.blend_defense_prior
+    orig_bw, orig_mult = wp._defense_blowout_team_weeks, wp._continuous_role_adjusted_multiplier
+
+    def bw(schedule_df):
+        out = orig_bw(schedule_df)
+        store['blowout_sources'].append((out, schedule_df))
+        return out
+
+    def est(hist_pos, team_col, stats, as_of_week, recency_floor=0.0, **kw):
+        out = orig_est(hist_pos, team_col, stats, as_of_week, recency_floor=recency_floor, **kw)
+        try:
+            pos = str(hist_pos['position'].astype(str).str.upper().mode().iloc[0])
+        except Exception:
+            return out
+        weeks, variants = kw.get('blowout_team_weeks'), {}
+        sched = next((sc for res, sc in store['blowout_sources'] if res is weeks), None) if weeks else None
+        saved = (wp.DEFENSE_BLOWOUT_WEIGHT_DISCOUNT, wp.DEFENSE_BLOWOUT_MARGIN)
+        try:
+            for kind, val in EST_VARIANTS:
+                if kind == 'disc' and weeks:
+                    wp.DEFENSE_BLOWOUT_WEIGHT_DISCOUNT = val
+                    variants[(kind, val)] = orig_est(hist_pos, team_col, stats, as_of_week, recency_floor=recency_floor, **kw)
+                elif kind == 'margin' and sched is not None:
+                    wp.DEFENSE_BLOWOUT_MARGIN = val
+                    alt = orig_bw(sched)
+                    wp.DEFENSE_BLOWOUT_MARGIN = saved[1]
+                    variants[(kind, val)] = orig_est(hist_pos, team_col, stats, as_of_week, recency_floor=recency_floor,
+                                                     **dict(kw, blowout_team_weeks=alt))
+                elif kind == 'oprior' and kw.get('offense_prior_games') is not None:
+                    variants[(kind, val)] = orig_est(hist_pos, team_col, stats, as_of_week, recency_floor=recency_floor,
+                                                     **dict(kw, offense_prior_games=val))
+                wp.DEFENSE_BLOWOUT_WEIGHT_DISCOUNT, wp.DEFENSE_BLOWOUT_MARGIN = saved
+        finally:
+            wp.DEFENSE_BLOWOUT_WEIGHT_DISCOUNT, wp.DEFENSE_BLOWOUT_MARGIN = saved
+        store['mpending']['prior' if recency_floor and recency_floor > 0 else 'current'] = (pos, out, variants)
+        return out
+
+    def blend(current, prior, evidence, prior_games=wp.DEFENSE_PRIOR_GAMES):
+        out = orig_blend(current, prior, evidence, prior_games=prior_games)
+        cur_pos, _cur_out, cur_vars = store['mpending'].get('current', (None, None, {}))
+        pri_pos, _pri_out, pri_vars = store['mpending'].get('prior', (None, None, {}))
+        store['mpending'] = {}
+        if cur_pos is None or cur_pos != pri_pos or out is None or out.empty:
+            return out
+        tables = {v: orig_blend(cur_vars.get(v, current), pri_vars.get(v, prior), evidence, prior_games=prior_games)
+                  for v in EST_VARIANTS if v in cur_vars or v in pri_vars}
+        store['overall_var'][cur_pos] = tables
+        if cur_pos == 'QB' and tables:
+            for stat in [c for c in out.columns if c in wp.QB_PASSING_MATCHUP_STATS]:
+                frame = pd.DataFrame({'defense': out.index.astype(str), 'shipped': out[stat].to_numpy(float)})
+                for (kind, val), tb in tables.items():
+                    frame[f'ov_{kind}_{val:g}'] = (tb[stat].reindex(out.index).to_numpy(float) if stat in tb.columns
+                                                   else np.nan)
+                frame['year'], frame['week'], frame['pos'], frame['stat'] = store['year'], store['week'], cur_pos, stat
+                store['qb_rating_frames'].append(frame)
+        return out
+
+    def mult(overall, role_tables, role_sizes, opponents, role_weights, stat):
+        out = orig_mult(overall, role_tables, role_sizes, opponents, role_weights, stat)
+        caller = sys._getframe(1).f_locals
+        cur_frame, pos = caller.get('cur'), caller.get('pos')
+        if cur_frame is None or pos is None or len(cur_frame) != len(out):
+            return out
+        name_col = caller.get('name_col', 'Player')
+        frame = pd.DataFrame({'player': cur_frame[name_col].astype(str).to_numpy(),
+                              'team': cur_frame['Team'].astype(str).to_numpy(), 'shipped': np.asarray(out, dtype=float)})
+        saved = wp.ROLE_MATCHUP_K
+        try:
+            for k in ROLE_K_GRID:
+                wp.ROLE_MATCHUP_K = k
+                frame[f'k_{k:g}'] = orig_mult(overall, role_tables, role_sizes, opponents, role_weights, stat)
+        finally:
+            wp.ROLE_MATCHUP_K = saved
+        for (kind, val), table in store['overall_var'].get(str(pos), {}).items():
+            frame[f'ov_{kind}_{val:g}'] = orig_mult(table, role_tables, role_sizes, opponents, role_weights, stat)
+        frame['year'], frame['week'], frame['pos'], frame['stat'] = store['year'], store['week'], str(pos), stat
+        store['matchup_frames'].append(frame)
+        return out
+
+    wp._defense_blowout_team_weeks = bw
+    wp.build_team_game_quality_adjusted_matchup = est
+    wp.blend_defense_prior = blend
+    wp._continuous_role_adjusted_multiplier = mult
+
 def install_defense_variant_hooks(store):
     """Wrap the defense estimator and the current/prior blend in data.weekly_projections. The board is unchanged (the
     original result is always returned); the variants go to ``store['rows']`` as long records."""
@@ -250,6 +346,7 @@ def main():
     ap.add_argument('--defense-variants', action='store_true', help='also record the defense profile under other settings')
     ap.add_argument('--alignment-variants', action='store_true', help='also record the PFF alignment WR/TE matchup variants')
     ap.add_argument('--xtd-variants', action='store_true', help='also record the expected-TD blend inputs per player')
+    ap.add_argument('--matchup-variants', action='store_true', help='also record role-overlay and blowout matchup variants')
     ap.add_argument('--recency-variants', action='store_true', help='also record each current rate under other decays')
     a = ap.parse_args()
     years = [int(y) for y in a.years.split(',')]
@@ -262,12 +359,16 @@ def main():
     align_path = a.out + '.alignment.parquet'
     xtd_path = a.out + '.xtd.parquet'
     recency_path = a.out + '.recency.parquet'
+    matchup_path, qb_rating_path = a.out + '.matchup.parquet', a.out + '.qbratings.parquet'
     store = {'rows': [], 'pending': {}, 'year': None, 'week': None, 'align_rows': [], 'xtd_rows': [],
-             'recency_frames': []}
+             'recency_frames': [], 'matchup_frames': [], 'qb_rating_frames': [], 'mpending': {}, 'overall_var': {},
+             'blowout_sources': []}
     if a.xtd_variants:
         install_xtd_hooks(store)
     if a.recency_variants:
         install_recency_hooks(store)
+    if a.matchup_variants:
+        install_matchup_variant_hooks(store)
     if a.defense_variants:
         install_defense_variant_hooks(store)
     if a.alignment_variants:
@@ -308,6 +409,7 @@ def main():
             build_weekly_projections.clear()
             store['year'], store['week'], store['pending'] = year, week, {}
             store['align_cur'], store['align_variants'], store['align_idx'] = {}, {}, {}
+            store['mpending'], store['overall_var'], store['blowout_sources'] = {}, {}, []
             board, meta = build_weekly_projections(year, week, a.scoring, as_of_week=week, apply_injury=False, features=feats)
             build_weekly_projections.clear()
             if board.empty:
@@ -359,6 +461,10 @@ def main():
                 pd.DataFrame(store['xtd_rows']).to_parquet(xtd_path, index=False)
             if a.recency_variants and store['recency_frames']:
                 pd.concat(store['recency_frames'], ignore_index=True).to_parquet(recency_path, index=False)
+            if a.matchup_variants and store['matchup_frames']:
+                pd.concat(store['matchup_frames'], ignore_index=True).to_parquet(matchup_path, index=False)
+                if store['qb_rating_frames']:
+                    pd.concat(store['qb_rating_frames'], ignore_index=True).to_parquet(qb_rating_path, index=False)
             print(f'{year} w{week}: {n} stat rows, {len(rows)} total, {time.time() - t0:.0f}s', flush=True)
     print('done', len(rows), flush=True)
 

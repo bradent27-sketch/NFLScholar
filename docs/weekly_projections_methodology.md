@@ -5487,3 +5487,27 @@ TE -0.007) was measured with the current lines. Test suite 841 passed. Undo: rem
 
 Note for C14: the expected-TD capture now running was started on the 59-flag defaults (before this ship). C10 does not touch TD rates,
 so the TD-blend comparison is unaffected apart from the small change in the receiving-yard points around it.
+
+
+### 2026-10-20 - Calibration audit C14 (touchdown-rate blend): no robust gain, closed; RB lean-on-xTD hint parked; C8 covered
+
+`scripts/capture_stat_blend_traces.py --xtd-variants` (2021-2025 weeks 3-17, DEFAULT_FEATURES 59; boards identical to a plain build;
+46,715 TD rows; the shipped TD rates replayed from the recorded inputs to 1e-16) and `scripts/eval_td_variants.py` (points through the
+shipped late steps, paired START pools, weekly bootstrap CI). Per group (RB rushing, RB receiving, WR receiving, TE receiving, QB rushing),
+one knob at a time, own-rate K x0.5 / x2 / x4, expected-TD K x0.5 / x2 / x4, last season's TD weight 0.4 / 1.0 (shipped 0.7):
+- WR, TE, QB: nothing beyond noise (every position dRMSE within +-0.005, START-ALL within +-0.001, mixed seasons).
+- RB, both TD types point the same way: lean more on expected TDs (xTD K x4: rushing START-RB -0.0095, receiving -0.0029, 4/5) and less on
+  last season's TDs (0.4: rushing -0.0043 [-0.0073, -0.0015], receiving -0.0014 [-0.0024, -0.0005], 5/5).
+- Joint leave-one-season-out over all five groups: -0.0011 START-ALL, better in 2 of 5 (the WR/TE/QB choices are noise).
+
+RB follow-up (`scripts/eval_td_rb_followup.py`, both RB groups moved together, grid extended to pure xTD): best START-RB -0.017
+(xTD K x4-8, last-season weight 0.2; START-ALL -0.005), but EVERY setting is worse in 2022 and 2023 (+0.003 to +0.010 START-ALL) and better
+in 2021, 2024, 2025; held out by season -0.0030 START-ALL, 3 of 5. Leaning on xTD also lowers the RB TD level: startable RBs' projected
+rushing TDs now match actual (0.421 vs 0.421 per game), and xTD-heavier settings give 0.39-0.40 (START-RB bias -0.08 -> -0.20). Keeping the
+shipped level with one scale per stat changes neither the gain nor the season split. On harness seasons (2022-2025) the expected effect is
+about -0.001, short of any bar, so no harness run. CLOSED, no change; parked as a watch item (re-check when 2026 adds a sixth season).
+Not covered by this capture (parts of how last season's TD rate is built): two-year TD weight 0.30 and band, credibility K, one-season
+cap 0.70, longevity bonus, xTD share K 4 (C14b, low priority).
+
+C8 (pace): no sweep needed. The opponent-pace weight is capped at PACE_ALPHA_CAP 0.15 (measured: team-game slope +0.136, t 3.4), which
+binds from a defense's second game, so PACE_PRIOR_GAMES almost never acts, and PACE_CLIP 0.85-1.15 times 0.15 is at most +-2.3%.

@@ -5575,3 +5575,15 @@ through the shipped late steps, paired START pools). START-QB dRMSE [CI], season
 - rush efficiency K (5), rush TD K (40), starter floor (20): all within +-0.0024, mixed.
 Nothing clears noise or comes close to a harness bar (START-ALL within +-0.0012 for every setting). CLOSED, no change; the style-K
 direction (5/5, tiny) is noted, not worth a run.
+
+
+### 2026-10-21 - Calibration audit C1b (PFF man/zone scheme TE matchup): no robust gain, closed
+
+`scripts/capture_stat_blend_traces.py --scheme-variants` (2024-2025 weeks 3-17, DEFAULT_FEATURES 60; boards identical to the QB-blend
+capture; 8,065 TE receiving rows on the scheme multiplier, the shipped setting replayed exactly) and `scripts/eval_scheme_variants.py`.
+One knob at a time, START-TE dRMSE: this-season shrinkage 1 / 2 / 8 / 12 / 20 games (shipped 4): +0.0062 (CI excludes 0, worse) /
++0.0034 (worse) / -0.0029 / -0.0042 / -0.0030; prior-season weight 0 / 0.2 / 0.6 (shipped 0.4): +0.0091 / +0.0045 / -0.0050 [-0.0113,
++0.0010]; clip 0.85-1.15 / 0.80-1.22 / 0.95-1.05 (shipped 0.90-1.10): -0.0010 / +0.0001 / +0.0080; strength 0.5 / 1.5: +0.0097 /
++0.0023. Best of the 288-point grid (shrinkage 20, prior weight 0.6, strength 1.5) -0.0137 START-TE [-0.0389, +0.0119], START-ALL
+-0.0018; chosen on one season and scored on the other: -0.0074 (2024) and +0.0259 (2025). The only consistent hint is more
+shrinkage and more prior weight (both seasons, CIs span 0). CLOSED, no change; revisit with more PFF weekly seasons (with C1).

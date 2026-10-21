@@ -45,6 +45,38 @@ from data.utils import calculate_percentile, clean_name_exact, clean_name_for_me
 CACHE_TTL_SECONDS = 3600
 
 
+def _load_snap_counts_raw(year):
+    """nflreadpy.load_snap_counts for one season, cached to data/cache/snap_counts_{year}.parquet (backlog D9, 2026-10-21).
+
+    The download used to be the only source for every season without a local export, and any failure returned an empty
+    table silently (2026-10-21: one failed download emptied a whole season's snaps in a calibration run, and through history
+    the two seasons after it). Same contract as historical_availability.load_injury_reports: a finished season is read from
+    disk and never downloaded again, a partial season's copy refreshes when older than CACHE_MAX_AGE_HOURS, and a failed
+    refresh keeps the cached copy. Never raises; an unreachable source with no cache returns an empty frame."""
+    from data.historical_availability import CACHE_DIR, _partial_season_cache_is_stale
+    cache_path = os.path.join(CACHE_DIR, f'snap_counts_{int(year)}.parquet')
+    cached = None
+    if os.path.exists(cache_path):
+        try:
+            cached = pd.read_parquet(cache_path)
+        except Exception:
+            cached = None
+        if cached is not None and not cached.empty and not _partial_season_cache_is_stale(cached, cache_path):
+            return cached
+    try:
+        raw = nflreadpy.load_snap_counts([year]).to_pandas()
+    except Exception:
+        return cached if cached is not None else pd.DataFrame()
+    if raw is None or raw.empty:
+        return cached if cached is not None else pd.DataFrame()
+    try:
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        raw.to_parquet(cache_path, index=False)
+    except Exception:
+        pass
+    return raw
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def _pivot_nflreadpy_snap_counts(year):
     """
@@ -62,10 +94,7 @@ def _pivot_nflreadpy_snap_counts(year):
     year except 2025, confirmed - see load_year_data) - defense_pct existed
     in the source data the whole time, just never read.
     """
-    try:
-        raw = nflreadpy.load_snap_counts([year]).to_pandas()
-    except Exception:
-        return pd.DataFrame()
+    raw = _load_snap_counts_raw(year)
     if raw.empty or not {'player', 'week'}.issubset(raw.columns):
         return pd.DataFrame()
     raw = raw.copy()

@@ -5615,3 +5615,12 @@ run as an add-candidate on harness v2 (2022-2025 weeks 3-17, injury/reserve repl
 START-ALL dRMSE <= -0.003, no position's START dRMSE above +0.010, and bias growth within 0.3. If switching it off is worse (START-ALL
 > 0 with a CI excluding 0) the filter is verified as helping; anything in between is recorded as "no measurable effect" and the
 filter stays (it was built for reported live cases). Any change to DEFAULT_FEATURES needs the user's sign-off.
+
+
+### 2026-10-21 - D9 shipped: snap counts cached on disk (data fix, not a model flag)
+
+User: "i think we can keep a local cache for snap counts". `data/loaders.py` `_load_snap_counts_raw` now reads nflverse snap counts
+through `data/cache/snap_counts_{year}.parquet` with the injury-report contract (finished season read from disk and never
+downloaded again; partial season refreshed when older than 6 h; a failed or empty refresh keeps the cached copy; never raises).
+Output is unchanged when the download works: the snap table built from the cache equals the downloaded one for 2021-2025, and
+2026 is cached and refreshing. `tests/test_snap_counts_cache.py` (6). The running app picks it up on its next restart.

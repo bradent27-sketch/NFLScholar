@@ -284,6 +284,61 @@ def install_matchup_variant_hooks(store):
     wp.blend_defense_prior = blend
     wp._continuous_role_adjusted_multiplier = mult
 
+# --qb-blend-variants (2026-10-20, calibration audit C13): the QB1 prior-season rate from data/qb_volume_blend.py (team
+# dropbacks x the QB's own style and efficiency, each shrunk by its own K). The blend is re-run under other K values and every
+# QB1's replaced prior rate is recorded per stat, so the K values re-score offline.
+QB_BLEND_VARIANTS = (('QB_STYLE_BLEND_K', 5.0), ('QB_STYLE_BLEND_K', 20.0), ('QB_STYLE_BLEND_K', 40.0),
+                     ('QB_VOLUME_BLEND_K', 30.0), ('QB_VOLUME_BLEND_K', 120.0), ('QB_VOLUME_BLEND_K', 240.0),
+                     ('QB_PASS_EFFICIENCY_BLEND_K', 50.0), ('QB_PASS_EFFICIENCY_BLEND_K', 200.0),
+                     ('QB_PASS_EFFICIENCY_BLEND_K', 400.0),
+                     ('QB_RUSH_EFFICIENCY_BLEND_K', 2.5), ('QB_RUSH_EFFICIENCY_BLEND_K', 10.0),
+                     ('QB_RUSH_EFFICIENCY_BLEND_K', 20.0),
+                     ('QB_RUSH_TD_BLEND_K', 20.0), ('QB_RUSH_TD_BLEND_K', 80.0), ('QB_RUSH_TD_BLEND_K', 160.0),
+                     ('QB_VOLUME_STARTER_FLOOR_DROPBACKS_PER_GAME', 15.0),
+                     ('QB_VOLUME_STARTER_FLOOR_DROPBACKS_PER_GAME', 25.0))
+
+
+def install_qb_blend_hooks(store):
+    import data.qb_volume_blend as qvb
+    import data.weekly_projections as wp
+    orig = wp.blend_qb1_volume
+
+    def blend(identity_keys, team_keys, qb1_mask, prior_history, *args, **kw):
+        out = orig(identity_keys, team_keys, qb1_mask, prior_history, *args, **kw)
+        caller = sys._getframe(1).f_locals
+        cur_frame = caller.get('cur')
+        rates = out[0]
+        if cur_frame is None or not rates or len(cur_frame) != len(qb1_mask):
+            return out
+        variants = {}
+        for name, val in QB_BLEND_VARIANTS:
+            if name == 'QB_STYLE_BLEND_K':      # a default argument, bound when the function was defined
+                variants[(name, val)] = orig(identity_keys, team_keys, qb1_mask, prior_history, *args, **dict(kw, k=val))[0]
+                continue
+            saved = getattr(qvb, name)
+            try:
+                setattr(qvb, name, val)
+                variants[(name, val)] = orig(identity_keys, team_keys, qb1_mask, prior_history, *args, **kw)[0]
+            finally:
+                setattr(qvb, name, saved)
+        name_col = caller.get('name_col', 'Player')
+        players = cur_frame[name_col].astype(str).to_numpy()
+        teams = cur_frame['Team'].astype(str).to_numpy()
+        keep = np.asarray(qb1_mask, dtype=bool)
+        for stat, arr in rates.items():
+            arr = np.asarray(arr, dtype=float)
+            m = keep & np.isfinite(arr)
+            if not m.any():
+                continue
+            frame = pd.DataFrame({'player': players[m], 'team': teams[m], 'shipped': arr[m]})
+            for (name, val), vr in variants.items():
+                frame[f'{name}_{val:g}'] = np.asarray(vr.get(stat, np.full(len(arr), np.nan)), dtype=float)[m]
+            frame['year'], frame['week'], frame['pos'], frame['stat'] = store['year'], store['week'], 'QB', stat
+            store['qb_blend_frames'].append(frame)
+        return out
+
+    wp.blend_qb1_volume = blend
+
 def install_defense_variant_hooks(store):
     """Wrap the defense estimator and the current/prior blend in data.weekly_projections. The board is unchanged (the
     original result is always returned); the variants go to ``store['rows']`` as long records."""
@@ -347,6 +402,7 @@ def main():
     ap.add_argument('--alignment-variants', action='store_true', help='also record the PFF alignment WR/TE matchup variants')
     ap.add_argument('--xtd-variants', action='store_true', help='also record the expected-TD blend inputs per player')
     ap.add_argument('--matchup-variants', action='store_true', help='also record role-overlay and blowout matchup variants')
+    ap.add_argument('--qb-blend-variants', action='store_true', help='also record the QB1 prior-rate blend under other K values')
     ap.add_argument('--recency-variants', action='store_true', help='also record each current rate under other decays')
     a = ap.parse_args()
     years = [int(y) for y in a.years.split(',')]
@@ -360,15 +416,18 @@ def main():
     xtd_path = a.out + '.xtd.parquet'
     recency_path = a.out + '.recency.parquet'
     matchup_path, qb_rating_path = a.out + '.matchup.parquet', a.out + '.qbratings.parquet'
+    qb_blend_path = a.out + '.qbblend.parquet'
     store = {'rows': [], 'pending': {}, 'year': None, 'week': None, 'align_rows': [], 'xtd_rows': [],
              'recency_frames': [], 'matchup_frames': [], 'qb_rating_frames': [], 'mpending': {}, 'overall_var': {},
-             'blowout_sources': []}
+             'blowout_sources': [], 'qb_blend_frames': []}
     if a.xtd_variants:
         install_xtd_hooks(store)
     if a.recency_variants:
         install_recency_hooks(store)
     if a.matchup_variants:
         install_matchup_variant_hooks(store)
+    if a.qb_blend_variants:
+        install_qb_blend_hooks(store)
     if a.defense_variants:
         install_defense_variant_hooks(store)
     if a.alignment_variants:
@@ -461,6 +520,8 @@ def main():
                 pd.DataFrame(store['xtd_rows']).to_parquet(xtd_path, index=False)
             if a.recency_variants and store['recency_frames']:
                 pd.concat(store['recency_frames'], ignore_index=True).to_parquet(recency_path, index=False)
+            if a.qb_blend_variants and store['qb_blend_frames']:
+                pd.concat(store['qb_blend_frames'], ignore_index=True).to_parquet(qb_blend_path, index=False)
             if a.matchup_variants and store['matchup_frames']:
                 pd.concat(store['matchup_frames'], ignore_index=True).to_parquet(matchup_path, index=False)
                 if store['qb_rating_frames']:

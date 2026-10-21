@@ -5525,3 +5525,17 @@ worse). One position at a time, no decay beats 0.85 beyond noise (best: RB 0.75 
 -0.0001); by stat family the same. Each position's decay chosen on four seasons and scored on the fifth: +0.0028 START-ALL, better
 in 2 of 5. The shipped 0.85 sits at the bottom of a clear U (the earlier "no signal" sweep is now a measured optimum). CLOSED, no
 change. (Volume stats - targets, attempts - carry no points while every stat is a direct rate, so the points test reads them as 0.)
+
+
+### 2026-10-21 - Capture data guard: a failed snap-count download invalidated the first C6/C7 matchup capture
+
+The first `--matchup-variants` capture (2026-10-20 22:51 - 10-21 00:36) did not match a plain build from 2022 on: 2022 snap counts
+(downloaded from nflverse with no disk cache; any failure returns an empty table silently) were lost mid-run, so every 2022 player
+had snap share 0 and the snap-based partial-game exclusions were off (snap coverage 0.6% vs 95% in every other capture), and the
+same in-process data moved 2023 (2022 as last season) and 2024 (two seasons back); 2025's small difference fits its download
+top-up failing too. Diagnosed by rebuilding 2022 week 3 with no hooks: identical to the recency capture, so the C9 result (and
+the earlier TD/defense captures, whose snap coverage is normal and which differ from a plain build only where C10 moved WR/TE)
+stand. The capture script now reads snap counts through a disk cache (`.sweeps/snap_cache`), retries, and stops rather than
+capture degraded boards (a guarded build of 2022 week 3 is identical to the plain one). The bad matchup output and the QB-blend
+capture that had just started without the guard were moved to `.sweeps/stale` and both re-run. Backlog D9 proposes the same cache in
+the app's loader for completed seasons.

@@ -45,6 +45,33 @@ TRACE_KEYS = ('build_path', 'current_games', 'current_rate', 'prior_rate', 'raw_
               'alignment_residual_available', 'defense_current_games', 'defense_prior_games', 'role_overlay',
               'defense_estimator')
 
+# Snap counts for seasons without a local export come from an nflverse download that returns an EMPTY table on any failure,
+# which silently drops every snap-based step for that season and every later season that reads it as history (2026-10-21: a
+# matchup capture lost 2022's snaps mid-run, which also moved its 2023 and 2024 boards). Captures read them through a disk
+# cache, retry, and stop rather than capture degraded boards.
+SNAP_CACHE_DIR = os.path.join('.sweeps', 'snap_cache')
+
+
+def install_snap_guard():
+    import data.loaders as ld
+    orig = ld._pivot_nflreadpy_snap_counts
+
+    def pivot(year):
+        path = os.path.join(SNAP_CACHE_DIR, f'snap_counts_{int(year)}.parquet')
+        if os.path.exists(path):
+            return pd.read_parquet(path)
+        for _attempt in range(6):
+            out = orig(year)
+            if out is not None and not out.empty:
+                os.makedirs(SNAP_CACHE_DIR, exist_ok=True)
+                out.to_parquet(path, index=False)
+                return out
+            time.sleep(30)
+        raise RuntimeError(f'snap counts for {year} could not be downloaded; stopping instead of capturing degraded boards')
+
+    ld._pivot_nflreadpy_snap_counts = pivot
+
+
 # --defense-variants (2026-10-20, calibration audit C2-C5): while each board is built exactly as shipped, the defense
 # estimator is re-run under other settings and the overall position-channel ratings are recorded, so the defense profile can
 # be re-scored offline. Current season: neutral games x per-game decay. Prior season: neutral games x late-season floor.
@@ -417,6 +444,7 @@ def main():
     recency_path = a.out + '.recency.parquet'
     matchup_path, qb_rating_path = a.out + '.matchup.parquet', a.out + '.qbratings.parquet'
     qb_blend_path = a.out + '.qbblend.parquet'
+    install_snap_guard()
     store = {'rows': [], 'pending': {}, 'year': None, 'week': None, 'align_rows': [], 'xtd_rows': [],
              'recency_frames': [], 'matchup_frames': [], 'qb_rating_frames': [], 'mpending': {}, 'overall_var': {},
              'blowout_sources': [], 'qb_blend_frames': []}

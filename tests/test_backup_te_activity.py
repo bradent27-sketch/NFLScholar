@@ -59,6 +59,6 @@ def test_freed_backup_volume_goes_to_the_te1_and_keeps_the_room_total():
     assert scale[1] == scale[2] == 1.0 and scale[3] == 1.0
 
 
-def test_discount_only_variant_is_registered_and_not_default():
+def test_discount_only_variant_is_registered_and_shipped():
     assert 'v2_backup_te_discount' in wp.MODEL_FEATURES
-    assert 'v2_backup_te_discount' not in wp.DEFAULT_FEATURES
+    assert 'v2_backup_te_discount' in wp.DEFAULT_FEATURES          # shipped 2026-10-22

@@ -10,7 +10,7 @@ are older and partly stale; where they disagree with this file, this file wins.
 
 - Work since the sweep sits on branch `open-items-2026-10-07` (LOCAL commits, not pushed; `PreNFL2026_v.02` on origin is at
   `001ad1b`, `main` was never touched). 762 tests pass. Nothing is running.
-- `DEFAULT_FEATURES` = 63 flags; `MODEL_FEATURES` = 96 (as of 2026-10-22: `v2_qb_implied_td_boost`, `v2_fallback_prior_fast_trust` and `v2_vacancy_lead_share_050` shipped from the error-first audit, docs/model_audit_2026-10-21.md; candidates `v2_no_history_exclusions` and `v2_qb_style_blend_k80` stay off). The model leads now live in `docs/improvement_backlog.md`. Calibration lines are **v4** (kept three times: 10-01, 10-06, 10-08).
+- `DEFAULT_FEATURES` = 64 flags; `MODEL_FEATURES` = 99 (as of 2026-10-22: `v2_qb_implied_td_boost`, `v2_fallback_prior_fast_trust`, `v2_vacancy_lead_share_050` and `v2_backup_te_discount` shipped from the error-first audit, docs/model_audit_2026-10-21.md; candidates `v2_no_history_exclusions`, `v2_qb_style_blend_k80`, `v2_backup_te_activity` and `v2_te_fill_in_role` stay off). The model leads now live in `docs/improvement_backlog.md`. Calibration lines are **v4** (kept three times: 10-01, 10-06, 10-08).
 - Newest ships: `v2_season_anchor` (10-06) and `v2_qb_td_blend` (10-06). Both shipped on a pre-set bar although the
   harness's own verdict was INCONCLUSIVE. Undo = remove the flag name from `DEFAULT_FEATURES`.
 - Standing rules: every model change is a named flag; a `DEFAULT_FEATURES` change needs sign-off or a win on a bar written

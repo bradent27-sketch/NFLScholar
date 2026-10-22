@@ -6019,3 +6019,14 @@ Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63), snap-guard
 Every-game TE ranking +0.004 (CI [+0.003, +0.005]); every-game TE bias +0.403 -> +0.267. The box-score whole-pool TE scope reads +0.006
 (backups run UNDER in games with a box-score line, so lowering them costs there - the L7 measurement effect, now visible side by side).
 Against the pre-set bar it is short on one criterion by 0.0001, so it is NOT shipped on the bar; it goes to the user with the numbers.
+
+
+### 2026-10-22 - SHIPPED: `v2_backup_te_discount` (DEFAULT_FEATURES = 64)
+
+User: "yes ship it", after the result entry above (every criterion met except box-score START-TE, +0.0021 against a +0.002 limit).
+Shipped on the user's call with those numbers on record: EVERY-TE -0.031 (CI [-0.038, -0.025], 57-3 weeks, 4 of 4 seasons),
+EVERY-ALL -0.005, starters unmoved (EVERY-START-TE -0.003, START-ALL +0.000). Effect on the board: backup TEs (room rank 2+) show
+fewer projected points (TE2 about 6%, TE4 about 25% on 2025 week 8); TE1s and every other position identical. It is a calibration
+input (CALIBRATION_INPUT_FEATURES follows DEFAULT_FEATURES; the re-scored points line is applied after it). `v2_backup_te_activity`
+and `v2_te_fill_in_role` stay candidates (off). MODEL_FEATURES = 99. The live app needs a restart to pick it up. Undo: remove the
+flag from DEFAULT_FEATURES.

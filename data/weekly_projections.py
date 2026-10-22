@@ -2308,7 +2308,7 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
-    'v2_backup_te_discount',  # CANDIDATE (2026-10-22). The backup-TE activity factor on the FINAL line (after
+    'v2_backup_te_discount',  # SHIPPED 2026-10-22. The backup-TE activity factor on the FINAL line (after
                              # vacancy and capacity), nothing handed to the TE1: only
                              # the backups move.
     'v2_te_fill_in_role',  # CANDIDATE (2026-10-22, the user's fill-in hypothesis). A backup TE whose games
@@ -2941,6 +2941,14 @@ DEFAULT_FEATURES = frozenset({
     # split instead of 0.24 (RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE). Harness: START-ALL 7.608 -> 7.604 (-0.004, CI [-0.007,
     # -0.001]), START-WR -0.009 (CI [-0.017, -0.001]), 35-25 weeks, 4 of 4 seasons; QB/RB 0, TE -0.004. Undo: remove this flag.
     'v2_vacancy_lead_share_050',
+    # SHIPPED 2026-10-22 (user: "yes ship it"): a backup TE's final receiving line (after vacancy and capacity) is scaled by
+    # how often backups with his last snap share really play and see targets (BACKUP_TE_ACTIVITY_BANDS), nothing handed on;
+    # TE1s and every other position are untouched. Harness v2 2022-2025 wk3-17 on the 63-flag base, every-game scopes (no
+    # box-score line = 0): EVERY-TE -0.031 (CI [-0.038, -0.025]), 57-3 weeks, 4 of 4 seasons; EVERY-ALL -0.005; EVERY-START-TE
+    # -0.003; START-ALL +0.000. It missed one pre-set criterion by 0.0001 (box-score START-TE +0.0021 vs +0.002, the scope that
+    # only counts games with a box-score line, where backups run under) and was shipped on the user's call with those numbers.
+    # A calibration input (acts before the re-scored points line). Undo: remove this flag.
+    'v2_backup_te_discount',
 })
 
 
@@ -13413,7 +13421,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # inside either one's own function.
     if 'v2_pass_capacity' in feats:
         result = clamp_dependent_stats(result)
-    # v2_backup_te_discount (CANDIDATE 2026-10-22): the BACKUP_TE_ACTIVITY_BANDS factor on a backup TE's final receiving line,
+    # v2_backup_te_discount (SHIPPED 2026-10-22): the BACKUP_TE_ACTIVITY_BANDS factor on a backup TE's final receiving line,
     # after vacancy and capacity, with nothing handed on - the every-game re-test found the backup discount right (EVERY-TE
     # -0.023, CI below 0) and the transfer to the TE1 the part that hurt the start pool. The bands were fit on final
     # (post-capacity) projections, so this is where they belong.

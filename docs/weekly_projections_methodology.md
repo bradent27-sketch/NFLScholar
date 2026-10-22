@@ -5674,3 +5674,30 @@ and START-ALL above 0, so it fails; the flag stays a candidate (off). Why the of
 carry: it moved only the QB's own stat rows, but a QB1's pass/rush split also sets his team's passing volume, which the pass
 catchers' and backs' target shares read (pass-capacity conservation), and those downstream moves cancel the QB gain. Lesson for
 the remaining QB knobs: a QB-blend change has to be scored on full builds, not on QB rows alone. CLOSED.
+
+
+### 2026-10-21 - Model audit, error first (diagnostic, no model change): error budget, residual scan, market gap
+
+User (2026-10-21): offline screening one setting at a time is not efficient; "come up with a plan on how to MOST effectively audit
+our model with the data we have" (steps 1-3 approved, plus scikit-learn and per-week harness output). Full write-up:
+`docs/model_audit_2026-10-21.md`; scripts `scripts/audit_error_budget.py`, `audit_features.py`, `audit_residual_scan.py`,
+`audit_leads.py`, `audit_market_gap.py`. Board: the 2026-10-21 capture's dump (DEFAULT_FEATURES 60), 2021-2025 weeks 3-17, START pool
+played 10,072 rows.
+
+- **Error budget** (one piece replaced by its actual, upper bound): team volume removes at most 6.5% of START squared error, the
+  player's share 28%, opportunities 37%, non-TD efficiency 26%, TDs 32%. TDs sit at their Poisson floor (0.87-1.22 of their error),
+  targets at 0.64, RB carries 0.40. So no TD-level or team-volume work; the reducible error is in player opportunity shares.
+- **Residual scan** (gradient boosting on 107 pre-game features, held out by season): half-strength headroom START-ALL -0.033
+  [-0.048, -0.018], 5/5 seasons (WR -0.041, TE -0.066, both 5/5; QB/RB about -0.017, CIs span 0); full strength overfits.
+  Leads (one held-out linear term vs the board): L1 QB x implied team total START-QB -0.048 (4/5; through passing TDs and rushing
+  yards, also week to week within a team); L2 WR last-season target share START-WR -0.025 (5/5; top-quarter WRs +1.0 all season,
+  bottom quarter -0.7 to -1.2); L3 rookie RB/WR START-RB -0.016, START-WR -0.015 (4/5; carries +1.7, targets +0.9 per game);
+  L4 TE level (targets under in every season, points +0.6 to +1.1 in 2023-25); L5 RB spread -0.008 (5/5); L6 last game's snap
+  share RB -0.010 (4/5). Together about the GBM headroom.
+- **Market gap** (live 2026 weeks 3-6, paired START pools): model 7.39 vs market 7.12; information slope WR 1.04, TE 0.95, all 0.87
+  (FantasyPros the same); the market's edge is WR receptions and yards (swap -0.25 / -0.23); the model's 3+-point disagreements are
+  wrong on average in both directions. Most of the live gap is information the backtest features do not contain.
+
+Tooling: `scripts/backtest_component.py` now writes per-week paired metrics of every v2 run to `.sweeps/harness_weekly/`
+(`--weekly-csv`, default auto; output-neutral). Next: L2, L1, L3 as named candidate flags, each with a pre-set bar, through the fast
+screen (validation running) and the harness.

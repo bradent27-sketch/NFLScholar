@@ -132,6 +132,10 @@ def evaluate_components(years, weeks, variant_defs, scoring='Full PPR'):
                     mv = _scope_metrics(var_sub, actual, pos, startable)
                     if mb and mv:
                         flag_rows[label].setdefault(scope, []).append((mb, mv))
+                        if weekly is not None:
+                            weekly.append({'variant': label, 'scope': scope, 'year': year, 'week': week,
+                                           **{f'base_{k}': v for k, v in mb.items()},
+                                           **{f'var_{k}': v for k, v in mv.items()}})
     return flag_rows, outliers
 
 
@@ -148,13 +152,15 @@ def _one_sided_worse_p(variant_wins, losses):
     return sum(math.comb(n, i) for i in range(0, variant_wins + 1)) / (2 ** n)
 
 
-def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_feats=None):
+def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_feats=None, weekly=None):
     """Same shape as evaluate_components (flag_rows[label][scope] = list of
     (metrics_base, metrics_variant) weekly pairs, plus the outlier ledger),
     built on scripts.harness_v2's paired-pool + pairwise_acc/RMSE metrics
     instead of _scope_df/_metrics - see harness_v2's own module docstring for
     exactly what this fixes and why it matters. Used when --harness v2
-    (the default)."""
+    (the default). ``weekly`` (a list), when given, gets one dict per
+    (variant, scope, year, week) pair with both arms' metrics - the per-week
+    record a faster screen is checked against (2026-10-21)."""
     scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
     flag_rows = {label: {} for label in variant_defs}
     outliers = []
@@ -214,6 +220,10 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
                     mv = harness_v2.metrics(var_idx.reindex(pool), actual.loc[pool])
                     if mb and mv:
                         flag_rows[label].setdefault(scope, []).append((mb, mv))
+                        if weekly is not None:
+                            weekly.append({'variant': label, 'scope': scope, 'year': year, 'week': week,
+                                           **{f'base_{k}': v for k, v in mb.items()},
+                                           **{f'var_{k}': v for k, v in mv.items()}})
     return flag_rows, outliers
 
 
@@ -411,6 +421,9 @@ def main():
     ap.add_argument('--scoring', default='Full PPR')
     ap.add_argument('--top-outliers', type=int, default=25)
     ap.add_argument('--outliers-csv', default=None, help="optional path to dump the full outlier ledger")
+    ap.add_argument('--weekly-csv', default='auto',
+                    help="v2 only: per-week paired metrics (variant, scope, year, week, both arms) to this CSV; "
+                    "'auto' (default) writes .sweeps/harness_weekly/<flags>_<years>_wk<weeks>.csv, '' skips it")
     ap.add_argument('--harness', default='v2', choices=['v1', 'v2'],
                     help="v2 (default): paired START pools + RMSE/pairwise_acc primary, MAE secondary "
                     "(scripts.harness_v2 - fixes the pool-pairing and MAE-bias flaws in v1). "
@@ -462,10 +475,20 @@ def main():
     print(f"DEFAULT_FEATURES size: {len(DEFAULT_FEATURES)}")
 
     if args.harness == 'v2':
+        weekly = []
         flag_rows, outliers = evaluate_components_v2(years, weeks, variant_defs, args.scoring,
-                                                      base_feats=base_feats)
+                                                      base_feats=base_feats, weekly=weekly)
         for label in variant_defs:
             print_flag_report_v2(label, flag_rows[label], mode=modes[label])
+        weekly_csv = args.weekly_csv
+        if weekly_csv == 'auto':
+            tag = '+'.join(sorted(variant_defs))[:120]
+            weekly_csv = os.path.join('.sweeps', 'harness_weekly',
+                                      f"{tag}_{years[0]}-{years[-1]}_wk{weeks[0]}-{weeks[-1]}.csv")
+        if weekly_csv and weekly:
+            os.makedirs(os.path.dirname(weekly_csv) or '.', exist_ok=True)
+            pd.DataFrame(weekly).to_csv(weekly_csv, index=False)
+            print(f"\nper-week paired metrics written to {weekly_csv}")
     else:
         flag_rows, outliers = evaluate_components(years, weeks, variant_defs, args.scoring)
         for label in variant_defs:

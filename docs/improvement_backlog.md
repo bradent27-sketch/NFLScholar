@@ -105,6 +105,24 @@ Plan when approved: (1) a defense-profile capture (one ~80 min run) so C2-C5 and
 harness; (2) C1 the same way on 2024-25; (3) C10-C11 from the existing M2 capture; (4) C12 and C14 with a small extra capture;
 (5) C15-C16 as on/off checks.
 
+## L. Audit leads (2026-10-21, error-first audit; `docs/model_audit_2026-10-21.md`)
+
+Found by the residual scan (107 pre-game features, held out by season, START pool, current model). Held-out = one linear term in
+the feature, fit on four seasons and scored on the fifth, against the board; the build-level flag has to earn its own number.
+GBM headroom over all features: START-ALL -0.033 [-0.048, -0.018], 5/5 seasons; these leads account for about all of it.
+
+| ID | Lead | Evidence | Held out | Status |
+|---|---|---|---|---|
+| L2 | **WR target concentration**: alphas under, depth over | Top-quarter last-season target share +1.0 pts all season (targets +0.95 in weeks 12-17), bottom quarter -0.7 to -1.2 (4-5/5); does not fade with weeks. Same territory as the live market gap (WR receptions/yards). | START-WR -0.025 (5/5), TE -0.012 (3/5) | MECHANISM FOUND 2026-10-21 (audit doc, "L2 mechanism"): team totals right, rooms too flat (TE1 +0.40 targets under, TE2-4 over, 5/5; WR1 +0.16, WR2 -0.17). Backups' blended rates and vacancy run high, then the uniform capacity cut (~12.5%) over-cuts the leader. TODO: upstream flag (backup prior/participation, vacancy rank decay); a rank-aware capacity cut needs the user's call (they chose the uniform cut on 2026-08-30) |
+| L1 | **QB x implied team total** | QB residual -1.6 (lowest implied fifth) to +1.2 (highest); week to week within a team too; via passing TDs and rushing yards | START-QB -0.048 (4/5) | TODO: re-fit the QB per-stat game-total elasticities on the current model (candidate flag) |
+| L3 | **Rookie RB/WR in-season growth** | RB rookies +1.3 to +1.9 per START game (carries +1.7), WR rookies +1.4 to +2.2 (targets +0.9), 5/5 seasons; second-year WRs -1.0 in weeks 3-6 | START-RB -0.016, START-WR -0.015 (4/5) | TODO |
+| L4 | **TE level** | TE targets under in every season (+0.4 to +0.8), points +0.6/+1.0/+1.1 in 2023-25 (W3) | START-TE line refit -0.023 | TODO (calibration input: points-line refit) |
+| L5 | RB game script (spread) | favored teams' RBs beat the board | START-RB -0.008 (5/5) | later |
+| L6 | Last game's snap share | a jump over the 3-game average is under-read | RB -0.010 (4/5), TE -0.007 (3/5) | later |
+
+Closed by the same audit: TD levels (at the Poisson floor), team volume (at most 6.5% of the error even if perfect; team carries 0/5
+predictable), coaching changes, rest, opponent allowance, team/QB change, PFF weekly coverage (each at most ~0.01 at one position).
+
 ## W. Watch items (nothing to build yet)
 
 | ID | Item | Trigger |

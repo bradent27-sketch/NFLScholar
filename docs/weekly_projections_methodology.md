@@ -5775,3 +5775,23 @@ snap-guarded), queued after L3:
   each within +0.002; bias growth within 0.3. Shipping needs the user's sign-off.
 - `v2_top_end_yardage` and `v2_expected_points_luck` (ablate, the fast-screen flips): each stays shipped unless removing it is
   SHIP-ELIGIBLE (START-ALL CI below 0); if so it goes to the user as a removal candidate, not removed automatically.
+
+
+### 2026-10-21 - L1 result: `v2_qb_implied_td_boost` meets its pre-set bar in full (SHIP-ELIGIBLE, not turned on)
+
+Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (60), snap-guarded;
+`.sweeps/harness_qb_implied_td_boost_2022-2025_wk3-17.log`, per-week `.sweeps/harness_weekly/v2_qb_implied_td_boost_*.csv`):
+VERDICT SHIP-ELIGIBLE. START-QB 7.497 -> 7.449 (-0.048, CI [-0.079, -0.017], 40-20 weeks; pairwise +0.005, CI [+0.000, +0.010]);
+START-ALL 7.615 -> 7.607 (-0.008, CI [-0.014, -0.003], 40-20 weeks); START-RB -0.000, START-WR -0.001, START-TE -0.000; whole-pool QB
+-0.044; bias growth -0.031 (START-QB bias -0.014 -> +0.162). By season (pooled from the per-week file): START-QB -0.059 / -0.041 /
+-0.073 / -0.024, START-ALL -0.010 / -0.007 / -0.014 / -0.005 (2022-2025), better in 4 of 4. The offline estimate (-0.040 START-QB,
+-0.007 START-ALL) matched: QB TDs and rushing are end-of-chain, so the re-score was faithful. The 20-week fast screen read -0.003
+START-ALL (CI spans 0), consistent with its validation. Against the bar: not REJECT, START-QB -0.048 <= -0.010 with 40-20 weeks,
+START-ALL -0.008 <= -0.003, other positions within +0.002, bias growth -0.031: met in full. Shipping needs the user's sign-off.
+
+Open check (does not change the paired result): this run's 2025 base boards differ slightly from fresh rebuilds and from the two
+20-week runs (2025 week 4 whole-pool QB RMSE 7.957 here vs 7.996; 2022-2024 identical; today's earlier full runs C15 and K80 have
+base QB 7.816 vs 7.821 here). Not reproduced by build order (week 4 alone, after week 3, after 2024 week 16 or 17, with base/variant
+alternation: identical), nor by a simulated failure of any one nflverse download (pbp, team stats, schedules, rosters, players,
+injuries, ff_opportunity, PFR). Both arms of a week are built back to back in the same process, so the paired delta stands; the L3
+and shared L2 runs (same base) will show whether full runs reproduce each other.

@@ -106,6 +106,15 @@ model's job upstream. So the fix candidates are upstream: the backups' prior and
 09-25 rank-decay sweep already found the shipped decay too weak). A rank-aware capacity cut needs the user's call first. TE1
 under-projection is most of the TE level gap (L4).
 
+Two offline checks on the traces (group totals held fixed, so the capacity factor is unchanged):
+- **A rank-aware capacity cut does not fit the pattern.** Tilting the cut toward the backups (allocation proportional to claim^a)
+  fixes TE but overshoots WR1 at once (a 1.1: WR1 +0.16 -> -0.15 while WR2 stays -0.24); START-ALL -0.003 (3/5), worse past 1.2. The
+  problem is WR2 specifically, not "everyone below the leader", so the 2026-08-30 uniform cut can stay.
+- **The vacancy lead share is the WR part.** The leader's weight in the vacancy split is 0.24 of the next man up's
+  (`RECEIVER_VACANCY_LEAD_SHARE`, set from one live case in August, never swept). At 0.5: WR1 +0.16 -> +0.04, WR2 -0.17 -> -0.13,
+  START-ALL -0.0036 [-0.0071, -0.0002] (4/5 seasons), START-WR -0.008 (3/5). Higher values overshoot. TE1 barely moves (+0.40 -> +0.35):
+  the TE part is the backups' own rates (TE2 blended 2.04 vs 1.50 actual), not vacancy.
+
 ## Step 3: market gap (live 2026, weeks 3-6)
 
 | START pool, paired | n | model RMSE | market RMSE | info slope |

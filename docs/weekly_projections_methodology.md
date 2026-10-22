@@ -5795,3 +5795,22 @@ base QB 7.816 vs 7.821 here). Not reproduced by build order (week 4 alone, after
 alternation: identical), nor by a simulated failure of any one nflverse download (pbp, team stats, schedules, rosters, players,
 injuries, ff_opportunity, PFR). Both arms of a week are built back to back in the same process, so the paired delta stands; the L3
 and shared L2 runs (same base) will show whether full runs reproduce each other.
+
+
+### 2026-10-21 - L3 result: `v2_fallback_prior_fast_trust` meets its pre-set bar in full (SHIP-ELIGIBLE, not turned on)
+
+Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (60), snap-guarded;
+`.sweeps/harness_fallback_prior_fast_trust_2022-2025_wk3-17.log`, per-week CSV in `.sweeps/harness_weekly/`): VERDICT SHIP-ELIGIBLE.
+START-ALL 7.613 -> 7.607 (-0.006, CI [-0.009, -0.003], 41-19 weeks); START-RB -0.009 [-0.018, -0.002], START-TE -0.010 [-0.019, -0.002],
+START-WR -0.003 [-0.008, +0.002], START-QB 0; whole-pool RB -0.007, TE -0.003, WR -0.002; bias growth -0.011. By season: START-ALL
+-0.003 / -0.015 / -0.005 / -0.002 (4 of 4 better); RB, WR and TE each better in 3 of 4. Larger than the offline -0.0063 feared after
+the capacity knock-on (it held up: the extra rookie volume was largely real). Fast screen: -0.008 START-ALL (CI [-0.015, -0.001]).
+Against the bar: not REJECT, START-ALL -0.006 <= -0.003, START-RB and START-WR <= 0, START-QB 0 and START-TE -0.010 within +0.002,
+bias growth -0.011: met in full. Shipping needs the user's sign-off.
+
+**Reproducibility check (L1 entry above) resolved:** this run's base equals the 20-week runs' base exactly (every overlapping week),
+fresh rebuilds, and the earlier full runs (whole-pool QB 7.816). Only the L1 full run differs, in every 2025 week from week 3 and
+nowhere else: that process loaded some 2025 input differently (most likely a live nflverse download that returned altered data; no
+single simulated failure reproduces it). L1's paired comparison used the same inputs in both arms; its 2025 slice (START-QB -0.024)
+is being re-run on 2025 alone. Defence to add after tonight's queue: disk copies of the remaining live downloads (play-by-play, team
+stats) so a finished season never depends on a download during a run.

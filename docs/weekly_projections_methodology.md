@@ -5716,3 +5716,20 @@ on the QB's per-stat game-total exponents for passing TDs (0.27 -> 0.77), rushin
 DEFAULT_FEATURES (60), snap-guarded): verdict not REJECT; START-QB dRMSE <= -0.010 and better in more weeks than worse; START-ALL
 dRMSE <= -0.003; START-RB, START-WR and START-TE each within +0.002; bias growth within 0.3. The fast screen (20 weeks) runs first as
 a further check of the screen itself; the full harness decides. Shipping needs the user's sign-off.
+
+
+### 2026-10-21 - Audit lead L3: `v2_fallback_prior_fast_trust` (CANDIDATE), pre-set bar
+
+From the audit: rookie RBs and WRs run +1.3 to +2.2 points per START game under the board (5/5 seasons), carries +1.7 and targets
++0.9 per game. Capture traces show why: with no prior of their own they are blended with the position fallback (the position's
+rate times their expected snap share), which for START-pool rookies runs far low (RB carries 7.7-9.1 vs 11.8-13.7 actual and
+10.2-12.5 this-season rate; WR targets 5.2-5.9 vs 6.5-7.3), and the in-season blend keeps 21-47% weight on it. Candidate flag
+`v2_fallback_prior_fast_trust` (off): K x 1/3 on the non-TD stats of RB/WR/TE rows whose prior is the position fallback
+(`FALLBACK_PRIOR_K_SCALE`, `_current_blend_weight(k_scale=...)`, `tests/test_fallback_prior_fast_trust.py` (3)). Offline on the
+2026-10-21 capture (receptions/yards/rush yards re-scored; volume stats not, they feed capacity): START-ALL -0.0063 [-0.0104, -0.0030],
+4/5 seasons; RB -0.012 (3/5), WR -0.005 (5/5), TE -0.006 (4/5); K x 0.5: -0.0044 (5/5). In a real build the extra rookie volume also
+comes out of teammates through capacity and the RB carry budget, so the harness number should be smaller.
+
+**Pre-set bar (written before its fast-screen and harness runs).** Harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base
+DEFAULT_FEATURES (60), snap-guarded): verdict not REJECT; START-ALL dRMSE <= -0.003; START-RB and START-WR each <= 0; START-QB and
+START-TE each within +0.002; bias growth within 0.3. Shipping needs the user's sign-off.

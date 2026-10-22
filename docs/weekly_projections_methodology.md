@@ -5865,3 +5865,8 @@ into the next calibration re-fit; their harness gains were measured with the cur
 60-flag base, so the combined set gets one confirming harness run (the three removed together vs the 63-flag default). Undo: remove
 the flag from DEFAULT_FEATURES. MODEL_FEATURES = 96. The live app needs a restart to pick up the new default (ledger rows carry the new
 feature hash).
+
+**Confirming run, pre-set bar (written before it).** Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63),
+snap-guarded), one variant with all three removed together (`--ablate-group`, new harness option): the combined ship is confirmed
+if removing the three raises START-ALL (dRMSE > 0, CI above 0) and no START position gets better by more than 0.002 when they are
+removed. The sum of the single-flag gains is about +0.018; a much smaller number means the three overlap, which goes back to the user.

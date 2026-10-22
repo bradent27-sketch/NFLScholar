@@ -418,6 +418,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--flags', default='', help="comma-separated DEFAULT_FEATURES names to ABLATE "
                     "(variant = DEFAULT_FEATURES minus this flag)")
+    ap.add_argument('--ablate-group', default='',
+                    help="comma-separated DEFAULT_FEATURES names removed TOGETHER as one variant (e.g. a confirming run "
+                    "for several flags shipped at once, each tested alone)")
     ap.add_argument('--add', default='', help="comma-separated MODEL_FEATURES names to ADD as an unproven "
                     "candidate (variant = DEFAULT_FEATURES plus this flag) - for a component NOT yet shipped")
     ap.add_argument('--add-features', default='',
@@ -453,7 +456,11 @@ def main():
     ablate_flags = [f.strip() for f in args.flags.split(',') if f.strip()]
     add_flags = [f.strip() for f in args.add.split(',') if f.strip()]
     add_features = frozenset(f.strip() for f in getattr(args, 'add_features').split(',') if f.strip())
-    if not ablate_flags and not add_flags:
+    group_flags = [f.strip() for f in args.ablate_group.split(',') if f.strip()]
+    unknown_group = set(group_flags) - set(DEFAULT_FEATURES)
+    if unknown_group:
+        raise SystemExit(f"--ablate-group not in DEFAULT_FEATURES: {sorted(unknown_group)}")
+    if not ablate_flags and not add_flags and not group_flags:
         raise SystemExit("pass --flags (ablate) and/or --add (candidate addition)")
     unknown_ablate = set(ablate_flags) - set(DEFAULT_FEATURES)
     if unknown_ablate:
@@ -474,6 +481,10 @@ def main():
     base_feats = frozenset(DEFAULT_FEATURES | add_features)
     variant_defs = {}
     modes = {}
+    if group_flags:
+        label = 'group:' + '+'.join(group_flags)
+        variant_defs[label] = frozenset((DEFAULT_FEATURES - set(group_flags)) | add_features)
+        modes[label] = 'ablate'
     for flag in ablate_flags:
         variant_defs[flag] = frozenset((DEFAULT_FEATURES - {flag}) | add_features)
         modes[flag] = 'ablate'
@@ -495,7 +506,7 @@ def main():
             print_flag_report_v2(label, flag_rows[label], mode=modes[label])
         weekly_csv = args.weekly_csv
         if weekly_csv == 'auto':
-            tag = '+'.join(sorted(variant_defs))[:120]
+            tag = ''.join(c if c.isalnum() or c in '_+.-' else '_' for c in '+'.join(sorted(variant_defs)))[:120]
             weekly_csv = os.path.join('.sweeps', 'harness_weekly',
                                       f"{tag}_{years[0]}-{years[-1]}_wk{weeks[0]}-{weeks[-1]}.csv")
         if weekly_csv and weekly:
@@ -504,7 +515,7 @@ def main():
             print(f"\nper-week paired metrics written to {weekly_csv}")
         boards_out = args.boards_out
         if boards_out == 'auto':
-            tag = '+'.join(sorted(variant_defs))[:120]
+            tag = ''.join(c if c.isalnum() or c in '_+.-' else '_' for c in '+'.join(sorted(variant_defs)))[:120]
             boards_out = os.path.join('.sweeps', 'harness_boards',
                                       f"{tag}_{years[0]}-{years[-1]}_wk{weeks[0]}-{weeks[-1]}.parquet")
         if boards_out and boards:

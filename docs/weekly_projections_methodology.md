@@ -5934,3 +5934,23 @@ confirmed helping. START-ALL 7.586 -> 7.603 (+0.017, CI [+0.009, +0.024], 19-41 
 +0.011, START-TE +0.013 (every position worse without them); whole-pool ALL +0.010; pairwise -0.001. The single-flag gains summed to
 about 0.018, so the three do not overlap. Against the bar (removal raises START-ALL with the CI above 0, no START position better by
 more than 0.002 without them): met. The 63-flag default stands.
+
+
+### 2026-10-22 - Backup-TE candidates: none meets its pre-set bar (not shipped)
+
+Shared harness run (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63), snap-guarded;
+`.sweeps/harness_te_room_shared_2022-2025_wk3-17.log`), all three INCONCLUSIVE:
+
+| variant | START-TE dRMSE (CI) | START-TE by season 2022-2025 | START-ALL | START-TE bias |
+|---|---|---|---|---|
+| `v2_backup_te_activity` | +0.002 [-0.043, +0.046] | +0.015 / -0.020 / -0.033 / -0.023 | -0.002 | -0.634 -> -0.210 |
+| `v2_te_fill_in_role` | -0.001 [-0.041, +0.038] | +0.026 / +0.005 / +0.002 / -0.055 | -0.001 | -0.595 -> -0.336 |
+| both | +0.024 [-0.036, +0.084] | +0.044 / +0.021 / -0.022 / -0.035 | +0.002 | -0.607 -> +0.010 |
+
+Against the bars (START-TE <= -0.010 with more weeks better, START-ALL <= -0.002): none met; both flags stay candidates (off).
+What they do: they move the TE level the right way (the TE1 under-projection mostly goes, START-TE bias to -0.2 / -0.3 / 0.0), but
+the extra volume lands on the TE1s on average without picking which ones get it, so the START-TE error does not fall; the offline
+-0.028 assumed every freed target found the right TE1. Recent seasons lean their way (activity better 2023-2025, fill-in better
+2025), which goes to the watch list. Note the harness only scores box-score games (backlog L7), where backups run UNDER, so the part
+these flags fix on the backups themselves (offline every-game TE RMSE -0.030) cannot show up here at all; if an every-game readout is
+added (L7 option a), they get re-scored on it before anything else is concluded.

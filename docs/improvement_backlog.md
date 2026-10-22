@@ -120,6 +120,7 @@ GBM headroom over all features: START-ALL -0.033 [-0.048, -0.018], 5/5 seasons; 
 | L4 | **TE level** | TE targets under in every season (+0.4 to +0.8), points +0.6/+1.0/+1.1 in 2023-25 (W3) | START-TE line refit -0.023 | TODO (calibration input: points-line refit) |
 | L5 | RB game script (spread) | favored teams' RBs beat the board | START-RB -0.008 (5/5) | later |
 | L6 | Last game's snap share | a jump over the 3-game average is under-read | RB -0.010 (4/5), TE -0.007 (3/5) | later |
+| L7 | **Low projections inflated by the points line (a measurement choice)** | The v4 points lines (and the harness) use only games with a box-score line. Counting every game the model expected the player to play (zeros included), the RAW projection is about right for low tiers and the calibrated one is not: TE 2-4 raw 2.14 / shown 2.89 / actual 2.02 (stat-line games 3.14); WR 2-4 1.95 / 2.91 / 1.93; RB 2-4 1.98 / 2.82 / 1.98; under 2 points shown is 2-3x the all-games actual. From ~8 points up 95%+ of games have a line and nothing changes. | none for startable players; large for deep bench, waivers, DFS punts | NEEDS THE USER'S CALL: (a) add an all-games readout to the harness (secondary), (b) fit the points line's low end on all expected-to-play games |
 
 Closed by the same audit: TD levels (at the Poisson floor), team volume (at most 6.5% of the error even if perfect; team carries 0/5
 predictable), coaching changes, rest, opponent allowance, team/QB change, PFF weekly coverage (each at most ~0.01 at one position).

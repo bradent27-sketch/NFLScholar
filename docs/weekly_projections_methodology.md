@@ -5999,3 +5999,23 @@ nothing handed on (the bands were fit on final, post-capacity projections). Boar
 EVERY-TE dRMSE <= -0.010 with its CI below 0; EVERY-START-TE and box-score START-TE each within +0.002; START-ALL and EVERY-START-ALL
 each within +0.002; EVERY-ALL <= 0; bias growth within 0.3. (It is built not to touch starters, so the start pools should not move;
 its value is the deep bench.) Shipping needs the user's sign-off.
+
+
+### 2026-10-22 - `v2_backup_te_discount` result: every criterion met except box-score START-TE, which misses by 0.0001 (not shipped; the user's call)
+
+Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63), snap-guarded;
+`.sweeps/harness_backup_te_discount_2022-2025_wk3-17.log`, per-week CSV in `.sweeps/harness_weekly/`). Harness-style deltas
+(weighted mean of weekly RMSE, unrounded from the per-week file):
+
+| scope | dRMSE | bar | |
+|---|---|---|---|
+| EVERY-TE | -0.0312, CI [-0.038, -0.025], 57-3 weeks; by season -0.040 / -0.022 / -0.022 / -0.033 | <= -0.010, CI below 0 | met |
+| EVERY-START-TE | -0.0031 | within +0.002 | met |
+| START-TE (box score) | +0.0021, CI [-0.006, +0.010] | within +0.002 | **missed by 0.0001** |
+| START-ALL / EVERY-START-ALL | +0.0005 / -0.0003 | within +0.002 | met |
+| EVERY-ALL | -0.0054, CI [-0.007, -0.004], 57-3 weeks | <= 0 | met |
+| bias growth | -0.000 | within 0.3 | met |
+
+Every-game TE ranking +0.004 (CI [+0.003, +0.005]); every-game TE bias +0.403 -> +0.267. The box-score whole-pool TE scope reads +0.006
+(backups run UNDER in games with a box-score line, so lowering them costs there - the L7 measurement effect, now visible side by side).
+Against the pre-set bar it is short on one criterion by 0.0001, so it is NOT shipped on the bar; it goes to the user with the numbers.

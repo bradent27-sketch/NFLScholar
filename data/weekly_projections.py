@@ -2156,17 +2156,17 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
-    'v2_vacancy_lead_share_050',  # CANDIDATE (2026-10-21, model audit lead L2, WR part). When a WR/TE is out,
+    'v2_vacancy_lead_share_050',  # SHIPPED 2026-10-22 (model audit lead L2, WR part). When a WR/TE is out,
                              # the room's lead pass catcher gets weight 0.5 of the
                              # next man up's in the vacancy split instead of 0.24
                              # (RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE). Acts through
                              # v2_receiver_vacancy_pecking_order.
-    'v2_fallback_prior_fast_trust',  # CANDIDATE (2026-10-21, model audit lead L3). An RB/WR/TE with no prior of
+    'v2_fallback_prior_fast_trust',  # SHIPPED 2026-10-22 (model audit lead L3). An RB/WR/TE with no prior of
                              # his own (rookie, nothing last season) trusts this
                              # season's rate sooner: K x FALLBACK_PRIOR_K_SCALE (1/3)
                              # on the non-TD stats, since the position-fallback
                              # prior says nothing about him.
-    'v2_qb_implied_td_boost',  # CANDIDATE (2026-10-21, model audit lead L1). A QB responds more to his
+    'v2_qb_implied_td_boost',  # SHIPPED 2026-10-22 (model audit lead L1). A QB responds more to his
                              # team's implied total: +QB_IMPLIED_ELASTICITY_BOOST on
                              # the per-stat game-total elasticity of passing TDs,
                              # rushing TDs and rushing yards (QB only; the per-stat
@@ -2760,6 +2760,21 @@ DEFAULT_FEATURES = frozenset({
     # growth +0.002, 40-20 weeks. No new number. A calibration input (it acts before the points line), so it is folded into
     # the next WR/TE calibration re-fit; the harness gain was measured with the current lines. Undo: remove this flag.
     'v2_role_confidence_reversed_wrte',
+    # The three below SHIPPED 2026-10-22 (user: "L1 L2 and L3 all look good to me. Turn them on"), each after its pre-set bar
+    # was met in full, from the error-first model audit (docs/model_audit_2026-10-21.md). All act before the points line
+    # (calibration inputs, folded into the next re-fit; the harness gains were measured with the current lines).
+    # L1: a QB's passing TDs, rushing TDs and rushing yards respond more to his team's implied total (+0.5 on those per-stat
+    # game-total exponents, QB_IMPLIED_ELASTICITY_BOOST). Harness v2 2022-2025 wk3-17: START-QB 7.497 -> 7.449 (-0.048, CI
+    # [-0.079, -0.017]), START-ALL -0.008 (CI [-0.014, -0.003]), 40-20 weeks, 4 of 4 seasons; RB/WR/TE 0. Undo: remove this flag.
+    'v2_qb_implied_td_boost',
+    # L3: an RB/WR/TE with no prior of his own (rookies, nothing last season) trusts this season's rate sooner, K x 1/3 on
+    # the non-TD stats (FALLBACK_PRIOR_K_SCALE). Harness: START-ALL 7.613 -> 7.607 (-0.006, CI [-0.009, -0.003]), START-RB
+    # -0.009, START-TE -0.010, START-WR -0.003, 41-19 weeks, 4 of 4 seasons; QB 0. Undo: remove this flag.
+    'v2_fallback_prior_fast_trust',
+    # L2 (WR part): when a WR/TE is out, the room's lead pass catcher gets weight 0.5 of the next man up's in the vacancy
+    # split instead of 0.24 (RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE). Harness: START-ALL 7.608 -> 7.604 (-0.004, CI [-0.007,
+    # -0.001]), START-WR -0.009 (CI [-0.017, -0.001]), 35-25 weeks, 4 of 4 seasons; QB/RB 0, TE -0.004. Undo: remove this flag.
+    'v2_vacancy_lead_share_050',
 })
 
 
@@ -5071,7 +5086,7 @@ def _efficiency_matchup(overall, role_tables, role_sizes, opponents, player_role
 
 ROLE_CHANGE_K_REDUCTION = 0.50
 
-# 'v2_fallback_prior_fast_trust' (CANDIDATE 2026-10-21, model audit lead L3, docs/model_audit_2026-10-21.md): a player with
+# 'v2_fallback_prior_fast_trust' (SHIPPED 2026-10-22, harness START-ALL -0.006; model audit lead L3): a player with
 # no prior of his own (a rookie, or nothing last season) is blended with the POSITION FALLBACK - the position's rate times
 # his expected snap share - which says nothing about him, yet the in-season blend keeps 21-47% weight on it. For the rookies
 # who reach the START pool it runs far low (RB carries 7.7-9.1 prior vs 11.8-13.7 actual, WR targets 5.2-5.9 vs 6.5-7.3),
@@ -8264,7 +8279,7 @@ GAME_TOTAL_CLIP_BY_STAT = {
 }
 GAME_TOTAL_ELASTICITY_BY_STAT_OVERRIDE_PATH = os.path.join(
     '.sweeps', 'gte_perstat_candidate.json')
-# 'v2_qb_implied_td_boost' (CANDIDATE 2026-10-21, model audit lead L1, docs/model_audit_2026-10-21.md): on the current
+# 'v2_qb_implied_td_boost' (SHIPPED 2026-10-22, harness START-ALL -0.008; model audit lead L1, docs/model_audit_2026-10-21.md): on the current
 # model a QB's miss still rises with his team's implied total, -1.6 points in the lowest fifth to +1.2 in the highest (4-5
 # of 5 seasons), week to week within a team too, and through passing TDs and rushing yards. Re-scored offline on the
 # 2026-10-21 board (2021-2025 weeks 3-17, shipped late steps): +0.5 on these three exponents, START-QB -0.040

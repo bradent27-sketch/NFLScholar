@@ -157,7 +157,7 @@ RB_CHART_VACANCY_EXTENSION_MAX = 1
 # 0.62 stays. See docs/weekly_projections_methodology.md, 2026-09-25.
 RECEIVER_VACANCY_RANK_DECAY = 0.62
 RECEIVER_VACANCY_LEAD_SHARE = 0.24
-# 'v2_vacancy_lead_share_050' (CANDIDATE 2026-10-21, model audit lead L2, WR part; docs/model_audit_2026-10-21.md): over
+# 'v2_vacancy_lead_share_050' (SHIPPED 2026-10-22, harness START-ALL -0.004; model audit lead L2, WR part): over
 # 2021-2025 the room leader is under-projected (WR1 +0.16 targets per game, 5/5 seasons) and WR2 over (-0.17) while team totals
 # are right, and the vacancy split hands WR2 more than WR1 (+0.57 vs +0.47 targets on average). LEAD_SHARE was set from one live
 # case (Collins 2026-08-30), never swept. Offline (group totals fixed): 0.5 moves WR1 to +0.04 and WR2 to -0.13, START-ALL -0.0036

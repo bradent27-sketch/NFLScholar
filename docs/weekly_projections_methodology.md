@@ -5854,3 +5854,14 @@ Tests: `tests/test_season_download_cache.py` (3); `tests/test_loaders.py` now ru
 seasons would otherwise be saved to data/cache and read by the next test). Full suite 873 passed. This removes live downloads as a
 possible cause of the one-season-per-run differences; the harness now also saves every base board, so if it recurs it can be
 diffed player by player.
+
+
+### 2026-10-22 - SHIPPED: `v2_qb_implied_td_boost`, `v2_fallback_prior_fast_trust`, `v2_vacancy_lead_share_050` (DEFAULT_FEATURES = 63)
+
+User: "L1 L2 and L3 all look good to me. Turn them on." Each met its pre-set bar in full on the 60-flag base (result entries above):
+L1 START-ALL -0.008 (QB -0.048), L3 -0.006 (RB -0.009, TE -0.010), L2 WR part -0.004 (WR -0.009), all better in 4 of 4 seasons. All
+three act before the points line, so they are calibration inputs (CALIBRATION_INPUT_FEATURES follows DEFAULT_FEATURES) and are folded
+into the next calibration re-fit; their harness gains were measured with the current v4 lines. Each was tested alone against the
+60-flag base, so the combined set gets one confirming harness run (the three removed together vs the 63-flag default). Undo: remove
+the flag from DEFAULT_FEATURES. MODEL_FEATURES = 96. The live app needs a restart to pick up the new default (ledger rows carry the new
+feature hash).

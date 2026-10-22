@@ -1,4 +1,4 @@
-"""v2_qb_implied_td_boost (candidate 2026-10-21, model audit lead L1): a QB's passing TDs, rushing TDs and rushing yards
+"""v2_qb_implied_td_boost (shipped 2026-10-22, model audit lead L1): a QB's passing TDs, rushing TDs and rushing yards
 respond more to his team's implied total (+0.5 on the per-stat game-total exponent)."""
 import os
 import sys
@@ -10,9 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import data.weekly_projections as wp  # noqa: E402
 
 
-def test_flag_is_registered_and_not_default():
+def test_flag_is_registered_and_shipped():
     assert 'v2_qb_implied_td_boost' in wp.MODEL_FEATURES
-    assert 'v2_qb_implied_td_boost' not in wp.DEFAULT_FEATURES
+    assert 'v2_qb_implied_td_boost' in wp.DEFAULT_FEATURES          # shipped 2026-10-22
     assert wp.QB_IMPLIED_ELASTICITY_BOOST == {'passing_tds': 0.5, 'rushing_tds': 0.5, 'rushing_yards': 0.5}
 
 

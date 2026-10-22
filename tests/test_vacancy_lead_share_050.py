@@ -1,4 +1,4 @@
-"""v2_vacancy_lead_share_050 (candidate 2026-10-21, model audit lead L2, WR part): when a WR/TE is out, the room's lead
+"""v2_vacancy_lead_share_050 (shipped 2026-10-22, model audit lead L2, WR part): when a WR/TE is out, the room's lead
 pass catcher gets weight 0.5 of the next man up's in the vacancy split instead of 0.24."""
 import os
 import sys
@@ -19,9 +19,9 @@ def _gains(frame, lead_share):
     return {r['Player']: float(r['targets']) - float(_player_row(frame, r['Player'])['targets']) for _, r in out.iterrows()}
 
 
-def test_flag_is_registered_and_not_default():
+def test_flag_is_registered_and_shipped():
     assert 'v2_vacancy_lead_share_050' in wp.MODEL_FEATURES
-    assert 'v2_vacancy_lead_share_050' not in wp.DEFAULT_FEATURES
+    assert 'v2_vacancy_lead_share_050' in wp.DEFAULT_FEATURES          # shipped 2026-10-22
     assert rba.RECEIVER_VACANCY_LEAD_SHARE == 0.24
     assert rba.RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE == 0.50
 

@@ -5733,3 +5733,45 @@ comes out of teammates through capacity and the RB carry budget, so the harness 
 **Pre-set bar (written before its fast-screen and harness runs).** Harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base
 DEFAULT_FEATURES (60), snap-guarded): verdict not REJECT; START-ALL dRMSE <= -0.003; START-RB and START-WR each <= 0; START-QB and
 START-TE each within +0.002; bias growth within 0.3. Shipping needs the user's sign-off.
+
+
+### 2026-10-21 - Fast screen validated (audit step 5): good for large effects and harms, too coarse for small gains
+
+Harness v2 on 20 fixed weeks (4, 7, 10, 13, 16 of 2022-2025, replay, base DEFAULT_FEATURES (60), snap-guarded), eight flags with
+known full-harness results in one run (one base build per week shared by all variants: 75 min for eight variants; a single-flag
+full run is 46 min). Log `.sweeps/fast_screen_validation.log`, per-week `.sweeps/harness_weekly/fast_screen_validation_*.csv`.
+START-ALL dRMSE, fast screen vs the full harness when the flag was added (ablations flip the sign):
+
+| flag | full harness | fast screen | agrees |
+|---|---|---|---|
+| `v2_qb1_latest_game_starter` (ablate) | -0.092 | +0.016 [+0.002, +0.032] (START-QB +0.083) | yes |
+| `v2_qb1_probable_starter_fallback` (ablate) | -0.028 | +0.013 [-0.012, +0.042] | yes |
+| `v2_no_history_exclusions` (add) | +0.007, START-TE +0.047 | +0.012, START-TE +0.067 | yes |
+| `v2_qb_style_blend_k80` (add) | +0.001 | +0.002 [+0.000, +0.004] | yes |
+| `v2_venue_mult` (add) | 0.000 | -0.001 | yes |
+| `v2_role_confidence_reversed_wrte` (ablate) | -0.004 | +0.000 | tie |
+| `v2_expected_points_luck` (ablate) | -0.007 | -0.003 [-0.012, +0.008] | no |
+| `v2_top_end_yardage` (ablate) | -0.006 | -0.005 [-0.012, +0.002] | no |
+
+The screen's START-ALL CI half-width is about 0.010-0.015, larger than the typical gain (0.003-0.008). Use: it can catch a harm or a
+large effect early and compare several variants cheaply, but small candidates go straight to the full harness, and candidates should
+share one full run (one base build per week). The two flips are not necessarily screen noise: ablating a shipped flag on today's
+base measures what it is worth now (top-end yardage was added on base 54, the luck step on base 58), so both get a full-harness
+re-check (step 6) before anything is concluded.
+
+
+### 2026-10-21 - Audit lead L2 (WR part): `v2_vacancy_lead_share_050` (CANDIDATE) and a step-6 re-check, pre-set bars
+
+`v2_vacancy_lead_share_050` (off): when a WR/TE is out, the room's lead pass catcher gets weight 0.5 of the next man up's in the
+vacancy split instead of 0.24 (`RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE` in data/rb_role_allocator.py; the shipped 0.24 came from one
+live case in August and was never swept; `tests/test_vacancy_lead_share_050.py` (2)). Offline (audit doc, L2 mechanism): WR1 +0.16
+-> +0.04 targets per game, WR2 -0.17 -> -0.13, START-ALL -0.0036 [-0.0071, -0.0002] (4/5 seasons), START-WR -0.008 (3/5).
+
+One full harness run, one base build per week shared by three variants (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (60),
+snap-guarded), queued after L3:
+
+**Pre-set bars (written before the run).**
+- `v2_vacancy_lead_share_050` (add): verdict not REJECT; START-ALL dRMSE <= -0.003; START-WR <= 0; START-QB, START-RB and START-TE
+  each within +0.002; bias growth within 0.3. Shipping needs the user's sign-off.
+- `v2_top_end_yardage` and `v2_expected_points_luck` (ablate, the fast-screen flips): each stays shipped unless removing it is
+  SHIP-ELIGIBLE (START-ALL CI below 0); if so it goes to the user as a removal candidate, not removed automatically.

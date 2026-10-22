@@ -157,6 +157,12 @@ RB_CHART_VACANCY_EXTENSION_MAX = 1
 # 0.62 stays. See docs/weekly_projections_methodology.md, 2026-09-25.
 RECEIVER_VACANCY_RANK_DECAY = 0.62
 RECEIVER_VACANCY_LEAD_SHARE = 0.24
+# 'v2_vacancy_lead_share_050' (CANDIDATE 2026-10-21, model audit lead L2, WR part; docs/model_audit_2026-10-21.md): over
+# 2021-2025 the room leader is under-projected (WR1 +0.16 targets per game, 5/5 seasons) and WR2 over (-0.17) while team totals
+# are right, and the vacancy split hands WR2 more than WR1 (+0.57 vs +0.47 targets on average). LEAD_SHARE was set from one live
+# case (Collins 2026-08-30), never swept. Offline (group totals fixed): 0.5 moves WR1 to +0.04 and WR2 to -0.13, START-ALL -0.0036
+# [-0.0071, -0.0002], 4/5 seasons; START-WR -0.008, 3/5. Higher values overshoot WR1.
+RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE = 0.50
 RECEIVER_VACANCY_CROSS_POS_WEIGHT = 0.30
 RECEIVER_VACANCY_PARTICIPATION_RANKS = 8
 RECEIVER_VACANCY_ABS_GROWTH_FLOOR = 2.0
@@ -1168,7 +1174,9 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                                            as_of_year: int | None = None,
                                            injury_provenance: dict[str, Any] | None = None,
                                            receiver_pecking_order: bool = False,
-                                           depleted_room_fill: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+                                           depleted_room_fill: bool = False,
+                                           receiver_lead_share: float = RECEIVER_VACANCY_LEAD_SHARE,
+                                           ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Redistribute an out core RB's carries and targets with allocator shares.
 
     ``injury_provenance`` can state the source season.  A prior-season injury
@@ -1180,6 +1188,9 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
     WR/TE branch so a departed pass catcher's targets flow mostly to the
     players just behind him on the depth chart rather than to the team's
     alpha - see RECEIVER_VACANCY_PECKING_TAPER / _LEAD_DAMPEN / _ABS_GROWTH_FLOOR.
+
+    ``receiver_lead_share`` is the pecking order's lead weight (RECEIVER_VACANCY_LEAD_SHARE; the candidate
+    'v2_vacancy_lead_share_050' passes RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE).
 
     ``depleted_room_fill`` (v2_rb_depleted_room_fill): carries/targets of an OUT back that the surviving backs'
     growth cap could not place are no longer dropped - see DEPLETED_ROOM_SURVIVOR_ABSORB. Rows flagged
@@ -1301,7 +1312,7 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                     weights = pd.Series(
                         np.power(RECEIVER_VACANCY_RANK_DECAY, (order - 2.0).clip(lower=0.0)),
                         index=order.index)
-                    weights = weights.where(order > 1.0, RECEIVER_VACANCY_LEAD_SHARE)
+                    weights = weights.where(order > 1.0, receiver_lead_share)
                     weights = weights.where(order <= RECEIVER_VACANCY_PARTICIPATION_RANKS, 0.0)
                     cross_pos = out.loc[candidates, "Pos"].astype(str).ne(source_role).to_numpy()
                     weights = weights.where(~cross_pos, weights * RECEIVER_VACANCY_CROSS_POS_WEIGHT)

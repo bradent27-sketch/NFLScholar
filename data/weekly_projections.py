@@ -130,6 +130,7 @@ from data.rb_role_allocator import (
     allocate_preseason_rb_roles, redistribute_rb_vacancy_with_allocator,
     analyze_rb_role_segments, derive_rb_allocator_segment_fields,
     INELIGIBLE_ROSTER_STATUSES, RB_TEAM_SNAP_SHARE_MAX,
+    RECEIVER_VACANCY_LEAD_SHARE, RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE,
 )
 from data.player_aliases import canonical_player_key, stable_roster_identity_keys
 from data.availability_overrides import (
@@ -2155,6 +2156,11 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
+    'v2_vacancy_lead_share_050',  # CANDIDATE (2026-10-21, model audit lead L2, WR part). When a WR/TE is out,
+                             # the room's lead pass catcher gets weight 0.5 of the
+                             # next man up's in the vacancy split instead of 0.24
+                             # (RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE). Acts through
+                             # v2_receiver_vacancy_pecking_order.
     'v2_fallback_prior_fast_trust',  # CANDIDATE (2026-10-21, model audit lead L3). An RB/WR/TE with no prior of
                              # his own (rookie, nothing last season) trusts this
                              # season's rate sooner: K x FALLBACK_PRIOR_K_SCALE (1/3)
@@ -13110,6 +13116,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     injury_provenance=injury_provenance,
                     receiver_pecking_order='v2_receiver_vacancy_pecking_order' in feats,
                     depleted_room_fill='v2_rb_depleted_room_fill' in feats,
+                    receiver_lead_share=(RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE
+                                         if 'v2_vacancy_lead_share_050' in feats else RECEIVER_VACANCY_LEAD_SHARE),
                 )
                 rb_vacancy_ledger = (rb_vacancy_frame.to_dict('records')
                                      if rb_vacancy_frame is not None and not rb_vacancy_frame.empty else [])

@@ -146,5 +146,8 @@ reliable yet. Re-run `scripts/audit_market_gap.py` after each week's games.
 1. Build L2, L1 and L3 as named flags, in that order (L2 is the largest and sits where the market gap is). Each gets a pre-set bar,
    the fast screen (step 5, being validated) and then the full harness. L4 is a points-line refit (cheap, calibration input).
 2. Each week: `scripts/audit_market_gap.py` (market and FantasyPros) and the big-miss read.
-3. Fast screen (step 5): 20 fixed weeks (4, 7, 10, 13, 16 of 2022-2025), validation run on eight flags with known full-harness results.
-   The harness now writes per-week paired metrics (`.sweeps/harness_weekly/`), so later runs can check how often the screen agrees.
+3. Fast screen (step 5), validated 2026-10-21 on eight flags with known results: it agrees on large effects and harms (QB1 rules,
+   the history filter, K80) but its START-ALL CI (+-0.010-0.015) is wider than a typical gain, and it flipped two small ones
+   (top-end yardage, the luck step). So: small candidates go straight to the full harness, and several candidates share one full
+   run (one base build per week). The two flips get a full-harness re-check (step 6). The harness writes per-week paired metrics to
+   `.sweeps/harness_weekly/`.

@@ -6030,3 +6030,26 @@ fewer projected points (TE2 about 6%, TE4 about 25% on 2025 week 8); TE1s and ev
 input (CALIBRATION_INPUT_FEATURES follows DEFAULT_FEATURES; the re-scored points line is applied after it). `v2_backup_te_activity`
 and `v2_te_fill_in_role` stay candidates (off). MODEL_FEATURES = 99. The live app needs a restart to pick it up. Undo: remove the
 flag from DEFAULT_FEATURES.
+
+
+### 2026-10-22 - Backlog L7b: `v2_low_end_points_line` (CANDIDATE), pre-set bar
+
+User: "yes start the points line refit". The v4 points lines were fit on games with a box-score line only; counting every game
+the model expected the player to play (no box-score line = 0), the RAW projection is about right at the low end and the shown one
+is not (TE raw 0.53 -> shown 1.20 vs 0.60 actual; WR 2-4 raw 1.95 -> 2.91 vs 1.93). The v5 re-fit of the WHOLE line on all rows was
+reverted on 2026-10-01 because the box-score harness scored it worse, so only the low end changes: below a knot the line becomes
+L(knot) + a * (raw - knot), continuous with the shipped line (`LOW_END_POINTS_LINE`, `points_line`, used at all three sites that
+apply the line: the per-position pass, the re-score after vacancy/capacity, and the top-end yardage re-score; tests
+`tests/test_low_end_points_line.py` (3)). Fit with `scripts/eval_low_end_line.py` on the 2026-10-21 board (2021-2025 weeks 3-17),
+slope by grid search through the shipped late steps on four seasons, scored on the fifth: knot 4 / 6 / 8 -> every-game ALL -0.021 /
+-0.025 / -0.026 (5/5 seasons), START pools 0.000 / +0.000 (TE +0.001) / TE +0.008; slopes the same in every fold (RB 1.1, WR 1.2,
+TE 1.2). Chosen: RB and WR knot 6, TE knot 4 (at 6 it began to touch the TE START pool): every-game RB -0.028, WR -0.028, TE -0.031,
+ALL -0.025 (5/5 each), every-game bias +0.50 -> +0.18; box-score and every-game START pools 0.0000-0.0001; QB untouched. Flag off is
+identical to the shipped board (2025 week 8 equals the saved harness board exactly). Board check, flag on, 2025 week 8: WR shown 2-4
+3.06 -> 2.39, RB 0-2 0.59 -> 0.21, TE 2-4 2.76 -> 2.38; 8+ points unchanged.
+
+**Pre-set bar (written before its harness run).** Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (64),
+snap-guarded): EVERY-ALL dRMSE <= -0.010 with its CI below 0; EVERY-RB, EVERY-WR and EVERY-TE each <= -0.005; box-score START-ALL,
+START-RB, START-WR and START-TE each within +0.002; EVERY-START-ALL within +0.002; bias growth within 0.3. The box-score whole-pool
+scopes (ALL, RB, WR, TE) are expected to get worse - they only count games with a box-score line, where low projections that record
+a stat outscore their raw number - and are reported, not part of the bar. Shipping needs the user's sign-off.

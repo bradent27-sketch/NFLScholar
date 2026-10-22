@@ -2308,6 +2308,10 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
+    'v2_low_end_points_line',  # CANDIDATE (2026-10-22, backlog L7b). Below a knot (RB/WR 6, TE 4 raw points)
+                             # the points line is re-fit on every game (no box-score
+                             # line = 0); the shipped v4 line everywhere above it.
+                             # See LOW_END_POINTS_LINE / points_line.
     'v2_backup_te_discount',  # SHIPPED 2026-10-22. The backup-TE activity factor on the FINAL line (after
                              # vacancy and capacity), nothing handed to the TE1: only
                              # the backups move.
@@ -3281,6 +3285,30 @@ def _weekly_calibration_for(pos, week):
     return WEEKLY_CALIBRATION_BY_BUCKET.get(bucket, {}).get(pos, base)
 
 
+# 'v2_low_end_points_line' (CANDIDATE 2026-10-22, backlog L7 option b; user: "yes start the points line refit"). The v4 lines
+# were fit on games with a box-score line only, and a low projection that records a stat scores more than its raw number, so
+# the line lifts every low projection: counting every game the model expected the player to play (no box-score line = 0),
+# TE raw 0.53 -> shown 1.20 against 0.60 actual, WR 2-4 raw 1.95 -> 2.91 against 1.93. The v5 all-rows re-fit of the WHOLE line
+# was reverted on 2026-10-01 (the box-score harness scored it worse), so only the low end changes: below the knot the line is
+# L(knot) + a * (raw - knot), continuous with the shipped line, a fit on every game through the shipped late steps
+# (scripts/eval_low_end_line.py; the chosen a was the same in all five held-out folds). Offline on the 2026-10-21 board,
+# held out by season: every-game error RB -0.028, WR -0.028, TE -0.031 (5/5 seasons each), every-game bias +0.50 -> +0.18;
+# box-score and every-game START pools unchanged (TE's knot sits at 4 because at 6 it began to touch the START pool).
+LOW_END_POINTS_LINE = {'RB': (6.0, 1.1), 'WR': (6.0, 1.2), 'TE': (4.0, 1.2)}      # pos: (knot in raw points, slope below it)
+
+
+def points_line(pos, week, raw, low_end=False):
+    """The points calibration line for ``pos`` in ``week``'s season phase applied to ``raw`` (scalar or array): slope * raw +
+    intercept, and with ``low_end`` ('v2_low_end_points_line') L(knot) + a * (raw - knot) below the position's knot."""
+    slope, intercept = _weekly_calibration_for(pos, week)
+    raw_arr = np.asarray(raw, dtype=float)
+    line = intercept + slope * raw_arr
+    if low_end and pos in LOW_END_POINTS_LINE:
+        knot, a = LOW_END_POINTS_LINE[pos]
+        line = np.where(raw_arr < knot, intercept + slope * knot + a * (raw_arr - knot), line)
+    return line
+
+
 # --- v2_season_anchor ---------------------------------------------------------
 # The calibrated projection shrinks toward the POOL mean (WEEKLY_CALIBRATION), not toward the player's own
 # average, so a WR/RB/TE who has played a few games is still moved too far from his own usual level. 2022-2025
@@ -3566,7 +3594,7 @@ TOP_END_YARDAGE = {
 TOP_END_YARDAGE_FIRST_WEEK = 3
 
 
-def apply_top_end_yardage(result, week, scoring_mode, calibrate=True, table=None):
+def apply_top_end_yardage(result, week, scoring_mode, calibrate=True, table=None, low_end=False):
     """(result, info): from TOP_END_YARDAGE_FIRST_WEEK on, compress each eligible row's projected yards above the
     knot (``table``, default TOP_END_YARDAGE), re-score 'Raw Model Proj Pts' from the new line and, with
     ``calibrate``, re-apply the points calibration line to it. Eligible: a listed position, not sidelined, a non-zero
@@ -3604,8 +3632,7 @@ def apply_top_end_yardage(result, week, scoring_mode, calibrate=True, table=None
         out.at[idx, 'Raw Model Proj Pts'] = new_raw
         points = new_raw
         if calibrate and out.at[idx, 'Pos'] in WEEKLY_CALIBRATION:
-            slope, intercept = _weekly_calibration_for(out.at[idx, 'Pos'], week)
-            line_pts = intercept + slope * new_raw
+            line_pts = float(points_line(out.at[idx, 'Pos'], week, new_raw, low_end))
             points = min(new_raw, line_pts) if WEEKLY_CALIBRATION_ONE_SIDED else line_pts
         for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
             if col in out.columns:
@@ -12743,9 +12770,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             #
             # WR/TE carry a weeks 1-4 "cold" line here; QB/RB one line all
             # year (see _weekly_calibration_for / WEEKLY_CALIBRATION V4).
-            slope, intercept = _weekly_calibration_for(pos, week)
             raw = out['Model Proj Pts'].to_numpy(dtype=float)
-            line = intercept + slope * raw
+            line = points_line(pos, week, raw, 'v2_low_end_points_line' in feats)
             # Two-sided as of 2026-09-02 - the line is the calibrated value in
             # BOTH directions. It used to be np.minimum(raw, line), which made
             # the WR and TE lines inert (they sit above the identity at every
@@ -13478,10 +13504,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 # also follow the same season-phase rule as the primary site
                 # (WR/TE weeks 1-4 "cold" line) - hence _weekly_calibration_for,
                 # not a bare WEEKLY_CALIBRATION lookup.
-                slopes = result['Pos'].map(lambda p: _weekly_calibration_for(p, week))
-                recomputed = [
-                    (min(v, sl * v + ic) if WEEKLY_CALIBRATION_ONE_SIDED else sl * v + ic)
-                    for v, (sl, ic) in zip(recomputed, slopes)]
+                recomputed = np.asarray(recomputed, dtype=float)
+                _low_end = 'v2_low_end_points_line' in feats
+                for _pos in result['Pos'].astype(str).unique():
+                    _m = result['Pos'].astype(str).eq(_pos).to_numpy()
+                    _line = points_line(_pos, week, recomputed[_m], _low_end)
+                    recomputed[_m] = np.minimum(recomputed[_m], _line) if WEEKLY_CALIBRATION_ONE_SIDED else _line
             result['Model Proj Pts'] = np.round(np.clip(recomputed, 0.0, None), 2)
             result['Calibrated Model Proj Pts'] = result['Model Proj Pts']
             _uncalibrate_sidelined(result, include_zero_rows=('v2_uncalibrate_zero_rows' in feats))
@@ -13499,7 +13527,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # stat line itself, so a calibration dump records the compressed line its lines would then be fit on.
     top_end_info = {}
     if 'v2_top_end_yardage' in feats:
-        result, top_end_info = apply_top_end_yardage(result, week, scoring_mode, calibrate=('calibration' in feats))
+        result, top_end_info = apply_top_end_yardage(result, week, scoring_mode, calibrate=('calibration' in feats),
+                                                     low_end=('v2_low_end_points_line' in feats))
         if top_end_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 

@@ -996,6 +996,94 @@ def _load_participation_curve():
     return xs, ys
 
 
+# 'v2_backup_te_activity' (CANDIDATE 2026-10-22, model audit lead L2, TE part; docs/model_audit_2026-10-21.md): a backup TE
+# the model expects to play often never takes an offensive snap (healthy scratch, inactive) or plays snaps without a stat
+# line: of TE2/TE3/TE4 rows with availability > 0.5 (2021-2025 weeks 3-17), 9% / 20% / 51% took no snap. The participation
+# curve keys on the share over his last four APPEARANCES, so the weeks he did not play never count, and backups who have
+# barely played stay over-projected; through the pass-capacity budget that surplus comes out of the TE1 (+0.40 targets per
+# game under, 5/5 seasons, while TE2-TE4 run -0.15 / -0.13 / -0.12 over). Factor = actual / projected targets for TE room
+# rank >= 2, by his offensive snap share in his most recent snap-count row this season (snap counts list every snap-taker,
+# stat line or not): steady by season (0-15%: 0.44-0.64; 15-35%: 0.81-0.93; 35-60%: 0.87-0.99). Offline (factors held out by
+# season, room totals kept): START-TE -0.028 [-0.054, -0.001], START-ALL -0.0037, 5/5 seasons; TE1 miss +0.40 -> +0.19.
+BACKUP_TE_ACTIVITY_BANDS = (       # (upper edge of the last snap share, factor); None = no snap row yet this season
+    (None, 0.73),
+    (0.0, 0.25),                   # special teams only (0 offensive snaps)
+    (0.15, 0.53),
+    (0.35, 0.85),
+    (0.60, 0.95),
+    (1.01, 1.08),
+)
+
+
+@lru_cache(maxsize=16)
+def _te_last_snap_shares(year, as_of_week):
+    """{clean name: offensive snap share in his latest snap-count row before ``as_of_week`` this season} for TEs, from the
+    cached nflverse snap counts (every snap-taker, stat line or not)."""
+    from data.loaders import _load_snap_counts_raw
+    from data.utils import clean_name_for_merge
+    raw = _load_snap_counts_raw(int(year))
+    if raw is None or raw.empty or not {'player', 'position', 'week', 'offense_pct'}.issubset(raw.columns):
+        return {}
+    s = raw[raw['position'].astype(str).str.upper().eq('TE')].copy()
+    if 'game_type' in s.columns:
+        s = s[s['game_type'].astype(str).str.upper().eq('REG')]
+    s['week'] = pd.to_numeric(s['week'], errors='coerce')
+    s = s[s['week'] < int(as_of_week)].sort_values('week')
+    if s.empty:
+        return {}
+    s['_key'] = clean_name_for_merge(s['player'].astype(str))
+    last = s.drop_duplicates('_key', keep='last')
+    return dict(zip(last['_key'], pd.to_numeric(last['offense_pct'], errors='coerce').fillna(0.0)))
+
+
+def te_room_rank(teams, shares, live):
+    """Rank by expected snap share among each team's non-sidelined TEs (NaN for a sidelined row)."""
+    share = np.asarray(shares, dtype=float)
+    return (pd.Series(np.where(live, share, np.nan)).groupby(pd.Series(teams, dtype=object).to_numpy())
+            .rank(ascending=False, method='first').to_numpy(dtype=float))
+
+
+def backup_te_activity_multiplier(names, teams, shares, live, year, as_of_week):
+    """Per TE row: BACKUP_TE_ACTIVITY_BANDS factor for his last snap share, for room rank >= 2 (te_room_rank); 1.0 for the
+    room leader and anyone sidelined."""
+    from data.utils import clean_name_for_merge
+    last = _te_last_snap_shares(int(year), int(as_of_week))
+    keys = clean_name_for_merge(pd.Series(names, dtype=object).astype(str)).to_numpy(dtype=object)
+    rank = te_room_rank(teams, shares, live)
+    out = np.ones(len(keys))
+    for i, key in enumerate(keys):
+        if not live[i] or not np.isfinite(rank[i]) or rank[i] < 2:
+            continue
+        value = last.get(key)
+        for edge, factor in BACKUP_TE_ACTIVITY_BANDS:
+            if (edge is None and value is None) or (edge is not None and value is not None and value <= edge):
+                out[i] = factor
+                break
+    return out
+
+
+def transfer_te_backup_volume(proj_cols, teams, activity, rank):
+    """'v2_backup_te_activity': the TE room's total is right (2021-2025: 7.21 projected and actual targets per team-week),
+    only its split is off, so what the activity factor takes from the backups goes to the team's TE1 - his receiving stats
+    scale together (his own catch rate, yards and TDs per target). Returns the TE1 scale per row (1.0 elsewhere)."""
+    scale = np.ones(len(activity))
+    if 'targets' not in proj_cols:
+        return scale
+    tgt = np.asarray(proj_cols['targets'], dtype=float)
+    act = np.asarray(activity, dtype=float)
+    freed = np.where(act > 0, tgt * (1.0 / np.where(act > 0, act, 1.0) - 1.0), 0.0)
+    teams = np.asarray(teams, dtype=object)
+    by_team = pd.Series(freed).groupby(teams).sum()
+    for i in np.where(np.asarray(rank) == 1)[0]:
+        add = float(by_team.get(teams[i], 0.0))
+        if tgt[i] > 0 and add != 0.0:
+            scale[i] = max(0.0, 1.0 + add / tgt[i])
+    for stat in ('targets', 'receptions', 'receiving_yards', 'receiving_tds'):
+        if stat in proj_cols:
+            proj_cols[stat] = np.asarray(proj_cols[stat], dtype=float) * scale
+    return scale
+
+
 def wrte_participation_multiplier(expected_share, strength=None):
     """1 - strength*(1 - g(s)): g is the fitted relative participation at
     active snap share s, flat at 1.0 for a starter. NaN share reads as the
@@ -2156,6 +2244,12 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
+    'v2_backup_te_activity',  # CANDIDATE (2026-10-22, model audit lead L2, TE part). A TE below the room
+                             # leader is scaled by how often backups with his last
+                             # snap share really play and see targets
+                             # (BACKUP_TE_ACTIVITY_BANDS, from the snap-count table,
+                             # stat line or not); the capacity budget hands the
+                             # difference back to the TE1.
     'v2_vacancy_lead_share_050',  # SHIPPED 2026-10-22 (model audit lead L2, WR part). When a WR/TE is out,
                              # the room's lead pass catcher gets weight 0.5 of the
                              # next man up's in the vacancy split instead of 0.24
@@ -11604,6 +11698,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             _rb_app = np.where(cur['Games'].to_numpy(dtype=float) >= 1, _rb_app, np.nan)
             participation_mult = rb_participation_multiplier(
                 _rb_share, _rb_app, _rb_last1, _rb_app3, _rb_rank)
+        _te_activity = _te_rank = None
+        if 'v2_backup_te_activity' in feats and pos == 'TE' and use_role_volume and not cold_start:
+            # see BACKUP_TE_ACTIVITY_BANDS: folded into the participation factor (same meaning: does he play at all);
+            # transfer_te_backup_volume below hands the difference to the TE1
+            _te_live = cur[name_col].map(injury_mult).fillna(1.0).to_numpy(dtype=float) > 0.01
+            _te_activity = backup_te_activity_multiplier(
+                cur[name_col].to_numpy(dtype=object), cur['Team'].to_numpy(dtype=object), player_share, _te_live,
+                year, as_of_week)
+            _te_rank = te_room_rank(cur['Team'].to_numpy(dtype=object), player_share, _te_live)
+            participation_mult = participation_mult * _te_activity
 
         proj_cols, stat_trace = {}, {}
         # v2_td_volume_shrink: the projected target rate from the 'targets'
@@ -12418,6 +12522,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 if trace is not None:
                     trace['qb_projected_starter'] = qb_projected_starter
                     trace['qb_nonstarter_volume_factor'] = qb_nonstarter_volume_factor
+
+        if _te_activity is not None:
+            _te_transfer = transfer_te_backup_volume(proj_cols, cur['Team'].to_numpy(dtype=object), _te_activity, _te_rank)
+            for _stat in ('targets', 'receptions', 'receiving_yards', 'receiving_tds'):
+                if _stat in stat_trace:
+                    stat_trace[_stat]['te_room_transfer_multiplier'] = _te_transfer
 
         # The direct-rate factors above describe the calculation before an
         # optional volume×efficiency rebuild.  Capture the final pre-vacancy

@@ -5870,3 +5870,30 @@ feature hash).
 snap-guarded), one variant with all three removed together (`--ablate-group`, new harness option): the combined ship is confirmed
 if removing the three raises START-ALL (dRMSE > 0, CI above 0) and no START position gets better by more than 0.002 when they are
 removed. The sum of the single-flag gains is about +0.018; a much smaller number means the three overlap, which goes back to the user.
+
+
+### 2026-10-22 - Audit lead L2 (TE part): `v2_backup_te_activity` (CANDIDATE), pre-set bar
+
+User: "check on backup TEs which you mentioned run high". On the capture traces (2021-2025 weeks 3-17), the backup TEs' high
+projections are not a rate problem: in games with a box score line they run UNDER (TE2 2.15 targets actual vs 1.80 projected, TE3
+1.36 vs 0.93). They run high once every game the model expected them to play counts: of TE2/TE3/TE4 rows with availability > 0.5,
+9% / 20% / 51% took no offensive snap (inactive, healthy scratch) and 21% / 32% / 26% played snaps without a stat line (nflverse box
+scores are stat-triggered; snap counts list every snap-taker). The participation curve keys on snap share over the last four
+APPEARANCES, so weeks he did not play never count. By his last snap share: no snaps last game -> 89% take none again; under 15%
+-> projected 0.59 targets vs 0.31 actual. The TE room's total is right (7.21 projected and actual per team-week), so the surplus
+on the backups is exactly what the TE1 is short (+0.40 under, 5/5 seasons).
+
+`v2_backup_te_activity` (off): a TE below the room leader (rank by expected snap share among non-sidelined TEs) is scaled by
+BACKUP_TE_ACTIVITY_BANDS on his offensive snap share in his latest snap-count row this season (none 0.73, special teams only 0.25,
+0-15% 0.53, 15-35% 0.85, 35-60% 0.95, 60%+ 1.08; actual / projected targets for those rows 2021-2025, steady by season), folded
+into the participation factor; what it takes from the backups goes to the team's TE1 at his own catch rate, yards and TDs per target
+(`transfer_te_backup_volume`), so the room total is unchanged before vacancy and capacity. In-season only. Tests
+`tests/test_backup_te_activity.py` (4). Offline (factors held out by season, room totals kept): START-TE -0.028 [-0.054, -0.001],
+START-ALL -0.0037, 5/5 seasons; every-game TE RMSE (zeros counted) -0.030; TE1 miss +0.40 -> +0.19. Board check, 2025 week 8:
+TE1s +6.9 targets in total, TE2-TE4 -8.1, WRs +1.4. Caveats: the factors were fit on the 60-flag board (L3 since shipped) over
+2021-2025, so the harness window is mildly in-sample; the harness scores box-score games only, where backups look under-projected,
+so it can only credit the fix through the TE1.
+
+**Pre-set bar (written before its harness run).** Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63),
+snap-guarded): verdict not REJECT; START-TE dRMSE <= -0.010 and better in more weeks than worse; START-ALL <= -0.002; START-QB,
+START-RB and START-WR each within +0.002; bias growth within 0.3. Shipping needs the user's sign-off.

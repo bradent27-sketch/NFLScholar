@@ -6053,3 +6053,24 @@ snap-guarded): EVERY-ALL dRMSE <= -0.010 with its CI below 0; EVERY-RB, EVERY-WR
 START-RB, START-WR and START-TE each within +0.002; EVERY-START-ALL within +0.002; bias growth within 0.3. The box-score whole-pool
 scopes (ALL, RB, WR, TE) are expected to get worse - they only count games with a box-score line, where low projections that record
 a stat outscore their raw number - and are reported, not part of the bar. Shipping needs the user's sign-off.
+
+
+### 2026-10-22 - `v2_low_end_points_line` result: every criterion met except box-score START-TE (+0.0026 vs +0.002), from one season (not shipped; the user's call)
+
+Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (64), snap-guarded;
+`.sweeps/harness_low_end_points_line_2022-2025_wk3-17.log`, per-week CSV in `.sweeps/harness_weekly/`). Harness-style deltas:
+
+| scope | dRMSE | by season 2022-2025 | bar | |
+|---|---|---|---|---|
+| EVERY-ALL | -0.0235, CI [-0.027, -0.020], 56-4 weeks; bias +0.412 -> +0.080; pairwise +0.001 [+0.001, +0.002] | -0.027 / -0.019 / -0.022 / -0.023 | <= -0.010, CI below 0 | met |
+| EVERY-RB | -0.031, CI [-0.037, -0.024] | -0.031 / -0.029 / -0.024 / -0.026 | <= -0.005 | met |
+| EVERY-WR | -0.030, CI [-0.037, -0.023] | -0.037 / -0.019 / -0.030 / -0.028 | <= -0.005 | met |
+| EVERY-TE | -0.020, CI [-0.026, -0.014] | -0.016 / -0.020 / -0.017 / -0.022 | <= -0.005 | met |
+| START-ALL / RB / WR | +0.0002 / -0.0000 / +0.0001 | | within +0.002 | met |
+| START-TE | **+0.0026**, CI [-0.002, +0.008] | -0.003 / -0.004 / **+0.016** / -0.003 | within +0.002 | missed by 0.0006 |
+| EVERY-START-ALL | +0.0001 | | within +0.002 | met |
+| bias growth | +0.000 | | within 0.3 | met |
+
+QB untouched (0.000 everywhere). As expected the box-score whole-pool scopes, which count only games with a box-score line, get worse
+(ALL +0.024, RB +0.019, WR +0.029, TE +0.040). Against the pre-set bar it misses one criterion by 0.0006, from a single season (2024),
+so it is NOT shipped on the bar; it goes to the user with the numbers.

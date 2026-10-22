@@ -5814,3 +5814,26 @@ nowhere else: that process loaded some 2025 input differently (most likely a liv
 single simulated failure reproduces it). L1's paired comparison used the same inputs in both arms; its 2025 slice (START-QB -0.024)
 is being re-run on 2025 alone. Defence to add after tonight's queue: disk copies of the remaining live downloads (play-by-play, team
 stats) so a finished season never depends on a download during a run.
+
+
+### 2026-10-22 - L2 (WR part) result: `v2_vacancy_lead_share_050` meets its pre-set bar (SHIP-ELIGIBLE, not turned on); step-6 re-checks keep top-end yardage and the luck step
+
+One full harness run, shared base (2022-2025 weeks 3-17, replay, DEFAULT_FEATURES (60), snap-guarded;
+`.sweeps/harness_l2_lead_share_and_recheck_2022-2025_wk3-17.log`, per-week CSV in `.sweeps/harness_weekly/`).
+
+- `v2_vacancy_lead_share_050` (add): VERDICT SHIP-ELIGIBLE. START-ALL 7.608 -> 7.604 (-0.004, CI [-0.007, -0.001], 35-25 weeks);
+  START-WR -0.009 [-0.017, -0.001]; START-TE -0.004 (CI spans 0); QB and RB 0; pairwise START-ALL +0.001; bias growth -0.017. By
+  season START-ALL -0.003 / -0.001 / -0.005 / -0.008 and START-WR -0.005 / -0.003 / -0.012 / -0.016 (4 of 4 each). Offline estimate
+  -0.0036. Against the bar: not REJECT, START-ALL <= -0.003, START-WR <= 0, QB/RB/TE within +0.002, bias within 0.3: met in full.
+  Shipping needs the user's sign-off.
+- `v2_top_end_yardage` (ablate): INCONCLUSIVE, removing it +0.002 START-ALL (CI [-0.003, +0.007]); by season +0.010 / +0.000 / -0.003
+  / -0.001. Stays shipped (bar: removal only if SHIP-ELIGIBLE).
+- `v2_expected_points_luck` (ablate): INCONCLUSIVE, removing it +0.005 START-ALL (CI [-0.002, +0.014]), worse in 4 of 4 seasons
+  (+0.015 / +0.002 / +0.004 / +0.001). Stays shipped.
+The fast screen's two flips were noise, as its validation said.
+
+**Reproducibility, update:** this run's base matches the L3 run in 2022, 2024 and 2025 and differs in every 2023 week. So it
+recurs: in two of tonight's four full runs one whole season came out differently (2025 in the L1 run, 2023 here), always the same
+"other" result inside a run, both arms alike. Ruled out: build order in short sequences, Python hash seed (eight seeds identical),
+a failed download of any one nflverse source. Paired results stand (both arms share the state within a week); absolute RMSEs can
+differ by a season between runs. Next: the harness saves each week's base board so the next occurrence can be diffed player by player.

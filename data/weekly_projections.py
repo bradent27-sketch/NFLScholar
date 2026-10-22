@@ -2155,6 +2155,11 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
+    'v2_qb_implied_td_boost',  # CANDIDATE (2026-10-21, model audit lead L1). A QB responds more to his
+                             # team's implied total: +QB_IMPLIED_ELASTICITY_BOOST on
+                             # the per-stat game-total elasticity of passing TDs,
+                             # rushing TDs and rushing yards (QB only; the per-stat
+                             # clips still apply). Needs v2_game_total_elasticity_perstat.
     'v2_expected_points_luck',  # SHIPPED 2026-10-20 (was a candidate, backlog N1). Last step on the points total:
                              # a WR/TE whose results ran ahead of what his usage was
                              # worth (nflverse ff_opportunity expected points) in his
@@ -8232,6 +8237,13 @@ GAME_TOTAL_CLIP_BY_STAT = {
 }
 GAME_TOTAL_ELASTICITY_BY_STAT_OVERRIDE_PATH = os.path.join(
     '.sweeps', 'gte_perstat_candidate.json')
+# 'v2_qb_implied_td_boost' (CANDIDATE 2026-10-21, model audit lead L1, docs/model_audit_2026-10-21.md): on the current
+# model a QB's miss still rises with his team's implied total, -1.6 points in the lowest fifth to +1.2 in the highest (4-5
+# of 5 seasons), week to week within a team too, and through passing TDs and rushing yards. Re-scored offline on the
+# 2026-10-21 board (2021-2025 weeks 3-17, shipped late steps): +0.5 on these three exponents, START-QB -0.040
+# [-0.070, -0.011], better in 5 of 5 seasons (+0.25 -0.026, +0.75 -0.041 4/5); START-ALL -0.007. The 2016-2023 fit was
+# made against each player's season mean, not against this model's own blend.
+QB_IMPLIED_ELASTICITY_BOOST = {'passing_tds': 0.5, 'rushing_tds': 0.5, 'rushing_yards': 0.5}
 
 
 @lru_cache(maxsize=1)
@@ -8256,14 +8268,17 @@ def _load_game_total_perstat():
     return {pos: tuple(sorted(stats.items())) for pos, stats in table.items()}
 
 
-def _game_total_stat_multipliers(env, teams, pos, league_implied, stats):
+def _game_total_stat_multipliers(env, teams, pos, league_implied, stats, boost=None):
     """{stat: np.array(len(teams))} - the per-stat implied-total factor for
     'v2_game_total_elasticity_perstat'. 1.0 for any team with no posted line
     (the normal case more than a few weeks out) and for any stat with no
     fitted elasticity, same degrade-gracefully convention as
     _game_env_multiplier, which this replaces on the implied-total channel
-    when the per-stat flag is on (venue stays on _game_env_multiplier)."""
+    when the per-stat flag is on (venue stays on _game_env_multiplier).
+    ``boost`` ({stat: delta}) is added to those stats' exponents ('v2_qb_implied_td_boost')."""
     betas = dict(_load_game_total_perstat().get(pos, ()))
+    for stat, delta in (boost or {}).items():
+        betas[stat] = betas.get(stat, 0.0) + float(delta)
     out = {stat: np.ones(len(teams)) for stat in stats}
     if not env or not league_implied or league_implied <= 0:
         return out
@@ -12175,7 +12190,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # the flag is on and a line is posted.
         env_stat_mult = (
             _game_total_stat_multipliers(env, cur['Team'].astype(str).to_numpy(), pos,
-                                         league_implied, tuple(proj_cols))
+                                         league_implied, tuple(proj_cols),
+                                         boost=(QB_IMPLIED_ELASTICITY_BOOST
+                                                if pos == 'QB' and 'v2_qb_implied_td_boost' in feats else None))
             if perstat_env and env else {})
         if env_stat_mult and cold_start and 'v2_cold_start_regression' in feats:
             r = 1.0 - COLD_START_MULTIPLIER_REGRESSION

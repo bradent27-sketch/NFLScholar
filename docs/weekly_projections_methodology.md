@@ -5701,3 +5701,18 @@ played 10,072 rows.
 Tooling: `scripts/backtest_component.py` now writes per-week paired metrics of every v2 run to `.sweeps/harness_weekly/`
 (`--weekly-csv`, default auto; output-neutral). Next: L2, L1, L3 as named candidate flags, each with a pre-set bar, through the fast
 screen (validation running) and the harness.
+
+
+### 2026-10-21 - Audit lead L1: `v2_qb_implied_td_boost` (CANDIDATE), pre-set bar
+
+From the audit (entry above): a QB's miss still rises with his team's implied total (-1.6 points in the lowest fifth to +1.2 in the
+highest, week to week within a team too), through passing TDs and rushing yards. Candidate flag `v2_qb_implied_td_boost` (off): +0.5
+on the QB's per-stat game-total exponents for passing TDs (0.27 -> 0.77), rushing TDs (0.24 -> 0.74) and rushing yards (0.19 ->
+0.69), shipped clips unchanged (`QB_IMPLIED_ELASTICITY_BOOST`, `tests/test_qb_implied_td_boost.py` (2)). Offline re-score on the
+2026-10-21 board through the shipped late steps: START-QB -0.040 [-0.070, -0.011], 5/5 seasons; START-ALL -0.007 (+0.25: -0.026 5/5;
++0.75: -0.041 4/5; adding passing yards too overshoots past +0.25).
+
+**Pre-set bar (written before its fast-screen and harness runs).** Harness v2 (2022-2025 weeks 3-17, injury/reserve replay, base
+DEFAULT_FEATURES (60), snap-guarded): verdict not REJECT; START-QB dRMSE <= -0.010 and better in more weeks than worse; START-ALL
+dRMSE <= -0.003; START-RB, START-WR and START-TE each within +0.002; bias growth within 0.3. The fast screen (20 weeks) runs first as
+a further check of the screen itself; the full harness decides. Shipping needs the user's sign-off.

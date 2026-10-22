@@ -57,3 +57,8 @@ def test_freed_backup_volume_goes_to_the_te1_and_keeps_the_room_total():
     assert np.isclose(proj['targets'][:3].sum(), before)
     assert np.isclose(proj['receptions'][0] / proj['targets'][0], 0.7)      # TE1 keeps his catch rate
     assert scale[1] == scale[2] == 1.0 and scale[3] == 1.0
+
+
+def test_discount_only_variant_is_registered_and_not_default():
+    assert 'v2_backup_te_discount' in wp.MODEL_FEATURES
+    assert 'v2_backup_te_discount' not in wp.DEFAULT_FEATURES

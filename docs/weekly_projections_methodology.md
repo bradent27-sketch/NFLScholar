@@ -5973,3 +5973,29 @@ the every-game part: a variant qualifies if EVERY-TE dRMSE <= -0.010 with its CI
 its known box-score START-TE is within +0.010 and START-ALL within +0.002 (so "both", at START-TE +0.024, cannot qualify). Among
 qualifiers the larger EVERY-TE gain wins. This is a second bar on a new metric after the first failed; the user asked for exactly
 this test, and the first bar stands as recorded. Shipping needs the user's sign-off.
+
+
+### 2026-10-22 - Every-game re-test result: the backup discount is right, the hand-off to the TE1 is not; `v2_backup_te_discount` (CANDIDATE), pre-set bar
+
+Re-test on the 63-flag base with the every-game scopes (`.sweeps/harness_te_room_every_game_2022-2025_wk3-17.log`; box-score
+scopes identical to the first run):
+
+| variant | EVERY-TE | EVERY-START-TE | EVERY-ALL | qualifies |
+|---|---|---|---|---|
+| `v2_backup_te_activity` | -0.023 [-0.040, -0.007], pairwise +0.004 [+0.003, +0.005] | +0.008 [-0.037, +0.052] | -0.005 [-0.008, -0.001] | no (start pool > 0) |
+| `v2_te_fill_in_role` | -0.012 [-0.025, +0.001] | +0.015 | -0.002 | no |
+| both | -0.019 | +0.043 | -0.004 | no (box-score START-TE +0.024) |
+
+None qualifies under the bar written before the run; both stay off. Reading: discounting the backups is right (every-game TE error
+down, ranking up, CI below 0), and handing their volume to the TE1 is what hurts the start pool: the TE1 level improves on average
+but the extra targets do not land on the right TE1s. The every-game view also shows the board running OVER on average once zero
+games count (EVERY-ALL bias +0.44, EVERY-WR +0.56), where the box-score view says under (ALL -0.27) - backlog L7.
+
+`v2_backup_te_discount` (off): the BACKUP_TE_ACTIVITY_BANDS factor on a backup TE's final receiving line, after vacancy and capacity,
+nothing handed on (the bands were fit on final, post-capacity projections). Board check 2025 week 8: only the 53 backup-TE rows move
+(TE2 targets 46.9 -> 42.6, TE3 23.4 -> 21.2, TE4 8.4 -> 5.1); TE1s and every other position identical.
+
+**Pre-set bar (written before its run).** Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63), snap-guarded):
+EVERY-TE dRMSE <= -0.010 with its CI below 0; EVERY-START-TE and box-score START-TE each within +0.002; START-ALL and EVERY-START-ALL
+each within +0.002; EVERY-ALL <= 0; bias growth within 0.3. (It is built not to touch starters, so the start pools should not move;
+its value is the deep bench.) Shipping needs the user's sign-off.

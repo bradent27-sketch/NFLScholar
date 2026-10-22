@@ -2308,6 +2308,9 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
+    'v2_backup_te_discount',  # CANDIDATE (2026-10-22). The backup-TE activity factor on the FINAL line (after
+                             # vacancy and capacity), nothing handed to the TE1: only
+                             # the backups move.
     'v2_te_fill_in_role',  # CANDIDATE (2026-10-22, the user's fill-in hypothesis). A backup TE whose games
                              # this season came while a TE now ahead of him was out is
                              # scaled to his normal-game snap share (or by
@@ -13410,6 +13413,25 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # inside either one's own function.
     if 'v2_pass_capacity' in feats:
         result = clamp_dependent_stats(result)
+    # v2_backup_te_discount (CANDIDATE 2026-10-22): the BACKUP_TE_ACTIVITY_BANDS factor on a backup TE's final receiving line,
+    # after vacancy and capacity, with nothing handed on - the every-game re-test found the backup discount right (EVERY-TE
+    # -0.023, CI below 0) and the transfer to the TE1 the part that hurt the start pool. The bands were fit on final
+    # (post-capacity) projections, so this is where they belong.
+    te_discount_adjusted = False
+    if ('v2_backup_te_discount' in feats and not cold_start and not result.empty
+            and {'Pos', 'Team', 'Player'}.issubset(result.columns)):
+        _te_rows = result['Pos'].eq('TE').to_numpy()
+        if _te_rows.any():
+            _te = result.loc[_te_rows]
+            _share = pd.to_numeric(_te.get('Expected Snap Share', pd.Series(0.0, index=_te.index)), errors='coerce').fillna(0.0)
+            _live = pd.to_numeric(_te.get('Availability', pd.Series(1.0, index=_te.index)), errors='coerce').fillna(1.0) > 0.01
+            _factor = backup_te_activity_multiplier(_te['Player'].to_numpy(dtype=object), _te['Team'].to_numpy(dtype=object),
+                                                    _share.to_numpy(dtype=float), _live.to_numpy(), year, as_of_week)
+            if (np.abs(_factor - 1.0) > 1e-9).any():
+                for _stat in ('targets', 'receptions', 'receiving_yards', 'receiving_tds'):
+                    if _stat in result.columns:
+                        result.loc[_te_rows, _stat] = pd.to_numeric(result.loc[_te_rows, _stat], errors='coerce') * _factor
+                te_discount_adjusted = True
     # Re-score whenever EITHER pass moved a stat line, not vacancy alone:
     # pass_capacity_conservation runs on every board (not just one with an
     # OUT player) and, unlike vacancy, was never covered by the existing
@@ -13417,7 +13439,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # keep pre-conservation points sitting next to a post-conservation stat
     # line, the same displayed-vs-real mismatch class of bug HANDOFF gotcha
     # #40 (the cross-position NaN fix) already documents one instance of.
-    if vacancy_adjusted or pass_capacity_adjusted or carry_budget_adjusted:
+    if vacancy_adjusted or pass_capacity_adjusted or carry_budget_adjusted or te_discount_adjusted:
             # .fillna(0.0) IS THE LOAD-BEARING PART OF THIS LINE. Re-scoring
             # happens on the ASSEMBLED frame, whose columns are the union of
             # four positions' stat lists - so a receiver's row carries NaN

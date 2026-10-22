@@ -14,7 +14,26 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import data.historical_availability as historical_availability  # noqa: E402
 import data.loaders as loaders  # noqa: E402
+
+
+def _isolated_cache(fn):
+    """Run one test with the season-download cache (data.loaders._cached_season_download, 2026-10-22) in a fresh temporary
+    folder: otherwise a test's fake season is saved to the real data/cache and handed to the next test."""
+    import functools
+    import tempfile
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        saved = historical_availability.CACHE_DIR
+        with tempfile.TemporaryDirectory() as tmp:
+            historical_availability.CACHE_DIR = tmp
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                historical_availability.CACHE_DIR = saved
+    return wrapper
 
 
 class _FakeFrame:
@@ -26,6 +45,7 @@ class _FakeFrame:
         return self._df
 
 
+@_isolated_cache
 def test_load_team_pace_through_week_drops_the_in_progress_week():
     # Regression (2026-09-14): a Thursday opener going final gives
     # nflreadpy real week-1 rows for ONLY the two teams that already
@@ -83,6 +103,7 @@ def test_load_team_pace_through_week_drops_the_in_progress_week():
         loaders.nflreadpy.load_schedules = original_sched
 
 
+@_isolated_cache
 def test_load_team_pace_reports_games_played_alongside_each_average():
     stats = pd.DataFrame([
         {'team': 'KC', 'opponent_team': 'DEN', 'week': 1,
@@ -113,6 +134,7 @@ def test_load_team_pace_reports_games_played_alongside_each_average():
     assert pace.loc['LAC', 'def_games'] == 1
 
 
+@_isolated_cache
 def test_load_team_pace_discounts_a_game_that_went_to_overtime():
     # A and B's Week 1 game ran long (70 combined plays); C and D's did not
     # (60). Raw, A/B would look like the faster pair purely from bonus OT
@@ -156,6 +178,7 @@ def test_load_team_pace_discounts_a_game_that_went_to_overtime():
         assert abs(row['plays'] - 60.0) < 1e-9
 
 
+@_isolated_cache
 def test_progressive_blowout_catches_a_game_decided_by_half_that_closed_under_the_final_threshold():
     # X leads Y 28-0 at halftime (a real prevent-defense/backup situation
     # already underway), then Y scores twice in garbage time while X coasts,

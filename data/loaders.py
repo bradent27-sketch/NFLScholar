@@ -45,16 +45,17 @@ from data.utils import calculate_percentile, clean_name_exact, clean_name_for_me
 CACHE_TTL_SECONDS = 3600
 
 
-def _load_snap_counts_raw(year):
-    """nflreadpy.load_snap_counts for one season, cached to data/cache/snap_counts_{year}.parquet (backlog D9, 2026-10-21).
+def _cached_season_download(kind, year, fetch):
+    """One season of an nflverse table, cached to data/cache/{kind}_{year}.parquet (backlog D9, 2026-10-21; play-by-play and
+    team stats added 2026-10-22). ``fetch()`` downloads it.
 
-    The download used to be the only source for every season without a local export, and any failure returned an empty
-    table silently (2026-10-21: one failed download emptied a whole season's snaps in a calibration run, and through history
-    the two seasons after it). Same contract as historical_availability.load_injury_reports: a finished season is read from
-    disk and never downloaded again, a partial season's copy refreshes when older than CACHE_MAX_AGE_HOURS, and a failed
-    refresh keeps the cached copy. Never raises; an unreachable source with no cache returns an empty frame."""
+    A download used to be the only source, and any failure returned an empty table silently (2026-10-21: one failed snap
+    download emptied a season in a calibration run; 2026-10-22: two of four full harness runs came out with one season built
+    differently). Same contract as historical_availability.load_injury_reports: a finished season is read from disk and never
+    downloaded again, a partial season's copy refreshes when older than CACHE_MAX_AGE_HOURS, and a failed or empty refresh keeps
+    the cached copy. Never raises; an unreachable source with no cache returns an empty frame."""
     from data.historical_availability import CACHE_DIR, _partial_season_cache_is_stale
-    cache_path = os.path.join(CACHE_DIR, f'snap_counts_{int(year)}.parquet')
+    cache_path = os.path.join(CACHE_DIR, f'{kind}_{int(year)}.parquet')
     cached = None
     if os.path.exists(cache_path):
         try:
@@ -64,7 +65,7 @@ def _load_snap_counts_raw(year):
         if cached is not None and not cached.empty and not _partial_season_cache_is_stale(cached, cache_path):
             return cached
     try:
-        raw = nflreadpy.load_snap_counts([year]).to_pandas()
+        raw = fetch()
     except Exception:
         return cached if cached is not None else pd.DataFrame()
     if raw is None or raw.empty:
@@ -75,6 +76,17 @@ def _load_snap_counts_raw(year):
     except Exception:
         pass
     return raw
+
+
+def _load_snap_counts_raw(year):
+    """nflreadpy.load_snap_counts for one season, cached on disk (see _cached_season_download)."""
+    return _cached_season_download('snap_counts', year, lambda: nflreadpy.load_snap_counts([year]).to_pandas())
+
+
+def _load_team_stats_week(year):
+    """nflreadpy.load_team_stats (weekly) for one season, cached on disk (see _cached_season_download)."""
+    return _cached_season_download('team_stats_week', year,
+                                   lambda: nflreadpy.load_team_stats([year], summary_level='week').to_pandas())
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
@@ -1146,7 +1158,7 @@ def load_team_pass_attempts_faced(year):
         # 'reg'-level summary collapses to one row per team per season with
         # no opponent_team/game breakdown at all - only the per-game 'week'
         # level carries opponent_team, so that's summed here instead.
-        team_stats = nflreadpy.load_team_stats([year], summary_level='week').to_pandas()
+        team_stats = _load_team_stats_week(year)
         return team_stats.groupby('opponent_team', observed=True)['attempts'].sum()
     except Exception:
         return pd.Series(dtype=float)
@@ -1163,10 +1175,7 @@ def load_pbp(year):
     anywhere has that at all, so this is a real gap-filler, not a
     duplicate of something already loaded elsewhere.
     """
-    try:
-        return nflreadpy.load_pbp([year]).to_pandas()
-    except Exception:
-        return pd.DataFrame()
+    return _cached_season_download('pbp', year, lambda: nflreadpy.load_pbp([year]).to_pandas())
 
 
 # --- v2_defense_blowout_discount_progressive --------------------------------
@@ -1437,7 +1446,7 @@ def load_team_pace(year, through_week=None):
     played yet.
     """
     try:
-        df = nflreadpy.load_team_stats([year], summary_level='week').to_pandas()
+        df = _load_team_stats_week(year)
     except Exception:
         return pd.DataFrame()
     if df.empty or 'team' not in df.columns:
@@ -1490,7 +1499,7 @@ def load_team_weekly_plays(year):
     has nothing for this year).
     """
     try:
-        df = nflreadpy.load_team_stats([year], summary_level='week').to_pandas()
+        df = _load_team_stats_week(year)
     except Exception:
         return pd.DataFrame(columns=['team', 'week', 'plays'])
     if df.empty or 'team' not in df.columns:

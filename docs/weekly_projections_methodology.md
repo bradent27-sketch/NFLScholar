@@ -5837,3 +5837,20 @@ recurs: in two of tonight's four full runs one whole season came out differently
 "other" result inside a run, both arms alike. Ruled out: build order in short sequences, Python hash seed (eight seeds identical),
 a failed download of any one nflverse source. Paired results stand (both arms share the state within a week); absolute RMSEs can
 differ by a season between runs. Next: the harness saves each week's base board so the next occurrence can be diffed player by player.
+
+
+### 2026-10-22 - L1 2025 re-run, and play-by-play / team stats cached on disk (data fix, no model change)
+
+**L1 on 2025 alone** (`.sweeps/harness_qb_implied_td_boost_rerun_2025_wk3-17.log`): base identical to the normal 2025 (every week
+matches the L3 run). START-QB -0.022 (CI [-0.071, +0.031]), START-ALL -0.004 (CI [-0.013, +0.005]); the anomalous run read -0.024 /
+-0.005 for the same season. L1's result is unchanged: better in every season on clean inputs.
+
+**D10: the remaining live downloads cached** (`data/loaders.py` `_cached_season_download`, the D9 contract generalised; snap counts
+now go through it too): `load_pbp` and the weekly team stats (`_load_team_stats_week`, used by the pace, weekly-plays and
+pass-attempts-faced loaders) are saved to `data/cache/pbp_{year}.parquet` / `team_stats_week_{year}.parquet`; a finished season
+is never downloaded again, the current one refreshes after 6 h, a failed refresh keeps the copy. Verified output-neutral: a 2025
+week-4 harness-style board built while downloading and again reading the cache equals the clean board in every numeric column.
+Tests: `tests/test_season_download_cache.py` (3); `tests/test_loaders.py` now runs each test with a temporary cache folder (its fake
+seasons would otherwise be saved to data/cache and read by the next test). Full suite 873 passed. This removes live downloads as a
+possible cause of the one-season-per-run differences; the harness now also saves every base board, so if it recurs it can be
+diffed player by player.

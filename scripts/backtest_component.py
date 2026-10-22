@@ -152,7 +152,13 @@ def _one_sided_worse_p(variant_wins, losses):
     return sum(math.comb(n, i) for i in range(0, variant_wins + 1)) / (2 ** n)
 
 
-def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_feats=None, weekly=None):
+# Columns of each week's base board kept by --boards-out (2026-10-22): enough to diff two runs player by player.
+BOARD_KEEP_COLUMNS = ('Player', 'Pos', 'Team', 'Opponent', 'Availability', 'Games This Season', 'Raw Model Proj Pts',
+                      'Model Proj Pts', 'passing_attempts', 'passing_yards', 'passing_tds', 'rushing_attempts',
+                      'rushing_yards', 'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds')
+
+
+def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_feats=None, weekly=None, boards=None):
     """Same shape as evaluate_components (flag_rows[label][scope] = list of
     (metrics_base, metrics_variant) weekly pairs, plus the outlier ledger),
     built on scripts.harness_v2's paired-pool + pairwise_acc/RMSE metrics
@@ -160,7 +166,8 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
     exactly what this fixes and why it matters. Used when --harness v2
     (the default). ``weekly`` (a list), when given, gets one dict per
     (variant, scope, year, week) pair with both arms' metrics - the per-week
-    record a faster screen is checked against (2026-10-21)."""
+    record a faster screen is checked against (2026-10-21). ``boards`` (a list), when given, gets each week's base board
+    (BOARD_KEEP_COLUMNS) so two runs can be compared player by player (2026-10-22: one season per run came out differently)."""
     scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
     flag_rows = {label: {} for label in variant_defs}
     outliers = []
@@ -180,6 +187,9 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
             if base_proj.empty:
                 print(f"{year} w{week} base: nothing ({base_meta.get('reason')})")
                 continue
+            if boards is not None:
+                keep = [c for c in BOARD_KEEP_COLUMNS if c in base_proj.columns]
+                boards.append(base_proj[keep].assign(year=year, week=week))
 
             for pos in ('QB', 'RB', 'WR', 'TE'):
                 top = _scope_df(base_proj, pos, True)
@@ -421,6 +431,9 @@ def main():
     ap.add_argument('--scoring', default='Full PPR')
     ap.add_argument('--top-outliers', type=int, default=25)
     ap.add_argument('--outliers-csv', default=None, help="optional path to dump the full outlier ledger")
+    ap.add_argument('--boards-out', default='auto',
+                    help="v2 only: every week's base board (key columns) to this parquet; 'auto' (default) writes "
+                    ".sweeps/harness_boards/<flags>_<years>_wk<weeks>.parquet, '' skips it")
     ap.add_argument('--weekly-csv', default='auto',
                     help="v2 only: per-week paired metrics (variant, scope, year, week, both arms) to this CSV; "
                     "'auto' (default) writes .sweeps/harness_weekly/<flags>_<years>_wk<weeks>.csv, '' skips it")
@@ -475,9 +488,9 @@ def main():
     print(f"DEFAULT_FEATURES size: {len(DEFAULT_FEATURES)}")
 
     if args.harness == 'v2':
-        weekly = []
+        weekly, boards = [], ([] if args.boards_out else None)
         flag_rows, outliers = evaluate_components_v2(years, weeks, variant_defs, args.scoring,
-                                                      base_feats=base_feats, weekly=weekly)
+                                                      base_feats=base_feats, weekly=weekly, boards=boards)
         for label in variant_defs:
             print_flag_report_v2(label, flag_rows[label], mode=modes[label])
         weekly_csv = args.weekly_csv
@@ -489,6 +502,19 @@ def main():
             os.makedirs(os.path.dirname(weekly_csv) or '.', exist_ok=True)
             pd.DataFrame(weekly).to_csv(weekly_csv, index=False)
             print(f"\nper-week paired metrics written to {weekly_csv}")
+        boards_out = args.boards_out
+        if boards_out == 'auto':
+            tag = '+'.join(sorted(variant_defs))[:120]
+            boards_out = os.path.join('.sweeps', 'harness_boards',
+                                      f"{tag}_{years[0]}-{years[-1]}_wk{weeks[0]}-{weeks[-1]}.parquet")
+        if boards_out and boards:
+            os.makedirs(os.path.dirname(boards_out) or '.', exist_ok=True)
+            frame = pd.concat(boards, ignore_index=True)
+            for col in frame.columns:
+                if frame[col].dtype == object:
+                    frame[col] = frame[col].astype(str)
+            frame.to_parquet(boards_out, index=False)
+            print(f"base boards written to {boards_out}")
     else:
         flag_rows, outliers = evaluate_components(years, weeks, variant_defs, args.scoring)
         for label in variant_defs:

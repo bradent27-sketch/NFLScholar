@@ -5924,3 +5924,13 @@ flag as written for `v2_backup_te_activity` above (not REJECT; START-TE <= -0.01
 -0.002; QB/RB/WR within +0.002; bias growth within 0.3). Choice: if only one meets its bar it is the candidate; if both do, the pair
 is preferred only when it meets the same bar and beats the better single flag on START-TE by 0.005 or more, otherwise the single
 flag with the larger START-TE gain. Shipping needs the user's sign-off.
+
+
+### 2026-10-22 - Confirming run for the 63-flag default: the three new flags add up (bar met)
+
+Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63), snap-guarded; `--ablate-group` of the three;
+`.sweeps/harness_confirm_l1_l2_l3_2022-2025_wk3-17.log`): removing them together makes the board worse, VERDICT (ablate) REJECT =
+confirmed helping. START-ALL 7.586 -> 7.603 (+0.017, CI [+0.009, +0.024], 19-41 weeks); START-QB +0.048, START-RB +0.009, START-WR
++0.011, START-TE +0.013 (every position worse without them); whole-pool ALL +0.010; pairwise -0.001. The single-flag gains summed to
+about 0.018, so the three do not overlap. Against the bar (removal raises START-ALL with the CI above 0, no START position better by
+more than 0.002 without them): met. The 63-flag default stands.

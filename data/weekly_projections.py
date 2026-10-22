@@ -1062,6 +1062,70 @@ def backup_te_activity_multiplier(names, teams, shares, live, year, as_of_week):
     return out
 
 
+# 'v2_te_fill_in_role' (CANDIDATE 2026-10-22, the user's hypothesis: "backup TEs ... played in games where there was an
+# injury and then when the other injured TEs return their snap share and projection is inflated"). Measured on the capture
+# board (2021-2025 weeks 3-17, TE room rank >= 2, expected to play): a backup's games played while a TE now ahead of him was
+# out run at 42.5% of snaps against 28.8% in his other games, and 28.4% the week being projected. Targets actual / projected:
+# no fill-in history 0.92; some fill-in with 2+ normal games 0.86; 1 normal game 0.71; nothing but fill-in games 0.61. The
+# rate and snap history average his fill-in role in, so after the starter returns the backup keeps it and, through the
+# pass-capacity budget, the TE1 is short. Factor = his mean offensive snap share in his normal games / in all his games this
+# season (snap counts, so a statless game counts too), or FILL_IN_ONLY_FACTOR when every game he played was a fill-in; the
+# room leader is never scaled, and transfer_te_backup_volume hands the difference to the TE1 (the room total is right).
+FILL_IN_ONLY_FACTOR = 0.61
+FILL_IN_ROLE_CLIP = (0.5, 1.0)
+
+
+@lru_cache(maxsize=16)
+def _te_snap_weeks(year, as_of_week):
+    """{clean name: {week: offensive snap share}} for TEs this season before ``as_of_week``, from the cached snap counts."""
+    from data.loaders import _load_snap_counts_raw
+    from data.utils import clean_name_for_merge
+    raw = _load_snap_counts_raw(int(year))
+    if raw is None or raw.empty or not {'player', 'position', 'week', 'offense_pct'}.issubset(raw.columns):
+        return {}
+    s = raw[raw['position'].astype(str).str.upper().eq('TE')].copy()
+    if 'game_type' in s.columns:
+        s = s[s['game_type'].astype(str).str.upper().eq('REG')]
+    s['week'] = pd.to_numeric(s['week'], errors='coerce')
+    s = s[s['week'] < int(as_of_week)]
+    s['_key'] = clean_name_for_merge(s['player'].astype(str))
+    s['offense_pct'] = pd.to_numeric(s['offense_pct'], errors='coerce').fillna(0.0)
+    out = {}
+    for key, week, pct in zip(s['_key'], s['week'], s['offense_pct']):
+        out.setdefault(key, {})[int(week)] = float(pct)
+    return out
+
+
+def te_fill_in_role_multiplier(names, teams, shares, live, year, as_of_week):
+    """Per TE row (room rank >= 2): his normal-game / all-game snap share, where a game is a fill-in when a live teammate
+    ranked ahead of him this week took no offensive snap; FILL_IN_ONLY_FACTOR if all his games were fill-ins; 1.0 when none
+    were, for the room leader, and for sidelined rows. Returns (factor, rank)."""
+    from data.utils import clean_name_for_merge
+    weeks = _te_snap_weeks(int(year), int(as_of_week))
+    keys = clean_name_for_merge(pd.Series(names, dtype=object).astype(str)).to_numpy(dtype=object)
+    teams = np.asarray(teams, dtype=object)
+    rank = te_room_rank(teams, shares, live)
+    out = np.ones(len(keys))
+    for i, key in enumerate(keys):
+        if not live[i] or not np.isfinite(rank[i]) or rank[i] < 2:
+            continue
+        mine = {w: p for w, p in weeks.get(key, {}).items() if p > 0}
+        if not mine:
+            continue
+        ahead = [keys[j] for j in range(len(keys)) if teams[j] == teams[i] and live[j] and np.isfinite(rank[j])
+                 and rank[j] < rank[i]]
+        fill = [w for w in mine if any(weeks.get(h, {}).get(w, 0.0) <= 0 for h in ahead)]
+        if not fill:
+            continue
+        normal = [w for w in mine if w not in fill]
+        if not normal:
+            out[i] = FILL_IN_ONLY_FACTOR
+            continue
+        ratio = np.mean([mine[w] for w in normal]) / np.mean(list(mine.values()))
+        out[i] = float(np.clip(ratio, *FILL_IN_ROLE_CLIP))
+    return out, rank
+
+
 def transfer_te_backup_volume(proj_cols, teams, activity, rank):
     """'v2_backup_te_activity': the TE room's total is right (2021-2025: 7.21 projected and actual targets per team-week),
     only its split is off, so what the activity factor takes from the backups goes to the team's TE1 - his receiving stats
@@ -2244,6 +2308,11 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
+    'v2_te_fill_in_role',  # CANDIDATE (2026-10-22, the user's fill-in hypothesis). A backup TE whose games
+                             # this season came while a TE now ahead of him was out is
+                             # scaled to his normal-game snap share (or by
+                             # FILL_IN_ONLY_FACTOR if every game was a fill-in); the
+                             # TE1 gets the difference (transfer_te_backup_volume).
     'v2_backup_te_activity',  # CANDIDATE (2026-10-22, model audit lead L2, TE part). A TE below the room
                              # leader is scaled by how often backups with his last
                              # snap share really play and see targets
@@ -11699,15 +11768,23 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             participation_mult = rb_participation_multiplier(
                 _rb_share, _rb_app, _rb_last1, _rb_app3, _rb_rank)
         _te_activity = _te_rank = None
+        if 'v2_te_fill_in_role' in feats and pos == 'TE' and use_role_volume and not cold_start:
+            # see FILL_IN_ONLY_FACTOR: a backup's fill-in role does not carry over once the starter is back
+            _te_live = cur[name_col].map(injury_mult).fillna(1.0).to_numpy(dtype=float) > 0.01
+            _te_activity, _te_rank = te_fill_in_role_multiplier(
+                cur[name_col].to_numpy(dtype=object), cur['Team'].to_numpy(dtype=object), player_share, _te_live,
+                year, as_of_week)
+            participation_mult = participation_mult * _te_activity
         if 'v2_backup_te_activity' in feats and pos == 'TE' and use_role_volume and not cold_start:
             # see BACKUP_TE_ACTIVITY_BANDS: folded into the participation factor (same meaning: does he play at all);
             # transfer_te_backup_volume below hands the difference to the TE1
             _te_live = cur[name_col].map(injury_mult).fillna(1.0).to_numpy(dtype=float) > 0.01
-            _te_activity = backup_te_activity_multiplier(
+            _te_act = backup_te_activity_multiplier(
                 cur[name_col].to_numpy(dtype=object), cur['Team'].to_numpy(dtype=object), player_share, _te_live,
                 year, as_of_week)
             _te_rank = te_room_rank(cur['Team'].to_numpy(dtype=object), player_share, _te_live)
-            participation_mult = participation_mult * _te_activity
+            _te_activity = _te_act if _te_activity is None else _te_activity * _te_act
+            participation_mult = participation_mult * _te_act
 
         proj_cols, stat_trace = {}, {}
         # v2_td_volume_shrink: the projected target rate from the 'targets'

@@ -421,6 +421,9 @@ def main():
     ap.add_argument('--ablate-group', default='',
                     help="comma-separated DEFAULT_FEATURES names removed TOGETHER as one variant (e.g. a confirming run "
                     "for several flags shipped at once, each tested alone)")
+    ap.add_argument('--add-group', default='',
+                    help="comma-separated MODEL_FEATURES names added TOGETHER as one candidate variant (e.g. two "
+                    "overlapping candidates also tested one by one with --add)")
     ap.add_argument('--add', default='', help="comma-separated MODEL_FEATURES names to ADD as an unproven "
                     "candidate (variant = DEFAULT_FEATURES plus this flag) - for a component NOT yet shipped")
     ap.add_argument('--add-features', default='',
@@ -460,7 +463,11 @@ def main():
     unknown_group = set(group_flags) - set(DEFAULT_FEATURES)
     if unknown_group:
         raise SystemExit(f"--ablate-group not in DEFAULT_FEATURES: {sorted(unknown_group)}")
-    if not ablate_flags and not add_flags and not group_flags:
+    add_group_flags = [f.strip() for f in args.add_group.split(',') if f.strip()]
+    bad_add_group = (set(add_group_flags) - set(MODEL_FEATURES)) | (set(add_group_flags) & set(DEFAULT_FEATURES))
+    if bad_add_group:
+        raise SystemExit(f"--add-group must be MODEL_FEATURES not yet in DEFAULT_FEATURES: {sorted(bad_add_group)}")
+    if not ablate_flags and not add_flags and not group_flags and not add_group_flags:
         raise SystemExit("pass --flags (ablate) and/or --add (candidate addition)")
     unknown_ablate = set(ablate_flags) - set(DEFAULT_FEATURES)
     if unknown_ablate:
@@ -481,6 +488,10 @@ def main():
     base_feats = frozenset(DEFAULT_FEATURES | add_features)
     variant_defs = {}
     modes = {}
+    if add_group_flags:
+        label = 'addgroup:' + '+'.join(add_group_flags)
+        variant_defs[label] = frozenset(DEFAULT_FEATURES | set(add_group_flags) | add_features)
+        modes[label] = 'add'
     if group_flags:
         label = 'group:' + '+'.join(group_flags)
         variant_defs[label] = frozenset((DEFAULT_FEATURES - set(group_flags)) | add_features)

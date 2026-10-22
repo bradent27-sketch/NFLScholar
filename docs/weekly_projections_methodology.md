@@ -5897,3 +5897,30 @@ so it can only credit the fix through the TE1.
 **Pre-set bar (written before its harness run).** Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63),
 snap-guarded): verdict not REJECT; START-TE dRMSE <= -0.010 and better in more weeks than worse; START-ALL <= -0.002; START-QB,
 START-RB and START-WR each within +0.002; bias growth within 0.3. Shipping needs the user's sign-off.
+
+
+### 2026-10-22 - The user's fill-in hypothesis: `v2_te_fill_in_role` (CANDIDATE), pre-set bars for a shared run
+
+User: backup TEs look inflated because they "played in games where there was an injury and then when the other injured TEs
+return their snap share and projection is inflated despite them being lower on the depth chart". Confirmed on the capture board
+(2021-2025 weeks 3-17, TE room rank >= 2, expected to play): a backup's games played while a TE now ahead of him was out ran at
+42.5% of snaps against 28.8% in his other games and 28.4% in the week projected. Targets actual / projected by history: no fill-in
+games 0.92 (2,829 rows); some fill-in, 2+ normal games 0.86 (1,510); one normal game 0.71 (253); only fill-in games 0.61 (577).
+TE2 with over half his games as fill-ins 0.78 (25% took no snap) vs 0.95 with none; TE3 0.68 vs 0.90; the same sign in 4-5 of 5
+seasons. Weaker elsewhere: WR3 1.08 -> 0.90, RB2 partly, WR2 none, so TE only. (Separately noted: backup points run well under
+projection even where their volume is right - TE2 with no fill-in history 0.95 of targets but 0.80 of points - a points-line
+lead for low projections.)
+
+`v2_te_fill_in_role` (off): for a TE ranked below the room leader, a game this season is a fill-in when a live teammate ranked
+ahead of him this week took no offensive snap (snap counts, so statless games count); factor = his mean offensive snap share in
+his normal games / in all his games (clipped 0.5-1.0), or FILL_IN_ONLY_FACTOR 0.61 when every game was a fill-in; folded into the
+participation factor, the difference goes to the TE1 (`transfer_te_backup_volume`). Composes with `v2_backup_te_activity`
+(multiplied). Tests `tests/test_te_fill_in_role.py` (3). Board check 2025 week 8: SF Kittle (back from a hamstring) 4.57 -> 6.29
+targets, 9.98 -> 12.95 points; Tonges (the fill-in) 3.57 -> 1.80; with both flags Kittle 7.30, Tonges 0.95.
+
+One shared harness run (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (63), snap-guarded; new `--add-group` option), three
+variants: `v2_backup_te_activity`, `v2_te_fill_in_role`, and both together. **Pre-set bars (written before the run):** each single
+flag as written for `v2_backup_te_activity` above (not REJECT; START-TE <= -0.010 with more weeks better than worse; START-ALL <=
+-0.002; QB/RB/WR within +0.002; bias growth within 0.3). Choice: if only one meets its bar it is the candidate; if both do, the pair
+is preferred only when it meets the same bar and beats the better single flag on START-TE by 0.005 or more, otherwise the single
+flag with the larger START-TE gain. Shipping needs the user's sign-off.

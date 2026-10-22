@@ -96,6 +96,34 @@ def scope_pool(base_df, var_df, pos, startable, actual_players=None):
     return sorted(pool)
 
 
+# Every-game scopes (2026-10-22, backlog L7). The scopes above score a player only in weeks he has a box-score line, and
+# nflverse box scores are stat-triggered: a backup who played only blocking snaps, a healthy scratch and a surprise inactive
+# all vanish from the pool, so those weeks never count against a projection (and the points line, fitted the same way, learned
+# to lift every low projection). These score every player the model EXPECTED to play (Availability > EXPECTED_AVAILABILITY on
+# the base board) and count a week with no box-score line as 0 points - what a fantasy lineup would have got. Reported next to
+# the scopes above; the ship verdict stays on those.
+EXPECTED_AVAILABILITY = 0.5
+EVERY_GAME_SCOPES = [('EVERY-' + name, pos, startable) for name, pos, startable in SCOPES]
+
+
+def expected_players(board, threshold=EXPECTED_AVAILABILITY):
+    """Players the board expected to play (Availability above ``threshold``; every row if the column is missing)."""
+    if 'Availability' not in board.columns:
+        return set(board['Player'])
+    avail = pd.to_numeric(board['Availability'], errors='coerce').fillna(1.0)
+    return set(board.loc[avail > threshold, 'Player'])
+
+
+def every_game_pool(base_df, var_df, pos, startable):
+    """scope_pool over the players the base board expected to play, with no box-score requirement."""
+    return scope_pool(base_df, var_df, pos, startable, actual_players=expected_players(base_df))
+
+
+def every_game_actual(actual, pool):
+    """Actual points for ``pool``, 0 for a player with no box-score line that week."""
+    return actual.reindex(pool).fillna(0.0)
+
+
 def pairwise_acc(pred, actual):
     """Share of all pairs (i, j) with actual_i != actual_j where
     sign(pred_i - pred_j) == sign(actual_i - actual_j). A tied prediction

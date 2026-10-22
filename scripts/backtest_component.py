@@ -132,10 +132,6 @@ def evaluate_components(years, weeks, variant_defs, scoring='Full PPR'):
                     mv = _scope_metrics(var_sub, actual, pos, startable)
                     if mb and mv:
                         flag_rows[label].setdefault(scope, []).append((mb, mv))
-                        if weekly is not None:
-                            weekly.append({'variant': label, 'scope': scope, 'year': year, 'week': week,
-                                           **{f'base_{k}': v for k, v in mb.items()},
-                                           **{f'var_{k}': v for k, v in mv.items()}})
     return flag_rows, outliers
 
 
@@ -234,6 +230,21 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
                             weekly.append({'variant': label, 'scope': scope, 'year': year, 'week': week,
                                            **{f'base_{k}': v for k, v in mb.items()},
                                            **{f'var_{k}': v for k, v in mv.items()}})
+                # every-game scopes (harness_v2.EVERY_GAME_SCOPES): no box-score line counts as 0
+                for scope, pos, startable in harness_v2.EVERY_GAME_SCOPES:
+                    pool = harness_v2.every_game_pool(base_proj, var_proj, pos, startable)
+                    min_pool = max(8, harness_v2.STARTABLE_N.get(pos, 40) // 2) if (startable and pos) else 20
+                    if len(pool) < min_pool:
+                        continue
+                    act = harness_v2.every_game_actual(actual, pool)
+                    mb = harness_v2.metrics(base_idx.reindex(pool), act)
+                    mv = harness_v2.metrics(var_idx.reindex(pool), act)
+                    if mb and mv:
+                        flag_rows[label].setdefault(scope, []).append((mb, mv))
+                        if weekly is not None:
+                            weekly.append({'variant': label, 'scope': scope, 'year': year, 'week': week,
+                                           **{f'base_{k}': v for k, v in mb.items()},
+                                           **{f'var_{k}': v for k, v in mv.items()}})
     return flag_rows, outliers
 
 
@@ -245,7 +256,9 @@ def print_flag_report_v2(label, rows, mode='ablate'):
     four START-position scopes' Holm-corrected significance as the veto."""
     print(f"\n{'=' * 78}\n{label}  [{mode} mode, harness v2]\n{'=' * 78}")
     scope_summary = {}
-    for scope, _pos, _startable in harness_v2.SCOPES:
+    for scope, _pos, _startable in harness_v2.SCOPES + harness_v2.EVERY_GAME_SCOPES:
+        if scope == harness_v2.EVERY_GAME_SCOPES[0][0] and rows.get(scope):
+            print("  -- every game the model expected him to play (no box-score line = 0 points); not part of the verdict --")
         pairs = rows.get(scope)
         if not pairs:
             continue

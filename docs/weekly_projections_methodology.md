@@ -5954,3 +5954,22 @@ the extra volume lands on the TE1s on average without picking which ones get it,
 2025), which goes to the watch list. Note the harness only scores box-score games (backlog L7), where backups run UNDER, so the part
 these flags fix on the backups themselves (offline every-game TE RMSE -0.030) cannot show up here at all; if an every-game readout is
 added (L7 option a), they get re-scored on it before anything else is concluded.
+
+
+### 2026-10-22 - Every-game scopes in the harness (backlog L7 option a), and the backup-TE re-test on them
+
+User: "Think we need to figure out how to test this including games where no stats were recorded right? Any way to test this?"
+`scripts/harness_v2.py` EVERY_GAME_SCOPES: each scope again (EVERY-ALL, EVERY-QB ... EVERY-START-ALL) over every player the base
+board expected to play (Availability > 0.5), a week with no box-score line counting as 0 points - statless snaps, healthy scratches
+and surprise inactives included, as a lineup would have scored them. `backtest_component.py` reports them under the usual scopes
+(per-week CSV too); the ship verdict stays on the box-score scopes. Tests `tests/test_harness_every_game.py` (2). Smoke (2025 week 8,
+`v2_backup_te_activity`): EVERY-TE n=86 vs TE n=57; the base board's every-game bias is +0.21 (EVERY-ALL) where the box-score view
+says -0.53 (ALL). Also fixed: the v1 harness loop had picked up the per-week logging lines (it has no such list; --harness v1
+would have raised).
+
+**Re-test, pre-set bar (written before the run).** Same three variants on the 63-flag base (activity, fill-in, both). Their
+box-score results are already known (START-TE +0.002 / -0.001 / +0.024, START-ALL -0.002 / -0.001 / +0.002), so the bar adds only
+the every-game part: a variant qualifies if EVERY-TE dRMSE <= -0.010 with its CI below 0, EVERY-START-TE <= 0, EVERY-ALL <= 0, and
+its known box-score START-TE is within +0.010 and START-ALL within +0.002 (so "both", at START-TE +0.024, cannot qualify). Among
+qualifiers the larger EVERY-TE gain wins. This is a second bar on a new metric after the first failed; the user asked for exactly
+this test, and the first bar stands as recorded. Shipping needs the user's sign-off.

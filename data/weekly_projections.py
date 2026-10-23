@@ -2308,7 +2308,7 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
-    'v2_low_end_points_line',  # CANDIDATE (2026-10-22, backlog L7b). Below a knot (RB/WR 6, TE 4 raw points)
+    'v2_low_end_points_line',  # SHIPPED 2026-10-22 (backlog L7b). Below a knot (RB/WR 6, TE 4 raw points)
                              # the points line is re-fit on every game (no box-score
                              # line = 0); the shipped v4 line everywhere above it.
                              # See LOW_END_POINTS_LINE / points_line.
@@ -2953,6 +2953,14 @@ DEFAULT_FEATURES = frozenset({
     # only counts games with a box-score line, where backups run under) and was shipped on the user's call with those numbers.
     # A calibration input (acts before the re-scored points line). Undo: remove this flag.
     'v2_backup_te_discount',
+    # SHIPPED 2026-10-22 (user: "ship as is"): below a knot (RB/WR 6, TE 4 raw points) the points line is L(knot) + a * (raw
+    # - knot), re-fit on every game the model expected the player to play (no box-score line = 0); the v4 line everywhere above
+    # (LOW_END_POINTS_LINE, points_line). Harness v2 2022-2025 wk3-17 on the 64-flag base: EVERY-ALL -0.023 (CI [-0.027,
+    # -0.020]), 56-4 weeks, every season; EVERY-RB -0.031, EVERY-WR -0.030, EVERY-TE -0.020; every-game bias +0.41 -> +0.08;
+    # START-ALL/RB/WR flat; START-TE +0.0026 against a +0.002 limit (2024 alone +0.016, the other three seasons better), shipped
+    # on the user's call with that on record. Part of the calibration step (inert without 'calibration'); a re-fit of the v4
+    # lines must re-fit these knots and slopes too. Undo: remove this flag.
+    'v2_low_end_points_line',
 })
 
 
@@ -3285,7 +3293,7 @@ def _weekly_calibration_for(pos, week):
     return WEEKLY_CALIBRATION_BY_BUCKET.get(bucket, {}).get(pos, base)
 
 
-# 'v2_low_end_points_line' (CANDIDATE 2026-10-22, backlog L7 option b; user: "yes start the points line refit"). The v4 lines
+# 'v2_low_end_points_line' (SHIPPED 2026-10-22, harness EVERY-ALL -0.023; backlog L7 option b). The v4 lines
 # were fit on games with a box-score line only, and a low projection that records a stat scores more than its raw number, so
 # the line lifts every low projection: counting every game the model expected the player to play (no box-score line = 0),
 # TE raw 0.53 -> shown 1.20 against 0.60 actual, WR 2-4 raw 1.95 -> 2.91 against 1.93. The v5 all-rows re-fit of the WHOLE line

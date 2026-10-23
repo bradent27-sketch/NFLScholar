@@ -6074,3 +6074,15 @@ Harness v2 (2022-2025 weeks 3-17, replay, base DEFAULT_FEATURES (64), snap-guard
 QB untouched (0.000 everywhere). As expected the box-score whole-pool scopes, which count only games with a box-score line, get worse
 (ALL +0.024, RB +0.019, WR +0.029, TE +0.040). Against the pre-set bar it misses one criterion by 0.0006, from a single season (2024),
 so it is NOT shipped on the bar; it goes to the user with the numbers.
+
+
+### 2026-10-22 - SHIPPED: `v2_low_end_points_line` (DEFAULT_FEATURES = 65)
+
+User: "ship as is", after the result entry above (every criterion met except box-score START-TE, +0.0026 against a +0.002 limit,
+all from 2024). Shipped on the user's call with that on record: EVERY-ALL -0.023 (CI [-0.027, -0.020], 56-4 weeks, every season),
+EVERY-RB -0.031, EVERY-WR -0.030, EVERY-TE -0.020, every-game bias +0.41 -> +0.08; START-ALL/RB/WR flat; QB untouched. Effect on the
+board: low projections (RB/WR under about 6 raw points, TE under 4) are shown lower, close to what such players score once every
+expected game counts (2025 week 8: WR shown 2-4 3.06 -> 2.39, RB 0-2 0.59 -> 0.21, TE 2-4 2.76 -> 2.38); everyone at 8+ points
+unchanged. It is part of the calibration step (inert without 'calibration'); any future re-fit of the v4 lines has to re-fit
+LOW_END_POINTS_LINE with it (scripts/eval_low_end_line.py). MODEL_FEATURES = 100. The live app needs a restart to pick it up.
+Undo: remove the flag from DEFAULT_FEATURES.

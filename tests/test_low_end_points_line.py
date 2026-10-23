@@ -1,4 +1,4 @@
-"""v2_low_end_points_line (candidate 2026-10-22, backlog L7b): below a knot the points line is re-fit on every game; the
+"""v2_low_end_points_line (shipped 2026-10-22, backlog L7b): below a knot the points line is re-fit on every game; the
 shipped v4 line everywhere above it."""
 import os
 import sys
@@ -10,9 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import data.weekly_projections as wp  # noqa: E402
 
 
-def test_flag_is_registered_and_not_default():
+def test_flag_is_registered_and_shipped():
     assert 'v2_low_end_points_line' in wp.MODEL_FEATURES
-    assert 'v2_low_end_points_line' not in wp.DEFAULT_FEATURES
+    assert 'v2_low_end_points_line' in wp.DEFAULT_FEATURES          # shipped 2026-10-22
     assert set(wp.LOW_END_POINTS_LINE) == {'RB', 'WR', 'TE'}
 
 

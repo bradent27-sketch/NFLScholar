@@ -27,7 +27,7 @@ from ui.components import (
     render_fpts_week_strip, render_matchup_heat_strip, render_game_links, skeleton_loader,
 )
 from ui.player_snapshot import build_player_snapshot, render_percentile_bars_figure, render_percentile_radar_grid, split_snapshot_for_display
-from ui.components import default_season_index
+from ui.components import default_season_index, scoring_control
 
 
 def _get_upcoming_opponent(team_abbr, year):
@@ -195,18 +195,15 @@ def render():
         if restored_filter == 'All Teams' or restored_filter in TEAM_CONFIG:
             st.session_state['player_search_team_filter'] = restored_filter
 
-    # Scoring format is a segmented control in the global header now (same
-    # key="score_tab1", instantiated once in ui.components.render_intro_and_
-    # glossary before any tab's content runs) - read its value here instead
-    # of instantiating a second widget under the same key, which Streamlit
-    # would reject.
-    t1_scoring_rule = st.session_state.get('score_tab1', 'Full PPR')
-
     team_options = ["All Teams"] + sorted(TEAM_CONFIG.keys(), key=lambda a: TEAM_CONFIG[a].get('name', a))
     team_option_labels = {"All Teams": "All Teams (search whole league)"}
     team_option_labels.update({abbr: f"{TEAM_CONFIG[abbr]['name']} ({abbr})" for abbr in TEAM_CONFIG})
 
-    c_t1_year, c_t1_team = st.columns(2)
+    # Scoring sits in this row since 2026-10-23 (it was in the page header, shared with Matchup Analyzer - see
+    # ui.components.scoring_control).
+    c_t1_year, c_t1_team, c_t1_scoring = st.columns([1, 1, 0.8])
+    with c_t1_scoring:
+        t1_scoring_rule = scoring_control("player_search_scoring")
     with c_t1_year:
         t1_target_year = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=default_season_index(), key="year_tab1")
     with c_t1_team:

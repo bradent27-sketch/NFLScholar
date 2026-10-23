@@ -47,6 +47,7 @@ from data.loaders import load_schedule
 from data.weather import resolve_game_weather, resolve_game_precip
 from data.game_slate import load_slate, slate_team_bridge
 from ui import board_session, freshness
+from ui.tabs import rankings_games
 from ui.report_export import (board_pdf, default_export_dir, export_file_names, game_report_pdf,
                               save_exports)
 from ui.charts import sparkline_data_uri, C as _CHART_COLORS
@@ -61,13 +62,17 @@ _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing
 _BOARD_AGE_NUDGE_HOURS = 3.0
 
 
-def _board_age_caption(built_at, now=None):
-    """When the board on screen was built; a nudge to rebuild once it is a few hours old."""
+def _board_age_caption(built_at, now=None, reprojected=None, reprojected_at=None):
+    """When the board on screen was built (and which teams a ruling re-projected since); a nudge to rebuild once it is a
+    few hours old."""
     now = now or datetime.datetime.now()
     minutes = max(0, int((now - built_at).total_seconds() // 60))
     age = 'just now' if minutes < 1 else (f'{minutes} min ago' if minutes < 90 else f'{minutes / 60:.1f} h ago')
-    text = (f"Board built at {built_at.strftime('%I:%M %p').lstrip('0')} ({age}). It stays as built until you click "
-            "**🧮 Build board** or change an injury or QB1 override.")
+    again = ''
+    if reprojected and reprojected_at is not None:
+        again = f" {', '.join(reprojected)} re-projected at {reprojected_at.strftime('%I:%M %p').lstrip('0')} for a ruling."
+    text = (f"Board built {built_at.strftime('%a %I:%M %p').replace(' 0', ' ')} ({age}).{again} Moving around the tab "
+            "never rebuilds it and a ruling re-projects only that team; **🧮 Build board** rebuilds it.")
     if minutes >= _BOARD_AGE_NUDGE_HOURS * 60:
         st.warning(text + " Rebuild before kickoff to pick up the latest injury and roster news.")
     else:
@@ -3164,9 +3169,10 @@ def _render_pff_weekly_alignment_upload(wk_year, wk_week):
         st.caption(f"No weekly archive saved for {wk_year} yet.")
 
 
-def _injury_freshness_caption(wk_year, wk_week):
-    """How old the saved injury report is against the next kickoff (backlog D2): inactives post about 90 minutes
-    before each game, and a board built before them keeps listing a late-activated player as Out."""
+def _injury_freshness(wk_year, wk_week):
+    """(short text for the live-data label, the full warning or None): how old the saved injury report is against the
+    next kickoff (backlog D2). Inactives post about 90 minutes before each game, and a board built before them keeps
+    listing a late-activated player as Out, so that case is still a warning of its own."""
     try:
         now = datetime.datetime.now(freshness.EASTERN)
         path = FANTASYPROS_INJURY_PATH
@@ -3175,35 +3181,22 @@ def _injury_freshness_caption(wk_year, wk_week):
         kickoff = freshness.next_kickoff(load_schedule(wk_year), int(wk_week), now)
         text, level = freshness.injury_report_note(saved_at, kickoff, now)
     except Exception:
-        return
-    if level == "warn":
-        st.warning(text)
-    else:
-        st.caption(text)
+        return "", None
+    short = ("injury report not saved" if saved_at is None
+             else f"injury report saved {freshness.span_text(now - saved_at)} ago")
+    return short, (text if level == "warn" else None)
 
 
-def _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring):
-    """The "has this actually been pulled, and when" indicator - explicit
-    request. Distinguishes a live pull FOR this exact year/week/scoring
-    selection from a held-over one for a different combination, since the
-    session can carry a stale pull from before the selectors above changed."""
+def _fantasypros_freshness_text(wk_year, wk_week, wk_scoring):
+    """Whether FantasyPros has been pulled for exactly this year/week/scoring, and when, in a few words for the live-data
+    label (explicit request: a held-over pull for another selection must not read as current)."""
     held_meta = st.session_state.get('wr_fp_weekly_meta')
     fetched_at = st.session_state.get('wr_fp_weekly_fetched_at')
     if held_meta is None or fetched_at is None:
-        st.caption("📡 FantasyPros: not pulled this session — open the expander above to fetch it.")
-        return
+        return "FantasyPros not pulled"
     if held_meta == (wk_year, wk_week, wk_scoring):
-        st.caption(
-            f"📡 FantasyPros projections current to **Week {wk_week}, {wk_year}** "
-            f"({wk_scoring}) — pulled {fetched_at:%b %d, %Y at %I:%M %p}."
-        )
-    else:
-        held_year, held_week, held_scoring = held_meta
-        st.caption(
-            f"📡 FantasyPros: last pull was for Week {held_week}, {held_year} ({held_scoring}) at "
-            f"{fetched_at:%b %d, %I:%M %p} — that doesn't match the selection above, so it isn't shown below. "
-            "Re-fetch to pull the current selection."
-        )
+        return f"FantasyPros pulled {fetched_at:%I:%M %p}".replace(" 0", " ")
+    return "FantasyPros pulled for another week"
 
 
 def _scoring_dict(scoring_mode):
@@ -3544,7 +3537,8 @@ def _render_qb1_overrides_hub(wk_year, current_stats, team_col, name_col):
 
 
 def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, name_pool,
-                          roster_df=None, model_meta=None, stats_df=None, team_col=None, name_col=None):
+                          roster_df=None, model_meta=None, stats_df=None, team_col=None, name_col=None,
+                          label="📡 Live data pulls", form_df=None):
     """
     One expander, six tabs - consolidates what used to be four separate
     stacked accordions (FantasyPros weekly projection, FantasyPros injury/
@@ -3564,11 +3558,17 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, name_
     Returns (fp_weekly_df, market_df), the two values render() still needs
     downstream; the injury, QB1, and PFF tabs read/write straight to disk
     and session state and have no return-value contract of their own.
+
+    `label` carries the FantasyPros and injury-report freshness (2026-10-23:
+    they were two caption lines under the expander). The weekly rankings
+    upload that sat below the board is the "Rankings upload" tab here, since
+    it is an input too - and here, above the board, its ECR columns show on
+    the same run instead of the next one.
     """
-    with st.expander("📡 Live data pulls", expanded=False):
-        tab_fp, tab_injury, tab_qb1, tab_pff, tab_market, tab_pipeline = st.tabs(
+    with st.expander(label, expanded=False):
+        tab_fp, tab_injury, tab_qb1, tab_pff, tab_market, tab_upload, tab_pipeline = st.tabs(
             ["FantasyPros projections", "Injury/availability", "QB1 overrides", "PFF alignment",
-             "Market props", "Data pipeline notes"])
+             "Market props", "Rankings upload", "Data pipeline notes"])
         with tab_fp:
             fp_weekly = _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring)
         with tab_injury:
@@ -3591,9 +3591,61 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, name_
                 market_df = None
             else:
                 market_df = _render_weekly_market_pull(wk_scoring, name_pool, wk_year, wk_week)
+        with tab_upload:
+            _render_rankings_upload(wk_year, form_df)
         with tab_pipeline:
             _render_pipeline_diagnostics(model_meta)
     return fp_weekly, market_df
+
+
+def _render_rankings_upload(wk_year, form_df):
+    """A weekly rankings export (FantasyPros' weekly export, or any CSV with a player-name column), compared against recent
+    form; a real FantasyPros export also feeds the board's FantasyPros ECR / Model vs FantasyPros ECR columns (their
+    actual published rank, not one derived from a points projection)."""
+    st.caption("A FantasyPros weekly export also fills the board's **FantasyPros ECR** columns.")
+    import_hint('fantasypros_weekly')
+    weekly_upload = st.file_uploader("Weekly rankings CSV", type=["csv"], key="weekly_rank_upload")
+    weekly_df = None
+    if weekly_upload is not None:
+        weekly_df = parse_fantasypros_upload(weekly_upload)
+        # Only a REAL FantasyPros-shaped export counts as "ECR" for the top
+        # table's comparison - a generic custom upload (parsed below as a
+        # fallback) could be anyone's ranking, and labelling that "FantasyPros
+        # ECR" would just be wrong.
+        st.session_state['_weekly_rank_ecr_df'] = weekly_df if not weekly_df.empty else None
+        if weekly_df.empty:
+            weekly_df = parse_custom_rankings(weekly_upload)
+        if weekly_df is None or weekly_df.empty:
+            st.warning("Couldn't find a player-name column in that upload — expected a header like 'Player', 'Player Name', or 'Name'.")
+
+    if weekly_df is None or weekly_df.empty:
+        return
+    if form_df is None or form_df.empty:
+        st.info(f"Not enough {wk_year} weekly data yet to build a recent-form baseline to compare it with.")
+        return
+
+    comparison = build_rankings_comparison(form_df, value_col='Recent Avg FPTS', rank_label='Form', fp_df=weekly_df)
+    extra_cols = [c for c in comparison.columns if c not in ('Player', 'Pos', 'Team')]
+    merged = form_df.merge(comparison[['Player'] + extra_cols], on='Player', how='left')
+    merged = merged.rename(columns={'Recent Avg FPTS': 'L5 Avg FPTS'})
+
+    upload_positions, _upload_group = position_group_buttons('wrup', default='SUPERFLEX')
+    display_df = apply_position_group(merged, upload_positions, pos_col='Pos')
+    display_df = _limit_rows(display_df, key="weekly_rank_upload_show_n")
+
+    diverging_cols = {}
+    delta_col = 'Form vs FantasyPros'
+    if delta_col in display_df.columns and display_df[delta_col].notna().any():
+        max_abs = display_df[delta_col].abs().max()
+        if max_abs and max_abs > 0:
+            diverging_cols[delta_col] = max_abs
+
+    indexed = display_df.set_index('Player')
+    st.dataframe(
+        style_plain_dataframe(indexed, diverging_cols=diverging_cols),
+        width="stretch", height=df_auto_height(min(len(display_df), 40)),
+        column_config=build_column_help_config(indexed, pinned_cols=['Team', 'Pos']),
+    )
 
 
 def _render_phone_export(wk_year, wk_week, wk_scoring, model_df, weather_by_team, precip_by_team):
@@ -3639,7 +3691,9 @@ def _render_phone_export(wk_year, wk_week, wk_scoring, model_df, weather_by_team
 def render():
     st.markdown("<div class='custom-section-header'>WEEKLY RANKINGS</div>", unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns(3)
+    # ONE ROW, left-anchored, Build board in it (2026-10-23, user: less text, CFB's layout): the trailing column is dead
+    # space on purpose so the four real controls don't stretch to fill the page.
+    c1, c2, c3, c4, _spacer = st.columns([1, 1, 1, 1, 2], vertical_alignment="bottom")
     with c1:
         # WITH_UPCOMING (not AVAILABLE_SEASONS) so the season about to start
         # is selectable and defaults FIRST (index=0) - unlike the tabs that
@@ -3659,6 +3713,8 @@ def render():
     wk_week_completed = bool(weeks[wk_week_idx].get('completed')) if weeks else False
     with c3:
         wk_scoring = st.selectbox("Scoring", ["Full PPR", "Half-PPR", "Standard"], key="weekly_rank_scoring")
+    with c4:
+        build_clicked = st.button("🧮 Build board", key="weekly_rank_build", type="primary", width="stretch")
 
     df_stats, t_col, n_col, _ = load_and_merge_data(wk_year, wk_scoring)
     form_df = build_recent_form_rank(df_stats, n_col, t_col, n_weeks=RECENT_FORM_GAMES)
@@ -3672,7 +3728,6 @@ def render():
         hub_roster = (df_stats[_roster_src].dropna(subset=[n_col]).drop_duplicates()
                       .rename(columns={n_col: 'Player', t_col: 'Team', 'position': 'Pos'}))
 
-    st.markdown("### This app's weekly model")
     # Data pulls FIRST, then an explicit build - the board no longer builds on
     # tab open (explicit request 2026-08-29): a user can stage FantasyPros
     # rankings / injury reports / PFF alignment and only then spend the model
@@ -3683,17 +3738,21 @@ def render():
     # that caught this missing before 2026-09-22 (Coverage silently blank
     # despite a fully-priced line).
     _name_pool_cols = [c for c in ('Player', 'Pos') if hub_roster is not None and c in hub_roster.columns]
+    # How fresh the FantasyPros pull and the injury report are rides in the hub's own label (it used to be two caption
+    # lines under it); a stale injury report right before kickoff still gets its own warning.
+    injury_text, injury_warning = _injury_freshness(wk_year, wk_week)
+    hub_label = " · ".join(t for t in ("📡 Live data pulls", _fantasypros_freshness_text(wk_year, wk_week, wk_scoring),
+                                        injury_text) if t)
     fp_weekly, market_df = _render_live_data_hub(
         wk_year, wk_week, wk_scoring, wk_week_completed,
         hub_roster[_name_pool_cols] if hub_roster is not None else None,
         roster_df=hub_roster,
         model_meta=st.session_state.get('weekly_rank_last_model_meta'),
-        stats_df=df_stats, team_col=t_col, name_col=n_col)
-    _fantasypros_freshness_caption(wk_year, wk_week, wk_scoring)
-    _injury_freshness_caption(wk_year, wk_week)
+        stats_df=df_stats, team_col=t_col, name_col=n_col, label=hub_label, form_df=form_df)
+    if injury_warning:
+        st.warning(injury_warning)
 
     build_key = (wk_year, wk_week, wk_scoring)
-    build_clicked = st.button("🧮 Build board", key="weekly_rank_build", type="primary")
     if build_clicked:
         st.session_state['weekly_rank_built_for'] = build_key
     # A board already built this session for these selectors shows again without a click (switching week or scoring
@@ -3708,7 +3767,12 @@ def render():
         # override or FantasyPros pull for this week, or a QB1 choice (ui/board_session.py; 2026-10-21, user: "this isn't
         # necessary if i built the board within an hour or two before"). The build cache expires after an hour, and every
         # full page rerun after that used to rebuild the whole league silently.
+        # Since 2026-10-23 the kept board survives an app restart (saved to disk) and a changed ruling re-projects only
+        # the teams it touches (ui/board_pin.py); that updated board is recorded like a rebuild was.
         entry = None if build_clicked else board_session.kept_board(wk_year, wk_week, wk_scoring)
+        if entry is not None and entry.get('just_reprojected'):
+            record_board(wk_year, wk_week, entry['df'], market_df=market_df,
+                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES)
         if entry is None:
             with skeleton_loader("table", n_rows=10, n_cols=7):
                 entry = board_session.build_board(wk_year, wk_week, wk_scoring)
@@ -3727,7 +3791,8 @@ def render():
         # rebuild
         avail_fp = entry['inputs']
         st.session_state['weekly_rank_last_model_meta'] = model_meta
-        _board_age_caption(entry['built_at'])
+        _board_age_caption(entry['built_at'], reprojected=entry.get('reprojected'),
+                           reprojected_at=entry.get('reprojected_at'))
 
     # Computed once per real board build (not per fragment-internal rerun -
     # see _render_board's own closure over this below) since it only
@@ -3760,12 +3825,8 @@ def render():
             weather_by_team, precip_by_team = {}, {}
 
     if not board_ready:
-        st.info(
-            "Set the season / week / scoring above, stage any FantasyPros rankings or injury "
-            "reports in **📡 Live data pulls**, then click **🧮 Build board**. "
-            "Changing a selector hides the board until you rebuild, so a rebuild always picks up "
-            "the current settings and uploads."
-        )
+        st.info("Set the season, week and scoring, stage any pulls in **📡 Live data pulls**, then click "
+                "**🧮 Build board**.")
     elif model_df.empty:
         st.info(f"This app's model has no projection for {wk_year} week {wk_week}: "
                f"{model_meta.get('reason', 'not enough data yet')}")
@@ -4091,331 +4152,260 @@ def render():
                     merged_model[_label] = merged_model[_label].map(
                         lambda v: f"{v:.1f}" if pd.notna(v) else '—')
 
-            # Explicit column order, per request: identity first, then the three
-            # projections side by side, then the stat line behind this app's own
-            # number, then the context columns, then the three source ranks
-            # together as a comparison block at the end.
-            #
-            # No standalone Position column - dropped to save table width, per
-            # explicit request. Its info isn't lost: every rank column already
-            # carries it in the "RB4"-style label (_woven_rank), and the rank
-            # columns are now colored by position too (position_values/
-            # position_cols below) so the same at-a-glance signal the Position
-            # column gave survives without spending a column on it.
-            display_cols = ['Rank', 'Player', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip',
-                            'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks']
-            display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
-            display_cols += ['Injury Status', 'Season Snap %', 'Last 5 Snaps',
-                            'FantasyPros Rank', 'Model Rank', 'Market Rank', 'Market Coverage',
-                            'FantasyPros ECR', 'Model vs FantasyPros ECR']
+            # BOARD / GAMES (2026-10-23, user: "replicate this very closely" - CFB Scholar's game view): only the open
+            # view is drawn. GAMES reads the same built board (ui/tabs/rankings_games.py).
+            rankings_games.keep_widget_state()
+            views = st.tabs(['BOARD', 'GAMES'], key='weekly_rank_view', on_change='rerun')
+            if views[0].open:
+                with views[0]:
+                    # Explicit column order, per request: identity first, then the three
+                    # projections side by side, then the stat line behind this app's own
+                    # number, then the context columns, then the three source ranks
+                    # together as a comparison block at the end.
+                    #
+                    # No standalone Position column - dropped to save table width, per
+                    # explicit request. Its info isn't lost: every rank column already
+                    # carries it in the "RB4"-style label (_woven_rank), and the rank
+                    # columns are now colored by position too (position_values/
+                    # position_cols below) so the same at-a-glance signal the Position
+                    # column gave survives without spending a column on it.
+                    display_cols = ['Rank', 'Player', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip',
+                                    'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks']
+                    display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
+                    display_cols += ['Injury Status', 'Season Snap %', 'Last 5 Snaps',
+                                    'FantasyPros Rank', 'Model Rank', 'Market Rank', 'Market Coverage',
+                                    'FantasyPros ECR', 'Model vs FantasyPros ECR']
 
-            # 'Last 5 Weeks'/'Last 5 Snaps' are built per-displayed-row further
-            # down, so neither is a real column yet at slicing time. 'Position' is kept even though
-            # it's no longer in display_cols (see the comment above) - the
-            # position-group filter just below and the rank-column position
-            # coloring further down both still need the raw values; it's
-            # dropped from the actually-rendered frame later, at the
-            # display_cols re-select (indexed = indexed[[...]]).
-            positions, group_label = position_group_buttons(
-                'wr', default='SUPERFLEX', rerun_scope='fragment')
-            # Hide the stat columns none of the selected positions project
-            # (no receiving for QB, no passing for RB/WR/TE, no rushing for
-            # WR/TE) - display_cols is re-applied to the frame further down,
-            # so this one filter covers both slices.
-            _unused_stats = _unused_stat_labels(positions)
-            display_cols = [c for c in display_cols if c not in _unused_stats]
-            keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position', '_matchup_pct']
-            # Matchup filter (explicit request, prop-betting workflow): isolate
-            # one game's slate instead of scanning the whole week. Keyed by the
-            # board's own (year, week, scoring) so switching weeks always starts
-            # from "all games" rather than carrying over a selection whose teams
-            # may not even play this week (a stale value Streamlit would refuse
-            # to render against a changed options list).
-            week_matchups = _week_matchups(merged_model[keep_cols], wk_year, wk_week)
-            selected_matchups = st.multiselect(
-                "Matchup", [label for label, _teams in week_matchups],
-                key=f"weekly_rank_matchup_filter_{wk_year}_{wk_week}_{wk_scoring}",
-                placeholder="All games — pick one or more to isolate a slate for props",
-            )
-            filtered_df = apply_position_group(merged_model[keep_cols], positions, pos_col='Position')
-            filtered_df = _apply_matchup_filter(filtered_df, selected_matchups, week_matchups)
-            total_filtered = len(filtered_df)
-            display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
-            tier_values = display_df['_tier'].tolist()
-            position_values = display_df['Position'].tolist()
-            matchup_pct_values = display_df['_matchup_pct'].tolist()
-            display_df = display_df.drop(columns=['_tier', '_matchup_pct'])
-            indexed = display_df.set_index('Player')
+                    # 'Last 5 Weeks'/'Last 5 Snaps' are built per-displayed-row further
+                    # down, so neither is a real column yet at slicing time. 'Position' is kept even though
+                    # it's no longer in display_cols (see the comment above) - the
+                    # position-group filter just below and the rank-column position
+                    # coloring further down both still need the raw values; it's
+                    # dropped from the actually-rendered frame later, at the
+                    # display_cols re-select (indexed = indexed[[...]]).
+                    positions, group_label = position_group_buttons(
+                        'wr', default='SUPERFLEX', rerun_scope='fragment')
+                    # Hide the stat columns none of the selected positions project
+                    # (no receiving for QB, no passing for RB/WR/TE, no rushing for
+                    # WR/TE) - display_cols is re-applied to the frame further down,
+                    # so this one filter covers both slices.
+                    _unused_stats = _unused_stat_labels(positions)
+                    display_cols = [c for c in display_cols if c not in _unused_stats]
+                    keep_cols = [c for c in display_cols if c in merged_model.columns] + ['_tier', 'Position', '_matchup_pct']
+                    # Matchup filter (explicit request, prop-betting workflow): isolate
+                    # one game's slate instead of scanning the whole week. Keyed by the
+                    # board's own (year, week, scoring) so switching weeks always starts
+                    # from "all games" rather than carrying over a selection whose teams
+                    # may not even play this week (a stale value Streamlit would refuse
+                    # to render against a changed options list).
+                    week_matchups = _week_matchups(merged_model[keep_cols], wk_year, wk_week)
+                    selected_matchups = st.multiselect(
+                        "Matchup", [label for label, _teams in week_matchups],
+                        key=f"weekly_rank_matchup_filter_{wk_year}_{wk_week}_{wk_scoring}",
+                        placeholder="All games — pick one or more to isolate a slate for props",
+                    )
+                    filtered_df = apply_position_group(merged_model[keep_cols], positions, pos_col='Position')
+                    filtered_df = _apply_matchup_filter(filtered_df, selected_matchups, week_matchups)
+                    total_filtered = len(filtered_df)
+                    display_df = _limit_rows(filtered_df, key="weekly_rank_show_n")
+                    tier_values = display_df['_tier'].tolist()
+                    position_values = display_df['Position'].tolist()
+                    matchup_pct_values = display_df['_matchup_pct'].tolist()
+                    display_df = display_df.drop(columns=['_tier', '_matchup_pct'])
+                    indexed = display_df.set_index('Player')
 
-            # Recent-form sparklines: the last five games' fantasy points (teal)
-            # and, right next to Season Snap %, the same five games' snap share
-            # (secondary color, so the two read as related but distinct at a
-            # glance) - both as a line with the player's SEASON average as a
-            # dotted reference line under it, explicit request, and the reason
-            # these are inline SVGs in an ImageColumn rather than the
-            # st.column_config.LineChartColumn Rookie Watch/Risers use (that
-            # column can draw the line and nothing else - see
-            # ui.charts.sparkline_data_uri).
-            #
-            # Gated to games BEFORE the selected week, which is also the fix for
-            # "Last 5 Weeks doesn't currently show anything": this tab opens on
-            # the UPCOMING season/week, and an upcoming season has no weekly stat
-            # rows at all, so every cell was correctly-but-uselessly empty. When
-            # that happens the series falls back to the prior season, captioned,
-            # the same "based on last season" fallback the model itself already
-            # makes for a cold-start week (see build_weekly_projections). Snap
-            # share reuses whichever source (this season or the prior-season
-            # fallback) the points series landed on, so both sparklines on one
-            # row always describe the SAME games rather than one reading
-            # current-season and the other prior.
-            _form_src_df, _form_src_name_col, form_source_year = df_stats, n_col, wk_year
-            form_series = build_form_series(_form_src_df, _form_src_name_col, metric='fantasy_points',
-                                            n_weeks=RECENT_FORM_GAMES, before_week=wk_week)
-            if not form_series:
-                try:
-                    prior_stats, _pt, _pn, _ = load_and_merge_data(wk_year - 1, wk_scoring)
-                    _form_src_df, _form_src_name_col, form_source_year = prior_stats, _pn, wk_year - 1
+                    # Recent-form sparklines: the last five games' fantasy points (teal)
+                    # and, right next to Season Snap %, the same five games' snap share
+                    # (secondary color, so the two read as related but distinct at a
+                    # glance) - both as a line with the player's SEASON average as a
+                    # dotted reference line under it, explicit request, and the reason
+                    # these are inline SVGs in an ImageColumn rather than the
+                    # st.column_config.LineChartColumn Rookie Watch/Risers use (that
+                    # column can draw the line and nothing else - see
+                    # ui.charts.sparkline_data_uri).
+                    #
+                    # Gated to games BEFORE the selected week, which is also the fix for
+                    # "Last 5 Weeks doesn't currently show anything": this tab opens on
+                    # the UPCOMING season/week, and an upcoming season has no weekly stat
+                    # rows at all, so every cell was correctly-but-uselessly empty. When
+                    # that happens the series falls back to the prior season, captioned,
+                    # the same "based on last season" fallback the model itself already
+                    # makes for a cold-start week (see build_weekly_projections). Snap
+                    # share reuses whichever source (this season or the prior-season
+                    # fallback) the points series landed on, so both sparklines on one
+                    # row always describe the SAME games rather than one reading
+                    # current-season and the other prior.
+                    _form_src_df, _form_src_name_col, form_source_year = df_stats, n_col, wk_year
                     form_series = build_form_series(_form_src_df, _form_src_name_col, metric='fantasy_points',
-                                                    n_weeks=RECENT_FORM_GAMES)
-                except Exception:
-                    _form_src_df, _form_src_name_col = pd.DataFrame(), n_col
-                    form_series = {}
-            snap_form_series = build_form_series(
-                _form_src_df, _form_src_name_col, metric='weekly_snap_pct', n_weeks=RECENT_FORM_GAMES,
-                before_week=(wk_week if form_source_year == wk_year else None))
-            indexed['Last 5 Weeks'] = [
-                sparkline_data_uri(*_form_entry(form_series, name)) for name in indexed.index
-            ]
-            indexed['Last 5 Snaps'] = [
-                sparkline_data_uri(*_form_entry(snap_form_series, name), line_color=_CHART_COLORS['secondary'])
-                for name in indexed.index
-            ]
-            # Re-apply the requested order now that both sparklines exist - each
-            # has to be built per DISPLAYED row (one SVG each), which is after
-            # the slice above, so they land at the end of the frame rather than
-            # in their requested slots without this re-apply.
-            indexed = indexed[[c for c in display_cols if c in indexed.columns]]
+                                                    n_weeks=RECENT_FORM_GAMES, before_week=wk_week)
+                    if not form_series:
+                        try:
+                            prior_stats, _pt, _pn, _ = load_and_merge_data(wk_year - 1, wk_scoring)
+                            _form_src_df, _form_src_name_col, form_source_year = prior_stats, _pn, wk_year - 1
+                            form_series = build_form_series(_form_src_df, _form_src_name_col, metric='fantasy_points',
+                                                            n_weeks=RECENT_FORM_GAMES)
+                        except Exception:
+                            _form_src_df, _form_src_name_col = pd.DataFrame(), n_col
+                            form_series = {}
+                    snap_form_series = build_form_series(
+                        _form_src_df, _form_src_name_col, metric='weekly_snap_pct', n_weeks=RECENT_FORM_GAMES,
+                        before_week=(wk_week if form_source_year == wk_year else None))
+                    indexed['Last 5 Weeks'] = [
+                        sparkline_data_uri(*_form_entry(form_series, name)) for name in indexed.index
+                    ]
+                    indexed['Last 5 Snaps'] = [
+                        sparkline_data_uri(*_form_entry(snap_form_series, name), line_color=_CHART_COLORS['secondary'])
+                        for name in indexed.index
+                    ]
+                    # Re-apply the requested order now that both sparklines exist - each
+                    # has to be built per DISPLAYED row (one SVG each), which is after
+                    # the slice above, so they land at the end of the frame rather than
+                    # in their requested slots without this re-apply.
+                    indexed = indexed[[c for c in display_cols if c in indexed.columns]]
 
-            pct_cols = {}
-            for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
-                if c in indexed.columns and indexed[c].notna().any():
-                    pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
-            # 'Def Rank' colors off the percentile ALREADY computed for it
-            # (matchup_pct_values, from model_meta - see
-            # _matchup_difficulty_by_pos_opponent), not a fresh percentile of
-            # the displayed rows the way pct_cols above is - a percentile
-            # recomputed from only the ~50 rows on screen would shift every
-            # time "Show" or a position filter changes, which is exactly
-            # backwards for a number meant to describe THIS DEFENSE, not
-            # this table's current slice. centered_pct_cols (not
-            # matchup_pct_cols) per explicit request: bright at the extremes,
-            # fading to a muted neutral at a genuinely average (50th
-            # percentile) matchup, rather than matchup_pct_cols' fixed-alpha
-            # ramp through every color at the same intensity.
-            centered_pct_cols = ({'Def Rank': matchup_pct_values} if 'Def Rank' in indexed.columns else {})
-            # Pre-formatted AFTER percentile calc (which needs the real
-            # numeric NaN) for the same reason _STAT_DISPLAY_COLS are -
-            # a player with zero market coverage (no book posted anything)
-            # leaves 'Market Proj Pts' NaN, and the interactive grid prints
-            # that as the literal word "None" rather than style_plain_
-            # dataframe's intended blank/dash. pct_cols above still colors
-            # correctly since it's matched by row position, not this
-            # column's own (now string) dtype.
-            for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
-                if c in indexed.columns:
-                    indexed[c] = indexed[c].map(lambda v: f"{v:.1f}" if pd.notna(v) else '—')
-            column_config = build_column_help_config(
-                indexed, pinned_cols=['Rank', 'Team', 'Opponent'],
-                short_labels=_RANK_PROJ_SHORT_LABELS, narrow_cols=_NARROW_COLS,
-                meter_cols={'Season Snap %': (0, 100)} if 'Season Snap %' in indexed.columns else {})
-            column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
-                help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
-                      f"({form_source_year}), with the dotted line at that season's average"),
-                width="small",
-            )
-            if 'Last 5 Snaps' in indexed.columns:
-                column_config['Last 5 Snaps'] = st.column_config.ImageColumn(
-                    help=(f"Snap share over the last {RECENT_FORM_GAMES} games played "
-                          f"({form_source_year}), with the dotted line at that season's average"),
-                    width="small",
-                )
-            # The availability fingerprint is part of the key so a manual injury
-            # override / FantasyPros pull for this week (which rebuilds the board
-            # and can move the injured player plus every vacancy recipient) forces
-            # the open decomposition and the per-player detail cache to re-resolve
-            # from the rebuild instead of showing the pre-injury breakdown.
-            detail_config = (wk_year, wk_week, wk_scoring, avail_fp)
-            selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
-            if selected_state and selected_state.get('config') != detail_config:
-                prev_config = selected_state.get('config')
-                prev_key = selected_state.get('key')
-                same_board = (isinstance(prev_config, tuple) and len(prev_config) == len(detail_config)
-                              and prev_config[:-1] == detail_config[:-1])
-                fresh = (_selected_player_detail(model_meta, detail_config, prev_key)
-                         if same_board and prev_key is not None else None)
-                if fresh is not None:
-                    # Same week/scoring, only the availability fingerprint moved -
-                    # an injury override / feed pull rebuilt this board. Keep the
-                    # decomposition open but re-resolve it against the rebuild so
-                    # the injured player and every vacancy recipient show fresh
-                    # numbers instead of the pre-injury breakdown.
-                    st.session_state[_PROJECTION_DETAIL_KEY] = {
-                        'config': detail_config, 'detail': fresh, 'key': prev_key,
-                        'market_detail': _market_detail_for_key(prev_key),
-                    }
-                else:
-                    # A real board switch (week / scoring), or nothing to
-                    # re-resolve: a Week 3 explanation is not meaningful over a
-                    # Week 4 table.
-                    st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
-            # Row KEYS only here, not a model_meta['explanations'] lookup per
-            # row - that dict lookup is cheap today, but every displayed row
-            # (up to 40) was being looked up on EVERY rerun regardless of
-            # whether anyone selects a row. Deferred into
-            # _selected_player_detail below so only the one row actually
-            # clicked ever gets resolved.
-            row_keys = [(row['Player'], row['Position'], row['Team']) for _, row in display_df.iterrows()]
-            model_table_key = f"weekly_rank_model_table_{wk_year}_{wk_week}_{wk_scoring}"
+                    pct_cols = {}
+                    for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
+                        if c in indexed.columns and indexed[c].notna().any():
+                            pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
+                    # 'Def Rank' colors off the percentile ALREADY computed for it
+                    # (matchup_pct_values, from model_meta - see
+                    # _matchup_difficulty_by_pos_opponent), not a fresh percentile of
+                    # the displayed rows the way pct_cols above is - a percentile
+                    # recomputed from only the ~50 rows on screen would shift every
+                    # time "Show" or a position filter changes, which is exactly
+                    # backwards for a number meant to describe THIS DEFENSE, not
+                    # this table's current slice. centered_pct_cols (not
+                    # matchup_pct_cols) per explicit request: bright at the extremes,
+                    # fading to a muted neutral at a genuinely average (50th
+                    # percentile) matchup, rather than matchup_pct_cols' fixed-alpha
+                    # ramp through every color at the same intensity.
+                    centered_pct_cols = ({'Def Rank': matchup_pct_values} if 'Def Rank' in indexed.columns else {})
+                    # Pre-formatted AFTER percentile calc (which needs the real
+                    # numeric NaN) for the same reason _STAT_DISPLAY_COLS are -
+                    # a player with zero market coverage (no book posted anything)
+                    # leaves 'Market Proj Pts' NaN, and the interactive grid prints
+                    # that as the literal word "None" rather than style_plain_
+                    # dataframe's intended blank/dash. pct_cols above still colors
+                    # correctly since it's matched by row position, not this
+                    # column's own (now string) dtype.
+                    for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
+                        if c in indexed.columns:
+                            indexed[c] = indexed[c].map(lambda v: f"{v:.1f}" if pd.notna(v) else '—')
+                    column_config = build_column_help_config(
+                        indexed, pinned_cols=['Rank', 'Team', 'Opponent'],
+                        short_labels=_RANK_PROJ_SHORT_LABELS, narrow_cols=_NARROW_COLS,
+                        meter_cols={'Season Snap %': (0, 100)} if 'Season Snap %' in indexed.columns else {})
+                    column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
+                        help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
+                              f"({form_source_year}), with the dotted line at that season's average"),
+                        width="small",
+                    )
+                    if 'Last 5 Snaps' in indexed.columns:
+                        column_config['Last 5 Snaps'] = st.column_config.ImageColumn(
+                            help=(f"Snap share over the last {RECENT_FORM_GAMES} games played "
+                                  f"({form_source_year}), with the dotted line at that season's average"),
+                            width="small",
+                        )
+                    # The availability fingerprint is part of the key so a manual injury
+                    # override / FantasyPros pull for this week (which rebuilds the board
+                    # and can move the injured player plus every vacancy recipient) forces
+                    # the open decomposition and the per-player detail cache to re-resolve
+                    # from the rebuild instead of showing the pre-injury breakdown.
+                    detail_config = (wk_year, wk_week, wk_scoring, avail_fp)
+                    selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
+                    if selected_state and selected_state.get('config') != detail_config:
+                        prev_config = selected_state.get('config')
+                        prev_key = selected_state.get('key')
+                        same_board = (isinstance(prev_config, tuple) and len(prev_config) == len(detail_config)
+                                      and prev_config[:-1] == detail_config[:-1])
+                        fresh = (_selected_player_detail(model_meta, detail_config, prev_key)
+                                 if same_board and prev_key is not None else None)
+                        if fresh is not None:
+                            # Same week/scoring, only the availability fingerprint moved -
+                            # an injury override / feed pull rebuilt this board. Keep the
+                            # decomposition open but re-resolve it against the rebuild so
+                            # the injured player and every vacancy recipient show fresh
+                            # numbers instead of the pre-injury breakdown.
+                            st.session_state[_PROJECTION_DETAIL_KEY] = {
+                                'config': detail_config, 'detail': fresh, 'key': prev_key,
+                                'market_detail': _market_detail_for_key(prev_key),
+                            }
+                        else:
+                            # A real board switch (week / scoring), or nothing to
+                            # re-resolve: a Week 3 explanation is not meaningful over a
+                            # Week 4 table.
+                            st.session_state.pop(_PROJECTION_DETAIL_KEY, None)
+                    # Row KEYS only here, not a model_meta['explanations'] lookup per
+                    # row - that dict lookup is cheap today, but every displayed row
+                    # (up to 40) was being looked up on EVERY rerun regardless of
+                    # whether anyone selects a row. Deferred into
+                    # _selected_player_detail below so only the one row actually
+                    # clicked ever gets resolved.
+                    row_keys = [(row['Player'], row['Position'], row['Team']) for _, row in display_df.iterrows()]
+                    model_table_key = f"weekly_rank_model_table_{wk_year}_{wk_week}_{wk_scoring}"
 
-            def _on_model_row_select():
-                rows = st.session_state.get(model_table_key, {}).get('selection', {}).get('rows', [])
-                if rows and rows[0] < len(row_keys):
-                    row_key = row_keys[rows[0]]
-                    detail = _selected_player_detail(model_meta, detail_config, row_key)
-                    if detail:
-                        st.session_state[_PROJECTION_DETAIL_KEY] = {
-                            'config': detail_config, 'detail': detail, 'key': row_key,
-                            'market_detail': _market_detail_for_key(row_key),
-                        }
+                    def _on_model_row_select():
+                        rows = st.session_state.get(model_table_key, {}).get('selection', {}).get('rows', [])
+                        if rows and rows[0] < len(row_keys):
+                            row_key = row_keys[rows[0]]
+                            detail = _selected_player_detail(model_meta, detail_config, row_key)
+                            if detail:
+                                st.session_state[_PROJECTION_DETAIL_KEY] = {
+                                    'config': detail_config, 'detail': detail, 'key': row_key,
+                                    'market_detail': _market_detail_for_key(row_key),
+                                }
 
-            st.dataframe(
-                style_plain_dataframe(indexed, numeric_pct_cols=pct_cols, centered_pct_cols=centered_pct_cols,
-                                      tier_cols={'Model Rank': tier_values} if 'Model Rank' in indexed.columns else None,
-                                      # Model Rank keeps its existing tier shading
-                                      # (a separate explicit request - performance
-                                      # cliffs, not position) rather than also
-                                      # getting position colors here; the other
-                                      # three rank columns had no coloring at all
-                                      # before, so this is a clean addition there.
-                                      position_cols={c: position_values for c in
-                                                     ('Rank', 'FantasyPros Rank', 'Market Rank')
-                                                     if c in indexed.columns},
-                                      label_cols={c: labels for c, labels in rank_labels.items()
-                                                  if c in indexed.columns}),
-                width="stretch", height=df_auto_height(min(len(display_df), 40), row_px=42),
-                row_height=42, column_config=column_config,
-                on_select=_on_model_row_select, selection_mode="single-row", key=model_table_key,
-            )
-            selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
-            if selected_state and selected_state.get('config') == detail_config:
-                _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))
-            shown_note = f"Showing {len(display_df)} of {total_filtered} {group_label} players"
-            if total_filtered > len(display_df):
-                st.caption(f"{shown_note} — widen \"Show\" above to see more.")
-            else:
-                st.caption(f"{shown_note}.")
-            if form_source_year != wk_year:
-                st.caption(
-                    f"↩︎ **Last 5 Weeks** falls back to {form_source_year} — {wk_year} has no played "
-                    "games before the selected week to chart yet."
-                )
-            st.caption(
-                "**Rank** is the table's default order and its scan anchor — a blend of FantasyPros' "
-                "and this app's own positional rank (averages each source's own ordinal, then re-ranks "
-                "from that average; falls back to whichever one source ranks a player when the other "
-                "doesn't, e.g. FantasyPros not pulled this session). "
-                "Every rank column sorts WOVEN (QB1, RB1, WR1, TE1, QB2, …) rather than alphabetically, "
-                "so no single position sweeps the top of the table, and a player a source doesn't rank "
-                "shows \"—\" and sorts to the bottom instead of the top. "
-                "**FantasyPros Rank** / **Model Rank** / **Market Rank** at the right are each source's "
-                "own positional rank, side by side, unblended — Model Rank is shaded by tier, a cluster "
-                "break in Model Proj Pts at that position, not a fixed players-per-tier cutoff. "
-                "**Def Rank**, right after Opponent, is this defense's rank (1-32) in fantasy points "
-                "allowed per game to this position — this season blended with last season, weighted "
-                "games / (games + 12) toward this season (about 25% after four games, 50% after twelve; "
-                "the same weighting the model uses for defense matchups), raw points allowed with no "
-                "adjustment for the offenses faced. 1 allows the MOST (softest matchup), "
-                "32 the least (hardest) — colored by percentile (bright green = easiest matchup at the "
-                "position, bright red = hardest, muted near league-average), off the same number the "
-                "projection decomposition's own \"toughest matchup\" "
-                "line uses. **Wind** / **Temp** / **Precip** just after it are this game's conditions, "
-                "icon-only (recorded once played, forecast otherwise): 🍃 calm / 💨 windy / 💨💨 very "
-                "windy, 🥶 freezing / ❄️ cold / ☀️ mild / 🥵 hot, and Dry / 🌦️ light rain / 🌧️ heavy "
-                "rain / 🌨️ snow — 🏟️ in all three for an indoor game rather than an unmeasured dash, "
-                "since weather genuinely doesn't apply there. "
-                "**Snap Share** and its own **Last 5 Snaps** trend, next to Injury, are this "
-                "player's role/opportunity — his share of the team's snaps in the games he actually "
-                "played, independent of whether this week's projection is driven by volume or by an "
-                "easy matchup. "
-                "**FantasyPros ECR** (when a weekly FantasyPros export is uploaded below) is "
-                "their own REAL published consensus rank, not derived from the points projection above "
-                "it — **Model vs FantasyPros ECR** shows how far apart the two actually are, which is "
-                "not always the same story a proj-pts comparison alone would tell, since a published "
-                "ECR also folds in analyst judgment a raw stat-line projection doesn't capture. "
-                "**Model Proj Pts** is this app's own projection (usage blended toward the current "
-                "season as it grows, opponent/pace/game-script adjusted - see "
-                "docs/weekly_projections_methodology.md), with the stat line it's built from shown "
-                "alongside it. **Market Proj Pts** is this week's live sportsbook player-prop lines "
-                "re-scored under this league's settings, with any stat no book has posted yet filled "
-                "in from this app's own projection so the total is always a complete, like-for-like "
-                "number rather than a truncated sum — **Market Coverage** shows how much of it the "
-                "real posted lines actually cover (a low number means more of it is model-backfilled). "
-                "Open a player's decomposition → **Market lines** for the per-book breakdown, where a "
-                "missing stat stays blank and nothing is backfilled. **FantasyPros Proj Pts** is "
-                "their analysts' number, pulled live above. Independent reads, shown side by side, "
-                "never blended."
-            )
+                    st.dataframe(
+                        style_plain_dataframe(indexed, numeric_pct_cols=pct_cols, centered_pct_cols=centered_pct_cols,
+                                              tier_cols={'Model Rank': tier_values} if 'Model Rank' in indexed.columns else None,
+                                              # Model Rank keeps its existing tier shading
+                                              # (a separate explicit request - performance
+                                              # cliffs, not position) rather than also
+                                              # getting position colors here; the other
+                                              # three rank columns had no coloring at all
+                                              # before, so this is a clean addition there.
+                                              position_cols={c: position_values for c in
+                                                             ('Rank', 'FantasyPros Rank', 'Market Rank')
+                                                             if c in indexed.columns},
+                                              label_cols={c: labels for c, labels in rank_labels.items()
+                                                          if c in indexed.columns}),
+                        width="stretch", height=df_auto_height(min(len(display_df), 40), row_px=42),
+                        row_height=42, column_config=column_config,
+                        on_select=_on_model_row_select, selection_mode="single-row", key=model_table_key,
+                    )
+                    selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
+                    if selected_state and selected_state.get('config') == detail_config:
+                        _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))
+                    # ONE SUMMARY LINE (2026-10-23, user: less text): what every column means is its header's hover help now
+                    # (ui.styling.COLUMN_HELP), not a paragraph under the table.
+                    _mkt_cols = [f'Mkt {s}' for s in consensus_stats if f'Mkt {s}' in merged_model.columns]
+                    priced = int(merged_model[_mkt_cols].notna().any(axis=1).sum()) if _mkt_cols else 0
+                    summary = [f"Showing {len(display_df)} of {total_filtered} {group_label} players"
+                               + (" (widen \"Show\" for more)" if total_filtered > len(display_df) else ""),
+                               f"{merged_model['Team'].nunique()} teams",
+                               f"built from weeks before {model_meta.get('as_of_week', wk_week)}",
+                               f"{priced} priced by the market", "hover a column header for what it means"]
+                    if form_source_year != wk_year:
+                        summary.append(f"Last 5 Weeks from {form_source_year} ({wk_year} has no games before this week yet)")
+                    st.caption(" · ".join(summary))
+            if views[1].open:
+                with views[1]:
+                    detail_config = (wk_year, wk_week, wk_scoring, avail_fp)
+
+                    def _select_from_games(row_key):
+                        detail = _selected_player_detail(model_meta, detail_config, row_key)
+                        if detail:
+                            st.session_state[_PROJECTION_DETAIL_KEY] = {
+                                'config': detail_config, 'detail': detail, 'key': row_key,
+                                'market_detail': _market_detail_for_key(row_key),
+                            }
+
+                    rankings_games.render(
+                        rankings_games.games_board(model_df, market_df, matchup_difficulty, _attach_by_name),
+                        model_meta, wk_year, wk_week, weather_by_team, precip_by_team, _select_from_games)
+                    selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
+                    if selected_state and selected_state.get('config') == detail_config:
+                        _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))
         _render_phone_export(wk_year, wk_week, wk_scoring, model_df, weather_by_team, precip_by_team)
         _render_board()
 
-    if form_df.empty:
-        st.info(f"Not enough {wk_year} weekly data yet to build a recent-form baseline.")
-        return
-
-    st.markdown("---")
-    st.markdown("**Upload a weekly rankings export** (FantasyPros weekly export, or any CSV with a player-name column)")
-    st.caption(
-        "A real FantasyPros weekly export (not a custom one) also feeds the **FantasyPros ECR** / "
-        "**Model vs FantasyPros ECR** columns in the model table above, on the NEXT rerun after "
-        "uploading — their actual published rank, not one derived from a points projection."
-    )
-    import_hint('fantasypros_weekly')
-    weekly_upload = st.file_uploader("Weekly rankings CSV", type=["csv"], key="weekly_rank_upload")
-    weekly_df = None
-    if weekly_upload is not None:
-        weekly_df = parse_fantasypros_upload(weekly_upload)
-        # Only a REAL FantasyPros-shaped export counts as "ECR" for the top
-        # table's comparison - a generic custom upload (parsed below as a
-        # fallback) could be anyone's ranking, and labelling that "FantasyPros
-        # ECR" would just be wrong.
-        st.session_state['_weekly_rank_ecr_df'] = weekly_df if not weekly_df.empty else None
-        if weekly_df.empty:
-            weekly_df = parse_custom_rankings(weekly_upload)
-        if weekly_df is None or weekly_df.empty:
-            st.warning("Couldn't find a player-name column in that upload — expected a header like 'Player', 'Player Name', or 'Name'.")
-
-    if weekly_df is None or weekly_df.empty:
-        return
-
-    comparison = build_rankings_comparison(form_df, value_col='Recent Avg FPTS', rank_label='Form', fp_df=weekly_df)
-    extra_cols = [c for c in comparison.columns if c not in ('Player', 'Pos', 'Team')]
-    merged = form_df.merge(comparison[['Player'] + extra_cols], on='Player', how='left')
-    merged = merged.rename(columns={'Recent Avg FPTS': 'L5 Avg FPTS'})
-
-    upload_positions, _upload_group = position_group_buttons('wrup', default='SUPERFLEX')
-    display_df = apply_position_group(merged, upload_positions, pos_col='Pos')
-    display_df = _limit_rows(display_df, key="weekly_rank_upload_show_n")
-
-    diverging_cols = {}
-    delta_col = 'Form vs FantasyPros'
-    if delta_col in display_df.columns and display_df[delta_col].notna().any():
-        max_abs = display_df[delta_col].abs().max()
-        if max_abs and max_abs > 0:
-            diverging_cols[delta_col] = max_abs
-
-    indexed = display_df.set_index('Player')
-    st.dataframe(
-        style_plain_dataframe(indexed, diverging_cols=diverging_cols),
-        width="stretch", height=df_auto_height(min(len(display_df), 40)),
-        column_config=build_column_help_config(indexed, pinned_cols=['Team', 'Pos']),
-    )

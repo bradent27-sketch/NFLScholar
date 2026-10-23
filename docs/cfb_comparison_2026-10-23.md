@@ -114,4 +114,76 @@ Results: see section 6.
 
 ## 6. Family ablation results
 
-(pending - the run started 2026-10-23 13:16)
+(pending) The first launch (13:16) died out of memory at 13:47, before its first week finished: CFB Scholar's
+`ablation_pairs.py` runs, two UI-comparison preview servers and two long-running Streamlit apps were on the machine with it. It is
+queued to start again from `.sweeps/wait_then_run_leanness.ps1`: it starts once no other heavy Python run has been seen for 10
+minutes and at least 12 GB of commit memory is free (progress in `.sweeps/leanness_waiter.log`). Same groups, same decision rule.
+
+## 7. The weekly board UI: Weekly Rankings vs CFB's Weekly Model
+
+Both tabs were built for 2025 (NFL week 7, CFB week 8) and read side by side. Ranked by how much each change helps a weekly decision
+per unit of work (S/M/L = rough size).
+
+1. **Default order = the model's own number (S, your call).** The first column, `Rank`, averages FantasyPros' and the model's
+   positional ranks, so the order a reader scans first is a model + FantasyPros blend. That predates the rule that market and
+   FantasyPros are benchmarks only. CFB sorts by its own headline stat and puts the market beside it. Proposal: default sort by
+   `Model Proj Pts` (positional rank from the model), keep FantasyPros and market as comparison columns, and make the blended rank an
+   opt-in sort.
+2. **One scoring control (S).** The header's Full PPR / Half-PPR / Standard control drives only Player Search; the tab has its own
+   `Scoring` selectbox. The two can show different settings on the same screen. Make the header control app-wide (the tab reads it)
+   or take it out of the header.
+3. **The board survives a restart, and a ruling re-projects one team (M).** NFL keeps a built board in session state, so a restart or
+   a new browser session costs a full rebuild of several minutes. CFB pins the board to disk with a keep window, and an injury
+   ruling re-projects only that team (`only_teams`), so moving around the tab never rebuilds the board.
+4. **Per-position tables by default, about 15 columns each (M).** In the default SUPERFLEX view one mixed table carries every stat
+   column (passing, rushing and receiving), most of them "—" for any one player. Unused stats are hidden only after you narrow the
+   position. CFB shows one table per position, stats in prop order, sorted by that position's headline stat. SUPERFLEX/FLEX would
+   become a compact points-only list.
+5. **Fewer comparison columns (M).** Today up to 12 leading columns + the stat line + 9 trailing ones: three point projections,
+   three source ranks, ECR, model vs ECR, market coverage, and wind, temperature and precipitation as three columns. Proposal: one
+   `Proj` (model) column, one `vs FP` and one `vs Market` delta (the other sources' full numbers in a tooltip or a Compare view),
+   weather as one chip column flagged only when it matters, season and last-5 snaps as one column, and one rank column with
+   "Rank by: Model / FantasyPros / Market". A matchup column where higher = better for the player reads faster than `Def Rank`
+   (1 = softest).
+6. **Column tooltips instead of the long caption (S).** About 600 words of caption sit under the table. CFB keeps one summary
+   line (players, teams, built from weeks before N, league pace, players priced) plus short per-view notes. Most of the NFL caption
+   is per-column definitions, which `column_config(help=...)` shows on hover.
+7. **A compact control row (S).** NFL: Season / Week / Scoring, then a "This app's weekly model" heading, the live data hub, two
+   freshness captions, and the Build button on its own row. CFB: Season / Week / Run model in one row, then one line saying when
+   the board was built and what a rebuild does. Fold the freshness lines into the data-hub label (e.g. "Live data · FantasyPros
+   2 h ago · injuries 35 min ago").
+8. **Move "Upload a weekly rankings export" into the live data hub (S).** It is a data input but renders below the board.
+9. **A GAMES view inside the tab (M-L).** CFB's game card shows model vs market team totals, spread and total, weather, each
+   team's projected volume (plays, pass attempts and yards, rush attempts and yards), and the availability flags with their
+   reasons ("assumed out: no recorded stat in 4 straight team games ...", "missed last game"), then both rosters. NFL has every
+   piece (Game Slate tab, the model's team volume, the new backup-TE and low-end steps), but not on one card next to the board.
+   This makes a team-level mistake visible (a team projected for 45 pass attempts) without opening player dialogs one by one.
+10. **An EDGES view (M, lower priority while props are parked).** CFB lists model vs line, largest disagreement first, plus a line
+    shop. It only matters for props (P1).
+11. **Split `ui/tabs/rankings.py` (261 KB) into view modules (L, maintenance).** CFB keeps the board, edges, games and dialogs in
+    separate modules and computes team colors and matchup shading once per board. Measure rerun time before treating this as a speed
+    fix.
+
+**The user's calls (2026-10-23)** and what was built the same day:
+- 1 (default order): no change.
+- 2 (one scoring control): the header's Full/Half/Standard control is gone; it drove Player Search and Matchup Analyzer, which each
+  carry it in their own control row now (`ui/components.scoring_control`, one shared choice).
+- 3 (board kept, team-only reload): `ui/board_pin.py` saves a built board to `data/cache/boards/` (git-ignored, 12 hours, dropped
+  when the model code or default features change) and a changed ruling re-projects only the teams whose rows changed
+  (`build_weekly_projections(only_teams=...)`, exact against a full build; methodology 2026-10-23). A re-projected board is recorded
+  in the ledger as a rebuild was.
+- 4: explained (below), not built yet.
+- 5: left for now.
+- 6 (less text): one control row with Build board; no "This app's weekly model" heading; the FantasyPros and injury freshness ride in
+  the Live data pulls label (a stale injury report near kickoff is still a warning); the rankings upload is a Live data pulls tab;
+  the ~600-word caption is one summary line, its definitions are column hover help.
+- 7 (GAMES view): `ui/games_view.py` (pure parts, a port of CFB's) and `ui/tabs/rankings_games.py` (widgets); BOARD / GAMES views
+  over the same built board. Differences from CFB's, each because the board differs: a PTS column; health flags from this app's
+  availability columns (injury report, FantasyPros, your rulings, the QB1 choice); the MODEL score is `data/points_fit.py`
+  (display only); team nicknames in the scoreboard rows (full names overflowed it).
+
+**Item 4, per-position tables, spelled out.** CFB's BOARD is four tabs - QB, RB, WR, TE - each its own table with only that
+position's stats in prop order (a WR table: targets, receptions, yards, TDs, the line). NFL's BOARD opens on SUPERFLEX: one table
+mixing every position, so it carries every stat column (passing, rushing and receiving, about 25 columns), and for any one player
+most of them are blank. NFL does hide the unused stat columns once you pick a single position with the buttons above the table; the
+difference is the default view and that the mixed view is the one you land on.

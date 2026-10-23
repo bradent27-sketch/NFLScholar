@@ -371,33 +371,40 @@ def render_intro_and_glossary():
     the stat glossary lives in the sidebar now (render_data_health_sidebar),
     next to Local Data Health rather than taking up main-content space.
 
-    Also renders the Full PPR/Half-PPR/Standard segmented control, top-right
-    in line with the title - placed here (not inside player_search.py) per
-    explicit request, even though it only actually drives Player Search's
-    own scoring: this function runs once, before any tab's content, so a
-    key="score_tab1" widget instantiated here satisfies Streamlit's
-    "session_state[key] must be set before that widget is instantiated"
-    rule for player_search.py's render() to simply read
-    st.session_state['score_tab1'] later without instantiating a second,
-    competing widget under the same key.
+    The Full PPR/Half-PPR/Standard control that sat top-right here moved
+    into the two tabs it actually drives (scoring_control below; user,
+    2026-10-23): on every other tab, Weekly Rankings above all, it read as
+    if it set that tab's scoring too.
     """
-    col_title, col_scoring = st.columns([3, 2])
-    with col_title:
-        st.markdown(
-            f"<div style='display:flex; align-items:center; gap:12px; margin-top:0;'>"
-            f"<img src='{_NFL_LOGO_URL}' style='height:34px; width:auto; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));'>"
-            f"<div>"
-            f"<div style='font-family:{F['display']}; font-size:21px; font-weight:800; letter-spacing:-0.02em; line-height:1.05; color:#ffffff;'>"
-            f"NFL <span style='color:{C['primary']};'>SCHOLAR</span></div>"
-            f"<div style='font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.14em; color:{C['on_surface_variant']}; margin-top:1px;'>"
-            f"Fantasy Analytics &amp; Matchup Intelligence</div>"
-            f"</div></div>", unsafe_allow_html=True,
-        )
-    with col_scoring:
-        st.segmented_control(
-            "Scoring", ["Full PPR", "Half-PPR", "Standard"], default="Full PPR",
-            key="score_tab1", label_visibility="collapsed", required=True,
-        )
+    st.markdown(
+        f"<div style='display:flex; align-items:center; gap:12px; margin-top:0;'>"
+        f"<img src='{_NFL_LOGO_URL}' style='height:34px; width:auto; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5));'>"
+        f"<div>"
+        f"<div style='font-family:{F['display']}; font-size:21px; font-weight:800; letter-spacing:-0.02em; line-height:1.05; color:#ffffff;'>"
+        f"NFL <span style='color:{C['primary']};'>SCHOLAR</span></div>"
+        f"<div style='font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.14em; color:{C['on_surface_variant']}; margin-top:1px;'>"
+        f"Fantasy Analytics &amp; Matchup Intelligence</div>"
+        f"</div></div>", unsafe_allow_html=True,
+    )
+
+
+SCORING_OPTIONS = ["Full PPR", "Half-PPR", "Standard"]
+
+
+def scoring_control(widget_key):
+    """
+    The Full PPR/Half-PPR/Standard control of a tab that scores players with
+    it (Player Search, Matchup Analyzer). The choice itself is kept under
+    'score_tab1' - an ordinary session entry, no longer a widget key - so it
+    survives a tab switch (Streamlit drops a widget's state on a run that
+    doesn't draw it, and only the open tab is drawn) and the two tabs share
+    one choice. Returns it.
+    """
+    if widget_key not in st.session_state:
+        st.session_state[widget_key] = st.session_state.get('score_tab1', SCORING_OPTIONS[0])
+    choice = st.segmented_control("Scoring", SCORING_OPTIONS, key=widget_key, required=True) or SCORING_OPTIONS[0]
+    st.session_state['score_tab1'] = choice
+    return choice
 
 
 def render_stat_tiles(entries):

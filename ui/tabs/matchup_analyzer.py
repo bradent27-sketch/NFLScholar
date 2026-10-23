@@ -54,7 +54,7 @@ from ui.components import (
 )
 from ui.player_snapshot import build_player_snapshot
 from ui.styling import get_matchup_color, get_pff_color
-from ui.components import default_season_index
+from ui.components import default_season_index, scoring_control
 
 C = THEME['colors']
 
@@ -98,13 +98,16 @@ def render():
     if jump_season in AVAILABLE_SEASONS_WITH_UPCOMING and st.session_state.get('ma_season') != jump_season:
         st.session_state['ma_season'] = jump_season
 
-    c_season, c_team, c_player, c_defense = st.columns([1, 1.3, 1.7, 1.4])
+    c_season, c_team, c_player, c_defense, c_scoring = st.columns([1, 1.3, 1.7, 1.4, 1.2])
     with c_season:
         # The newest season once it has a game played, the one before until then (default_season_index).
         season = st.selectbox("Season", AVAILABLE_SEASONS_WITH_UPCOMING, index=default_season_index(), key="ma_season")
+    with c_scoring:
+        # In this row since 2026-10-23 (it was in the page header; see ui.components.scoring_control)
+        scoring = scoring_control("ma_scoring")
 
     with skeleton_loader("tiles", n=8):
-        stats_df, team_col, name_col, _ = load_and_merge_data(season, _scoring())
+        stats_df, team_col, name_col, _ = load_and_merge_data(season, scoring)
     if stats_df.empty:
         st.info(f"No player data available for {season} yet.")
         return
@@ -236,13 +239,6 @@ def render():
     _render_scheme_fit(season, player_name, position, defense_team)
     _render_anytime_td(stats_df, name_col, player_name, position, defense_team, softness_map)
     _render_prop_analysis(season, stats_df, name_col, player_name, position, offense_team, defense_team, selected_stat)
-
-
-def _scoring():
-    """The app-wide scoring control lives in the header (ui.components.
-    render_intro_and_glossary instantiates it), so this reads it rather than
-    adding a second competing widget under the same key."""
-    return st.session_state.get('score_tab1', 'Full PPR')
 
 
 # ---------------------------------------------------------------------------

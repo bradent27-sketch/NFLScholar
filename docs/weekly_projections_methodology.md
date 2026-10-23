@@ -6120,3 +6120,22 @@ A family whose removal is SHIP-ELIGIBLE (removing helps) is a removal candidate.
 EVERY-START-ALL each by less than 0.002 and EVERY-ALL by less than 0.003 is a simplification candidate (no measurable value).
 Candidates go to a second run that removes them together (interactions), and nothing is removed from DEFAULT_FEATURES without the
 user's sign-off.
+
+### 2026-10-23 - Leanness run relaunch, and a team-only build (no change to any projection)
+The family-ablation run above started at 13:16 and died out of memory at 13:47, before its first week finished (CFB Scholar's
+ablation runs, two Streamlit apps and two comparison servers were on the machine with it). Same groups, same rule; it restarts
+from `.sweeps/wait_then_run_leanness.ps1` once no other heavy Python run has been seen for 10 minutes and 12 GB of commit memory
+is free.
+
+`build_weekly_projections(..., only_teams=, league_context=)` (user: a ruling should re-project only its team, as CFB Scholar's
+board does): the position pool is cut to those teams right after it is built; the four numbers a position pass takes over its
+whole projected pool (the 15th-percentile default snap share, the pooled per-game rate, the pool total behind the per-full-snap
+rate, the pooled efficiency ratio) are recorded by a full build in `meta['league_context']` and read back from it, so a team gets
+exactly what a full build gives it. `ui/board_pin.merge_team_board` swaps the team's rows, explanations and ledgers into the board
+and recomputes the boom/bust bands and chart axes on the merged board (`board_distribution` / `set_distribution_axes`, now shared
+with the build's own last step). Checked exactly before shipping: full builds after the change equal the saved before-builds
+(2025 weeks 7 and 12: board, four ledgers, every band); team-only builds equal the full build's rows for those teams and the merge
+equals the full board (KC+LV 2025 wk 7, SF 2025 wk 12, BUF+LA 2026 wk 8). A team-only build takes ~15 s against ~35-45 s for a
+full one (the league-wide preparation stays). Display only beside it: `data/points_fit.py`, a two-way points fit for the Weekly
+Rankings GAMES view's MODEL column (2023-2025 weeks 3-17 team points MAE 7.56 vs the market's 7.29, margins correlated 0.85);
+no projection reads it.

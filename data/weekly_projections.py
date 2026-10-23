@@ -9287,10 +9287,21 @@ def _load_pff_receiving(year, allow_season_totals=True):
 
 @st.cache_data(show_spinner=False, ttl=CACHE_TTL_SECONDS)
 def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=None, apply_injury=True,
-                             features=None, availability_fingerprint=None):
+                             features=None, availability_fingerprint=None, only_teams=None, league_context=None):
     """
     This app's own projected stat line + fantasy points for every QB/RB/WR/
     TE with usable history, for one week.
+
+    `only_teams` (2026-10-23, user: a ruling should re-project only that
+    team, as CFB Scholar does): project just these teams' players, for
+    swapping into a board already built (ui/board_pin.merge_team_board).
+    Everything league-wide is computed as in a full build; the few numbers
+    taken over a position's whole projected pool (a pooled per-game rate, the
+    15th-percentile default snap share - see _league_value) come from
+    `league_context`, the full build's meta['league_context'], so a team gets
+    exactly the numbers a full build gives it. Raises LeagueContextMissing
+    when one is not there (a board built before this existed): rebuild in
+    full. Ranks and bands across the board are recomputed by the merge.
 
     `as_of_week` defaults to `week` (project week N off weeks < N of the
     same season - the real-time use). Passed explicitly and lower than
@@ -9353,6 +9364,21 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     if as_of_week is None:
         as_of_week = week
     feats = resolve_model_features(features)
+    team_filter = frozenset(str(t).upper() for t in only_teams) if only_teams else None
+    league_record = {}
+
+    def _league_value(key, compute):
+        """A number taken over a position's whole projected pool: computed (and recorded) in a full build, read from
+        `league_context` in a team-only one."""
+        if team_filter is not None:
+            if not league_context or key not in league_context:
+                raise LeagueContextMissing(key)
+            value = league_context[key]
+        else:
+            value = compute()
+        league_record[key] = value
+        return value
+
     stats_df, team_col, name_col, _ = load_and_merge_data(year, scoring_mode)
     if stats_df.empty:
         return pd.DataFrame(), {'reason': f'No roster or weekly data for {year} yet.'}
@@ -10354,6 +10380,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     current_snapshot=not bool(historical_target))
             if cur.empty:
                 continue
+        if team_filter is not None:
+            cur = cur[cur['Team'].astype(str).str.upper().isin(team_filter)].copy()
+            if cur.empty:
+                continue
         # Keep a non-display functional-position flag through the assembled
         # frame.  In a live preseason cold start this is the roster/Ourlads
         # classification (so an FB cannot masquerade as a broad RB); in an
@@ -11081,7 +11111,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # just below can shrink it further for a player a real depth
             # chart shows buried at 3rd string or deeper.
             measured = player_share[np.isfinite(player_share)]
-            default_share = float(np.percentile(measured, 15)) if measured.size else 0.5
+            default_share = _league_value(
+                ('default_share', pos), lambda: float(np.percentile(measured, 15)) if measured.size else 0.5)
             fell_back_to_default = ~np.isfinite(player_share)
             player_share = np.where(np.isfinite(player_share), player_share, default_share)
             player_whole_share = player_share.copy()
@@ -11928,8 +11959,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior_games_total = prior['Games'].sum()
                 pos_rate = float(prior[stat].sum() / prior_games_total) if prior_games_total > 0 else 0.0
             else:
-                games_total = cur_games.sum()
-                pos_rate = float(cur_total.sum() / games_total) if games_total > 0 else 0.0
+                pos_rate = _league_value(
+                    ('pos_rate', pos, stat),
+                    lambda: float(cur_total.sum() / cur_games.sum()) if cur_games.sum() > 0 else 0.0)
             pos_rate_arr = np.full(len(cur), pos_rate)
 
             # v2_td_prior_credibility: shrink a thin one-season TD-rate prior
@@ -12033,8 +12065,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 if pos_share_sum > 0:
                     source = prior if (cold_start and not prior.empty and stat in prior.columns) else cur
                     if stat in source.columns:
-                        pos_rate_arr = np.full(
-                            len(cur), float(source[stat].sum()) / pos_share_sum) * player_share
+                        source_total = (float(source[stat].sum()) if source is prior else
+                                        _league_value(('pool_total', pos, stat), lambda: float(source[stat].sum())))
+                        pos_rate_arr = np.full(len(cur), source_total / pos_share_sum) * player_share
                 prior_rate = prior_rate * stat_role_scale
 
             if pos == 'QB' and 'v2_qb_volume_blend' in feats and stat in qb_blend_rates:
@@ -12629,7 +12662,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 if cold_start and not prior.empty and num_stat in prior.columns and den_stat in prior.columns:
                     pos_num, pos_den = float(prior[num_stat].sum()), float(prior[den_stat].sum())
                 elif num_stat in cur.columns and den_stat in cur.columns:
-                    pos_num, pos_den = float(cur[num_stat].sum()), float(cur[den_stat].sum())
+                    pos_num, pos_den = _league_value(
+                        ('pool_ratio', pos, num_stat, den_stat),
+                        lambda: (float(cur[num_stat].sum()), float(cur[den_stat].sum())))
                 else:
                     continue
                 evidence = (cur[den_stat].to_numpy(dtype=float) if den_stat in cur.columns
@@ -13695,10 +13730,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             continue
         detail['raw_points'] = float(row.get('Raw Model Proj Pts', row['Model Proj Pts']))
         detail['calibrated_points'] = float(row['Model Proj Pts'])
-        detail['distribution'] = player_distribution(
-            row['Pos'], final_pos_rank.loc[idx], detail['calibrated_points'],
-            role_confidence=float(row.get('Role Confidence', np.nan)),
-            own_game_points=_eligible_fantasy_points(*detail.get('game_log_by_season', {}).values()))
+        detail['distribution'] = board_distribution(row, final_pos_rank.loc[idx], detail)
         # The vacancy pass mutates the assembled ranking frame after the
         # per-position explanation was created.  Refresh every displayed stat
         # from that final frame so the popup is a literal decomposition of the
@@ -13809,16 +13841,51 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             _yr: _by_team_pos.get((str(row['Opponent']), str(row['Pos'])), [])
             for _yr, _by_team_pos in defense_alignment_log_by_team_pos_by_season.items()
         }
-    # A fixed x-axis per position for the "Range of outcomes" chart -
-    # explicit request, 2026-08-24: every player's curve was being auto-fit
-    # to the full chart width (0 to that player's own P90 + margin), so a
-    # deep-bench player's narrow, low band and a workhorse's wide, high one
-    # rendered as the same-looking hump - correct in proportion, but visually
-    # indistinguishable, since matplotlib rescaled each one's own axis to
-    # match. Anchoring every player at this position's ACTUAL widest band
-    # (this week's real max P90 across the position, not a guessed constant)
-    # instead lets true differences in width/location show up as a shorter,
-    # further-left curve rather than being silently rescaled away.
+    # one x-axis per position for the "Range of outcomes" chart (see set_distribution_axes)
+    set_distribution_axes(explanations)
+    # Allocation fields are implementation detail, not ranking columns.
+    result = result.drop(columns=[
+        column for column in result.columns
+        if column.startswith('_rb_') or column == '_functional_position'
+    ], errors='ignore')
+    meta = {'reason': None, 'year': year, 'week': week, 'as_of_week': as_of_week,
+            'players': int(len(result)), 'scoring': scoring_mode, 'cold_start': cold_start,
+            'features': sorted(feats), 'vacancy_adjusted': vacancy_adjusted,
+            'source_contract': source_contract, 'explanations': explanations,
+            'vacancy_ledger': vacancy_ledger,
+            'rb_allocation_ledger': rb_allocation_ledger,
+            'pass_capacity_ledger': pass_capacity_ledger,
+            'rb_carry_budget_ledger': carry_budget_ledger,
+            'league_context': league_record,
+            'only_teams': sorted(team_filter) if team_filter is not None else None}
+    return result, meta
+
+
+class LeagueContextMissing(KeyError):
+    """A team-only build (build_weekly_projections' only_teams) needs a whole-pool number the given league_context
+    does not have: the board it would merge into predates the record, so build it in full."""
+
+
+def board_distribution(row, position_rank, detail):
+    """One board row's boom/bust band at its rank at its position on the FINAL board (the full build and a merged
+    board both draw it here, so the two agree)."""
+    return player_distribution(
+        row['Pos'], position_rank, float(row['Model Proj Pts']),
+        role_confidence=float(row.get('Role Confidence', np.nan)),
+        own_game_points=_eligible_fantasy_points(*detail.get('game_log_by_season', {}).values()))
+
+
+def set_distribution_axes(explanations):
+    """A fixed x-axis per position for the "Range of outcomes" chart -
+    explicit request, 2026-08-24: every player's curve was being auto-fit
+    to the full chart width (0 to that player's own P90 + margin), so a
+    deep-bench player's narrow, low band and a workhorse's wide, high one
+    rendered as the same-looking hump - correct in proportion, but visually
+    indistinguishable, since matplotlib rescaled each one's own axis to
+    match. Anchoring every player at this position's ACTUAL widest band
+    (this week's real max P90 across the position, not a guessed constant)
+    instead lets true differences in width/location show up as a shorter,
+    further-left curve rather than being silently rescaled away."""
     position_axis_max: dict[str, float] = {}
     for detail in explanations.values():
         distribution = detail.get('distribution')
@@ -13832,17 +13899,3 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         distribution = detail.get('distribution')
         if distribution:
             distribution['axis_max'] = position_axis_max.get(detail['position'], 0.0) + 1.0
-    # Allocation fields are implementation detail, not ranking columns.
-    result = result.drop(columns=[
-        column for column in result.columns
-        if column.startswith('_rb_') or column == '_functional_position'
-    ], errors='ignore')
-    meta = {'reason': None, 'year': year, 'week': week, 'as_of_week': as_of_week,
-            'players': int(len(result)), 'scoring': scoring_mode, 'cold_start': cold_start,
-            'features': sorted(feats), 'vacancy_adjusted': vacancy_adjusted,
-            'source_contract': source_contract, 'explanations': explanations,
-            'vacancy_ledger': vacancy_ledger,
-            'rb_allocation_ledger': rb_allocation_ledger,
-            'pass_capacity_ledger': pass_capacity_ledger,
-            'rb_carry_budget_ledger': carry_budget_ledger}
-    return result, meta

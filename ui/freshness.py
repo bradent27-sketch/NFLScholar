@@ -26,6 +26,11 @@ def _span(delta: dt.timedelta) -> str:
     return f"{mins}m"
 
 
+def span_text(delta: dt.timedelta) -> str:
+    """'2h 05m' / '3d 4h' / '12m' - the same wording as the notes, for a label elsewhere."""
+    return _span(delta)
+
+
 def next_kickoff(schedule, week: int, now: dt.datetime) -> dt.datetime | None:
     """The earliest kickoff in `week` that is still ahead of `now` (timezone-aware, US Eastern), or None."""
     if schedule is None or len(schedule) == 0 or "gameday" not in schedule.columns:

@@ -2308,6 +2308,9 @@ MODEL_FEATURES = (
                              # partial-game filter of annotate_player_history_participation
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
+    'v2_no_td_matchup',  # CANDIDATE (2026-10-23, strength audit): no matchup multiplier on TD stats.
+    'v2_no_qb_rush_script',  # CANDIDATE (2026-10-23, strength audit): no game-script multiplier on QB rushing.
+    'v2_no_pace',  # CANDIDATE (2026-10-23, strength audit): no opponent-pace multiplier.
     'v2_low_end_points_line',  # SHIPPED 2026-10-22 (backlog L7b). Below a knot (RB/WR 6, TE 4 raw points)
                              # the points line is re-fit on every game (no box-score
                              # line = 0); the shipped v4 line everywhere above it.
@@ -3315,6 +3318,15 @@ def points_line(pos, week, raw, low_end=False):
         knot, a = LOW_END_POINTS_LINE[pos]
         line = np.where(raw_arr < knot, intercept + slope * knot + a * (raw_arr - knot), line)
     return line
+
+
+# Subtraction candidates (2026-10-23, from the CFB comparison's multiplier strength audit, scripts/audit_factor_gamma.py on the
+# capture traces, every game the model expected the player to play, RMSE, 2021-2025; offline - downstream steps not re-run):
+#   'v2_no_td_matchup'      the matchup multiplier on TD stats fits best at strength 0 at every position (receiving TDs WR/TE/RB,
+#                           QB passing TDs: switching it off -0.17% to -0.44%, 3-4 of 5 seasons; box-score rows agree).
+#   'v2_no_qb_rush_script'  the game-script multiplier on QB rushing attempts/yards fits best at 0 (-1.2%, 4 of 5 seasons).
+#   'v2_no_pace'            the opponent-pace multiplier moves a projection ~1% (log sd 0.009) and is worth at most 0.05%.
+STRENGTH_AUDIT_TD_STATS = ('passing_tds', 'rushing_tds', 'receiving_tds')
 
 
 # --- v2_season_anchor ---------------------------------------------------------
@@ -12416,6 +12428,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     cur['target_margin'].to_numpy(dtype=float))
             stat_trace[stat]['script_neutral_multiplier'] = script_neutral_mult
 
+            # Subtraction candidates from the 2026-10-23 multiplier strength audit (scripts/audit_factor_gamma.py, every game,
+            # 2021-2025): the matchup multiplier on TD stats and the game-script multiplier on QB rushing both fit best at
+            # strength 0 (see STRENGTH_AUDIT_TD_STATS).
+            if 'v2_no_td_matchup' in feats and stat in STRENGTH_AUDIT_TD_STATS:
+                matchup_mult = np.ones(len(cur))
+                stat_trace[stat]['matchup_multiplier'] = matchup_mult
+            if 'v2_no_qb_rush_script' in feats and pos == 'QB' and stat in ('rushing_attempts', 'rushing_yards'):
+                script_mult = np.ones(len(cur))
+                stat_trace[stat]['script_multiplier'] = script_mult
             stat_trace[stat]['participation_multiplier'] = participation_mult
             proj_cols[stat] = blended * matchup_mult * script_mult * script_neutral_mult * participation_mult
 
@@ -12437,6 +12458,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 if 'v2_pace_alpha_cap' in feats:
                     pace_alpha = np.minimum(pace_alpha, PACE_ALPHA_CAP)
                 pace_mult = 1.0 + pace_alpha * (pace_mult - 1.0)
+        if 'v2_no_pace' in feats:
+            # strength audit 2026-10-23: the opponent-pace multiplier moves a projection ~1% and is worth at most 0.05%
+            pace_mult = pd.Series(1.0, index=cur.index)
 
         tempo_mult = np.ones(len(cur))
         if 'v2_own_tempo_regression' in feats and pace is not None and not pace.empty:

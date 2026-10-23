@@ -433,7 +433,8 @@ def main():
                     "(variant = DEFAULT_FEATURES minus this flag)")
     ap.add_argument('--ablate-group', default='',
                     help="comma-separated DEFAULT_FEATURES names removed TOGETHER as one variant (e.g. a confirming run "
-                    "for several flags shipped at once, each tested alone)")
+                    "for several flags shipped at once, each tested alone). Several groups: 'name=a,b;name2=c,d', each "
+                    "its own variant 'group:name' sharing the base build")
     ap.add_argument('--add-group', default='',
                     help="comma-separated MODEL_FEATURES names added TOGETHER as one candidate variant (e.g. two "
                     "overlapping candidates also tested one by one with --add)")
@@ -472,7 +473,12 @@ def main():
     ablate_flags = [f.strip() for f in args.flags.split(',') if f.strip()]
     add_flags = [f.strip() for f in args.add.split(',') if f.strip()]
     add_features = frozenset(f.strip() for f in getattr(args, 'add_features').split(',') if f.strip())
-    group_flags = [f.strip() for f in args.ablate_group.split(',') if f.strip()]
+    ablate_groups = {}
+    for chunk in [c.strip() for c in args.ablate_group.split(';') if c.strip()]:
+        name, _, flags = chunk.rpartition('=') if '=' in chunk else ('', '', chunk)
+        members = [f.strip() for f in flags.split(',') if f.strip()]
+        ablate_groups[name.strip() or '+'.join(members)] = members
+    group_flags = [f for members in ablate_groups.values() for f in members]
     unknown_group = set(group_flags) - set(DEFAULT_FEATURES)
     if unknown_group:
         raise SystemExit(f"--ablate-group not in DEFAULT_FEATURES: {sorted(unknown_group)}")
@@ -505,9 +511,9 @@ def main():
         label = 'addgroup:' + '+'.join(add_group_flags)
         variant_defs[label] = frozenset(DEFAULT_FEATURES | set(add_group_flags) | add_features)
         modes[label] = 'add'
-    if group_flags:
-        label = 'group:' + '+'.join(group_flags)
-        variant_defs[label] = frozenset((DEFAULT_FEATURES - set(group_flags)) | add_features)
+    for name, members in ablate_groups.items():
+        label = 'group:' + name
+        variant_defs[label] = frozenset((DEFAULT_FEATURES - set(members)) | add_features)
         modes[label] = 'ablate'
     for flag in ablate_flags:
         variant_defs[flag] = frozenset((DEFAULT_FEATURES - {flag}) | add_features)

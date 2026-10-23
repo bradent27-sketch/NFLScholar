@@ -6086,3 +6086,37 @@ expected game counts (2025 week 8: WR shown 2-4 3.06 -> 2.39, RB 0-2 0.59 -> 0.2
 unchanged. It is part of the calibration step (inert without 'calibration'); any future re-fit of the v4 lines has to re-fit
 LOW_END_POINTS_LINE with it (scripts/eval_low_end_line.py). MODEL_FEATURES = 100. The live app needs a restart to pick it up.
 Undo: remove the flag from DEFAULT_FEATURES.
+
+
+### 2026-10-23 - Leanness check: family ablations of the 65-flag default (plan and decision rule, written before the run)
+
+User: compare the app with CFB Scholar and check whether "we have so many different parameters ... some of them overlapping or
+redundant ... see if potentially a more minimal version is better". One full harness run (2022-2025 weeks 3-17, replay, base
+DEFAULT_FEATURES (65), snap-guarded; `--ablate-group`, now taking several named groups that share the base build), each variant
+removing one FAMILY of flags (core mechanisms - role_volume, calibration, v2_vacancy, v2_defense_prior, QB1 selection, the
+contracts/guards - stay), plus `v2_pff_alignment_matchup` alone (its 2026-09-23 re-ablation said removing it helped, -0.011,
+left as a user decision):
+
+| group | flags removed together |
+|---|---|
+| rate_trust | v2_adaptive_volume, v2_role_change_by_stat, v2_stat_k_by_pos, v2_role_confidence_reversed_wrte, v2_fallback_prior_fast_trust, v2_offense_prior_blend |
+| participation | v2_wrte_participation, v2_rb_participation, v2_rookie_backup_wr_dampen_narrow, v2_uncalibrate_zero_rows, v2_backup_te_discount |
+| script | v2_offense_script_pool_blend, v2_script_neutral_volume, v2_script_neutral_level_fix, v2_rb_rush_yards_script_neutral |
+| rb_conservation | v2_rb_carry_budget, v2_rb_carry_budget_keep_tds, v2_rb_in_season_share_conservation, v2_rb_depleted_room_fill |
+| pass_capacity | v2_pass_capacity, v2_pass_capacity_injury_neutral_claim, v2_pass_capacity_keep_tds, v2_pass_capacity_matchup_flex |
+| vacancy_modifiers | v2_vacancy_absence_decay, v2_vacancy_bump_cap, v2_receiver_vacancy_pecking_order, v2_vacancy_lead_share_050 |
+| defense_extras | v2_channel_matchups, v2_continuous_roles, v2_pff_alignment_matchup, v2_scheme_matchup, v2_pff_defense_prior_blend, v2_defense_blowout_discount |
+| td_extras | v2_td_prior_credibility, v2_td_two_year_prior, v2_xtd, v2_xtd_rush_outside_zone |
+| late_points | v2_season_anchor, v2_questionable_workload, v2_expected_points_luck, v2_top_end_yardage, v2_low_end_points_line |
+| qb_rates | v2_qb_volume_blend, v2_qb_td_blend, v2_qb_implied_td_boost |
+| environment | v2_game_total_elasticity_perstat, v2_weather_adjustment, v2_pace_alpha_cap |
+| alignment_only | v2_pff_alignment_matchup |
+
+Not measurable in this window (cold start / weeks 1-2 only, inert in weeks 3-17): v2_preseason_rb_allocator,
+v2_receiver_cold_start_vacancy, v2_opening_week_stat_calibration.
+
+**Decision rule (written before the run).** A family whose removal is REJECT (removing hurts, START-ALL CI above 0) earns its keep.
+A family whose removal is SHIP-ELIGIBLE (removing helps) is a removal candidate. A family whose removal moves START-ALL and
+EVERY-START-ALL each by less than 0.002 and EVERY-ALL by less than 0.003 is a simplification candidate (no measurable value).
+Candidates go to a second run that removes them together (interactions), and nothing is removed from DEFAULT_FEATURES without the
+user's sign-off.

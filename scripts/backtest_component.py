@@ -438,6 +438,10 @@ def main():
     ap.add_argument('--add-group', default='',
                     help="comma-separated MODEL_FEATURES names added TOGETHER as one candidate variant (e.g. two "
                     "overlapping candidates also tested one by one with --add)")
+    ap.add_argument('--variant', default='',
+                    help="named variants that remove AND add flags at once, e.g. a leaner model: 'lean=-a,-b,+c;lean2=-d,+e' "
+                    "('-' a DEFAULT_FEATURES flag removed, '+' a MODEL_FEATURES flag added); each its own variant "
+                    "'variant:name', judged as an ablation (is the leaner model at least as good)")
     ap.add_argument('--add', default='', help="comma-separated MODEL_FEATURES names to ADD as an unproven "
                     "candidate (variant = DEFAULT_FEATURES plus this flag) - for a component NOT yet shipped")
     ap.add_argument('--add-features', default='',
@@ -486,7 +490,20 @@ def main():
     bad_add_group = (set(add_group_flags) - set(MODEL_FEATURES)) | (set(add_group_flags) & set(DEFAULT_FEATURES))
     if bad_add_group:
         raise SystemExit(f"--add-group must be MODEL_FEATURES not yet in DEFAULT_FEATURES: {sorted(bad_add_group)}")
-    if not ablate_flags and not add_flags and not group_flags and not add_group_flags:
+    mixed_variants = {}
+    for chunk in [c.strip() for c in args.variant.split(';') if c.strip()]:
+        name, _, flags = chunk.partition('=')
+        items = [f.strip() for f in flags.split(',') if f.strip()]
+        removed = {f[1:] for f in items if f.startswith('-')}
+        added = {f[1:] for f in items if f.startswith('+')}
+        if not name.strip() or len(removed) + len(added) != len(items):
+            raise SystemExit(f"--variant needs 'name=-flag,+flag,...': {chunk!r}")
+        bad = (removed - set(DEFAULT_FEATURES)) | (added - set(MODEL_FEATURES)) | (added & set(DEFAULT_FEATURES))
+        if bad:
+            raise SystemExit(f"--variant {name}: removed flags must be in DEFAULT_FEATURES, added ones in MODEL_FEATURES "
+                             f"and not shipped: {sorted(bad)}")
+        mixed_variants[name.strip()] = (removed, added)
+    if not ablate_flags and not add_flags and not group_flags and not add_group_flags and not mixed_variants:
         raise SystemExit("pass --flags (ablate) and/or --add (candidate addition)")
     unknown_ablate = set(ablate_flags) - set(DEFAULT_FEATURES)
     if unknown_ablate:
@@ -514,6 +531,10 @@ def main():
     for name, members in ablate_groups.items():
         label = 'group:' + name
         variant_defs[label] = frozenset((DEFAULT_FEATURES - set(members)) | add_features)
+        modes[label] = 'ablate'
+    for name, (removed, added) in mixed_variants.items():
+        label = 'variant:' + name
+        variant_defs[label] = frozenset((DEFAULT_FEATURES - removed) | added | add_features)
         modes[label] = 'ablate'
     for flag in ablate_flags:
         variant_defs[flag] = frozenset((DEFAULT_FEATURES - {flag}) | add_features)

@@ -6123,9 +6123,8 @@ user's sign-off.
 
 ### 2026-10-23 - Leanness run relaunch, and a team-only build (no change to any projection)
 The family-ablation run above started at 13:16 and died out of memory at 13:47, before its first week finished (CFB Scholar's
-ablation runs, two Streamlit apps and two comparison servers were on the machine with it). Same groups, same rule; it restarts
-from `.sweeps/wait_then_run_leanness.ps1` once no other heavy Python run has been seen for 10 minutes and 12 GB of commit memory
-is free.
+ablation runs, two Streamlit apps and two comparison servers were on the machine with it). Same groups, same rule; restarted at 18:43
+(a waiter held it behind the CFB jobs, which ended about 14:45, then waited on a 12 GB free-memory bar that never came free).
 
 `build_weekly_projections(..., only_teams=, league_context=)` (user: a ruling should re-project only its team, as CFB Scholar's
 board does): the position pool is cut to those teams right after it is built; the four numbers a position pass takes over its
@@ -6139,3 +6138,36 @@ equals the full board (KC+LV 2025 wk 7, SF 2025 wk 12, BUF+LA 2026 wk 8). A team
 full one (the league-wide preparation stays). Display only beside it: `data/points_fit.py`, a two-way points fit for the Weekly
 Rankings GAMES view's MODEL column (2023-2025 weeks 3-17 team points MAE 7.56 vs the market's 7.29, margins correlated 0.85);
 no projection reads it.
+
+### 2026-10-23 - Leanness check result (family ablations), and the second run's bar (written before it)
+Result (2022-2025 weeks 3-17, 65-flag base; Δ RMSE when the family is REMOVED, START-ALL / EVERY-START-ALL / EVERY-ALL):
+
+| group | START-ALL | EVERY-START-ALL | EVERY-ALL | verdict | reading |
+|---|---|---|---|---|---|
+| rate_trust | +0.011 [+0.006,+0.017] | +0.011 | +0.004 | REJECT | earns its keep |
+| participation | +0.013 [+0.007,+0.019] | +0.009 | +0.033 | REJECT | earns its keep |
+| script | +0.022 [+0.010,+0.033] | +0.023 | +0.013 | REJECT | earns its keep |
+| rb_conservation | +0.009 [-0.000,+0.019] | +0.013 | +0.008 | INCONCLUSIVE | keep: START-RB +0.036, CI excludes 0 |
+| pass_capacity | +0.007 [-0.015,+0.030] | +0.033 | +0.032 | INCONCLUSIVE | keep: every-game WR +0.063, START bias -0.19 -> +0.37 |
+| vacancy_modifiers | +0.001 [-0.013,+0.015] | +0.006 | +0.005 | INCONCLUSIVE | keep: every scope leans worse without it |
+| defense_extras | -0.004 [-0.009,+0.001] | -0.004 | -0.002 | INCONCLUSIVE | removal leans helpful on every scope |
+| td_extras | +0.024 [+0.011,+0.038] | +0.037 | +0.029 | REJECT | earns its keep |
+| late_points | +0.028 [+0.012,+0.046] | +0.053 | +0.050 | REJECT | earns its keep |
+| qb_rates | +0.023 [+0.010,+0.037] | +0.019 | +0.009 | REJECT | earns its keep |
+| environment | +0.033 [+0.021,+0.045] | +0.043 | +0.025 | REJECT | earns its keep |
+| alignment_only | -0.003 [-0.008,+0.000] | -0.004 | -0.002 | INCONCLUSIVE | most of defense_extras' effect; START-RB -0.005, CI excludes 0 |
+
+By the rule written before the run: no family is a removal candidate (no removal is significant) and none is a simplification
+candidate (defense_extras / alignment_only move 0.003-0.004, outside the no-value band, on the side where removing helps). Ten of
+twelve families measurably earn their keep. The one family that adds nothing is the defense extras, and inside it
+`v2_pff_alignment_matchup` (its 2026-09-23 re-ablation said the same, -0.011).
+
+**Second run (bar written before it).** Three leaner variants against the same base, each judged as an ablation (`--variant`, new:
+removes and adds in one variant):
+- `subtract3` = + v2_no_td_matchup, v2_no_qb_rush_script, v2_no_pace (the strength audit's three subtractions);
+- `lean_alignment` = subtract3 and - v2_pff_alignment_matchup;
+- `lean_defense` = subtract3 and - the six defense_extras flags.
+A variant is a simplification win when START-ALL, EVERY-START-ALL and EVERY-ALL each move by at most +0.002 / +0.002 / +0.003 and no
+START position is worse by more than 0.010 with its CI above 0; it is better outright when START-ALL improves with the CI below 0.
+Either way it goes to the user; nothing leaves DEFAULT_FEATURES without sign-off. defense_extras is in this run although it is not a
+candidate by the letter of the first rule, because its removal leaned helpful on every headline scope in two separate runs.

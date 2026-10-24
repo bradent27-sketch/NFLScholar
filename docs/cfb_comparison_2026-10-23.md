@@ -114,10 +114,31 @@ Results: see section 6.
 
 ## 6. Family ablation results
 
-(pending) The first launch (13:16) died out of memory at 13:47, before its first week finished: CFB Scholar's
-`ablation_pairs.py` runs, two UI-comparison preview servers and two long-running Streamlit apps were on the machine with it. It is
-queued to start again from `.sweeps/wait_then_run_leanness.ps1`: it starts once no other heavy Python run has been seen for 10
-minutes and at least 12 GB of commit memory is free (progress in `.sweeps/leanness_waiter.log`). Same groups, same decision rule.
+Run 2022-2025 weeks 3-17 (started 18:43 after an out-of-memory first launch, finished 23:10). Δ RMSE when the family is
+REMOVED (positive = the model gets worse without it):
+
+| family | START-ALL | every-game START | every game | verdict |
+|---|---|---|---|---|
+| trust in this season's rate | +0.011 | +0.011 | +0.004 | earns its keep |
+| does he play / how much | +0.013 | +0.009 | +0.033 | earns its keep |
+| game script | +0.022 | +0.023 | +0.013 | earns its keep |
+| RB volume conservation | +0.009 | +0.013 | +0.008 | keep (START-RB +0.036, significant) |
+| pass capacity | +0.007 | +0.033 | +0.032 | keep (every-game WR +0.063; bias jumps without it) |
+| vacancy modifiers | +0.001 | +0.006 | +0.005 | keep (every scope leans worse without it) |
+| defense extras | **-0.004** | **-0.004** | **-0.002** | adds nothing (removal leans helpful) |
+| TD extras | +0.024 | +0.037 | +0.029 | earns its keep |
+| late point steps | +0.028 | +0.053 | +0.050 | earns its keep |
+| QB rates | +0.023 | +0.019 | +0.009 | earns its keep |
+| environment | +0.033 | +0.043 | +0.025 | earns its keep |
+| PFF alignment alone | **-0.003** | **-0.004** | **-0.002** | most of the defense extras' effect |
+
+**Answer to "is a more minimal version better?"** Mostly no: ten of the twelve families measurably earn their keep, and the
+families that look redundant on paper (three kinds of volume conservation, four script flags) each carry weight. The one family
+that adds nothing is the defense extras (channel matchups, continuous roles, PFF alignment, scheme matchup, PFF defense prior,
+blowout discount), and inside it `v2_pff_alignment_matchup`, whose removal helped here and in its 2026-09-23 re-ablation. None of
+it is significant on its own, so by the rule nothing is removed yet. A second run (methodology 2026-10-23, bar written first)
+tests three leaner variants together with the strength audit's subtractions (matchup off on TD stats, QB rushing script off, pace
+off).
 
 ## 7. The weekly board UI: Weekly Rankings vs CFB's Weekly Model
 

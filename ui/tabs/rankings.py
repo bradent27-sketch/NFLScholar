@@ -48,6 +48,7 @@ from data.weather import resolve_game_weather, resolve_game_precip
 from data.game_slate import load_slate, slate_team_bridge
 from ui import board_session, freshness
 from ui.tabs import rankings_games
+from data.weekly_median import MEDIAN_STATS, attach_medians
 from ui.report_export import (board_pdf, default_export_dir, export_file_names, game_report_pdf,
                               save_exports)
 from ui.charts import sparkline_data_uri, C as _CHART_COLORS
@@ -60,6 +61,16 @@ _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing
                     'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds']
 
 _BOARD_AGE_NUDGE_HOURS = 3.0
+
+
+def _median_view(board):
+    """The board read as medians: Model Proj Pts and every projected stat replaced by its median (data/weekly_median.py)."""
+    out = attach_medians(board)
+    for stat in [s for s in MEDIAN_STATS if 'Median ' + s in out.columns]:
+        out[stat] = out['Median ' + stat]
+    if 'Median Proj Pts' in out.columns:
+        out['Model Proj Pts'] = out['Median Proj Pts']
+    return out.drop(columns=[c for c in out.columns if c.startswith('Median ')])
 
 
 def _board_age_caption(built_at, now=None, reprojected=None, reprojected_at=None):
@@ -3881,7 +3892,21 @@ def render():
             to live there, not here, and _switch_tab_from_fragment's for
             the two ways of doing this that looked right and were not.
             """
+            # AVERAGE / MEDIAN (2026-10-23, user: CFB's toggle - the average for fantasy, the median as a floor reference
+            # and for over/unders): the median view swaps the model's points and stat line for their medians
+            # (data/weekly_median.py) before anything is ranked or coloured, so the whole table reads in the chosen view.
+            # The ledger, the projection dialog and every other tab keep the means.
+            rankings_games.keep_widget_state()
+            view_col, _view_spare = st.columns([2, 5])
+            with view_col:
+                projection_view = st.segmented_control(
+                    "Projection", ["Average", "Median"], key="weekly_rank_projection_view",
+                    help="Average: the expected points and stats (what adds up over a season - use it for fantasy). Median: "
+                         "the middle game, half of games above it - a floor reference, and the number an over/under line is "
+                         "priced against.") or "Average"
             merged_model = model_df.copy()
+            if projection_view == "Median":
+                merged_model = _median_view(merged_model)
             # 'Def Rank' - directly right of Opponent per explicit request -
             # a single combined difficulty read for this position against
             # this opponent (see _matchup_difficulty_by_pos_opponent's own
@@ -4154,7 +4179,6 @@ def render():
 
             # BOARD / GAMES (2026-10-23, user: "replicate this very closely" - CFB Scholar's game view): only the open
             # view is drawn. GAMES reads the same built board (ui/tabs/rankings_games.py).
-            rankings_games.keep_widget_state()
             views = st.tabs(['BOARD', 'GAMES'], key='weekly_rank_view', on_change='rerun')
             if views[0].open:
                 with views[0]:
@@ -4293,7 +4317,9 @@ def render():
                             indexed[c] = indexed[c].map(lambda v: f"{v:.1f}" if pd.notna(v) else '—')
                     column_config = build_column_help_config(
                         indexed, pinned_cols=['Rank', 'Team', 'Opponent'],
-                        short_labels=_RANK_PROJ_SHORT_LABELS, narrow_cols=_NARROW_COLS,
+                        short_labels=(dict(_RANK_PROJ_SHORT_LABELS, **{'Model Proj Pts': 'Model Median'})
+                                      if projection_view == "Median" else _RANK_PROJ_SHORT_LABELS),
+                        narrow_cols=_NARROW_COLS,
                         meter_cols={'Season Snap %': (0, 100)} if 'Season Snap %' in indexed.columns else {})
                     column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
                         help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
@@ -4385,6 +4411,8 @@ def render():
                                f"{merged_model['Team'].nunique()} teams",
                                f"built from weeks before {model_meta.get('as_of_week', wk_week)}",
                                f"{priced} priced by the market", "hover a column header for what it means"]
+                    if projection_view == "Median":
+                        summary.insert(1, "medians: half of games land above each number")
                     if form_source_year != wk_year:
                         summary.append(f"Last 5 Weeks from {form_source_year} ({wk_year} has no games before this week yet)")
                     st.caption(" · ".join(summary))
@@ -4402,7 +4430,8 @@ def render():
 
                     rankings_games.render(
                         rankings_games.games_board(model_df, market_df, matchup_difficulty, _attach_by_name),
-                        model_meta, wk_year, wk_week, weather_by_team, precip_by_team, _select_from_games)
+                        model_meta, wk_year, wk_week, weather_by_team, precip_by_team, _select_from_games,
+                        view=projection_view)
                     selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
                     if selected_state and selected_state.get('config') == detail_config:
                         _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))

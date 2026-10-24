@@ -10,6 +10,7 @@ import streamlit as st
 
 from data.game_slate import load_slate, team_display_name
 from data.points_fit import week_points_fit
+from data.weekly_median import attach_medians
 from ui import games_view
 
 _GAME_PICK_KEY = 'wr_game_pick'
@@ -17,7 +18,7 @@ _GAME_TABLE_MAX_ROWS = 16            # rows of a team's player table shown befor
 _POSITION_ORDER = ('QB', 'RB', 'WR', 'TE')
 # the widgets of this view that carry a value worth keeping across the BOARD/GAMES switch, with the value each starts at
 _PERSISTED_WIDGETS = {'wr_game_day': 'All', _GAME_PICK_KEY: None, 'wr_game_pos': 'ALL', 'wr_game_rows': 'With a role',
-                      'wr_game_props_group': 'All'}
+                      'wr_game_props_group': 'All', 'weekly_rank_projection_view': 'Average'}
 
 
 def keep_widget_state(keys=_PERSISTED_WIDGETS):
@@ -90,10 +91,11 @@ def _game_label(game):
         f" · {game['kickoff']}" if game['kickoff'] else '')
 
 
-def render(board, meta, year, week, weather_by_team, precip_by_team, select_player, team_filter=None):
+def render(board, meta, year, week, weather_by_team, precip_by_team, select_player, team_filter=None, view='Average'):
     """The GAMES view. `board`: the built board with 'Matchup Pct' and any 'Mkt <stat>' columns (rankings._games_board); `meta`: its
     meta (explanations, vacancy ledger); `select_player(key)`: what a row click calls with (Player, Pos, Team); `team_filter`: the
-    board's matchup filter, as a set of teams (None = every game)."""
+    board's matchup filter, as a set of teams (None = every game); `view`: Average or Median for the player tables and team totals
+    (the props table always compares the median with the line)."""
     games = game_list(year, week, board)
     if team_filter:
         games = [g for g in games if set(g['teams']) & set(team_filter)]
@@ -143,7 +145,7 @@ def render(board, meta, year, week, weather_by_team, precip_by_team, select_play
         group = board[board['Team'] == team]
         items, hidden = games_view.availability_items(group, explanations, ledger)
         side = ('Home' if team == game['home'] else 'Away') + (' · neutral site' if game['neutral'] else '')
-        blocks.append({'team': team, 'name': team_display_name(team), 'side': side, 'chips': games_view.team_chips(group),
+        blocks.append({'team': team, 'name': team_display_name(team), 'side': side, 'chips': games_view.team_chips(group, view),
                        'items': items, 'hidden': hidden})
     st.markdown(games_view.teams_html(blocks, colors, logos), unsafe_allow_html=True)
 
@@ -169,7 +171,7 @@ def render(board, meta, year, week, weather_by_team, precip_by_team, select_play
     # with only the stats its position has, the columns as narrow as their headers allow
     for pos in (_POSITION_ORDER if position == 'ALL' else (position,)):
         frames = {team: games_view.position_table(board[board['Team'] == team], pos, role_only=(mode == 'With a role'),
-                                                  explanations=explanations) for team in game['teams']}
+                                                  explanations=explanations, view=view) for team in game['teams']}
         if all(frame.empty for frame in frames.values()):
             if position != 'ALL':
                 st.caption(f'No {games_view.POSITION_LABELS[pos].lower()} for this filter.')
@@ -180,15 +182,15 @@ def render(board, meta, year, week, weather_by_team, precip_by_team, select_play
                 if frame.empty:
                     st.caption(f'{team_display_name(team)}: no {games_view.POSITION_LABELS[pos].lower()} for this filter.')
                     continue
-                st.markdown(games_view.table_header_html(team, team_display_name(team), len(frame), colors, label=pos),
+                st.markdown(games_view.table_header_html(team, team_display_name(team), len(frame), colors, label=pos, view=view),
                             unsafe_allow_html=True)
-                key = f"wr_game_{game['game_id']}_{team}_{pos}_{mode}_{board_key}"
+                key = f"wr_game_{game['game_id']}_{team}_{pos}_{mode}_{view}_{board_key}"
                 st.dataframe(games_view.styled_table(frame), width='stretch', hide_index=True, height=_games_table_height(len(frame)),
                              on_select=_on_select_for(key, frame), selection_mode='single-row', key=key,
                              column_config=_game_column_config(frame))
 
     # THE PROPS in the game, the largest disagreement with the book first
-    st.markdown('**Priced props in this game** (largest disagreement with the book first)')
+    st.markdown("**Priced props in this game** (the model's median against the line, largest disagreement first)")
     group = st.segmented_control('Props', ['All', 'Passing', 'Rushing', 'Receiving'], key='wr_game_props_group',
                                  label_visibility='collapsed') or 'All'
     props = games_view.props_table(games_view.long_market(board), game['teams'], group)
@@ -203,8 +205,9 @@ def render(board, meta, year, week, weather_by_team, precip_by_team, select_play
 
 def games_board(model_df, market_df, matchup_difficulty, attach_by_name):
     """The board the GAMES view reads: the built board with 'Matchup Pct' (0-100, 100 = the softest matchup, the Def Rank
-    percentile) and the market's consensus line per stat as 'Mkt <stat>' when a market pull is staged."""
-    board = model_df.copy()
+    percentile), the medians beside the means (data/weekly_median.py) and the market's consensus line per stat as 'Mkt <stat>'
+    when a market pull is staged."""
+    board = attach_medians(model_df)
     pct = [(matchup_difficulty.get((str(p).upper(), str(o))) or (None, None))[1]
            for p, o in zip(board['Pos'], board['Opponent'])]
     board['Matchup Pct'] = pd.to_numeric(pd.Series(pct, index=board.index, dtype=object), errors='coerce')

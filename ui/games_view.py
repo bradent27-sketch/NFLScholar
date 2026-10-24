@@ -258,11 +258,19 @@ STAT_COLUMN_WIDTH = 54
 POSITION_LABELS = {'QB': 'Quarterbacks', 'RB': 'Running backs', 'WR': 'Wide receivers', 'TE': 'Tight ends'}
 
 
-def team_table(group, display_stats, position='ALL', role_only=False, explanations=None):
+def value_column(stat, view='Average'):
+    """The board column a stat (or 'points') reads in the chosen view: the mean, or its median from data/weekly_median.py."""
+    base = 'Model Proj Pts' if stat == 'points' else stat
+    if view != 'Median':
+        return base
+    return 'Median Proj Pts' if stat == 'points' else 'Median ' + stat
+
+
+def team_table(group, display_stats, position='ALL', role_only=False, explanations=None, view='Average'):
     """-> the team's player table: EVERY QB/RB/WR/TE on the board for the team, in position order, the players projected in a game
     first by volume and the players who are out last, with a HEALTH column (blank when healthy), PTS (Model Proj Pts), the stats and
-    the market's line on the headline stat. A player who is out has blank stats. `position`: 'ALL' (the compact stat set) or one
-    position (that position's own set). `role_only` drops the players with no role who are not flagged. Hidden columns (`_key`,
+    the market's line on the headline stat, in the chosen `view` (Average or Median). A player who is out has blank stats.
+    `position`: 'ALL' (the compact stat set) or one position (that position's own set). `role_only` drops the players with no role who are not flagged. Hidden columns (`_key`,
     `_tone`, `_out`) carry the row click and the styling. `group` may carry 'Matchup Pct' (0-100, 100 = the easiest matchup) and
     'Mkt <stat>' columns."""
     explanations = explanations or {}
@@ -286,12 +294,12 @@ def team_table(group, display_stats, position='ALL', role_only=False, explanatio
             if role_only and not has_role and not keep:
                 continue
             rating = _num(rec.get('Matchup Pct'))
-            points = _num(rec.get('Model Proj Pts'))
+            points = _num(rec.get(value_column('points', view)))
             shown = {'PLAYER': rec.get('Player'), 'POS': pos, 'MATCHUP': float(rating) if np.isfinite(rating) else np.nan,
                      'HEALTH': health['label'], 'PTS': float(points) if np.isfinite(points) and not out else np.nan}
             for stat, label in stats:
                 applies = position != 'ALL' or stat in ALL_POSITION_STATS[pos]
-                value = _num(rec.get(stat))
+                value = _num(rec.get(value_column(stat, view)))
                 shown[label] = float(value) if applies and not out and np.isfinite(value) else np.nan
             line = _num(rec.get('Mkt ' + HEADLINE_STAT[pos]))
             shown['LINE'] = float(line) if np.isfinite(line) else np.nan
@@ -306,11 +314,11 @@ def team_table(group, display_stats, position='ALL', role_only=False, explanatio
     return pd.DataFrame(rows)
 
 
-def position_table(group, position, role_only=False, explanations=None):
+def position_table(group, position, role_only=False, explanations=None, view='Average'):
     """A team's players at ONE position, compacted for a half-width grid: the team_table of that position's own stat set, with the
     small coloured POS chip and the matchup rating (1-100, coloured the same way), without a HEALTH or LINE column when nobody in it
     has a value there. Empty when the team has no one at the position for this filter."""
-    frame = team_table(group, POSITION_STATS, position, role_only=role_only, explanations=explanations)
+    frame = team_table(group, POSITION_STATS, position, role_only=role_only, explanations=explanations, view=view)
     if frame.empty:
         return frame
     drop = []
@@ -374,12 +382,14 @@ def styled_table(frame):
     return show.style.apply(style_row, axis=1).format(numeric)
 
 
-def team_chips(group):
+def team_chips(group, view='Average'):
     """[(label, value)] for a team's projected totals: its plays (attempts + carries + sacks are not on the board, so pass attempts
-    plus carries) and the sums of its players' attempts and yards."""
+    plus carries) and the sums of its players' attempts and yards in the chosen view (a sum of medians is not the team's median;
+    the Average view adds up)."""
     def total(stat, positions=None):
         part = group if positions is None else group[group['Pos'].isin(positions)]
-        return float(pd.to_numeric(part[stat], errors='coerce').sum()) if stat in part.columns and len(part) else np.nan
+        column = value_column(stat, view)
+        return float(pd.to_numeric(part[column], errors='coerce').sum()) if column in part.columns and len(part) else np.nan
     pass_att, rush_att = total('passing_attempts', ('QB',)), total('rushing_attempts')
     plays = pass_att + rush_att if np.isfinite(pass_att) and np.isfinite(rush_att) else np.nan
     return [('PLAYS', plays), ('PASS ATT', pass_att), ('PASS YD', total('passing_yards', ('QB',))),
@@ -407,7 +417,8 @@ MARKET_STAT_NAME = {'rushing_attempts': 'carries', 'passing_attempts': 'attempts
 
 def long_market(board):
     """The board's priced props, one row per (player, stat): player, team, Pos, stat, model, line, diff, diff_pct, _key. From the
-    'Mkt <stat>' columns the market pull attaches, under the market's own stat names (empty when there are none)."""
+    'Mkt <stat>' columns the market pull attaches, under the market's own stat names (empty when there are none). The model side is
+    the MEDIAN wherever the board carries one ('Median <stat>'): an over/under line is priced against the middle game."""
     if board is None or board.empty:
         return pd.DataFrame()
     rows = []
@@ -417,7 +428,7 @@ def long_market(board):
             continue
         part = board[pd.to_numeric(board[col], errors='coerce').notna()]
         for rec in part.to_dict('records'):
-            line, model = float(_num(rec[col])), _num(rec.get(stat))
+            line, model = float(_num(rec[col])), _num(rec.get('Median ' + stat, rec.get(stat)))
             if not np.isfinite(model):
                 continue
             rows.append({'player': rec['Player'], 'team': rec['Team'], 'Pos': rec['Pos'], 'stat': stat, 'model': float(model),
@@ -793,12 +804,12 @@ def team_block_html(block, colors=None, logos=None):
             f'<div class="gm-av"><div class="gm-k">AVAILABILITY</div>{rows}</div></div>')
 
 
-def table_header_html(team, name, count, colors=None, label=''):
+def table_header_html(team, name, count, colors=None, label='', view='Average'):
     """The line above a team's player table: its name beside a bar in its colour, how many players (of the position `label`, when one
     is given)."""
     what = f'{label} · {int(count)}' if label else f'{int(count)} players'
     return (f'<div class="gm-th" style="border-left-color:{_color(colors, team)}"><b>{esc(name)}</b>'
-            f'<span>{esc(what)} · projections</span></div>')
+            f'<span>{esc(what)} · {"medians" if view == "Median" else "averages"}</span></div>')
 
 
 def teams_html(blocks, colors=None, logos=None):

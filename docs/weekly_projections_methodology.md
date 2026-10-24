@@ -6171,3 +6171,24 @@ A variant is a simplification win when START-ALL, EVERY-START-ALL and EVERY-ALL 
 START position is worse by more than 0.010 with its CI above 0; it is better outright when START-ALL improves with the CI below 0.
 Either way it goes to the user; nothing leaves DEFAULT_FEATURES without sign-off. defense_extras is in this run although it is not a
 candidate by the letter of the first rule, because its removal leaned helpful on every headline scope in two separate runs.
+
+### 2026-10-23 - A median beside every projection (Average / Median view; no change to any projection)
+User: "the median version toggle that the cfb app has ... by general position, value, but also specific to that player's history
+... average for fantasy, median as a reference for floor and the median for O/U bets." The board's numbers stay means;
+`data/weekly_median.py` gives each stat (and fantasy points) a median: mean x ratio(position, stat, mean), ratio = a + b log(mean)
+clipped to [0.35, 1.25], fit by `scripts/eval_stat_medians.py` on the 2022-2025 weeks 3-17 base boards (played games, full role, at
+least a minimum projection of the stat so fringe box-score rows do not bend it). Touchdowns, interceptions and small unfitted counts
+use the Poisson median. Every median is continuity-corrected (counts read as spread over [k - 0.5, k + 0.5]), so it compares with an
+x.5 line directly.
+
+Leave-one-season-out over 2022-2025 (fit three seasons, score the fourth), share of results above the median (0.500 is right) and
+MAE: the mean used as a median scores 0.38-0.54 (RB receiving yards 0.399, QB rushing yards 0.381, WR points 0.430); the fitted
+median scores 0.495-0.512 for every one of the 23 (position, stat) pairs, with an equal or lower MAE everywhere (one tie: TE
+receiving yards 18.005 vs 17.993). The player's own history - his own median over his own mean, against the curve at his
+own mean, shrunk by n / (n + K) games - did not help out of sample: K = 20 pushed several over-rates to 0.52-0.54 (TE/WR targets),
+K = 80 converged to the curve, MAE changes in the hundredths. So the median depends on position and projected level only; a player's
+own spread still sets the width of his boom/bust band.
+
+UI: Weekly Rankings has a Projection: Average / Median switch above BOARD / GAMES. Median swaps the model's points and stat line for
+the medians before ranking and colouring; GAMES' player tables and team totals follow it; the GAMES props table always compares the
+median with the line. The ledger, the projection dialog and the other tabs keep the means.

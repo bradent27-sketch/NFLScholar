@@ -6220,3 +6220,14 @@ the projections.
 EVERY-ALL with the CI above 0, or a START position with its Holm-adjusted p under 0.05. It is HARMFUL when removing it improves
 START-ALL with the CI below 0. Otherwise it is NEGLIGIBLE, reported with the CI that bounds it and its footprint (players moved, mean
 |Δ points|); the recommendation then weighs what it adds as context against its code.
+
+### 2026-10-24 - Mechanism-by-mechanism result (full write-up: docs/mechanism_review_2026-10-24.md)
+Same window and base; Δ = switched off minus on (START-ALL / EVERY-ALL; the notable position): v2_channel_matchups 0.000 exactly
+(no gating code - a dead flag); v2_continuous_roles -0.001 [-0.004,+0.002] / -0.000; v2_scheme_matchup +0.000 / +0.000, START-TE
++0.007 [-0.014,+0.028], every TE stat worse without it (+0.2 to +0.5%); v2_pff_defense_prior_blend +0.001 [-0.000,+0.002] / +0.000
+[+0.000,+0.001], START-TE +0.005 [+0.001,+0.010] (Holm p 0.24); v2_defense_blowout_discount +0.001 [-0.001,+0.002] / +0.000;
+TD matchup off +0.001 [-0.006,+0.008] / +0.002, TD stats 0.1-0.7% better without it, RB points 0.12% worse; QB rushing script off
++0.000 / -0.000, QB rushing attempts 2.41% and yards 1.01% better without it; pace off +0.002 [-0.000,+0.004] / +0.001, START-RB
++0.004 [+0.001,+0.007], Holm p 0.027. By the rule: pace HOLDS ITS OWN; none is harmful on points; the rest are negligible on points.
+Recommended (user's call): drop the dead `v2_channel_matchups` name and turn off the QB rushing game script; keep the rest.
+The run used the harness's new per-week build-cache clear (memory flat at ~3 GB, against 11-12 GB and two out-of-memory deaths before).

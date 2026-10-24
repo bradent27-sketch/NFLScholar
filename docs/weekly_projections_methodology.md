@@ -6207,3 +6207,16 @@ defense_extras flags out of DEFAULT_FEATURES and v2_no_td_matchup, v2_no_qb_rush
 (channel matchups, continuous roles, PFF alignment, scheme matchup, PFF defense prior blend, blowout discount, the matchup multiplier
 on TD stats, QB rushing game script, pace) at no measurable cost on any headline scope. The three subtractions alone cost a hair
 (+0.002/+0.003); removing the defense extras with them nets to zero. Not shipped: the user's call.
+
+### 2026-10-24 - Mechanism-by-mechanism run (bar written before it)
+User: keep `v2_pff_alignment_matchup` ("I like to keep that context"); look deeper at the strength-audit subtractions and the other
+defense extras, "a truly conclusive explanation of what each does, its effect, and your recommendation". One run, same window and
+base, one variant per mechanism: the five other defense extras ablated one at a time (v2_channel_matchups, v2_continuous_roles,
+v2_scheme_matchup, v2_pff_defense_prior_blend, v2_defense_blowout_discount) and the three off-switches added one at a time
+(v2_no_td_matchup, v2_no_qb_rush_script, v2_no_pace), every variant's board saved (`--variant-boards`) to measure how far each moves
+the projections.
+
+**Rule, per mechanism (Δ = without it minus with it):** it HOLDS ITS OWN when removing it worsens START-ALL with the CI above 0, or
+EVERY-ALL with the CI above 0, or a START position with its Holm-adjusted p under 0.05. It is HARMFUL when removing it improves
+START-ALL with the CI below 0. Otherwise it is NEGLIGIBLE, reported with the CI that bounds it and its footprint (players moved, mean
+|Δ points|); the recommendation then weighs what it adds as context against its code.

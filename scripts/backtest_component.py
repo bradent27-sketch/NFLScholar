@@ -90,6 +90,7 @@ def evaluate_components(years, weeks, variant_defs, scoring='Full PPR'):
             print(f"{year}: no weekly data, skipped")
             continue
         for week in weeks:
+            build_weekly_projections.clear()          # see evaluate_components_v2: a week's builds are never reused
             actual = _actual_points(stats_df, name_col, week, scoring_col)
             if actual.empty:
                 continue
@@ -154,7 +155,8 @@ BOARD_KEEP_COLUMNS = ('Player', 'Pos', 'Team', 'Opponent', 'Availability', 'Game
                       'rushing_yards', 'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds')
 
 
-def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_feats=None, weekly=None, boards=None):
+def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_feats=None, weekly=None, boards=None,
+                           variant_boards=False):
     """Same shape as evaluate_components (flag_rows[label][scope] = list of
     (metrics_base, metrics_variant) weekly pairs, plus the outlier ledger),
     built on scripts.harness_v2's paired-pool + pairwise_acc/RMSE metrics
@@ -163,7 +165,9 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
     (the default). ``weekly`` (a list), when given, gets one dict per
     (variant, scope, year, week) pair with both arms' metrics - the per-week
     record a faster screen is checked against (2026-10-21). ``boards`` (a list), when given, gets each week's base board
-    (BOARD_KEEP_COLUMNS) so two runs can be compared player by player (2026-10-22: one season per run came out differently)."""
+    (BOARD_KEEP_COLUMNS) so two runs can be compared player by player (2026-10-22: one season per run came out differently);
+    with ``variant_boards`` every variant's board too, under a 'variant' column ('base' for the base), so how far a mechanism moves
+    the projections can be read player by player (2026-10-24)."""
     scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
     flag_rows = {label: {} for label in variant_defs}
     outliers = []
@@ -175,6 +179,10 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
             print(f"{year}: no weekly data, skipped")
             continue
         for week in weeks:
+            # Each build stays in build_weekly_projections' in-memory cache for an hour (Streamlit's TTL cache, ~60 MB a
+            # board with its explanations) and no build is reused across weeks: an hour of them was ~10 GB, and two full
+            # runs died out of memory on 2026-10-23/24. Clearing per week keeps only this week's (results unchanged).
+            build_weekly_projections.clear()
             actual = _actual_points(stats_df, name_col, week, scoring_col)
             if actual.empty:
                 continue
@@ -185,7 +193,8 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
                 continue
             if boards is not None:
                 keep = [c for c in BOARD_KEEP_COLUMNS if c in base_proj.columns]
-                boards.append(base_proj[keep].assign(year=year, week=week))
+                frame = base_proj[keep].assign(year=year, week=week)
+                boards.append(frame.assign(variant='base') if variant_boards else frame)
 
             for pos in ('QB', 'RB', 'WR', 'TE'):
                 top = _scope_df(base_proj, pos, True)
@@ -207,6 +216,9 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
                 if var_proj.empty:
                     print(f"{year} w{week} {label} (variant): nothing ({var_meta.get('reason')})")
                     continue
+                if boards is not None and variant_boards:
+                    keep = [c for c in BOARD_KEEP_COLUMNS if c in var_proj.columns]
+                    boards.append(var_proj[keep].assign(year=year, week=week, variant=label))
                 base_idx = base_proj.set_index('Player')['Model Proj Pts']
                 var_idx = var_proj.set_index('Player')['Model Proj Pts']
                 for scope, pos, startable in harness_v2.SCOPES:
@@ -458,6 +470,8 @@ def main():
     ap.add_argument('--boards-out', default='auto',
                     help="v2 only: every week's base board (key columns) to this parquet; 'auto' (default) writes "
                     ".sweeps/harness_boards/<flags>_<years>_wk<weeks>.parquet, '' skips it")
+    ap.add_argument('--variant-boards', action='store_true',
+                    help="with --boards-out, also write every variant's board (a 'variant' column; 'base' for the base)")
     ap.add_argument('--weekly-csv', default='auto',
                     help="v2 only: per-week paired metrics (variant, scope, year, week, both arms) to this CSV; "
                     "'auto' (default) writes .sweeps/harness_weekly/<flags>_<years>_wk<weeks>.csv, '' skips it")
@@ -552,7 +566,8 @@ def main():
     if args.harness == 'v2':
         weekly, boards = [], ([] if args.boards_out else None)
         flag_rows, outliers = evaluate_components_v2(years, weeks, variant_defs, args.scoring,
-                                                      base_feats=base_feats, weekly=weekly, boards=boards)
+                                                      base_feats=base_feats, weekly=weekly, boards=boards,
+                                                      variant_boards=args.variant_boards)
         for label in variant_defs:
             print_flag_report_v2(label, flag_rows[label], mode=modes[label])
         weekly_csv = args.weekly_csv

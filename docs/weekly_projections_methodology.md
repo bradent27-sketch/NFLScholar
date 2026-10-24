@@ -6192,3 +6192,18 @@ own spread still sets the width of his boom/bust band.
 UI: Weekly Rankings has a Projection: Average / Median switch above BOARD / GAMES. Median swaps the model's points and stat line for
 the medians before ranking and colouring; GAMES' player tables and team totals follow it; the GAMES props table always compares the
 median with the line. The ledger, the projection dialog and the other tabs keep the means.
+
+### 2026-10-24 - Leanness second run result: the leanest variant costs nothing measurable (user's call)
+Same window and base. Δ RMSE of each leaner model vs the 65-flag default (START-ALL / EVERY-START-ALL / EVERY-ALL; START positions):
+
+| variant | START-ALL | EVERY-START-ALL | EVERY-ALL | START QB / RB / WR / TE | bar |
+|---|---|---|---|---|---|
+| subtract3 | +0.002 [-0.006,+0.009] | +0.003 | +0.001 | +0.002 / +0.010 / -0.002 / -0.004 | misses (EVERY-START-ALL +0.003 > +0.002) |
+| lean_alignment | -0.000 [-0.008,+0.007] | +0.000 | +0.000 | +0.002 / +0.006 / -0.001 / -0.013 | meets the simplification bar |
+| lean_defense | -0.001 [-0.009,+0.007] | -0.000 | -0.000 | +0.003 / +0.006 / -0.001 / -0.016 | meets the simplification bar |
+
+No START position is worse with a CI above 0 in either lean variant (RB +0.006, CI [-0.007,+0.019]). `lean_defense` - the six
+defense_extras flags out of DEFAULT_FEATURES and v2_no_td_matchup, v2_no_qb_rush_script, v2_no_pace on - removes nine mechanisms
+(channel matchups, continuous roles, PFF alignment, scheme matchup, PFF defense prior blend, blowout discount, the matchup multiplier
+on TD stats, QB rushing game script, pace) at no measurable cost on any headline scope. The three subtractions alone cost a hair
+(+0.002/+0.003); removing the defense extras with them nets to zero. Not shipped: the user's call.

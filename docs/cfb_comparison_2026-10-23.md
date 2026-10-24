@@ -136,9 +136,14 @@ REMOVED (positive = the model gets worse without it):
 families that look redundant on paper (three kinds of volume conservation, four script flags) each carry weight. The one family
 that adds nothing is the defense extras (channel matchups, continuous roles, PFF alignment, scheme matchup, PFF defense prior,
 blowout discount), and inside it `v2_pff_alignment_matchup`, whose removal helped here and in its 2026-09-23 re-ablation. None of
-it is significant on its own, so by the rule nothing is removed yet. A second run (methodology 2026-10-23, bar written first)
-tests three leaner variants together with the strength audit's subtractions (matchup off on TD stats, QB rushing script off, pace
-off).
+it is significant on its own, so by the rule nothing is removed yet.
+
+**Second run (bar written first): a leaner model that costs nothing.** `lean_defense` - the six defense extras removed AND the
+strength audit's three subtractions (matchup multiplier off on TD stats, QB rushing game script off, pace off) - moves START-ALL
+-0.001, every-game START -0.000 and every game -0.000, with no position significantly worse (RB +0.006, CI includes 0; TE -0.016).
+Nine mechanisms out, accuracy unchanged: it meets the simplification bar. The three subtractions alone cost a hair (+0.002 / +0.003);
+removing PFF alignment alone with them also nets to zero (`lean_alignment`). Shipping it (DEFAULT_FEATURES 65 -> 59 plus three
+off-switches, or deleting those code paths) is the user's call.
 
 ## 7. The weekly board UI: Weekly Rankings vs CFB's Weekly Model
 

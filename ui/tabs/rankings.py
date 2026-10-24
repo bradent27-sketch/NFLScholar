@@ -3894,7 +3894,8 @@ def render():
             """
             # AVERAGE / MEDIAN (2026-10-23, user: CFB's toggle - the average for fantasy, the median as a floor reference
             # and for over/unders): the median view swaps the model's points and stat line for their medians
-            # (data/weekly_median.py) before anything is ranked or coloured, so the whole table reads in the chosen view.
+            # (data/weekly_median.py) before anything is ranked or coloured (the swap sits below, after Market Proj Pts),
+            # so the whole table reads in the chosen view.
             # The ledger, the projection dialog and every other tab keep the means.
             rankings_games.keep_widget_state()
             view_col, _view_spare = st.columns([2, 5])
@@ -3905,8 +3906,6 @@ def render():
                          "the middle game, half of games above it - a floor reference, and the number an over/under line is "
                          "priced against.") or "Average"
             merged_model = model_df.copy()
-            if projection_view == "Median":
-                merged_model = _median_view(merged_model)
             # 'Def Rank' - directly right of Opponent per explicit request -
             # a single combined difficulty read for this position against
             # this opponent (see _matchup_difficulty_by_pos_opponent's own
@@ -4082,6 +4081,10 @@ def render():
             # significant cutoff actually falls (data.draft_board.tier_by_position,
             # the same k-means-on-points technique Draft HQ's board tiers with),
             # not a fixed players-per-tier bucket.
+            # The median view swaps in here: after Market Proj Pts, which fills a stat no book posted from the model's
+            # stat line and must stay the market's number in either view; before tiers and ranks, which follow the view.
+            if projection_view == "Median":
+                merged_model = _median_view(merged_model)
             merged_model['_tier'] = tier_by_position(merged_model, 'Model Proj Pts', pos_col='Pos')
 
             # One rank column per projection SOURCE, not just this app's own

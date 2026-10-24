@@ -98,7 +98,8 @@ def stat_median(position, stat, mean):
 
 def attach_medians(board):
     """`board` with 'Median <stat>' beside every projected stat column and 'Median Proj Pts' beside Model Proj Pts. A player
-    projected out (Availability at or below SIDELINED) has a median of 0. Nothing else changes."""
+    projected out (Availability at or below SIDELINED) has a median of 0; a stat his position does not project (a blank mean)
+    stays blank. Nothing else changes."""
     if board is None or board.empty:
         return board
     out = board.copy()
@@ -107,8 +108,9 @@ def attach_medians(board):
              if 'Availability' in out.columns else np.ones(len(out)))
     live = avail > SIDELINED
     for stat in [s for s in MEDIAN_STATS if s in out.columns]:
-        means = pd.to_numeric(out[stat], errors='coerce').fillna(0.0).to_numpy()
-        out['Median ' + stat] = [round(stat_median(p, stat, m), 2) if ok else 0.0 for p, m, ok in zip(positions, means, live)]
+        means = pd.to_numeric(out[stat], errors='coerce').to_numpy()
+        out['Median ' + stat] = [np.nan if not np.isfinite(m) else (round(stat_median(p, stat, m), 2) if ok else 0.0)
+                                 for p, m, ok in zip(positions, means, live)]
     if 'Model Proj Pts' in out.columns:
         points = pd.to_numeric(out['Model Proj Pts'], errors='coerce').fillna(0.0).to_numpy()
         out['Median Proj Pts'] = [round(stat_median(p, 'points', m), 2) if ok else 0.0 for p, m, ok in zip(positions, points, live)]

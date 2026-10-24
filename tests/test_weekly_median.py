@@ -56,6 +56,11 @@ class AttachMediansTest(unittest.TestCase):
         self.assertEqual(out.loc[1, 'Median receiving_yards'], 0.0)
         self.assertEqual(list(out['receiving_yards']), [70.0, 0.0])
 
+    def test_a_stat_the_position_does_not_project_stays_blank(self):
+        board = pd.DataFrame([{'Player': 'A', 'Pos': 'WR', 'Availability': 1.0, 'Model Proj Pts': 14.0,
+                               'receiving_yards': 70.0, 'passing_yards': float('nan')}])
+        self.assertTrue(pd.isna(wm.attach_medians(board).loc[0, 'Median passing_yards']))
+
 
 class GamesViewSwitchTest(unittest.TestCase):
     def test_tables_read_the_chosen_view_and_props_read_the_median(self):

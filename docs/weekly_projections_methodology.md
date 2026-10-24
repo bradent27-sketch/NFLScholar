@@ -6231,3 +6231,23 @@ TD matchup off +0.001 [-0.006,+0.008] / +0.002, TD stats 0.1-0.7% better without
 +0.004 [+0.001,+0.007], Holm p 0.027. By the rule: pace HOLDS ITS OWN; none is harmful on points; the rest are negligible on points.
 Recommended (user's call): drop the dead `v2_channel_matchups` name and turn off the QB rushing game script; keep the rest.
 The run used the harness's new per-week build-cache clear (memory flat at ~3 GB, against 11-12 GB and two out-of-memory deaths before).
+
+### 2026-10-24 - SHIPPED: `v2_channel_matchups` out (dead flag), `v2_no_qb_rush_script` in (DEFAULT_FEATURES = 65)
+User: "those two changes sound good". `v2_channel_matchups` had no gating code (0.000 on every player); `v2_no_qb_rush_script`
+switches off the QB rushing game-script multiplier (QB rushing attempts RMSE -2.41%, yards -1.01% on the games it moved, QB points
+unchanged; mechanism-by-mechanism run). The default set stays at 65 flags. A QB points-line re-fit is not needed (QB points moved
+-0.017 on average; START-QB +0.002 [-0.010, +0.013]).
+
+### 2026-10-24 - TD matchup: four strengths, one run (bar written before it)
+User: "look into td matchup as it sounds it may have a poor effect. Need to adjust it or make a more detailed decision to get rid
+of it." Why it may hurt: the TD stats already carry the market's implied team total (per-stat game-total elasticity with a wider TD
+clip, and the QB implied-TD boost), and that total prices the opposing defense in - a defense TD-allowed multiplier on top counts
+the defense twice. The strength audit's best strength was 0 for passing and receiving TDs and 0.5 for rushing TDs (RB 5/5 seasons).
+One run on the new 65-flag default, 2022-2025 weeks 3-17, variants (`TD_MATCHUP_STRENGTH`): `v2_no_td_matchup` (all off),
+`v2_td_matchup_audit` (passing/receiving off, rushing half), `v2_td_matchup_pass_rec_off` (passing/receiving off, rushing as is),
+`v2_td_matchup_half` (all half); variant boards saved for the per-stat and anytime-TD reading (Brier of P(1+ TD) = 1 - exp(-TDs)).
+
+**Bar.** A variant may replace the current TD matchup when START-ALL and EVERY-ALL each move by at most +0.002, no START position is
+worse with a Holm-adjusted p under 0.05, and the TD stats it changes get more accurate (RMSE and anytime-TD Brier on the moved rows,
+passing and receiving TDs together). Among those, the best START-ALL wins; a tie goes to the simplest (all off). If none qualifies,
+the TD matchup stays as it is. The decision is the user's.

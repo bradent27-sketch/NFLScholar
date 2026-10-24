@@ -1458,7 +1458,7 @@ MODEL_FEATURES = (
                              # run before shipping.
     'v2_defense_prior',    # defense rating prior/shrinkage revision
     'v2_continuous_roles', # continuous (not tiered) role-share read; see role_matchup above
-    'v2_channel_matchups', # per-route-channel matchup read
+    'v2_channel_matchups', # per-route-channel matchup read - never built (no gating code); out of DEFAULT_FEATURES 2026-10-24
     'v2_alignment_contract',  # PFF alignment data contract/validation
     'v2_pff_alignment_matchup',  # WR/TE slot/non-slot defense residual - built and
                                   # measured on 2025 weeks 2-18: lost on the startable
@@ -2309,7 +2309,10 @@ MODEL_FEATURES = (
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
     'v2_no_td_matchup',  # CANDIDATE (2026-10-23, strength audit): no matchup multiplier on TD stats.
-    'v2_no_qb_rush_script',  # CANDIDATE (2026-10-23, strength audit): no game-script multiplier on QB rushing.
+    'v2_td_matchup_audit',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, half strength on rushing TDs.
+    'v2_td_matchup_pass_rec_off',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, rushing TDs unchanged.
+    'v2_td_matchup_half',  # CANDIDATE (2026-10-24): TD matchup at half strength on every TD stat.
+    'v2_no_qb_rush_script',  # SHIPPED 2026-10-24 (strength audit): no game-script multiplier on QB rushing.
     'v2_no_pace',  # CANDIDATE (2026-10-23, strength audit): no opponent-pace multiplier.
     'v2_low_end_points_line',  # SHIPPED 2026-10-22 (backlog L7b). Below a knot (RB/WR 6, TE 4 raw points)
                              # the points line is re-fit on every game (no box-score
@@ -2426,7 +2429,8 @@ DEFAULT_FEATURES = frozenset({
     'v2_td_two_year_prior',
     'v2_defense_prior',
     'v2_continuous_roles',
-    'v2_channel_matchups',
+    # 'v2_channel_matchups' removed 2026-10-24 (user-approved): it has no gating code, so it never did anything - the
+    # mechanism-by-mechanism run measured exactly 0.000 on every player (docs/mechanism_review_2026-10-24.md).
     'v2_alignment_contract',
     'v2_pff_alignment_matchup',
     'v2_availability',
@@ -2964,6 +2968,11 @@ DEFAULT_FEATURES = frozenset({
     # on the user's call with that on record. Part of the calibration step (inert without 'calibration'); a re-fit of the v4
     # lines must re-fit these knots and slopes too. Undo: remove this flag.
     'v2_low_end_points_line',
+    # SHIPPED 2026-10-24 (user: "those two changes sound good"): the QB rushing game-script multiplier is switched off (the
+    # 2026-10-23 strength audit's subtraction). Mechanism-by-mechanism run, 2022-2025 wk3-17 on the 65-flag base: QB rushing
+    # attempts RMSE 2.41% and rushing yards 1.01% better without it on the games it moved, QB points unchanged (START-QB +0.002
+    # [-0.010, +0.013], START-ALL +0.000, EVERY-ALL -0.000). Undo: remove this flag.
+    'v2_no_qb_rush_script',
 })
 
 
@@ -3327,6 +3336,25 @@ def points_line(pos, week, raw, low_end=False):
 #   'v2_no_qb_rush_script'  the game-script multiplier on QB rushing attempts/yards fits best at 0 (-1.2%, 4 of 5 seasons).
 #   'v2_no_pace'            the opponent-pace multiplier moves a projection ~1% (log sd 0.009) and is worth at most 0.05%.
 STRENGTH_AUDIT_TD_STATS = ('passing_tds', 'rushing_tds', 'receiving_tds')
+# The TD matchup at a chosen strength (2026-10-24, user: "look into td matchup ... adjust it or make a more detailed decision to
+# get rid of it"): matchup multiplier ** strength on that TD stat (0 = off, 0.5 = half, 1 = as is). The TD stats already carry the
+# market's implied team total (GAME_TOTAL_ELASTICITY_BY_STAT, a wider clip for TDs, and QB_IMPLIED_ELASTICITY_BOOST), which prices
+# the opposing defense in - so a defense's TD-allowed multiplier on top counts it twice. The strength audit's best strength was 0 for
+# passing and receiving TDs at every position and 0.5 for rushing TDs (RB 5 of 5 seasons, QB). The first flag present wins.
+TD_MATCHUP_STRENGTH = {
+    'v2_no_td_matchup': {'passing_tds': 0.0, 'rushing_tds': 0.0, 'receiving_tds': 0.0},
+    'v2_td_matchup_audit': {'passing_tds': 0.0, 'rushing_tds': 0.5, 'receiving_tds': 0.0},
+    'v2_td_matchup_pass_rec_off': {'passing_tds': 0.0, 'rushing_tds': 1.0, 'receiving_tds': 0.0},
+    'v2_td_matchup_half': {'passing_tds': 0.5, 'rushing_tds': 0.5, 'receiving_tds': 0.5},
+}
+
+
+def td_matchup_strength(feats, stat):
+    """The strength the TD matchup runs at for this stat under `feats` (1.0 = unchanged)."""
+    for flag, table in TD_MATCHUP_STRENGTH.items():
+        if flag in feats and stat in table:
+            return table[stat]
+    return 1.0
 
 
 # --- v2_season_anchor ---------------------------------------------------------
@@ -12464,8 +12492,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # Subtraction candidates from the 2026-10-23 multiplier strength audit (scripts/audit_factor_gamma.py, every game,
             # 2021-2025): the matchup multiplier on TD stats and the game-script multiplier on QB rushing both fit best at
             # strength 0 (see STRENGTH_AUDIT_TD_STATS).
-            if 'v2_no_td_matchup' in feats and stat in STRENGTH_AUDIT_TD_STATS:
-                matchup_mult = np.ones(len(cur))
+            _td_strength = td_matchup_strength(feats, stat) if stat in STRENGTH_AUDIT_TD_STATS else 1.0
+            if _td_strength != 1.0:
+                matchup_mult = (np.ones(len(cur)) if _td_strength == 0.0
+                                else np.power(np.clip(np.asarray(matchup_mult, dtype=float), 1e-6, None), _td_strength))
                 stat_trace[stat]['matchup_multiplier'] = matchup_mult
             if 'v2_no_qb_rush_script' in feats and pos == 'QB' and stat in ('rushing_attempts', 'rushing_yards'):
                 script_mult = np.ones(len(cur))

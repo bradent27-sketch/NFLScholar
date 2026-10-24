@@ -83,6 +83,26 @@ def main():
                 acc.append(f'    {pos} {stat:16} n={int(ok.sum()):5d}  RMSE {b:.3f} -> {v:.3f} ({v - b:+.4f}, {100 * (v / b - 1):+.2f}%)')
         lines.append('  accuracy on the rows it moves, played games (positive = worse without it):')
         lines += acc or ['    (fewer than 200 moved rows at every position/stat)']
+        # touchdowns as a TD prop reads them: P(at least one) = 1 - exp(-projected TDs), Brier score against scoring one
+        td_lines = []
+        for pos, g in j.groupby('Pos'):
+            for stat in ('passing_tds', 'rushing_tds', 'receiving_tds'):
+                if stat + '_v' not in g.columns or 'a_' + stat not in g.columns:
+                    continue
+                touched = (g[stat + '_v'] - g[stat]).abs() > 1e-6
+                y = pd.to_numeric(g['a_' + stat], errors='coerce')
+                ok = touched & y.notna()
+                if ok.sum() < 200:
+                    continue
+                hit = (y[ok] >= 1).astype(float)
+                pb = 1.0 - np.exp(-g.loc[ok, stat].clip(lower=0).astype(float))
+                pv = 1.0 - np.exp(-g.loc[ok, stat + '_v'].clip(lower=0).astype(float))
+                bb, bv = float(np.mean((pb - hit) ** 2)), float(np.mean((pv - hit) ** 2))
+                td_lines.append(f'    {pos} {stat:14} n={int(ok.sum()):5d}  anytime-TD Brier {bb:.4f} -> {bv:.4f} ({bv - bb:+.5f}, '
+                                f'{100 * (bv / bb - 1):+.2f}%)')
+        if td_lines:
+            lines.append('  touchdowns as a prop reads them (P(1 or more) = 1 - exp(-projection); positive = worse):')
+            lines += td_lines
         lines.append('')
     text = '\n'.join(lines)
     print(text)

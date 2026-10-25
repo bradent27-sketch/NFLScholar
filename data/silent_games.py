@@ -55,11 +55,11 @@ def _snap_games(year):
     }).dropna(subset=['week'])
 
 
-def _boxed(snaps, stats_df):
+def _boxed(snaps, stats_df, name_col):
     """Whether each snap game has a box-score row that week (same PFR id, or the same cleaned name)."""
     weeks = pd.to_numeric(stats_df['week'], errors='coerce')
     by_id = set(zip(stats_df['pfr_id'].astype(str), weeks)) if 'pfr_id' in stats_df.columns else set()
-    names = stats_df['exact_name'].astype(str) if 'exact_name' in stats_df.columns else clean_name_exact(stats_df['player_display_name'])
+    names = stats_df['exact_name'].astype(str) if 'exact_name' in stats_df.columns else clean_name_exact(stats_df[name_col])
     by_name = set(zip(names, weeks))
     keys = clean_name_exact(pd.Series(snaps['name'].to_numpy()))
     return np.array([(p, w) in by_id or (k, w) in by_name for p, k, w in zip(snaps['pfr'], keys, snaps['week'])], dtype=bool)
@@ -68,12 +68,14 @@ def _boxed(snaps, stats_df):
 def silent_game_rows(year, stats_df, name_col, team_col):
     """Box-score-shaped rows (every stat 0, `_silent_game` True) for the season's silent games (module docstring), in stats_df's
     columns and dtypes as far as they go. Empty when there are none or no snap counts."""
-    if stats_df is None or stats_df.empty or 'week' not in stats_df.columns:
+    # the join keys on PFR ids (every nflverse weekly table has pfr_id); a table without them (a hand-made test frame) gets none,
+    # rather than real snap games joined onto players it does not have
+    if stats_df is None or stats_df.empty or 'week' not in stats_df.columns or 'pfr_id' not in stats_df.columns:
         return pd.DataFrame()
     snaps = _snap_games(year)
     if snaps.empty:
         return pd.DataFrame()
-    silent = snaps[~_boxed(snaps, stats_df)].copy()
+    silent = snaps[~_boxed(snaps, stats_df, name_col)].copy()
     if silent.empty:
         return pd.DataFrame()
     # the player's identity from his own box-score rows this season (latest row), by PFR id, else by cleaned name

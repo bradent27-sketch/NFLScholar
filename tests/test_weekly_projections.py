@@ -3147,7 +3147,9 @@ def test_wrte_participation_discounts_only_the_depth_receiver_in_season():
 
     assert trace('flag', 'Starter WR')['participation_multiplier'] == 1.0
     assert trace('base', 'Depth WR')['participation_multiplier'] == 1.0
-    expected = float(wp.wrte_participation_multiplier(np.array([0.20]))[0])
+    # the default reads the snap-appearance curve since 2026-10-25 (v2_silent_participation)
+    expected = float(wp.wrte_participation_multiplier(
+        np.array([0.20]), silent='v2_silent_participation' in wp.DEFAULT_FEATURES)[0])
     assert expected < 1.0
     assert trace('flag', 'Depth WR')['participation_multiplier'] == pytest.approx(expected, abs=1e-3)
     ratio = trace('flag', 'Depth WR')['pre_vacancy_projection'] / trace('base', 'Depth WR')['pre_vacancy_projection']

@@ -101,3 +101,20 @@ parts cancel: pace's cost (+0.002) and the prior blend's (+0.001) against PFF al
 Taken one at a time, the model has one dead flag, one mechanism that hurts its own stats (QB rushing script), two neutral ones, and
 four small helpers. Two changes are clear wins for clarity or stats at no fantasy cost: remove `v2_channel_matchups` and switch off
 the QB rushing game script. Neither is shipped without the user's sign-off.
+
+## Follow-up (2026-10-24): the TD matchup, four strengths
+
+User: "look into td matchup ... adjust it or make a more detailed decision to get rid of it." Why it hurts TD lines: the TD stats
+already carry the market's implied team total, which prices the opposing defense in, so a defense TD multiplier on top counts the
+defense twice. One run on the new default, four strengths (negative = better than today):
+
+| variant | START-ALL | every game | QB starters | RB starters | TD lines |
+|---|---|---|---|---|---|
+| all off | +0.0002 | +0.0015 | -0.0034 | +0.0077 | passing TDs -0.70%, receiving -0.13 to -0.25% |
+| passing/receiving off, rushing half | -0.0006 | +0.0008 | -0.0043 | +0.0059 | same, rushing -0.15% |
+| passing/receiving off, rushing as is | -0.0008 | +0.0004 | -0.0028 | +0.0033 | same |
+| **half strength on every TD stat** | **-0.0016** (33-27 weeks) | **-0.0002** | **-0.0060** (36-24) | +0.0033 | passing -0.54%, receiving -0.18 to -0.22%, rushing -0.15% |
+
+All four meet the bar; half strength wins it (best START-ALL, the only one better on every pooled scope, smallest moves). Turning
+it off entirely makes passing-TD lines a little sharper (-0.70% vs -0.54%) but costs running backs more (+0.008 vs +0.003): the
+defense TD matchup is not worthless, it is applied about twice too hard. **Recommendation: half strength (`v2_td_matchup_half`).**

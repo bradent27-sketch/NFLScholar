@@ -6251,3 +6251,21 @@ One run on the new 65-flag default, 2022-2025 weeks 3-17, variants (`TD_MATCHUP_
 worse with a Holm-adjusted p under 0.05, and the TD stats it changes get more accurate (RMSE and anytime-TD Brier on the moved rows,
 passing and receiving TDs together). Among those, the best START-ALL wins; a tie goes to the simplest (all off). If none qualifies,
 the TD matchup stays as it is. The decision is the user's.
+
+### 2026-10-24 - TD matchup result: half strength wins by the pre-set rule (user's call)
+Pooled from the weekly records (Δ RMSE vs the 65-flag default, negative = better; 95% CI over weeks; weeks better-worse):
+
+| variant | START-ALL | EVERY-ALL | EVERY-START-ALL | START-QB | START-RB |
+|---|---|---|---|---|---|
+| all off (`v2_no_td_matchup`) | +0.0002 [-0.0062,+0.0070] 29-31 | +0.0015 | +0.0025 | -0.0034 | +0.0077 |
+| audit (pass/rec off, rush half) | -0.0006 [-0.0066,+0.0050] 28-32 | +0.0008 | +0.0011 | -0.0043 | +0.0059 |
+| pass/rec off, rush as is | -0.0008 [-0.0063,+0.0050] 30-30 | +0.0004 | +0.0005 | -0.0028 | +0.0033 |
+| half (`v2_td_matchup_half`) | -0.0016 [-0.0051,+0.0017] 33-27 | -0.0002 | -0.0006 | -0.0060 (36-24) | +0.0033 |
+
+No position is worse with a Holm-adjusted p under 0.05 in any variant (START-RB p 0.49). Every TD stat gets more accurate on the
+rows each variant moves (RMSE and anytime-TD Brier, P(1+) = 1 - exp(-TDs)): passing TDs -0.70% RMSE / -0.72% Brier with the
+matchup off, -0.54% / -0.47% at half; receiving TDs -0.13% to -0.26% RMSE and -0.26% to -0.39% Brier (WR, TE, RB); rushing TDs
+-0.04% to -0.15%. All four meet the bar; the best START-ALL is `v2_td_matchup_half`, which is also the only one better on every
+pooled scope and moves projections least (30% of players, mean 0.12 points, largest 0.81 vs 1.63 for all off). RB points are a hair
+worse in every variant (+0.003 to +0.008, CIs include 0): the defense TD matchup still carries a little for running backs. Not
+shipped yet: the user's call.

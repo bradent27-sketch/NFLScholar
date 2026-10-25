@@ -6367,3 +6367,25 @@ it gains -0.011 on PLAYED ALL and loses +0.011 on EVERY-ALL; it stays on every g
 **Finding: the shipped points scale still describes the model, with silent games in it. Nothing to ship from the re-fit;
 `v2_points_scale_v6` stays unset.** The silent-games result above (run against today's model with the shipped scale) is therefore
 also the confirming run for silent games.
+
+### 2026-10-25 - SHIPPED: `v2_silent_games` + `v2_silent_participation` (DEFAULT_FEATURES = 68)
+User: "sounds like refit WR/TE curve is best...but if you think there are pieces of the RB layer and backup TE discount maybe that
+should be included too (mixed together in some way). But if not that is fine too." Shipped the `silent_snapcurve` pair (numbers
+in the silent-games result above). Undo: remove both flags.
+
+### 2026-10-25 - The RB layer and the backup-TE discount on the silent-games model (CANDIDATES), pre-set bar
+Both were fit on "has a box-score row", so with silent games in the history they now take a backup's statless games off twice. On
+the 68-flag boards (2022-2025 weeks 3-17, players expected to play): backup TEs come in UNDER their projections in every band
+(actual / projected targets 1.11-1.63); RB3s get 10% more carries than projected, RB4+ 16% more. With each layer off they run over
+instead (TE bands 0.39-1.21, RB3 0.87, RB4+ 0.81). Candidates (all against the new 68-flag default): `te_off`
+(-v2_backup_te_discount); `te_pieces` (+v2_backup_te_bands_pieces: only the bands that still discount - no row 0.93, special teams
+only 0.39, 0-15% 0.87 - the rest 1); `te_silent` (+v2_backup_te_bands_silent: the bands as re-read, 0.93 / 0.39 / 0.87 / 1.07 /
+1.08 / 1.21); `rb_060` (+v2_rb_participation_060: the RB model at 0.6 strength, the strength that meets RB3 and RB4+ in the middle);
+`te_pieces_rb_060` (both). The bands and the strength are read off the harness window (mildly in sample).
+
+**Pre-set bar (written before the run).** A TE variant passes when START-TE and EVERY-TE both improve (dRMSE < 0), START-ALL and
+EVERY-ALL are no worse than +0.001, and no START position is worse with a Holm-adjusted p under 0.05; the passing TE variant with
+the best START-TE wins, a tie within 0.002 going to the simpler (te_off, then te_pieces, then te_silent). `rb_060` passes on the same
+terms with START-RB and EVERY-RB. If a TE variant and `rb_060` both pass, they ship together - confirmed by `te_pieces_rb_060` when the
+TE winner is te_pieces (START-ALL at least as good as either alone), otherwise on the additivity of two layers that touch
+different positions, said so. Shipping needs the user's sign-off.

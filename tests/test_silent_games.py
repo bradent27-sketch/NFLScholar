@@ -63,3 +63,14 @@ def test_no_snaps_means_no_silent_games(monkeypatch):
     sg._MEMO.clear()
     assert sg.silent_game_rows(2024, _stats(), 'player_display_name', 'team').empty
     assert len(sg.with_silent_games(_stats(), 2024, 'player_display_name', 'team')) == 3
+
+
+def test_the_silent_games_candidates_pick_their_tables():
+    import data.weekly_projections as wp
+    for flag in ('v2_backup_te_bands_silent', 'v2_backup_te_bands_pieces', 'v2_rb_participation_060'):
+        assert flag in wp.MODEL_FEATURES
+    assert wp.backup_te_bands(set()) is wp.BACKUP_TE_ACTIVITY_BANDS
+    assert wp.backup_te_bands({'v2_backup_te_bands_silent'}) is wp.BACKUP_TE_ACTIVITY_BANDS_SILENT
+    assert wp.backup_te_bands({'v2_backup_te_bands_pieces'}) is wp.BACKUP_TE_ACTIVITY_BANDS_PIECES
+    assert all(f <= 1.0 for _e, f in wp.BACKUP_TE_ACTIVITY_BANDS_PIECES)              # the pieces only discount
+    assert {'v2_silent_games', 'v2_silent_participation'} <= wp.DEFAULT_FEATURES     # shipped 2026-10-25

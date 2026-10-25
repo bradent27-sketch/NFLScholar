@@ -1021,6 +1021,27 @@ BACKUP_TE_ACTIVITY_BANDS = (       # (upper edge of the last snap share, factor)
 )
 
 
+# The bands on the silent-games model (2026-10-25, user: "if you think there are pieces of the RB layer and backup TE discount maybe
+# that should be included too"). With silent games in a backup's history his statless games are already in his rate, so the shipped
+# bands now take them off twice: on the 68-flag boards with them applied, backup TEs come in UNDER their projections in every band
+# (actual / projected targets: no row 1.27, special teams only 1.57, 0-15% 1.63, 15-35% 1.25, 35-60% 1.12, 60%+ 1.11). Re-read with
+# the discount off (scripts/diag_backup_te_silent.py, 2022-2025 weeks 3-17, expected to play): 0.93 / 0.39 / 0.87 / 1.07 / 1.08 /
+# 1.21. 'v2_backup_te_bands_silent' (CANDIDATE) applies those as fit; 'v2_backup_te_bands_pieces' (CANDIDATE) keeps only the parts
+# that still discount (a backup who barely played last game) and leaves the rest at 1 - nothing is lifted past what the capacity
+# pass allowed. Either replaces BACKUP_TE_ACTIVITY_BANDS wherever the bands are read. Fit on the harness window (mildly in sample).
+BACKUP_TE_ACTIVITY_BANDS_SILENT = ((None, 0.93), (0.0, 0.39), (0.15, 0.87), (0.35, 1.07), (0.60, 1.08), (1.01, 1.21))
+BACKUP_TE_ACTIVITY_BANDS_PIECES = ((None, 0.93), (0.0, 0.39), (0.15, 0.87), (0.35, 1.0), (0.60, 1.0), (1.01, 1.0))
+
+
+def backup_te_bands(feats):
+    """The backup-TE band table the features ask for (BACKUP_TE_ACTIVITY_BANDS unless a silent-games table is on)."""
+    if 'v2_backup_te_bands_silent' in feats:
+        return BACKUP_TE_ACTIVITY_BANDS_SILENT
+    if 'v2_backup_te_bands_pieces' in feats:
+        return BACKUP_TE_ACTIVITY_BANDS_PIECES
+    return BACKUP_TE_ACTIVITY_BANDS
+
+
 @lru_cache(maxsize=16)
 def _te_last_snap_shares(year, as_of_week):
     """{clean name: offensive snap share in his latest snap-count row before ``as_of_week`` this season} for TEs, from the
@@ -1049,9 +1070,10 @@ def te_room_rank(teams, shares, live):
             .rank(ascending=False, method='first').to_numpy(dtype=float))
 
 
-def backup_te_activity_multiplier(names, teams, shares, live, year, as_of_week):
-    """Per TE row: BACKUP_TE_ACTIVITY_BANDS factor for his last snap share, for room rank >= 2 (te_room_rank); 1.0 for the
-    room leader and anyone sidelined."""
+def backup_te_activity_multiplier(names, teams, shares, live, year, as_of_week, bands=None):
+    """Per TE row: the band factor (``bands``, default BACKUP_TE_ACTIVITY_BANDS) for his last snap share, for room rank >= 2
+    (te_room_rank); 1.0 for the room leader and anyone sidelined."""
+    bands = BACKUP_TE_ACTIVITY_BANDS if bands is None else bands
     from data.utils import clean_name_for_merge
     last = _te_last_snap_shares(int(year), int(as_of_week))
     keys = clean_name_for_merge(pd.Series(names, dtype=object).astype(str)).to_numpy(dtype=object)
@@ -1061,7 +1083,7 @@ def backup_te_activity_multiplier(names, teams, shares, live, year, as_of_week):
         if not live[i] or not np.isfinite(rank[i]) or rank[i] < 2:
             continue
         value = last.get(key)
-        for edge, factor in BACKUP_TE_ACTIVITY_BANDS:
+        for edge, factor in bands:
             if (edge is None and value is None) or (edge is not None and value is not None and value <= edge):
                 out[i] = factor
                 break
@@ -1184,6 +1206,11 @@ def wrte_participation_multiplier(expected_share, strength=None, silent=False):
 # their conditional calibration is already right.
 RB_PARTICIPATION_PATH = os.path.join('data', 'rb_participation.json')
 RB_PARTICIPATION_STRENGTH = float(np.clip(float(os.environ.get('RB_PARTICIPATION_STRENGTH', 1.0)), 0.0, 1.0))
+# 'v2_rb_participation_060' (CANDIDATE 2026-10-25, with silent games): the model was fit on P(box-score row), so with silent games
+# in the history it now discounts a back's statless games twice. On the 68-flag boards (2022-2025 weeks 3-17, expected to play) RB3s
+# get 10% more carries than projected and RB4+ 16% more; with the layer off, 13% and 19% fewer. The strength that meets the middle
+# is 0.62 (RB3) / 0.63 (RB4+): 0.6.
+RB_PARTICIPATION_SILENT_STRENGTH = 0.6
 
 
 @lru_cache(maxsize=1)
@@ -2339,14 +2366,20 @@ MODEL_FEATURES = (
                              # (BACKUP_TE_ACTIVITY_BANDS, from the snap-count table,
                              # stat line or not); the capacity budget hands the
                              # difference back to the TE1.
-    'v2_silent_games',  # CANDIDATE (2026-10-25, user: "Count silent games"). A RB/WR/TE game the snap counts
+    'v2_silent_games',  # SHIPPED 2026-10-25 (user: "Count silent games"). A RB/WR/TE game the snap counts
                              # put him on the field for with no box-score row joins his
                              # history (this season, last, two back) as a game with
                              # every stat 0 at its real snap share (data/silent_games.py).
+    'v2_backup_te_bands_silent',  # CANDIDATE (2026-10-25). The backup-TE bands re-read on the silent-games
+                             # model (BACKUP_TE_ACTIVITY_BANDS_SILENT).
+    'v2_backup_te_bands_pieces',  # CANDIDATE (2026-10-25). Only the bands that still discount on the silent-games
+                             # model (BACKUP_TE_ACTIVITY_BANDS_PIECES), the rest 1.
+    'v2_rb_participation_060',  # CANDIDATE (2026-10-25). The RB participation model at 0.6 strength with silent
+                             # games in the history (RB_PARTICIPATION_SILENT_STRENGTH).
     'v2_points_scale_v6',  # CANDIDATE (2026-10-25, user: "Refit the points scale"). The points lines, the low
                              # end and (if re-fit) the season anchor's s from one re-fit
                              # on the current model (POINTS_SCALE_V6 / points_scale).
-    'v2_silent_participation',  # CANDIDATE (2026-10-25, with v2_silent_games). The WR/TE participation curve
+    'v2_silent_participation',  # SHIPPED 2026-10-25 (with v2_silent_games). The WR/TE participation curve
                              # read as P(any offensive snap | share) (silent games are
                              # appearances), not P(box-score row | share), so a silent
                              # game is not counted in the rate and in the discount.
@@ -2997,6 +3030,15 @@ DEFAULT_FEATURES = frozenset({
     # EVERY-ALL -0.0002, START-QB -0.0060 (36-24), START-RB +0.0033 (CI includes 0); passing TDs RMSE -0.54%, anytime-TD Brier
     # -0.3 to -0.6% at every position. Undo: remove this flag.
     'v2_td_matchup_half',
+    # SHIPPED 2026-10-25 (user: "sounds like refit WR/TE curve is best"): silent games - a RB/WR/TE snap game with no box-score
+    # row - join the history as games with every stat 0 at their real snap share (data/silent_games.py), and the WR/TE
+    # participation curve reads P(any offensive snap | share) so those games are not counted twice. Harness v2 2022-2025 wk3-17 on
+    # the 66-flag base, the verdict scopes now scoring silent games as played (0): PLAYED ALL -0.010 [-0.015, -0.005] (42-18),
+    # START-ALL -0.008 [-0.015, -0.001] (37-23), START QB/RB/WR/TE -0.003/-0.011/-0.007/-0.008, EVERY-ALL -0.016 [-0.021, -0.010]
+    # (48-12), pairwise +0.001 / +0.002, no position worse. The points-scale re-fit on this model found nothing better than the
+    # shipped scale. Undo: remove both flags.
+    'v2_silent_games',
+    'v2_silent_participation',
 })
 
 
@@ -11935,7 +11977,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # restoration, not by this discount.
             _rb_app = np.where(cur['Games'].to_numpy(dtype=float) >= 1, _rb_app, np.nan)
             participation_mult = rb_participation_multiplier(
-                _rb_share, _rb_app, _rb_last1, _rb_app3, _rb_rank)
+                _rb_share, _rb_app, _rb_last1, _rb_app3, _rb_rank,
+                strength=RB_PARTICIPATION_SILENT_STRENGTH if 'v2_rb_participation_060' in feats else None)
         _te_activity = _te_rank = None
         if 'v2_te_fill_in_role' in feats and pos == 'TE' and use_role_volume and not cold_start:
             # see FILL_IN_ONLY_FACTOR: a backup's fill-in role does not carry over once the starter is back
@@ -13609,7 +13652,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             _share = pd.to_numeric(_te.get('Expected Snap Share', pd.Series(0.0, index=_te.index)), errors='coerce').fillna(0.0)
             _live = pd.to_numeric(_te.get('Availability', pd.Series(1.0, index=_te.index)), errors='coerce').fillna(1.0) > 0.01
             _factor = backup_te_activity_multiplier(_te['Player'].to_numpy(dtype=object), _te['Team'].to_numpy(dtype=object),
-                                                    _share.to_numpy(dtype=float), _live.to_numpy(), year, as_of_week)
+                                                    _share.to_numpy(dtype=float), _live.to_numpy(), year, as_of_week,
+                                                    bands=backup_te_bands(feats))
             if (np.abs(_factor - 1.0) > 1e-9).any():
                 for _stat in ('targets', 'receptions', 'receiving_yards', 'receiving_tds'):
                     if _stat in result.columns:

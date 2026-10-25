@@ -6341,3 +6341,29 @@ layers fewer). Its cost is EVERY-RB (+0.012 [+0.004,+0.021]): without the RB par
 count against it; the re-fit's every-game low end and the confirming run speak to that. With only silent games added (`silent`),
 the old box-score scope reads TE +0.022 worse - the same change read on the old definition, which never saw the games it fixes.
 The base itself on the new definition: START-ALL 7.577 (box score 7.565), ALL 5.894 (box score 6.172).
+
+### 2026-10-25 - Points-scale re-fit result: no variant beats the shipped scale; it stays
+Dump: scripts/calibration_lab.py of the silent-games model (`silent_snapcurve_lite`), 2021-2025 weeks 1-18 (2021 week 1 left
+out: no depth-chart archive), 45,019 rows, 31,579 played (3,746 of them silent games). scripts/fit_points_scale.py, each season
+predicted from the other four, against the dump's own shipped pipeline (Δ RMSE, negative = better):
+
+| variant | PLAYED START-ALL | START-QB / RB / WR / TE | PLAYED ALL | EVERY-ALL |
+|---|---|---|---|---|
+| lines on every row, k 0.5, low end every game | +0.0084 [+0.0016,+0.0152] | +0.023 / +0.004 / +0.002 / +0.021 | +0.0043 | -0.0079 |
+| same, low end on played games | +0.0089 | (same) | -0.0064 | +0.0071 |
+| same, anchor s re-fit | +0.0139 | | +0.0085 | -0.0038 |
+| lines on every row, k 1.0, low end every game | +0.0046 [-0.0044,+0.0136] | +0.003 / +0.003 / +0.003 / +0.016 | +0.0029 | -0.0079 |
+| k 1.0, low end on played / s re-fit | +0.0049 / +0.0101 | | -0.0093 / +0.0080 | +0.0075 / -0.0037 |
+| *added after the first read:* lines on START rows, k 0.5 / 1.0 | +0.0046 / +0.0015 | | +0.0014 / +0.0025 | -0.0072 / -0.0043 |
+| *added after the first read:* shipped lines, low end only (every / played) | -0.0003 / +0.0000 | | -0.0000 / -0.0108 | -0.0019 / +0.0112 |
+
+No pre-set variant meets the bar (every one is worse on held-out START-ALL; the shipped lines were fit on all five seasons, so a
+held-out re-fit starts behind, but none comes close). The two variants added after the first read (labelled) do not change that:
+fitting the lines on the startable rows closes most of the gap but still trails, and a low-end-only re-fit (RB knot 6 -> 8; WR
+and TE slopes 1.2 -> 1.1) is worth -0.002 every-game, too small for a change. Fit on every season, the lines land close to the
+shipped ones where it matters (QB full-strength (0.695, 4.35) vs shipped (0.738, 4.15)); the lower intercepts of an all-rows fit
+come from the low-projection bulk, which the low end already handles. The low-end target is a straight trade: fit on played games
+it gains -0.011 on PLAYED ALL and loses +0.011 on EVERY-ALL; it stays on every game (the user's L7b choice, the fantasy reading).
+**Finding: the shipped points scale still describes the model, with silent games in it. Nothing to ship from the re-fit;
+`v2_points_scale_v6` stays unset.** The silent-games result above (run against today's model with the shipped scale) is therefore
+also the confirming run for silent games.

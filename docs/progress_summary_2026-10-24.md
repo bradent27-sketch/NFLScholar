@@ -94,6 +94,11 @@ our numbers, so timing (acting early) is not an edge on what we have. The passin
 
 **User 2026-10-25:** "Refit the points scale ... Count silent games ... essential for making sure the model is accurate and that our backtests are accurate ... especially for players who get less volume. The rest store as later ideas." Those two are in progress (silent games first, since they change both the model's history and what a backtest counts as a played game, then one re-fit on the result); every other row below is a later idea.
 
+**Done 2026-10-25** (methodology, three entries that day): silent games pass their pre-set bar on all three variants (best
+all-played: `silent_snapcurve_lite`, PLAYED ALL -0.012, START-ALL -0.007, EVERY-ALL -0.008; `silent_snapcurve` START-ALL
+-0.008 with its CI below 0 and EVERY-ALL -0.016); the backtest now scores silent games as played (0). The points-scale re-fit on
+that model found no variant better than the shipped scale held out, so the scale stays. Shipping silent games is the user's call.
+
 | item | what | evidence so far | recommendation |
 |---|---|---|---|
 | **W1 2026 passing surge** | QB starters threw 7.4% more and gained 4.6% more yards than projected (live weeks 3-7; the market also ran 4% low) | the watch trigger (over 5% through week 10) is effectively met; passing-yard and attempt leans lose | **Yes, next.** Test faster in-season trust for QB volume / a league pass-rate term on 2023-2026 with a pre-set bar |

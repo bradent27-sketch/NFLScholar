@@ -82,8 +82,10 @@ def late(d, cal, s):
     return shown + d['_late_offset'].to_numpy(dtype=float)
 
 
-def fit_lines(d, train, k):
+def fit_lines(d, train, k, pool='all'):
     m = train & d['played'].to_numpy() & d['live'].to_numpy()
+    if pool == 'start':                           # the startable rows (top-N by raw) only: the line's own region
+        m &= d['start_raw'].to_numpy()
     params = {}
     for pos in POS:
         for cold in (True, False):
@@ -139,6 +141,12 @@ def main():
     ap.add_argument('--dump-path', required=True)
     ap.add_argument('--k', default='0.5,1.0')
     ap.add_argument('--knots', default='4,6,8')
+    ap.add_argument('--pool', default='all', choices=('all', 'start'),
+                    help="rows the lines are fit on: every live played row, or the startable rows only (added after the first "
+                         "run, 2026-10-25: a line fit on every row is pulled toward the bulk of low projections)")
+    ap.add_argument('--only-every', action='store_true', help='only the low-end-on-every-game, anchor-kept variant')
+    ap.add_argument('--lines-shipped', action='store_true',
+                    help="keep the shipped v4 lines and re-fit only the low end (added after the first run, 2026-10-25)")
     ap.add_argument('--out', default='.sweeps/fit_points_scale.txt')
     ap.add_argument('--drop-weeks', default='2021:1',
                     help="year:week pairs left out (2021 week 1: the depth-chart archive behind v2_historical_ourlads starts in 2022, "
@@ -166,22 +174,23 @@ def main():
              f"reproduction of the shipped pipeline: max |diff| {float(np.abs(late(d, apply_lines(d, shipped_params(), shipped_low), s_ship) - base).max()):.4f}",
              '']
     for k in [float(x) for x in a.k.split(',')]:
-        for refit_s, low_target in ((False, 'every'), (False, 'played'), (True, 'every')):
+        combos = ((False, 'every'),) if a.only_every else ((False, 'every'), (False, 'played'), (True, 'every'))
+        for refit_s, low_target in combos:
             var = base.copy()
             for y in years:
                 train = (d['year'] != y).to_numpy()
                 test = ~train
-                params = fit_lines(d, train, k)
+                params = shipped_params() if a.lines_shipped else fit_lines(d, train, k, a.pool)
                 s = fit_s(d, apply_lines(d, params, shipped_low), train) if refit_s else s_ship
                 low = fit_low(d, train, params, s, knots, low_target)
                 var[test] = late(d, apply_lines(d, params, low), s)[test]
             sc = scores(d, base, var, window)
-            label = f"k={k:g}, low end fit on {low_target} games, anchor s {'re-fit' if refit_s else 'kept'}"
+            label = ('shipped v4 lines' if a.lines_shipped else f"lines on {a.pool} rows, k={k:g}") + f", low end fit on {low_target} games, anchor s {'re-fit' if refit_s else 'kept'}"
             lines.append(f"{label}: held-out dRMSE vs today's pipeline (negative = better)   [95% CI over weeks]   bias   weeks better-worse")
             for name, (dr, lo, hi, bb, bv, wins, losses) in sc.items():
                 lines.append(f"   {name:10s} {dr:+.4f} [{lo:+.4f},{hi:+.4f}]   bias {bb:+.2f} -> {bv:+.2f}   {wins}-{losses}")
             train = np.ones(len(d), dtype=bool)
-            params = fit_lines(d, train, k)
+            params = shipped_params() if a.lines_shipped else fit_lines(d, train, k, a.pool)
             s = fit_s(d, apply_lines(d, params, shipped_low), train) if refit_s else s_ship
             low = fit_low(d, train, params, s, knots, low_target)
             lines.append(f"   fit on every season: lines {{{', '.join(f'{p}/{b}: ({v[0]:.3f}, {v[1]:.3f})' for (p, b), v in params.items())}}}")

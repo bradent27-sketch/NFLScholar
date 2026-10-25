@@ -29,6 +29,7 @@ session of analysis and I want the current numbers" is a judgement no
 staleness rule should be allowed to overrule.
 """
 import datetime
+import functools
 import json
 import os
 
@@ -203,6 +204,36 @@ def _archive_snapshot(props, status, fetched_at):
                        'status': status, 'rows': props.to_dict('records')}, handle)
     except Exception:
         pass
+
+
+def players_with_lines(year, week, archive_dir=PROPS_ARCHIVE_DIR):
+    """The players (clean_name_exact keys) with at least one scorable game line in any pull archived for ``year`` week
+    ``week`` - v2_ps_line_routing reads it to see which practice-squad back the books expect to play. A union over the
+    week's pulls, not the latest: a partial pull (one book up) must not erase a line the full pulls carried. Only that a
+    line exists is read, never its number. Empty when nothing is archived (every week before 2026 week 3)."""
+    prefix = f'{int(year)}_wk{int(week):02d}_'
+    try:
+        files = tuple(sorted(f for f in os.listdir(archive_dir) if f.startswith(prefix) and f.endswith('.json')))
+    except OSError:
+        return frozenset()
+    return _players_with_lines(archive_dir, files)
+
+
+@functools.lru_cache(maxsize=8)
+def _players_with_lines(archive_dir, files):
+    from data.utils import clean_name_exact
+    names = set()
+    for fname in files:
+        try:
+            with open(os.path.join(archive_dir, fname), encoding='utf-8') as handle:
+                rows = json.load(handle).get('rows') or []
+        except (OSError, ValueError):
+            continue
+        names.update(str(r.get('player')) for r in rows if r.get('player') and r.get('scorable', True)
+                     and str(r.get('period', 'game')) == 'game')
+    if not names:
+        return frozenset()
+    return frozenset(clean_name_exact(pd.Series(sorted(names))))
 
 
 def save_snapshot(props, status, fetched_at=None, path=WEEKLY_SNAPSHOT_PATH):

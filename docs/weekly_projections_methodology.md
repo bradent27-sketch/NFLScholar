@@ -6427,3 +6427,100 @@ but the discount still earns its keep on the weeks a backup TE does not play at 
 0) for no START-RB gain. No START position was worse at any Holm-adjusted p (all 1.0). The double count measured on the played
 games is real, but on every game the model expected the player to play the layers as shipped are the better trade. Nothing changes;
 the three candidate flags stay off.
+
+### 2026-10-25 - A lone lead back takes a quarter of an out backup's volume (CANDIDATE), pre-set bar
+User, week 7 of 2026: Atlanta's Brian Robinson (8.8 carries a game) is out and Bijan Robinson gets all of the volume - "some of
+the backup volume must be allocated to the third string (even though the third string doesn't have any evidence)". The board:
+Bijan 17.1 -> 24.1 carries (24.83 pts, 100% of ATL's RB carries); Khalil Herbert and Jam Miller (practice squad, put on the board by
+`v2_rb_depleted_room_fill`) at 0. Cause: the RB vacancy pass gives the surviving backs VACANCY_SURVIVAL (80%) of an out back's
+volume by allocator share; with one survivor he takes all of it, and the practice-squad backs only get what the 2x growth cap
+cannot place - nothing, for a lead back. TEN (Pollard, 97% of the carries) and CAR (Hubbard, 95%) have the same shape this week.
+
+Evidence (scratchpad rb2_out_study.py; 2021-2025, weeks 3-17; an established RB2 = 5+ carries a game over his last games, 2+
+games, played one of the last two; RB1 10+ carries; RB2 did not play, RB1 did; drift of the 948 both-played weeks removed):
+
+| games | n | RB2's carries | RB1 picked up | rest of the room | room kept |
+|---|---|---|---|---|---|
+| all | 121 | 7.75 | 24% (+-16%) | 57% | 81% |
+| no third back with in-season games | 56 | 7.54 | 8% (+-22%) | 62% | 70% |
+| third back with games | 65 | 7.93 | 36% (+-22%) | 54% | 89% |
+| RB1 already 15+ carries | 52 | 7.39 | -3% (+-21%) | 71% | 68% |
+
+The RB1 picked up ~none of the RB2's targets (-0.04 of 1.81). The shipped model on the harness base boards (2022-2025, the RB2
+known out): the RB1 runs +3.7 carries high where there was no third back (22 games; -2.3 where there was one, 24) - but his
+points bias there is only -0.1 (+-3.6), so carries are clearly off and points are not clearly off.
+
+Candidate `v2_rb_lone_lead_vacancy` (`lone_lead`): when the only surviving back with a role is the team's lead back (his carries
+before any redistribution at least every out back's), he takes LONE_LEAD_VACANCY_SHARE (0.25, the all-games estimate - the
+no-third-back estimate is 8% but noisy) of the out back's carries and targets, not 80%; the rest of the reusable 80% goes to the
+team's practice-squad candidates as their expected-value split, else stays unallocated (call-ups nobody projects). Rooms with a
+second healthy back, and a backup left alone because the LEAD is out (PHI week 5, Shipley), are untouched. Tests:
+tests/test_rb_lone_lead_vacancy.py.
+
+**Pre-set bar (written before the run).** The rule fires a few times a season, so the paired scopes can only show harm; the rows it
+moves are scored by scripts/eval_changed_rows.py from the run's variant boards (every (year, week, player) moved by more than
+0.05 pts: the lead backs, lowered, and the practice-squad backs, raised). It passes when (1) START-ALL and EVERY-ALL are no worse
+than +0.001 and neither START-RB nor EVERY-RB is worse at a Holm-adjusted p under 0.05; and (2) on the moved rows, every game
+they were expected to play (no game = 0), the variant's RMSE is lower than the base's (point estimate below 0). Both pass:
+ship-eligible (the user's sign-off). (1) passes and (2) fails: the share is right in carries and wrong in points (the lead back's
+efficiency or TDs rise when the backup sits) - read the lead backs' points vs carries before anything else; do not sweep the share
+on the harness.
+
+Added the same day (user: "if there is a market line available for one of the practice squad backs the volume should entirely or
+partially go to that backup back instead of an even split. If there are no lines then an even split is fine"). Separate candidate
+`v2_ps_line_routing`: when any of a team's practice-squad candidates has a posted line this week (any book, any market, any pull
+archived for the week - data.odds_weekly.players_with_lines), the practice-squad share goes to the one(s) with a line, split
+equally among them; with none, the even split stands. It reads only that a line exists, never its number, so the model's
+projections stay its own (no model + market blend). It applies wherever the practice-squad share is handed out (the lone-lead rule
+and the depleted-room fill). "Entirely" rather than "partially": a back the books price is the one expected to dress; a back
+with no line is most likely not elevated, so his expected-value share is mostly wasted. Live ATL week 7: Khalil Herbert has lines
+at four books (rushing yards 7.5, i.e. about 2 carries), Jam Miller none - Herbert takes the whole share. The books' carries line
+for Bijan is 18.5-19.5 (the lone-lead rule puts him near 19; the shipped model 24.1). Herbert's share (~4.8 carries) is above his
+line; that is the size of the pool (the 57-62% the rest of the room took in 2021-2025), not the routing.
+
+No lines are archived before 2026 week 3, so the 2022-2025 harness cannot test the routing: in it the flag is a no-op. The bar is
+a live check instead: over 2026 weeks 3-7 (and each week from here, in the ledger), a practice-squad candidate the routing picks
+must play (a box score or a snap) in most of those games - if lined backs sit as often as unlined ones, the routing adds nothing
+and stays off. The user's call either way. A board kept in the app re-projects a team when its injury rows change or on Build
+board; a line posted after that reaches the board at the next one (to wire into ui/board_session.board_inputs at ship time).
+
+Revised before any run (same day, from the live week 7 build): the lone lead's rest no longer goes only to practice-squad
+candidates - TEN (Spears and Singleton out, Pollard the lone lead) and CAR (Brooks and Dillon out, Hubbard) are not depleted
+rooms, so they have no practice-squad rows, and the rest vanished although active depth backs sat on the board at ~0 (TEN:
+Michael Carter, Julius Chestnut, Kalel Mullings; CAR: Trevor Etienne, Anthony Tyus III) - the third string the user meant. The
+rest now goes to the team's other healthy backs on the board (active depth backs and practice-squad candidates; not a FB) by
+expected snap share (equal when none has one - the practice-squad rows all carry the same floor), with their dependent stats at
+the league per-opportunity rates (DEPLETED_ROOM_LEAGUE_RATES); with `v2_ps_line_routing`, to the one(s) with a posted line
+when any has one. Live week 7 (default -> candidates; the books' carries line, for reference only - not an input):
+
+| team | lead back | carries | books | the rest went to |
+|---|---|---|---|---|
+| ATL | Bijan Robinson | 24.0 -> 19.2 | 18.5-19.5 | Khalil Herbert 4.8 (the only one with a line; Jam Miller 0) |
+| TEN | Tony Pollard | 20.6 -> 17.3 | 16.5 | Michael Carter +1.9, Kalel Mullings +1.4 (Chestnut 0 snaps) |
+| CAR | Chuba Hubbard | 19.7 -> 17.2 | 17.0 | Trevor Etienne +1.6, Anthony Tyus III +0.8 |
+
+The pre-set bar above stands for the revised rule (no run had started).
+
+Line routing, the 2026 check: practice-squad RBs (roster status DEV the week before) in weeks 3-6 - 170 without a line, 1 played;
+1 with a line (Jaydon Blue, PHI week 6), did not play. Too few to say anything; the routing rests on its logic and the user's call,
+and the ledger will build the record from here.
+
+### 2026-10-25 - Players with every game excluded: result - the flag misses its bar; revised to players with no prior-season role
+Harness 2022-2025 weeks 3-17 against the 68-flag default (.sweeps/harness_keep_excluded_2022-2025_wk3-17.log), dRMSE:
+START-ALL +0.002 [-0.001, +0.005], EVERY-ALL -0.000 [-0.002, +0.002], START-TE +0.009 [-0.002, +0.021], START-RB +0.002,
+START-WR -0.000; Holm-adjusted p >= 0.22 everywhere. The restored players (scripts/eval_restored_players.py, 116 player-weeks,
+38 players): on the games they played, RB -1.12 / TE +1.13 / WR -0.99 pts a game (-0.51 overall: under, not over); RMSE 3.2 / 2.4 /
+5.7 against 7.3 / 2.8 / 7.6 for leaving them off. So the restored players pass and the paired scopes fail by the bar (START-ALL
++0.002 against +0.001).
+
+Who moved (scripts/eval_changed_rows.py, written for the next candidate, run on these boards: 1,866 rows on both boards moved >0.05
+pts; every-game RMSE -0.005 [-0.029, +0.023]): the harm is veterans whose only in-season game the filter had excluded because it
+was cut short - with the flag that game became their history and replaced their prior-season line. Xavier Worthy 2025 week 4
+(one snap in week 1, then hurt): 7.81 -> 1.01, scored 17.1; Chris Godwin 2022 week 4 10.6 -> 4.6; Jonathan Taylor 2023 week 6
+7.7 -> 4.7; Tyler Higbee 2024 week 17; Jeff Wilson 2023 week 8. TE rows the flag lowered: +0.035 [-0.008, +0.077].
+
+Revision, candidate `v2_keep_fully_excluded_no_prior` (`keep_no_prior`): the same rule only for a player with NO eligible
+prior-season game at his position (the returning-player rule's own test, by identity) - the one who would otherwise be off the
+board. A veteran stays on his prior-season line. Live week 7: Lane 5.32, Sarratt 0.00 (on the board), Estimé unchanged (he has a
+prior-season role). **Pre-set bar:** the first flag's bar, unchanged (START-ALL and EVERY-ALL no worse than +0.001, no START
+position Holm-worse at p < 0.05; restored players not over by more than 1.0 pt a game on the games they played).

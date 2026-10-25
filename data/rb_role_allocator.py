@@ -125,6 +125,17 @@ DEPLETED_ROOM_LEAGUE_RATES = {
     'targets': {'receptions': 0.80, 'receiving_yards': 6.0, 'receiving_tds': 0.035},
 }
 
+# v2_rb_lone_lead_vacancy (candidate 2026-10-25; user: ATL week 7, Brian Robinson out and Bijan Robinson given all of
+# his carries - 17.1 -> 24.1 - with the practice-squad backs on the board at 0). When the back left is the team's LEAD
+# back and the only one with a role, he took VACANCY_SURVIVAL (80%) of a backup's volume. What the data says
+# (2021-2025, wk3-17, 121 games where an established RB2 - 5+ carries/game - sat and the RB1 played; control-week
+# drift removed): the RB1 picked up 24% of the RB2's carries (+-16%), the rest of the room 57%; with no third back
+# with in-season games, 8% (+-22%) vs 62% to backs nobody projected; RB1s already at 15+ carries, ~0%. Targets:
+# ~0 of the RB2's 1.8. Harness base boards: the RB1 in those games runs +3.7 carries high (22 games). So the lone
+# lead back takes LONE_LEAD_VACANCY_SHARE of the vacated volume; the rest of the reusable 80% goes to the team's
+# practice-squad candidates (as v2_rb_depleted_room_fill's expected value), else stays unallocated.
+LONE_LEAD_VACANCY_SHARE = 0.25
+
 # How many extra chart slots an injured-top-three backfield can promote into
 # the "credible core RB" set. 1 => one absence reaches the chart RB4, never the
 # RB5. See the `rank_ceiling` block in allocate_preseason_rb_roles.
@@ -1170,12 +1181,37 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
     return out.drop(columns=["_rb_team"], errors="ignore"), pd.DataFrame(ledger, columns=ledger_columns)
 
 
+def _line_holders_first(out: pd.DataFrame, indexes: pd.Index, line_holders) -> tuple[pd.Index, bool]:
+    """v2_ps_line_routing: the rows of ``indexes`` whose player has a posted market line this week when any has one (and
+    True), else all of them (and False)."""
+    if line_holders and len(indexes):
+        lined = indexes[[str(out.at[index, "Player"]) in line_holders for index in indexes]]
+        if len(lined):
+            return lined, True
+    return indexes, False
+
+
+def _add_volume_at_league_rates(out: pd.DataFrame, amounts: pd.Series, volume_col: str, dep_cols: tuple) -> None:
+    """Add ``amounts`` (by row) of ``volume_col`` to those rows of ``out``, their dependent stats at the league
+    per-opportunity rates (DEPLETED_ROOM_LEAGUE_RATES) - for backs whose own rates rest on little or nothing."""
+    rates = DEPLETED_ROOM_LEAGUE_RATES.get(volume_col, {})
+    for index, amount in amounts.items():
+        before = pd.to_numeric(pd.Series([out.at[index, volume_col]]), errors="coerce").fillna(0.0).iloc[0]
+        out.at[index, volume_col] = round(float(before) + float(amount), 2)
+        for dep_col in dep_cols:
+            if dep_col in out.columns:
+                prev = pd.to_numeric(pd.Series([out.at[index, dep_col]]), errors="coerce").fillna(0.0).iloc[0]
+                out.at[index, dep_col] = round(float(prev) + float(amount) * rates.get(dep_col, 0.0), 2)
+
+
 def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles: dict[str, dict[str, Any]],
                                            as_of_year: int | None = None,
                                            injury_provenance: dict[str, Any] | None = None,
                                            receiver_pecking_order: bool = False,
                                            depleted_room_fill: bool = False,
                                            receiver_lead_share: float = RECEIVER_VACANCY_LEAD_SHARE,
+                                           lone_lead_share: float | None = None,
+                                           rb_line_holders: set | frozenset | None = None,
                                            ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Redistribute an out core RB's carries and targets with allocator shares.
 
@@ -1196,6 +1232,15 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
     growth cap could not place are no longer dropped - see DEPLETED_ROOM_SURVIVOR_ABSORB. Rows flagged
     ``_ps_elevation_candidate`` (practice-squad backs the build added for a depleted room) receive the
     practice-squad share as an expected value, split equally.
+
+    ``lone_lead_share`` (v2_rb_lone_lead_vacancy, LONE_LEAD_VACANCY_SHARE): when the only surviving back with a role
+    is the team's lead back (his carries before any redistribution at least every out back's), he takes this share of
+    the out back's volume instead of all of the reusable part; the rest goes to the team's other healthy backs on the
+    board (active depth backs and practice-squad candidates) by expected snap share, else stays unallocated.
+
+    ``rb_line_holders`` (v2_ps_line_routing): board names of the backs with a posted market line this week. When any of
+    the backs a share goes to (the lone lead's rest, or the depleted room's practice-squad share) has one, those alone take
+    it (split equally); with none, the split stands.
     """
     columns = ["team", "volume", "source_player", "functional_source_role", "injury_provenance",
                "vacated", "allocated", "unallocated", "recipients", "reason"]
@@ -1222,6 +1267,12 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
     share_columns = {"rushing_attempts": "_rb_carry_allocation_share", "targets": "_rb_target_allocation_share"}
     ps_flag = (out["_ps_elevation_candidate"].fillna(False).astype(bool) if "_ps_elevation_candidate" in out.columns
                else pd.Series(False, index=out.index))
+    # Each back's carries before any redistribution (an out back's stashed full volume): who is the lead back is
+    # read from these, not from volumes an earlier source or volume already grew.
+    carries_now = (pd.to_numeric(out["rushing_attempts"], errors="coerce") if "rushing_attempts" in out.columns
+                   else pd.Series(0.0, index=out.index))
+    pre_carries = (pd.to_numeric(out["_full_rushing_attempts"], errors="coerce") if "_full_rushing_attempts" in out.columns
+                   else carries_now).fillna(carries_now).fillna(0.0)
     for source_index in out.index[sidelined]:
         source = out.loc[source_index]
         team = str(source["Team"])
@@ -1298,6 +1349,15 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                     continue
                 candidates, shares = candidates[:0], pd.Series(dtype=float)
             gain, recipients, allocated = pd.Series(dtype=float), [], 0.0
+            # v2_rb_lone_lead_vacancy: the one surviving back with a role is the lead back - his pre-redistribution
+            # carries at least every out back's on the team - for both volumes (a lead back picks up ~none of a
+            # backup's targets either).
+            lone_lead = None
+            if lone_lead_share is not None and source_role == "RB" and len(candidates):
+                role_backs = [index for index in candidates if shares.loc[index] > 0 and not bool(ps_flag.loc[index])]
+                out_backs = out["Team"].astype(str).eq(team) & out["Pos"].eq("RB") & core & sidelined
+                if len(role_backs) == 1 and pre_carries.loc[role_backs[0]] >= pre_carries[out_backs].max():
+                    lone_lead = role_backs[0]
             if len(candidates):
                 # "Next man up": rank the healthy recipients by current volume
                 # (pecking-order proxy), weight by a geometric rank decay from the
@@ -1320,6 +1380,9 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                         shares = weights
                 volume = pd.to_numeric(out.loc[candidates, volume_col], errors="coerce").fillna(0.0)
                 requested = shares / shares.sum() * reusable
+                if lone_lead is not None:
+                    requested = pd.Series(0.0, index=candidates)
+                    requested.loc[lone_lead] = min(pre_injury * lone_lead_share, reusable)
                 allowed = (volume * VACANCY_MAX_GROWTH - volume).clip(lower=0.0)
                 if pecking:
                     allowed = allowed.clip(lower=RECEIVER_VACANCY_ABS_GROWTH_FLOOR)
@@ -1343,7 +1406,34 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                               for index in candidates if gain.loc[index] > 0]
                 allocated = float(gain.sum())
             reason = "Allocator-weighted core-RB injury redistribution."
-            if depleted_room_fill and source_role == "RB" and reusable - allocated > 1e-9:
+            if lone_lead is not None and reusable - allocated > 1e-9:
+                # v2_rb_lone_lead_vacancy: the rest goes to the team's other healthy backs on the board - its active depth
+                # backs and any practice-squad candidates - by expected snap share (equal when none has one), or
+                # (v2_ps_line_routing) to the one(s) with a posted line this week when any has one.
+                rest = reusable - allocated
+                depth = out.index[out["Team"].astype(str).eq(team) & out["Pos"].eq("RB") & ~functional.eq("FB")
+                                  & ~sidelined & availability.gt(0.01) & (out.index != lone_lead)]
+                depth, lined = _line_holders_first(out, depth, rb_line_holders)
+                if len(depth):
+                    weights = (pd.to_numeric(out.loc[depth, "Expected Snap Share"], errors="coerce").fillna(0.0)
+                               if "Expected Snap Share" in out.columns else pd.Series(0.0, index=depth))
+                    if weights.sum() <= 0:
+                        weights = pd.Series(1.0, index=depth)
+                    amounts = weights / weights.sum() * rest
+                    _add_volume_at_league_rates(out, amounts, volume_col, dep_cols)
+                    recipients += [{"player": str(out.at[index, "Player"]), "allocated": round(float(amounts.loc[index]), 3),
+                                    "team_rank": len(candidates) + 1 + k, "practice_squad": bool(ps_flag.loc[index]),
+                                    "posted_line": lined}
+                                   for k, index in enumerate(depth) if amounts.loc[index] > 0]
+                    allocated += rest
+                    with_line = " with a posted line this week" if lined else ""
+                    names = ", ".join(str(out.at[index, "Player"]) for index in depth)
+                    reason += (f" Lone lead back: he takes {lone_lead_share:.0%} of a backup's volume; the team's other "
+                               f"back(s){with_line} ({names}) take the rest.")
+                else:
+                    reason += (f" Lone lead back: he takes {lone_lead_share:.0%} of a backup's volume; the rest goes to "
+                               "unprojected call-ups.")
+            elif depleted_room_fill and source_role == "RB" and reusable - allocated > 1e-9:
                 # What the growth cap could not place is not dropped (see DEPLETED_ROOM_SURVIVOR_ABSORB).
                 leftover = reusable - allocated
                 survivor_extra = leftover * DEPLETED_ROOM_SURVIVOR_ABSORB if len(candidates) else 0.0
@@ -1366,23 +1456,26 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                                    "allocated": round(float(gain.loc[index]), 3),
                                    "team_rank": int(_rank.loc[index])}
                                   for index in candidates if gain.loc[index] > 0]
-                if len(ps_idx) and ps_pool > 0:
-                    per_back = ps_pool / len(ps_idx)
-                    rates = DEPLETED_ROOM_LEAGUE_RATES.get(volume_col, {})
-                    for k, index in enumerate(ps_idx):
-                        before = pd.to_numeric(pd.Series([out.at[index, volume_col]]), errors="coerce").fillna(0.0).iloc[0]
-                        out.at[index, volume_col] = round(float(before) + per_back, 2)
-                        for dep_col in dep_cols:
-                            if dep_col in out.columns:
-                                prev = pd.to_numeric(pd.Series([out.at[index, dep_col]]), errors="coerce").fillna(0.0).iloc[0]
-                                out.at[index, dep_col] = round(float(prev) + per_back * rates.get(dep_col, 0.0), 2)
-                        recipients.append({"player": str(out.at[index, "Player"]), "allocated": round(per_back, 3),
-                                           "team_rank": len(candidates) + 1 + k, "practice_squad": True})
+                # v2_ps_line_routing: the practice-squad back(s) with a posted line this week take the share; else all
+                # of them split it.
+                ps_split, lined = _line_holders_first(out, ps_idx, rb_line_holders)
+                if len(ps_split) and ps_pool > 0:
+                    per_back = ps_pool / len(ps_split)
+                    _add_volume_at_league_rates(out, pd.Series(per_back, index=ps_split), volume_col, dep_cols)
+                    recipients += [{"player": str(out.at[index, "Player"]), "allocated": round(per_back, 3),
+                                    "team_rank": len(candidates) + 1 + k, "practice_squad": True, "posted_line": lined}
+                                   for k, index in enumerate(ps_split)]
                     allocated += ps_pool
+                if not len(ps_idx):
+                    rest_text = "; the rest goes to unprojected call-ups."
+                elif lined:
+                    names = ", ".join(str(out.at[index, "Player"]) for index in ps_split)
+                    rest_text = f"; the practice-squad back(s) with a posted line this week ({names}) take the rest."
+                else:
+                    rest_text = (f"; {len(ps_idx)} practice-squad back(s) share the rest as an expected value, not a "
+                                 "prediction of who is elevated.")
                 reason += (f" Depleted room: the surviving back(s) absorbed {DEPLETED_ROOM_SURVIVOR_ABSORB:.0%} of what the "
-                           "growth cap could not place"
-                           + (f"; {len(ps_idx)} practice-squad back(s) share the rest as an expected value, not a "
-                              "prediction of who is elevated." if len(ps_idx) else "; the rest goes to unprojected call-ups."))
+                           "growth cap could not place" + rest_text)
             ledgers.append({"team": team, "volume": volume_col, "source_player": source["Player"],
                             "functional_source_role": source_role_label, "injury_provenance": source_provenance,
                             "vacated": pre_injury, "allocated": allocated,

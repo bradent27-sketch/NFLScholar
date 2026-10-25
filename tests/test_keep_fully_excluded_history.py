@@ -40,3 +40,27 @@ def test_nothing_to_keep_is_unchanged():
     annotated = _annotated().iloc[2:4]
     out = wp._keep_fully_excluded_players(annotated, 'player')
     pd.testing.assert_frame_equal(out, annotated)
+
+
+# v2_keep_fully_excluded_no_prior (candidate 2026-10-25, the revision after the first flag's harness): only a player with no
+# eligible prior-season game at his position keeps his excluded games; a veteran stays on his prior-season line.
+
+def test_no_prior_flag_is_registered_and_not_default():
+    assert 'v2_keep_fully_excluded_no_prior' in wp.MODEL_FEATURES
+    assert 'v2_keep_fully_excluded_no_prior' not in wp.DEFAULT_FEATURES
+
+
+def test_with_a_prior_season_role_the_excluded_games_stay_excluded():
+    annotated = _annotated()
+    prior = pd.DataFrame({'player': ['Fill-in TE', 'Fill-in TE', 'Rookie WR'], 'position': ['TE', 'TE', 'TE'],
+                          'week': [1.0, 2.0, 3.0]})
+    out = wp._keep_fully_excluded_players(annotated, 'player', prior, 'player')
+    # the fill-in TE had TE games last season: his cut-short game stays out; the rookie's prior row is at another position
+    assert out['_player_history_eligible'].tolist() == [True, True, True, False, False, False]
+    assert out['_player_history_reason'].iloc[5] == 'partial replacement after teammate exit'
+
+
+def test_an_empty_prior_season_keeps_every_fully_excluded_player():
+    annotated = _annotated()
+    out = wp._keep_fully_excluded_players(annotated, 'player', pd.DataFrame(), 'player')
+    pd.testing.assert_frame_equal(out, wp._keep_fully_excluded_players(annotated, 'player'))

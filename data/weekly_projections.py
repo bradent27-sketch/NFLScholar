@@ -130,7 +130,7 @@ from data.rb_role_allocator import (
     allocate_preseason_rb_roles, redistribute_rb_vacancy_with_allocator,
     analyze_rb_role_segments, derive_rb_allocator_segment_fields,
     INELIGIBLE_ROSTER_STATUSES, RB_TEAM_SNAP_SHARE_MAX,
-    RECEIVER_VACANCY_LEAD_SHARE, RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE,
+    RECEIVER_VACANCY_LEAD_SHARE, RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE, LONE_LEAD_VACANCY_SHARE,
 )
 from data.player_aliases import canonical_player_key, stable_roster_identity_keys
 from data.availability_overrides import (
@@ -2380,7 +2380,29 @@ MODEL_FEATURES = (
                              # board). A RB/WR/TE whose every game this season the
                              # partial-game filter excluded keeps those games as his
                              # history instead of dropping out of the in-season pool
-                             # (_keep_fully_excluded_players).
+                             # (_keep_fully_excluded_players). HARNESS 2026-10-25: misses
+                             # its bar (START-ALL +0.002 vs +0.001; veterans whose only
+                             # game was cut short lose their prior-season line).
+    'v2_keep_fully_excluded_no_prior',  # CANDIDATE (2026-10-25, the revision): the same, only for
+                             # a player with no eligible prior-season game at his
+                             # position - the one who would otherwise be off the board.
+    'v2_rb_lone_lead_vacancy',  # CANDIDATE (2026-10-25, user: ATL week 7, Brian Robinson out and Bijan
+                             # Robinson given all of his carries, the practice-squad
+                             # backs at 0). When the only surviving back with a role
+                             # is the lead back, he takes LONE_LEAD_VACANCY_SHARE (25%)
+                             # of the out backup's volume, not 80%; the rest goes to
+                             # the practice-squad candidates (2021-2025: RB1s picked up
+                             # 24% of an absent RB2's carries, the rest of the room 57%).
+    'v2_ps_line_routing',  # CANDIDATE (2026-10-25, user: "if there is a market line available for one of the
+                             # practice squad backs the volume should entirely or
+                             # partially go to that backup"). The practice-squad share
+                             # of an out back's volume (v2_rb_depleted_room_fill /
+                             # v2_rb_lone_lead_vacancy) goes to the candidate(s) with a
+                             # posted line this week, not split over all of them; with
+                             # no line the even split stands. Reads only THAT a line
+                             # exists (props archive), never its number. No archived
+                             # lines before 2026 week 3: the 2022-2025 harness cannot
+                             # test it.
     'v2_points_scale_v6',  # CANDIDATE (2026-10-25, user: "Refit the points scale"). The points lines, the low
                              # end and (if re-fit) the season anchor's s from one re-fit
                              # on the current model (POINTS_SCALE_V6 / points_scale).
@@ -7767,6 +7789,24 @@ def _depleted_rb_room_teams(cur, injury_profiles, name_col):
     return {t for t in sidelined.index if sidelined[t] >= 1 and healthy.get(t, 0) <= 1}
 
 
+def _rb_backs_with_lines(result, year, week):
+    """v2_ps_line_routing: the board names of the RBs with a posted market line this week (data.odds_weekly.players_with_lines
+    - that a line exists, never its number), else None. Read only where a vacated share goes to backs without a role of
+    their own: a lone lead back's rest, a depleted room's practice-squad share."""
+    if result is None or result.empty or 'Player' not in result.columns or 'Pos' not in result.columns:
+        return None
+    rb = result['Pos'].astype(str).eq('RB')
+    if not rb.any():
+        return None
+    from data.odds_weekly import players_with_lines
+    lined = players_with_lines(year, week)
+    if not lined:
+        return None
+    names = result.loc[rb, 'Player'].astype(str)
+    holders = frozenset(names[clean_name_exact(names).isin(lined).to_numpy()])
+    return holders or None
+
+
 def _add_missing_returning_player_rows(cur, roster_source, player_prior, prior_name_col,
                                         name_col, team_col, stats, pos, practice_squad_teams=None,
                                         as_of_week=None, current_snapshot=False):
@@ -8046,11 +8086,16 @@ def _keep_every_history_game(annotated):
 FULLY_EXCLUDED_KEEP_POSITIONS = ('RB', 'WR', 'TE')
 
 
-def _keep_fully_excluded_players(annotated, name_col):
+def _keep_fully_excluded_players(annotated, name_col, player_prior=None, prior_name_col=None):
     """'v2_keep_fully_excluded_history' (candidate 2026-10-25, user: Ja'Kobi Lane missing from the week 7 board): a RB/WR/TE whose
     EVERY game this season the partial-game filter excluded keeps those games, rather than having no history at all. With none, he
     is not in the in-season pool; one with a prior-season role is added back from it (_add_missing_returning_player_rows), a rookie
-    is left off the board. QBs are left to the QB1 rules (a relief appearance is a partial game, not a role)."""
+    is left off the board. QBs are left to the QB1 rules (a relief appearance is a partial game, not a role).
+
+    With ``player_prior`` ('v2_keep_fully_excluded_no_prior', candidate 2026-10-25 after the first flag's harness): only a player
+    with NO eligible prior-season game at his position keeps them - the one who would otherwise be off the board. A veteran whose
+    only game was cut short (Xavier Worthy 2025: one snap in week 1, then hurt) stays on his prior-season line, which the
+    first flag replaced with the cut-short game (7.8 -> 1.0 pts; he scored 17.1)."""
     if annotated is None or annotated.empty or name_col not in annotated.columns \
             or '_player_history_eligible' not in annotated.columns:
         return annotated
@@ -8059,6 +8104,11 @@ def _keep_fully_excluded_players(annotated, name_col):
     position = out.get('position', pd.Series('', index=out.index)).astype(str).str.upper()
     kept_any = eligible.groupby(out[name_col].astype(str)).transform('any')
     keep = ~kept_any & position.isin(FULLY_EXCLUDED_KEEP_POSITIONS)
+    if keep.any() and player_prior is not None and not player_prior.empty and prior_name_col in player_prior.columns:
+        prior_position = player_prior.get('position', pd.Series('', index=player_prior.index)).astype(str).str.upper()
+        prior_roles = set(zip(player_identity_keys(player_prior, prior_name_col), prior_position))
+        has_prior_role = pd.Series(list(zip(player_identity_keys(out, name_col), position)), index=out.index).isin(prior_roles)
+        keep &= ~has_prior_role
     if keep.any():
         out.loc[keep, '_player_history_eligible'] = True
         out.loc[keep, '_player_history_reason'] = ''
@@ -10148,6 +10198,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         hist_annotated = _keep_every_history_game(hist_annotated)
     elif 'v2_keep_fully_excluded_history' in feats:
         hist_annotated = _keep_fully_excluded_players(hist_annotated, name_col)
+    elif 'v2_keep_fully_excluded_no_prior' in feats:
+        hist_annotated = _keep_fully_excluded_players(hist_annotated, name_col, player_prior, prior_name_col)
     player_hist = hist_annotated[hist_annotated['_player_history_eligible']].copy()
 
     def _blowout_weeks_for_matchup(schedule_frame, matchup_year):
@@ -13578,6 +13630,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     depleted_room_fill='v2_rb_depleted_room_fill' in feats,
                     receiver_lead_share=(RECEIVER_VACANCY_LEAD_SHARE_CANDIDATE
                                          if 'v2_vacancy_lead_share_050' in feats else RECEIVER_VACANCY_LEAD_SHARE),
+                    lone_lead_share=(LONE_LEAD_VACANCY_SHARE if 'v2_rb_lone_lead_vacancy' in feats else None),
+                    rb_line_holders=(_rb_backs_with_lines(result, year, week) if 'v2_ps_line_routing' in feats else None),
                 )
                 rb_vacancy_ledger = (rb_vacancy_frame.to_dict('records')
                                      if rb_vacancy_frame is not None and not rb_vacancy_frame.empty else [])

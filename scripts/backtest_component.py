@@ -48,6 +48,7 @@ import pandas as pd  # noqa: E402
 
 from data.weekly_projections import build_weekly_projections, DEFAULT_FEATURES  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
+from data.silent_games import played_players  # noqa: E402
 from scripts.eval_weekly_model import _metrics, _weighted, STARTABLE_N, _actual_points  # noqa: E402
 from scripts import harness_v2  # noqa: E402
 
@@ -150,7 +151,7 @@ def _one_sided_worse_p(variant_wins, losses):
 
 
 # Columns of each week's base board kept by --boards-out (2026-10-22): enough to diff two runs player by player.
-BOARD_KEEP_COLUMNS = ('Player', 'Pos', 'Team', 'Opponent', 'Availability', 'Games This Season', 'Raw Model Proj Pts',
+BOARD_KEEP_COLUMNS = ('Player', 'Pos', 'Team', 'Opponent', 'Availability', 'Games This Season', 'Expected Snap Share', 'Raw Model Proj Pts',
                       'Model Proj Pts', 'passing_attempts', 'passing_yards', 'passing_tds', 'rushing_attempts',
                       'rushing_yards', 'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds')
 
@@ -183,9 +184,11 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
             # board with its explanations) and no build is reused across weeks: an hour of them was ~10 GB, and two full
             # runs died out of memory on 2026-10-23/24. Clearing per week keeps only this week's (results unchanged).
             build_weekly_projections.clear()
-            actual = _actual_points(stats_df, name_col, week, scoring_col)
-            if actual.empty:
+            box_actual = _actual_points(stats_df, name_col, week, scoring_col)
+            if box_actual.empty:
                 continue
+            # the verdict scopes score everyone who PLAYED, a silent game as 0 (harness_v2.BOX_SCORE_SCOPES' comment)
+            actual = harness_v2.played_actual(box_actual, played_players(year, week, stats_df, name_col, _team_col))
             base_proj, base_meta = build_weekly_projections(
                 year, week, scoring, as_of_week=week, apply_injury=False, features=base_feats)
             if base_proj.empty:
@@ -242,13 +245,27 @@ def evaluate_components_v2(years, weeks, variant_defs, scoring='Full PPR', base_
                             weekly.append({'variant': label, 'scope': scope, 'year': year, 'week': week,
                                            **{f'base_{k}': v for k, v in mb.items()},
                                            **{f'var_{k}': v for k, v in mv.items()}})
+                # box-score scopes (harness_v2.BOX_SCORE_SCOPES): the verdict scopes as they were before 2026-10-25
+                for scope, pos, startable in harness_v2.BOX_SCORE_SCOPES:
+                    pool = harness_v2.scope_pool(base_proj, var_proj, pos, startable, actual_players=box_actual.index)
+                    min_pool = max(8, harness_v2.STARTABLE_N.get(pos, 40) // 2) if (startable and pos) else 20
+                    if len(pool) < min_pool:
+                        continue
+                    mb = harness_v2.metrics(base_idx.reindex(pool), box_actual.loc[pool])
+                    mv = harness_v2.metrics(var_idx.reindex(pool), box_actual.loc[pool])
+                    if mb and mv:
+                        flag_rows[label].setdefault(scope, []).append((mb, mv))
+                        if weekly is not None:
+                            weekly.append({'variant': label, 'scope': scope, 'year': year, 'week': week,
+                                           **{f'base_{k}': v for k, v in mb.items()},
+                                           **{f'var_{k}': v for k, v in mv.items()}})
                 # every-game scopes (harness_v2.EVERY_GAME_SCOPES): no box-score line counts as 0
                 for scope, pos, startable in harness_v2.EVERY_GAME_SCOPES:
                     pool = harness_v2.every_game_pool(base_proj, var_proj, pos, startable)
                     min_pool = max(8, harness_v2.STARTABLE_N.get(pos, 40) // 2) if (startable and pos) else 20
                     if len(pool) < min_pool:
                         continue
-                    act = harness_v2.every_game_actual(actual, pool)
+                    act = harness_v2.every_game_actual(box_actual, pool)
                     mb = harness_v2.metrics(base_idx.reindex(pool), act)
                     mv = harness_v2.metrics(var_idx.reindex(pool), act)
                     if mb and mv:
@@ -268,7 +285,9 @@ def print_flag_report_v2(label, rows, mode='ablate'):
     four START-position scopes' Holm-corrected significance as the veto."""
     print(f"\n{'=' * 78}\n{label}  [{mode} mode, harness v2]\n{'=' * 78}")
     scope_summary = {}
-    for scope, _pos, _startable in harness_v2.SCOPES + harness_v2.EVERY_GAME_SCOPES:
+    for scope, _pos, _startable in harness_v2.SCOPES + harness_v2.BOX_SCORE_SCOPES + harness_v2.EVERY_GAME_SCOPES:
+        if scope == harness_v2.BOX_SCORE_SCOPES[0][0] and rows.get(scope):
+            print("  -- box-score games only (the verdict scopes before 2026-10-25, silent games left out); not part of the verdict --")
         if scope == harness_v2.EVERY_GAME_SCOPES[0][0] and rows.get(scope):
             print("  -- every game the model expected him to play (no box-score line = 0 points); not part of the verdict --")
         pairs = rows.get(scope)

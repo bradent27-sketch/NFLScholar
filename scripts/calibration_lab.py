@@ -12,7 +12,9 @@ offline on top of the shipped stat lines:
     anchor_mean / anchor_games   - the player's mean fantasy points over his games before the target week, computed
                                    from the same `hist` frame the build hands apply_season_anchor
     p_<stat> / a_<stat>          - projected and actual stat line (actuals 0 when the player has no box score)
-    actual / played              - the harness's actual (`_actual_points`, PPR sum); played = has a box score
+    actual / played              - the harness's actual (`_actual_points`, PPR sum); played = a box score or a silent game
+                                   (actual 0; since 2026-10-25, the harness's verdict definition); played_box / silent
+                                   say which
     plus context columns (games this season, availability, role confidence, snap share, injury status, ...) for
     segment diagnostics.
 
@@ -35,6 +37,7 @@ import pandas as pd  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
 from data.weekly_projections import (  # noqa: E402
     DEFAULT_FEATURES, _ALL_PROJECTION_STATS, _played_weeks_before, build_weekly_projections)
+from data.silent_games import played_players, with_silent_games  # noqa: E402
 from scripts.eval_weekly_model import _actual_points  # noqa: E402
 
 REPLAY_FLAGS = frozenset({'v2_historical_injury_replay', 'v2_historical_reserve_replay'})
@@ -71,6 +74,10 @@ def do_dump(years, weeks, scoring, dump_path, features=HARNESS_BASE_FEATURES):
             wk = stats_df[pd.to_numeric(stats_df['week'], errors='coerce') == week]
             a_cols = [s for s in (*_ALL_PROJECTION_STATS, *EXTRA_ACTUALS) if s in wk.columns]
             sa = wk.groupby(name_col, observed=True)[a_cols].sum()
+            # 'played' counts a silent game (a snap with no box-score row, data/silent_games.py) as played with 0 points - the
+            # harness's verdict definition since 2026-10-25; 'played_box' keeps the box-score-only flag
+            silent_names = played_players(year, week, stats_df, name_col, _t) - set(actual.index.astype(str))
+            hist_source = with_silent_games(stats_df, year, name_col, _t) if 'v2_silent_games' in features else stats_df
             build_weekly_projections.clear()
             proj, _meta = build_weekly_projections(year, week, scoring, as_of_week=week, apply_injury=False,
                                                    features=features)
@@ -81,7 +88,7 @@ def do_dump(years, weeks, scoring, dump_path, features=HARNESS_BASE_FEATURES):
             keep = [c for c in CONTEXT_COLS if c in proj.columns]
             d = proj[keep].rename(columns=CONTEXT_COLS).copy()
             # the season anchor's inputs, from the frame the build itself passes apply_season_anchor
-            hist = _played_weeks_before(stats_df, week)
+            hist = _played_weeks_before(hist_source, week)
             if not hist.empty and 'fantasy_points' in hist.columns:
                 g = pd.to_numeric(hist['fantasy_points'], errors='coerce').groupby(hist[name_col]).agg(['mean', 'count'])
                 d['anchor_mean'] = d['player'].map(g['mean'])
@@ -89,11 +96,15 @@ def do_dump(years, weeks, scoring, dump_path, features=HARNESS_BASE_FEATURES):
             else:
                 d['anchor_mean'], d['anchor_games'] = np.nan, 0
             d['actual'] = d['player'].map(actual)
-            d['played'] = d['actual'].notna()
+            d['played_box'] = d['actual'].notna()
+            d['silent'] = ~d['played_box'] & d['player'].astype(str).isin(silent_names)
+            d.loc[d['silent'], 'actual'] = 0.0
+            d['played'] = d['played_box'] | d['silent']
             for s in _ALL_PROJECTION_STATS:
                 d[f'p_{s}'] = pd.to_numeric(proj[s], errors='coerce').to_numpy() if s in proj.columns else np.nan
             for s in a_cols:
                 d[f'a_{s}'] = d['player'].map(sa[s])
+                d.loc[d['silent'], f'a_{s}'] = 0.0
             d['year'], d['week'] = year, week
             rows.append(d)
             print(f"{year} w{week} done  ({len(d)} rows, {int(d['played'].sum())} played)", flush=True)
@@ -117,12 +128,14 @@ def main():
                     help="flags added to the harness base arm, e.g. v2_historical_ourlads for a week-1 dump: a "
                          "historical week-1 board without it has no depth chart (starting QBs project 0); the flag "
                          "only acts at a cold start and its archive covers 2022-2025")
+    ap.add_argument('--remove-features', default='', help="flags taken out of the harness base arm")
     a = ap.parse_args()
     if a.mode == 'dump':
         y0, y1 = (int(x) for x in a.years.split('-'))
         w0, w1 = (int(x) for x in a.weeks.split('-'))
         years, weeks = list(range(y0, y1 + 1)), list(range(w0, w1 + 1))
-        feats = frozenset(HARNESS_BASE_FEATURES | {f for f in a.extra_features.split(',') if f})
+        feats = frozenset((HARNESS_BASE_FEATURES | {f for f in a.extra_features.split(',') if f})
+                          - {f for f in a.remove_features.split(',') if f})
         print(f"dump {years} wk{weeks[0]}-{weeks[-1]}  ({len(years) * len(weeks)} builds), "
               f"{len(feats)} flags (harness base arm{' + ' + a.extra_features if a.extra_features else ''})\n",
               flush=True)

@@ -105,6 +105,18 @@ def scope_pool(base_df, var_df, pos, startable, actual_players=None):
 EXPECTED_AVAILABILITY = 0.5
 EVERY_GAME_SCOPES = [('EVERY-' + name, pos, startable) for name, pos, startable in SCOPES]
 
+# PLAYED (2026-10-25, user: "Count silent games ... essential for making sure ... our backtests are accurate ... especially for
+# players who get less volume"). The verdict scopes (SCOPES) score every player who PLAYED that week: a box-score row, or an
+# offensive snap with no row (a silent game, data/silent_games.py), which scores 0. Before this they scored box-score rows only, so
+# a backup's statless games never counted against his projection (TE 24-28% of snap games, WR 10-13%, RB 11-15%). Those old numbers
+# stay as BOX-* (comparable with every run before 2026-10-25); EVERY-* (anyone expected to play, scratches included) is unchanged.
+BOX_SCORE_SCOPES = [('BOX-' + name, pos, startable) for name, pos, startable in SCOPES]
+
+
+def played_actual(actual, played):
+    """Actual points for everyone who played (a box-score row or a snap): the box score's, 0 for a silent game."""
+    return actual.reindex(sorted(set(actual.index) | set(played))).fillna(0.0)
+
 
 def expected_players(board, threshold=EXPECTED_AVAILABILITY):
     """Players the board expected to play (Availability above ``threshold``; every row if the column is missing)."""

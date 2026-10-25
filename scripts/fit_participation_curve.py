@@ -39,11 +39,16 @@ TOP = 0.70
 EDGES = [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 1.0]
 
 
-def player_weeks(years, weeks):
+def player_weeks(years, weeks, silent_games=False):
     from data.transforms import load_and_merge_data
     rows = []
     for year in years:
         stats_df, team_col, name_col, _ = load_and_merge_data(year, 'Full PPR')
+        if silent_games:
+            # 'v2_silent_games' (2026-10-25): a snap game with no box-score row is a game he played - in his snap-share history
+            # and as an appearance - so the curve measures P(any offensive snap | share), not P(box-score row | share)
+            from data.silent_games import with_silent_games
+            stats_df = with_silent_games(stats_df, year, name_col, team_col)
         s = stats_df[stats_df['position'].astype(str).isin(['WR', 'TE'])].copy()
         s['week'] = pd.to_numeric(s['week'], errors='coerce')
         s['snap'] = (pd.to_numeric(s['weekly_snap_pct'], errors='coerce') / 100.0).clip(0, 1)
@@ -102,10 +107,12 @@ def main():
     ap.add_argument('--years', default='2019,2020,2021')
     ap.add_argument('--weeks', default='3-17')
     ap.add_argument('--no-write', action='store_true')
+    ap.add_argument('--silent-games', action='store_true',
+                    help="count silent games (data/silent_games.py) as appearances; writes data/participation_curve_silent.json")
     args = ap.parse_args()
     years = [int(y) for y in args.years.split(',')]
     lo, hi = (int(x) for x in args.weeks.split('-'))
-    df = player_weeks(years, list(range(lo, hi + 1)))
+    df = player_weeks(years, list(range(lo, hi + 1)), silent_games=args.silent_games)
     top, g = fit(df)
     print(f"player-weeks n={len(df)}  P(appear | s >= {TOP}) = {top:.3f}")
     print(g.round(3).to_string())
@@ -122,10 +129,13 @@ def main():
     payload = {'fit_years': years, 'weeks': f'{lo}-{hi}', 'positions': ['WR', 'TE'],
                'top_share': TOP, 'p_appear_top': round(top, 4), 'n': int(len(df)),
                'knots': knots}
+    if args.silent_games:
+        payload['silent_games'] = True
     if not args.no_write:
-        with open(OUT_PATH, 'w') as fh:
+        out_path = OUT_PATH.replace('.json', '_silent.json') if args.silent_games else OUT_PATH
+        with open(out_path, 'w') as fh:
             json.dump(payload, fh, indent=2)
-        print(f"\nwrote {OUT_PATH}")
+        print(f"\nwrote {out_path}")
     print(json.dumps(payload['knots']))
 
 

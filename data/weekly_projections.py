@@ -146,6 +146,7 @@ from data.historical_availability import (
 from data.matchup_signals import (defense_stat_rank, blended_defense_stat_table,
                                    defense_rank_from_table)
 from data.weekly_distribution import player_distribution
+from data.silent_games import with_silent_games
 from data.pff_alignment import (
     load_weekly_alignment_profiles, load_season_alignment_prior,
     lookup_alignment_profile, load_weekly_alignment_defense_profiles,
@@ -978,14 +979,19 @@ def _script_exp_factor(curve, own_margin):
 # target RMSE best at 0.4-0.5, share slope 1.071 -> 1.004 at 0.5).
 PARTICIPATION_CURVE_PATH = os.path.join('data', 'participation_curve.json')
 WRTE_PARTICIPATION_STRENGTH = float(np.clip(float(os.environ.get('WRTE_PARTICIPATION_STRENGTH', 0.5)), 0.0, 1.0))
+# 'v2_silent_participation' (CANDIDATE 2026-10-25, with 'v2_silent_games'): once a snap game with no box-score row is in a player's
+# history as a game with every stat 0, the curve above (P(box-score row | share)) counts those games twice - in the rate and in the
+# discount. This one is P(any offensive snap | share) with silent games as appearances (scripts/fit_participation_curve.py
+# --silent-games, same 2019-2021 weeks 3-17): only the weeks he never took a snap (healthy scratch, inactive) are left to discount.
+PARTICIPATION_CURVE_SILENT_PATH = os.path.join('data', 'participation_curve_silent.json')
 
 
-@lru_cache(maxsize=1)
-def _load_participation_curve():
-    """(share_knots, relative_knots) from data/participation_curve.json, or
+@lru_cache(maxsize=2)
+def _load_participation_curve(path=PARTICIPATION_CURVE_PATH):
+    """(share_knots, relative_knots) from a participation curve file (data/participation_curve.json by default), or
     None (the flag degrades to a no-op) if the file is missing or malformed."""
     try:
-        with open(PARTICIPATION_CURVE_PATH, encoding='utf-8') as fh:
+        with open(path, encoding='utf-8') as fh:
             knots = json.load(fh).get('knots') or []
         xs = np.array([float(k[0]) for k in knots])
         ys = np.array([float(k[1]) for k in knots])
@@ -1148,12 +1154,13 @@ def transfer_te_backup_volume(proj_cols, teams, activity, rank):
     return scale
 
 
-def wrte_participation_multiplier(expected_share, strength=None):
+def wrte_participation_multiplier(expected_share, strength=None, silent=False):
     """1 - strength*(1 - g(s)): g is the fitted relative participation at
     active snap share s, flat at 1.0 for a starter. NaN share reads as the
-    curve's lowest point (a player with no measured role is a depth body)."""
+    curve's lowest point (a player with no measured role is a depth body).
+    `silent`: the snap-appearance curve ('v2_silent_participation')."""
     share = np.asarray(expected_share, dtype=float)
-    curve = _load_participation_curve()
+    curve = _load_participation_curve(PARTICIPATION_CURVE_SILENT_PATH if silent else PARTICIPATION_CURVE_PATH)
     if curve is None:
         return np.ones(len(share))
     strength = WRTE_PARTICIPATION_STRENGTH if strength is None else float(np.clip(strength, 0.0, 1.0))
@@ -2332,6 +2339,17 @@ MODEL_FEATURES = (
                              # (BACKUP_TE_ACTIVITY_BANDS, from the snap-count table,
                              # stat line or not); the capacity budget hands the
                              # difference back to the TE1.
+    'v2_silent_games',  # CANDIDATE (2026-10-25, user: "Count silent games"). A RB/WR/TE game the snap counts
+                             # put him on the field for with no box-score row joins his
+                             # history (this season, last, two back) as a game with
+                             # every stat 0 at its real snap share (data/silent_games.py).
+    'v2_points_scale_v6',  # CANDIDATE (2026-10-25, user: "Refit the points scale"). The points lines, the low
+                             # end and (if re-fit) the season anchor's s from one re-fit
+                             # on the current model (POINTS_SCALE_V6 / points_scale).
+    'v2_silent_participation',  # CANDIDATE (2026-10-25, with v2_silent_games). The WR/TE participation curve
+                             # read as P(any offensive snap | share) (silent games are
+                             # appearances), not P(box-score row | share), so a silent
+                             # game is not counted in the rate and in the discount.
     'v2_vacancy_lead_share_050',  # SHIPPED 2026-10-22 (model audit lead L2, WR part). When a WR/TE is out,
                              # the room's lead pass catcher gets weight 0.5 of the
                              # next man up's in the vacancy split instead of 0.24
@@ -3295,8 +3313,9 @@ WEEKLY_CALIBRATION_BY_BUCKET = {
 WEEKLY_CALIBRATION_ONE_SIDED = False
 
 
-def _weekly_calibration_for(pos, week):
-    """(slope, intercept) for ``pos`` in the season phase ``week`` falls in.
+def _weekly_calibration_for(pos, week, scale=None):
+    """(slope, intercept) for ``pos`` in the season phase ``week`` falls in (``scale``: a POINTS_SCALE_V6-shaped dict
+    in place of the shipped tables, see points_scale).
 
     WR and TE carry a 2-bucket season-phase split (see WEEKLY_CALIBRATION's
     V4 block): weeks 1..WEEKLY_CALIBRATION_COLD_MAX_WEEK use the harder
@@ -3304,11 +3323,13 @@ def _weekly_calibration_for(pos, week):
     not in WEEKLY_CALIBRATION_BY_BUCKET - use the single WEEKLY_CALIBRATION
     line at every week. ``week`` None also falls through to the single line.
     """
-    base = WEEKLY_CALIBRATION.get(pos, (1.0, 0.0))
+    lines = (scale or {}).get('lines', WEEKLY_CALIBRATION)
+    by_bucket = (scale or {}).get('by_bucket', WEEKLY_CALIBRATION_BY_BUCKET)
+    base = lines.get(pos, (1.0, 0.0))
     if week is None:
         return base
     bucket = 'cold' if week <= WEEKLY_CALIBRATION_COLD_MAX_WEEK else 'rest'
-    return WEEKLY_CALIBRATION_BY_BUCKET.get(bucket, {}).get(pos, base)
+    return by_bucket.get(bucket, {}).get(pos, base)
 
 
 # 'v2_low_end_points_line' (SHIPPED 2026-10-22, harness EVERY-ALL -0.023; backlog L7 option b). The v4 lines
@@ -3323,16 +3344,32 @@ def _weekly_calibration_for(pos, week):
 LOW_END_POINTS_LINE = {'RB': (6.0, 1.1), 'WR': (6.0, 1.2), 'TE': (4.0, 1.2)}      # pos: (knot in raw points, slope below it)
 
 
-def points_line(pos, week, raw, low_end=False):
+def points_line(pos, week, raw, low_end=False, scale=None):
     """The points calibration line for ``pos`` in ``week``'s season phase applied to ``raw`` (scalar or array): slope * raw +
-    intercept, and with ``low_end`` ('v2_low_end_points_line') L(knot) + a * (raw - knot) below the position's knot."""
-    slope, intercept = _weekly_calibration_for(pos, week)
+    intercept, and with ``low_end`` ('v2_low_end_points_line') L(knot) + a * (raw - knot) below the position's knot.
+    ``scale``: a POINTS_SCALE_V6-shaped dict in place of the shipped tables (points_scale)."""
+    slope, intercept = _weekly_calibration_for(pos, week, scale)
     raw_arr = np.asarray(raw, dtype=float)
     line = intercept + slope * raw_arr
-    if low_end and pos in LOW_END_POINTS_LINE:
-        knot, a = LOW_END_POINTS_LINE[pos]
+    low_table = (scale or {}).get('low_end', LOW_END_POINTS_LINE)
+    if low_end and pos in low_table:
+        knot, a = low_table[pos]
         line = np.where(raw_arr < knot, intercept + slope * knot + a * (raw_arr - knot), line)
     return line
+
+
+# 'v2_points_scale_v6' (CANDIDATE 2026-10-25, user: "Refit the points scale"): the whole points scale re-fit at once on the model
+# as it now stands - the v4 lines (QB/RB one line, WR/TE weeks 1-4 / 5-18) on PLAYED games (a box score or a silent game, 0
+# points), LOW_END_POINTS_LINE's knots and slopes below them, and the season anchor's s when re-fit - by
+# scripts/fit_points_scale.py from a scripts/calibration_lab.py dump (methodology 2026-10-25, points-scale re-fit). None until
+# that fit is done: the flag then reads the shipped tables. Keys: 'lines' {pos: (slope, intercept)}, 'by_bucket'
+# {'cold'|'rest': {pos: (slope, intercept)}}, 'low_end' {pos: (knot, slope)}, optional 'anchor_s' {pos: s}.
+POINTS_SCALE_V6 = None
+
+
+def points_scale(feats):
+    """The re-fit points scale when 'v2_points_scale_v6' is on and fit, else None (the shipped tables)."""
+    return POINTS_SCALE_V6 if 'v2_points_scale_v6' in feats and POINTS_SCALE_V6 else None
 
 
 # Subtraction candidates (2026-10-23, from the CFB comparison's multiplier strength audit, scripts/audit_factor_gamma.py on the
@@ -3648,7 +3685,7 @@ TOP_END_YARDAGE = {
 TOP_END_YARDAGE_FIRST_WEEK = 3
 
 
-def apply_top_end_yardage(result, week, scoring_mode, calibrate=True, table=None, low_end=False):
+def apply_top_end_yardage(result, week, scoring_mode, calibrate=True, table=None, low_end=False, scale=None):
     """(result, info): from TOP_END_YARDAGE_FIRST_WEEK on, compress each eligible row's projected yards above the
     knot (``table``, default TOP_END_YARDAGE), re-score 'Raw Model Proj Pts' from the new line and, with
     ``calibrate``, re-apply the points calibration line to it. Eligible: a listed position, not sidelined, a non-zero
@@ -3686,7 +3723,7 @@ def apply_top_end_yardage(result, week, scoring_mode, calibrate=True, table=None
         out.at[idx, 'Raw Model Proj Pts'] = new_raw
         points = new_raw
         if calibrate and out.at[idx, 'Pos'] in WEEKLY_CALIBRATION:
-            line_pts = float(points_line(out.at[idx, 'Pos'], week, new_raw, low_end))
+            line_pts = float(points_line(out.at[idx, 'Pos'], week, new_raw, low_end, scale))
             points = min(new_raw, line_pts) if WEEKLY_CALIBRATION_ONE_SIDED else line_pts
         for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
             if col in out.columns:
@@ -9416,6 +9453,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     stats_df, team_col, name_col, _ = load_and_merge_data(year, scoring_mode)
     if stats_df.empty:
         return pd.DataFrame(), {'reason': f'No roster or weekly data for {year} yet.'}
+    if 'v2_silent_games' in feats:
+        # see data/silent_games.py: snap games with no box-score row join the history as games with every stat 0
+        stats_df = with_silent_games(stats_df, year, name_col, team_col)
 
     observed_weeks = (pd.to_numeric(stats_df.get('week', pd.Series(dtype=float)), errors='coerce')
                       .dropna())
@@ -9474,12 +9514,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         prior_stats, prior_team_col, prior_name_col, _ = load_and_merge_data(year - 1, scoring_mode)
     except Exception:
         prior_stats = pd.DataFrame()
+    if 'v2_silent_games' in feats and not prior_stats.empty:
+        prior_stats = with_silent_games(prior_stats, year - 1, prior_name_col, prior_team_col)
     prior2_stats, prior2_team_col, prior2_name_col = pd.DataFrame(), team_col, name_col
     if 'v2_td_two_year_prior' in feats:
         try:
             prior2_stats, prior2_team_col, prior2_name_col, _ = load_and_merge_data(year - 2, scoring_mode)
         except Exception:
             prior2_stats = pd.DataFrame()
+        if 'v2_silent_games' in feats and not prior2_stats.empty:
+            prior2_stats = with_silent_games(prior2_stats, year - 2, prior2_name_col, prior2_team_col)
 
     if cold_start and (prior_stats is None or prior_stats.empty):
         return pd.DataFrame(), {'reason': f'Week {as_of_week} of {year} has no games played yet this '
@@ -10508,6 +10552,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     _ydf, _ytc, _ync, _ = load_and_merge_data(year - _yb, scoring_mode)
                 except Exception:
                     _ydf = pd.DataFrame()
+                if 'v2_silent_games' in feats and not _ydf.empty:
+                    _ydf = with_silent_games(_ydf, year - _yb, _ync, _ytc)
                 if _ydf.empty or 'week' not in _ydf.columns:
                     continue
                 _yt = attach_player_identity(
@@ -11870,7 +11916,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         participation_mult = np.ones(len(cur))
         if ('v2_wrte_participation' in feats and pos in ('WR', 'TE') and use_role_volume
                 and not cold_start):
-            participation_mult = wrte_participation_multiplier(player_share)
+            participation_mult = wrte_participation_multiplier(player_share, silent='v2_silent_participation' in feats)
         elif ('v2_rb_participation' in feats and pos == 'RB' and use_role_volume
                 and not cold_start):
             # Rank by snap share among the team's NON-sidelined RBs, so an OUT
@@ -12874,7 +12920,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # WR/TE carry a weeks 1-4 "cold" line here; QB/RB one line all
             # year (see _weekly_calibration_for / WEEKLY_CALIBRATION V4).
             raw = out['Model Proj Pts'].to_numpy(dtype=float)
-            line = points_line(pos, week, raw, 'v2_low_end_points_line' in feats)
+            line = points_line(pos, week, raw, 'v2_low_end_points_line' in feats, points_scale(feats))
             # Two-sided as of 2026-09-02 - the line is the calibrated value in
             # BOTH directions. It used to be np.minimum(raw, line), which made
             # the WR and TE lines inert (they sit above the identity at every
@@ -13341,8 +13387,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'calibration': {
                     'enabled': 'calibration' in feats and pos in WEEKLY_CALIBRATION,
                     # Phase-aware: WR/TE weeks 1-4 report their 'cold' line.
-                    'slope': float(_weekly_calibration_for(pos, week)[0]),
-                    'intercept': float(_weekly_calibration_for(pos, week)[1]),
+                    'slope': float(_weekly_calibration_for(pos, week, points_scale(feats))[0]),
+                    'intercept': float(_weekly_calibration_for(pos, week, points_scale(feats))[1]),
                     'raw_points': float(row['Raw Model Proj Pts']),
                     'displayed_points': float(row['Calibrated Model Proj Pts']),
                     'delta': float(row['Calibrated Model Proj Pts'] - row['Raw Model Proj Pts']),
@@ -13611,7 +13657,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 _low_end = 'v2_low_end_points_line' in feats
                 for _pos in result['Pos'].astype(str).unique():
                     _m = result['Pos'].astype(str).eq(_pos).to_numpy()
-                    _line = points_line(_pos, week, recomputed[_m], _low_end)
+                    _line = points_line(_pos, week, recomputed[_m], _low_end, points_scale(feats))
                     recomputed[_m] = np.minimum(recomputed[_m], _line) if WEEKLY_CALIBRATION_ONE_SIDED else _line
             result['Model Proj Pts'] = np.round(np.clip(recomputed, 0.0, None), 2)
             result['Calibrated Model Proj Pts'] = result['Model Proj Pts']
@@ -13631,7 +13677,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     top_end_info = {}
     if 'v2_top_end_yardage' in feats:
         result, top_end_info = apply_top_end_yardage(result, week, scoring_mode, calibrate=('calibration' in feats),
-                                                     low_end=('v2_low_end_points_line' in feats))
+                                                     low_end=('v2_low_end_points_line' in feats), scale=points_scale(feats))
         if top_end_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
@@ -13648,7 +13694,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # v2_season_anchor: last step on the points total, after calibration and the sidelined/zero restore.
     season_anchor_info = {}
     if 'v2_season_anchor' in feats and not cold_start:
-        result, season_anchor_info = apply_season_anchor(result, hist, name_col)
+        result, season_anchor_info = apply_season_anchor(result, hist, name_col, factors=(points_scale(feats) or {}).get('anchor_s'))
         if season_anchor_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 

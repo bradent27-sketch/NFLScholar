@@ -92,6 +92,8 @@ our numbers, so timing (acting early) is not an edge on what we have. The passin
 
 ## 4. What is left, and whether it is worth doing
 
+**User 2026-10-25:** "Refit the points scale ... Count silent games ... essential for making sure the model is accurate and that our backtests are accurate ... especially for players who get less volume. The rest store as later ideas." Those two are in progress (silent games first, since they change both the model's history and what a backtest counts as a played game, then one re-fit on the result); every other row below is a later idea.
+
 | item | what | evidence so far | recommendation |
 |---|---|---|---|
 | **W1 2026 passing surge** | QB starters threw 7.4% more and gained 4.6% more yards than projected (live weeks 3-7; the market also ran 4% low) | the watch trigger (over 5% through week 10) is effectively met; passing-yard and attempt leans lose | **Yes, next.** Test faster in-season trust for QB volume / a league pass-rate term on 2023-2026 with a pre-set bar |

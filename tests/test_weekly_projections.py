@@ -3063,7 +3063,7 @@ def test_xtd_blended_rate_is_a_no_op_without_a_rates_table():
 def test_wrte_participation_multiplier_leaves_starters_alone_and_discounts_depth():
     original = wp._load_participation_curve
     try:
-        wp._load_participation_curve = lambda: (np.array([0.0, 0.3, 0.7]), np.array([0.5, 0.6, 1.0]))
+        wp._load_participation_curve = lambda path=None: (np.array([0.0, 0.3, 0.7]), np.array([0.5, 0.6, 1.0]))
         out = wp.wrte_participation_multiplier(np.array([0.95, 0.70, 0.30, 0.0, np.nan]), strength=0.5)
         assert out[0] == pytest.approx(1.0)
         assert out[1] == pytest.approx(1.0)
@@ -3080,18 +3080,26 @@ def test_wrte_participation_multiplier_leaves_starters_alone_and_discounts_depth
 def test_wrte_participation_multiplier_is_a_no_op_without_a_curve():
     original = wp._load_participation_curve
     try:
-        wp._load_participation_curve = lambda: None
+        wp._load_participation_curve = lambda path=None: None
         assert np.allclose(wp.wrte_participation_multiplier(np.array([0.1, 0.9])), 1.0)
     finally:
         wp._load_participation_curve = original
 
 
 def test_shipped_participation_curve_is_monotone_and_anchored_at_one():
-    xs, ys = wp._load_participation_curve()
-    assert np.all(np.diff(xs) > 0)
-    assert np.all(np.diff(ys) >= 0)
-    assert ys[-1] == pytest.approx(1.0)
-    assert 0.0 < ys[0] < 1.0
+    for path in (wp.PARTICIPATION_CURVE_PATH, wp.PARTICIPATION_CURVE_SILENT_PATH):
+        xs, ys = wp._load_participation_curve(path)
+        assert np.all(np.diff(xs) > 0)
+        assert np.all(np.diff(ys) >= 0)
+        assert ys[-1] == pytest.approx(1.0)
+        assert 0.0 < ys[0] < 1.0
+
+
+def test_silent_participation_discounts_less_than_the_box_score_curve():
+    # once silent games are in the rate, only the weeks with no snap at all are left to discount
+    share = np.array([0.1, 0.25, 0.45, 0.9])
+    box, snap = wp.wrte_participation_multiplier(share), wp.wrte_participation_multiplier(share, silent=True)
+    assert np.all(snap[:3] > box[:3]) and snap[3] == pytest.approx(1.0) and box[3] == pytest.approx(1.0)
 
 
 def test_wrte_participation_discounts_only_the_depth_receiver_in_season():

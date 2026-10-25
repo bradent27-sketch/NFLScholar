@@ -6273,3 +6273,53 @@ shipped yet: the user's call.
 ### 2026-10-24 - SHIPPED: `v2_td_matchup_half` (DEFAULT_FEATURES = 66)
 User: "yeah ship half strength". The defense matchup on TD stats runs at half strength (numbers in the entry above). Undo: remove
 the flag.
+
+### 2026-10-25 - Silent games: in the history and in the backtest (CANDIDATES), pre-set bar
+User: "Refit the points scale ... Count silent games ... essential for making sure the model is accurate and that our backtests are
+accurate ... especially for players who get less volume." Silent games first (they change both the history and what a backtest
+counts as played), then one re-fit of the points scale on the result.
+
+**What a silent game is** (data/silent_games.py): a regular-season game the snap counts put a RB/WR/TE on the field for (offensive
+snaps > 0) with no box-score row; nflverse box scores are stat-triggered. QBs are left out (2%, kneel-downs and one-snap reliefs,
+and the QB1 rules read QB rows). Measured 2021-2025 (scripts/diag_silent_games.py): of offensive-snap games with no box-score row,
+TE 24-28% (64% at a 5-15% snap share), WR 10-13%, RB 11-15%; for low-volume players a per-game rate over box-score games runs about
+33-44% high (TE targets), 20% (WR targets), 6-15% (RB carries); starters 1-4%.
+
+**Backtest (harness, not a flag).** The verdict scopes now score everyone who PLAYED - a box-score row or a silent game, which
+scores 0 (`harness_v2.played_actual`). The old box-score-only scopes stay as BOX-* (comparable with every earlier run); EVERY-* is
+unchanged.
+
+**Model.** `v2_silent_games`: a silent game joins the player's history (this season, last, two back) as a game with every stat 0
+at its real snap share, so every rate, games count, snap share and appearance count sees it. The participation layers were fit on
+"has a box-score row", which counts a silent game a second time once it is in the rate: `v2_silent_participation` reads the WR/TE
+curve as P(any offensive snap | share) instead (data/participation_curve_silent.json, refit on the same 2019-2021 weeks 3-17 with
+silent games as appearances: e.g. 0.76 at a 25% share against 0.58). The RB participation model and the backup-TE bands are fit on
+board captures; whether they still earn their place under silent games is what the third variant asks.
+
+**Run** (2022-2025 weeks 3-17, base = the 66-flag default + replay, variant boards saved for the re-fits):
+`silent` (+v2_silent_games), `silent_snapcurve` (+v2_silent_games, +v2_silent_participation), `silent_snapcurve_lite`
+(+v2_silent_games, +v2_silent_participation, -v2_rb_participation, -v2_backup_te_discount).
+
+**Pre-set bar (written before the run).** The points scale (v4 lines, LOW_END_POINTS_LINE) is NOT re-fit in this run and silent
+games move the level of low projections, so the bar reads where silent games live and leaves the level to the re-fit: a variant
+passes when PLAYED ALL dRMSE < 0 with its CI below 0 (the whole pool, where silent games are); EVERY-ALL dRMSE <= 0; PLAYED START-ALL
+dRMSE <= +0.003 and START-ALL pairwise not worse than -0.002; no START position worse with a Holm-adjusted p under 0.05. Among
+passing variants the best PLAYED ALL goes on to the points-scale re-fit (v4 lines and LOW_END_POINTS_LINE fit on played games, the
+new definition), and then one confirming run of [silent + re-fit] against today's model decides. If none passes, silent games stay
+off and the re-fit is done on today's model. Shipping needs the user's sign-off.
+
+### 2026-10-25 - Points-scale re-fit, pre-set bar (written before the dump and the fit)
+User: "Refit the points scale." One re-fit of the whole scale on the model as it will ship (with silent games if they pass
+their bar, else today's 66 flags): the v4 lines (QB/RB one line, WR/TE weeks 1-4 / 5-18) on PLAYED rows (box score or silent
+game = 0; every live row), and LOW_END_POINTS_LINE's knots and slopes below them. Dump: scripts/calibration_lab.py (2021-2025
+weeks 1-18, the exact harness base arm + v2_historical_ourlads for week 1); fit and held-out check: scripts/fit_points_scale.py
+(each season predicted from the other four, scored against the dump's own shipped pipeline; harness-style paired pools, weeks
+3-17). Variants: strength k = 0.5 (shipped) and 1.0; low end fit on every expected game (the user's L7b choice) or on played
+games; season-anchor s kept or re-fit.
+
+**Bar.** A variant is a candidate when, held out: PLAYED START-ALL dRMSE <= 0 with the CI upper bound below +0.003, no START
+position worse by more than +0.005, and PLAYED ALL and EVERY-ALL both <= 0. Among candidates the best PLAYED START-ALL wins; a tie
+(within 0.001) goes to the simpler one (k = 0.5, s kept, low end on every game as shipped). The winner's constants go behind a
+flag (`v2_points_scale_v6`) and face one confirming harness run against today's model (2022-2025 weeks 3-17), where the usual
+rule decides (verdict not REJECT, START-ALL not worse, no START position Holm-significantly worse). If no variant is a candidate,
+the shipped scale stays and that is the finding. Shipping needs the user's sign-off.

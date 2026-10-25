@@ -27,3 +27,13 @@ def test_every_game_pool_keeps_statless_players_and_drops_the_ones_ruled_out():
 def test_every_game_scopes_mirror_the_box_score_scopes():
     assert [s[0] for s in harness_v2.EVERY_GAME_SCOPES] == ['EVERY-' + s[0] for s in harness_v2.SCOPES]
     assert harness_v2.expected_players(pd.DataFrame({'Player': ['A']})) == {'A'}   # no column: everyone
+
+
+def test_played_actual_scores_a_silent_game_as_zero():
+    # 2026-10-25: the verdict scopes score everyone who played - a box-score row, or a snap with no row (0 points)
+    import pandas as pd
+    from scripts import harness_v2
+    box = pd.Series({'Starter': 18.0, 'Backup': 3.0})
+    out = harness_v2.played_actual(box, {'Backup', 'Blocker'})
+    assert out.to_dict() == {'Backup': 3.0, 'Blocker': 0.0, 'Starter': 18.0}
+    assert [name for name, _p, _s in harness_v2.BOX_SCORE_SCOPES][:2] == ['BOX-ALL', 'BOX-QB']

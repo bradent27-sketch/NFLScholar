@@ -22,11 +22,13 @@ def test_shipped_on_2026_10_24():
 
 def test_td_matchup_strength_variants():
     feats = frozenset(wp.DEFAULT_FEATURES)
-    assert wp.td_matchup_strength(feats, 'passing_tds') == 1.0
+    assert wp.td_matchup_strength(feats, 'passing_tds') == 0.5          # v2_td_matchup_half shipped 2026-10-24
+    assert wp.td_matchup_strength(frozenset(), 'passing_tds') == 1.0
     assert wp.td_matchup_strength(feats | {'v2_no_td_matchup'}, 'rushing_tds') == 0.0
     audit = feats | {'v2_td_matchup_audit'}
     assert (wp.td_matchup_strength(audit, 'receiving_tds'), wp.td_matchup_strength(audit, 'rushing_tds')) == (0.0, 0.5)
     assert wp.td_matchup_strength(feats | {'v2_td_matchup_pass_rec_off'}, 'rushing_tds') == 1.0
     assert wp.td_matchup_strength(feats | {'v2_td_matchup_half'}, 'passing_tds') == 0.5
     for flag in wp.TD_MATCHUP_STRENGTH:
-        assert flag in wp.MODEL_FEATURES and flag not in wp.DEFAULT_FEATURES
+        assert flag in wp.MODEL_FEATURES
+        assert (flag in wp.DEFAULT_FEATURES) == (flag == 'v2_td_matchup_half')

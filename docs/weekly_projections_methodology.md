@@ -6269,3 +6269,7 @@ matchup off, -0.54% / -0.47% at half; receiving TDs -0.13% to -0.26% RMSE and -0
 pooled scope and moves projections least (30% of players, mean 0.12 points, largest 0.81 vs 1.63 for all off). RB points are a hair
 worse in every variant (+0.003 to +0.008, CIs include 0): the defense TD matchup still carries a little for running backs. Not
 shipped yet: the user's call.
+
+### 2026-10-24 - SHIPPED: `v2_td_matchup_half` (DEFAULT_FEATURES = 66)
+User: "yeah ship half strength". The defense matchup on TD stats runs at half strength (numbers in the entry above). Undo: remove
+the flag.

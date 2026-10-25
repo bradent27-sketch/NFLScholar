@@ -2311,7 +2311,7 @@ MODEL_FEATURES = (
     'v2_no_td_matchup',  # CANDIDATE (2026-10-23, strength audit): no matchup multiplier on TD stats.
     'v2_td_matchup_audit',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, half strength on rushing TDs.
     'v2_td_matchup_pass_rec_off',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, rushing TDs unchanged.
-    'v2_td_matchup_half',  # CANDIDATE (2026-10-24): TD matchup at half strength on every TD stat.
+    'v2_td_matchup_half',  # SHIPPED 2026-10-24: TD matchup at half strength on every TD stat.
     'v2_no_qb_rush_script',  # SHIPPED 2026-10-24 (strength audit): no game-script multiplier on QB rushing.
     'v2_no_pace',  # CANDIDATE (2026-10-23, strength audit): no opponent-pace multiplier.
     'v2_low_end_points_line',  # SHIPPED 2026-10-22 (backlog L7b). Below a knot (RB/WR 6, TE 4 raw points)
@@ -2973,6 +2973,12 @@ DEFAULT_FEATURES = frozenset({
     # attempts RMSE 2.41% and rushing yards 1.01% better without it on the games it moved, QB points unchanged (START-QB +0.002
     # [-0.010, +0.013], START-ALL +0.000, EVERY-ALL -0.000). Undo: remove this flag.
     'v2_no_qb_rush_script',
+    # SHIPPED 2026-10-24 (user: "yeah ship half strength"): the defense matchup on TD stats at half strength (TD_MATCHUP_STRENGTH)
+    # - the TD stats already carry the market's implied team total, which prices the defense in. Harness v2 2022-2025 wk3-17 on the
+    # 65-flag base, four strengths in one run: half won the pre-set rule - START-ALL -0.0016 [-0.0051, +0.0017] (33-27 weeks),
+    # EVERY-ALL -0.0002, START-QB -0.0060 (36-24), START-RB +0.0033 (CI includes 0); passing TDs RMSE -0.54%, anytime-TD Brier
+    # -0.3 to -0.6% at every position. Undo: remove this flag.
+    'v2_td_matchup_half',
 })
 
 

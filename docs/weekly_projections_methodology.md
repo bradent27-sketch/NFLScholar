@@ -6409,3 +6409,21 @@ structural error (a player who plays and is not on the board) needs no gain to b
 scored by scripts/eval_restored_players.py from the run's variant boards: it passes unless, on the games they played, their
 projections are over by more than 1.0 point a game on average (that would mean the excluded games inflate them - why they are
 excluded). Both pass: ship (the user's sign-off). The paired scopes fail: read the variant boards for who moved before anything else.
+
+### 2026-10-25 - RB layer / backup-TE discount result: no variant passes; the 68-flag default stays
+Harness 2022-2025 weeks 3-17 against the 68-flag default (.sweeps/harness_silent_layers_2022-2025_wk3-17.log), dRMSE (negative =
+better), [95% CI]:
+
+| variant | START-TE | EVERY-TE | START-RB | EVERY-RB | START-ALL | EVERY-ALL | BOX-TE |
+|---|---|---|---|---|---|---|---|
+| te_off | -0.006 [-0.015,+0.003] | +0.004 [-0.002,+0.011] | 0 | 0 | -0.001 | +0.001 | -0.021 |
+| te_pieces | -0.005 [-0.013,+0.004] | +0.003 [-0.002,+0.008] | 0 | 0 | -0.001 | +0.000 | -0.018 |
+| te_silent | +0.002 [-0.011,+0.015] | +0.011 [+0.003,+0.019] | 0 | 0 | +0.000 | +0.002 | -0.026 |
+| rb_060 | -0.001 | -0.001 | +0.001 [-0.004,+0.006] | +0.007 [+0.003,+0.012] | +0.000 | +0.001 | -0.000 |
+| te_pieces_rb_060 | -0.006 | +0.002 | +0.001 | +0.007 | -0.001 | +0.002 | -0.018 |
+
+By the pre-set bar none passes: every TE variant makes EVERY-TE worse (te_off and te_pieces help START-TE and the box-score games,
+but the discount still earns its keep on the weeks a backup TE does not play at all), and rb_060 makes EVERY-RB worse (CI clear of
+0) for no START-RB gain. No START position was worse at any Holm-adjusted p (all 1.0). The double count measured on the played
+games is real, but on every game the model expected the player to play the layers as shipped are the better trade. Nothing changes;
+the three candidate flags stay off.

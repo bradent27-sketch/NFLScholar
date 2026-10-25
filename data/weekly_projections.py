@@ -2376,6 +2376,11 @@ MODEL_FEATURES = (
                              # model (BACKUP_TE_ACTIVITY_BANDS_PIECES), the rest 1.
     'v2_rb_participation_060',  # CANDIDATE (2026-10-25). The RB participation model at 0.6 strength with silent
                              # games in the history (RB_PARTICIPATION_SILENT_STRENGTH).
+    'v2_keep_fully_excluded_history',  # CANDIDATE (2026-10-25, user: Ja'Kobi Lane missing from the week 7
+                             # board). A RB/WR/TE whose every game this season the
+                             # partial-game filter excluded keeps those games as his
+                             # history instead of dropping out of the in-season pool
+                             # (_keep_fully_excluded_players).
     'v2_points_scale_v6',  # CANDIDATE (2026-10-25, user: "Refit the points scale"). The points lines, the low
                              # end and (if re-fit) the season anchor's s from one re-fit
                              # on the current model (POINTS_SCALE_V6 / points_scale).
@@ -8038,6 +8043,28 @@ def _keep_every_history_game(annotated):
     return out
 
 
+FULLY_EXCLUDED_KEEP_POSITIONS = ('RB', 'WR', 'TE')
+
+
+def _keep_fully_excluded_players(annotated, name_col):
+    """'v2_keep_fully_excluded_history' (candidate 2026-10-25, user: Ja'Kobi Lane missing from the week 7 board): a RB/WR/TE whose
+    EVERY game this season the partial-game filter excluded keeps those games, rather than having no history at all. With none, he
+    is not in the in-season pool; one with a prior-season role is added back from it (_add_missing_returning_player_rows), a rookie
+    is left off the board. QBs are left to the QB1 rules (a relief appearance is a partial game, not a role)."""
+    if annotated is None or annotated.empty or name_col not in annotated.columns \
+            or '_player_history_eligible' not in annotated.columns:
+        return annotated
+    out = annotated.copy()
+    eligible = out['_player_history_eligible'].astype(bool)
+    position = out.get('position', pd.Series('', index=out.index)).astype(str).str.upper()
+    kept_any = eligible.groupby(out[name_col].astype(str)).transform('any')
+    keep = ~kept_any & position.isin(FULLY_EXCLUDED_KEEP_POSITIONS)
+    if keep.any():
+        out.loc[keep, '_player_history_eligible'] = True
+        out.loc[keep, '_player_history_reason'] = ''
+    return out
+
+
 def _annotate_player_history_participation_uncached(history, name_col, team_col, schedule_df=None, prior_reference=None):
     """Mark only clearly interrupted player-games as unusable rate evidence.
 
@@ -10119,6 +10146,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         prior_reference=_player_snap_seed(player_prior, prior_name_col))
     if 'v2_no_history_exclusions' in feats:
         hist_annotated = _keep_every_history_game(hist_annotated)
+    elif 'v2_keep_fully_excluded_history' in feats:
+        hist_annotated = _keep_fully_excluded_players(hist_annotated, name_col)
     player_hist = hist_annotated[hist_annotated['_player_history_eligible']].copy()
 
     def _blowout_weeks_for_matchup(schedule_frame, matchup_year):

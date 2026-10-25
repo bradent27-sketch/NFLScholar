@@ -6389,3 +6389,23 @@ the best START-TE wins, a tie within 0.002 going to the simpler (te_off, then te
 terms with START-RB and EVERY-RB. If a TE variant and `rb_060` both pass, they ship together - confirmed by `te_pieces_rb_060` when the
 TE winner is te_pieces (START-ALL at least as good as either alone), otherwise on the additivity of two layers that touch
 different positions, said so. Shipping needs the user's sign-off.
+
+### 2026-10-25 - Players with every game excluded stay on the board (CANDIDATE), pre-set bar
+User: "jakobi lane is not projected on my week 7 board? He missing in the data or just an error?" An error. The data has him (BAL
+WR, weeks 1 and 6, 8 targets, 47% of snaps; active for week 7). annotate_player_history_participation excluded BOTH games as
+"partial replacement after teammate exit" - week 6 (his return from IR) on its own, week 1 (his debut) once the prior-season snap
+seed marks the teammate who left as established - so player_hist had no row for him, the in-season pool never took him, and the
+returning-player fallback needs a prior-season role a rookie does not have: off the board, not projected low. Week 7: four RB/WR/TE
+with every game excluded - Ja'Kobi Lane and Elijah Sarratt (BAL, rookies) off the board, Ben Yurosek (MIN TE, 0.00) and Audric
+Estimé (CLE RB, 0.86) back from last season. Candidate `v2_keep_fully_excluded_history` (`keep_excluded`): a RB/WR/TE whose every
+game this season was excluded keeps those games (_keep_fully_excluded_players); QBs are left to the QB1 rules. On the live week 7
+build: Lane 5.16 (2.96 targets), Sarratt 1.30, Yurosek 0.78, Estimé 5.04 (one fill-in game, 24% expected snaps); BAL's other
+receivers give up the volume (Flowers 14.43 -> 13.36).
+
+**Pre-set bar (written before the run).** The harness scores players both arms projected, so a restored player is outside it; it
+measures what the flag does to everyone else (teammates' shares, players like Estimé re-projected from their own games). It passes
+when START-ALL and EVERY-ALL are no worse than +0.001 and no START position is worse with a Holm-adjusted p under 0.05 - a
+structural error (a player who plays and is not on the board) needs no gain to be removed. The restored players themselves are
+scored by scripts/eval_restored_players.py from the run's variant boards: it passes unless, on the games they played, their
+projections are over by more than 1.0 point a game on average (that would mean the excluded games inflate them - why they are
+excluded). Both pass: ship (the user's sign-off). The paired scopes fail: read the variant boards for who moved before anything else.

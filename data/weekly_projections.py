@@ -2385,7 +2385,9 @@ MODEL_FEATURES = (
                              # game was cut short lose their prior-season line).
     'v2_keep_fully_excluded_no_prior',  # CANDIDATE (2026-10-25, the revision): the same, only for
                              # a player with no eligible prior-season game at his
-                             # position - the one who would otherwise be off the board.
+                             # position - the one who would otherwise be off the board. HARNESS
+                             # 2026-10-25: passes its bar (START-ALL +0.0005, EVERY-ALL
+                             # +0.0003; restored players under, not over). Awaits sign-off.
     'v2_rb_lone_lead_vacancy',  # CANDIDATE (2026-10-25, user: ATL week 7, Brian Robinson out and Bijan
                              # Robinson given all of his carries, the practice-squad
                              # backs at 0). When the only surviving back with a role
@@ -2393,6 +2395,9 @@ MODEL_FEATURES = (
                              # of the out backup's volume, not 80%; the rest goes to
                              # the practice-squad candidates (2021-2025: RB1s picked up
                              # 24% of an absent RB2's carries, the rest of the room 57%).
+                             # HARNESS 2026-10-25: misses its bar (31 rows in 4 seasons;
+                             # lead backs' carries fixed, points worse on 13 games; the
+                             # 121-game study says points follow carries). User's call.
     'v2_ps_line_routing',  # CANDIDATE (2026-10-25, user: "if there is a market line available for one of the
                              # practice squad backs the volume should entirely or
                              # partially go to that backup"). The practice-squad share

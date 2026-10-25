@@ -6524,3 +6524,29 @@ prior-season game at his position (the returning-player rule's own test, by iden
 board. A veteran stays on his prior-season line. Live week 7: Lane 5.32, Sarratt 0.00 (on the board), Estimé unchanged (he has a
 prior-season role). **Pre-set bar:** the first flag's bar, unchanged (START-ALL and EVERY-ALL no worse than +0.001, no START
 position Holm-worse at p < 0.05; restored players not over by more than 1.0 pt a game on the games they played).
+
+### 2026-10-25 - Lone lead back / keep-excluded (no prior role): results
+Harness 2022-2025 weeks 3-17 against the 68-flag default (.sweeps/harness_lone_lead_keep_no_prior_2022-2025_wk3-17.log; exact
+pooled deltas from the weekly file).
+
+**`keep_no_prior` (v2_keep_fully_excluded_no_prior): passes its bar.** START-ALL +0.0005, EVERY-ALL +0.0003 (both within +0.001),
+START-TE +0.003 [-0.006, +0.008], START-RB -0.000, START-WR +0.000; Holm-adjusted p >= 0.92. The veterans the first flag hurt
+(Worthy, Godwin, Taylor, Higbee) are untouched. Restored players (42 player-weeks, 17 players; .sweeps/eval_restored_players_
+keep_no_prior.txt): on the games they played RB -4.46 (2), TE +0.78 (1), WR -1.32 (12) pts a game - under, not over (-1.6
+overall); RMSE 4.5 / 0.8 / 6.4 against 9.6 / 0.0 / 8.1 for leaving them off. Ship-eligible: the user's sign-off.
+
+**`lone_lead` (v2_rb_lone_lead_vacancy): misses its bar on both parts.** It fires rarely: 31 player-weeks in four seasons (13 lead
+backs lowered, 18 depth backs raised; 12 team-weeks). (1) START-ALL +0.0019 (> +0.001), START-RB +0.006 [-0.004, +0.018], EVERY-ALL
++0.0007; Holm p = 1.0. (2) The moved rows (.sweeps/eval_changed_rows_lone_lead.txt), every game: RMSE +0.40 [-0.64, +1.46]. Lead
+backs: carries bias +5.07 -> +0.53 (projected 19.8 -> 15.3, actual 14.8) but points RMSE 8.85 -> 9.80 [-0.65, +2.05] - they scored
+18.1 a game against 16.7 projected by the base (D'Onta Foreman 33.0 on 16 carries, Omarion Hampton 27.5 on 12, Jordan Mason 23.6
+on 16). Depth backs: RMSE 6.54 -> 6.37, carries bias -2.08 -> +0.92.
+
+The bar's next step - the lead backs' points against their carries - on the 121-game study (scratchpad rb2_out_points.py, same
+definition, drift removed): the RB1 gains +1.83 carries (+12%), +11.2 rushing yards (+17%), +0.04 rushing TDs, +0.08 targets and
++1.62 PPR points (+-1.77, +11%) - about 22% of the RB2's 7.2 points; no third back: +0.98 points (+-2.57). Points follow carries;
+no efficiency jump. The 13 harness games ran hot, inside a wide interval. So the evidence for the rule (121 games, carries and
+points, and the books' carries lines on the live board) and the harness (13 games, which cannot see it) disagree; by the pre-set
+bar it does not ship. The user's call, as with v2_backup_te_discount; the share is not swept on the harness.
+
+`v2_ps_line_routing` was not in the run (no lines before 2026 week 3); the user's call on its logic.

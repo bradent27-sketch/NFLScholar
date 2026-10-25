@@ -140,8 +140,17 @@ def main():
     ap.add_argument('--k', default='0.5,1.0')
     ap.add_argument('--knots', default='4,6,8')
     ap.add_argument('--out', default='.sweeps/fit_points_scale.txt')
+    ap.add_argument('--drop-weeks', default='2021:1',
+                    help="year:week pairs left out (2021 week 1: the depth-chart archive behind v2_historical_ourlads starts in 2022, "
+                         "so that opening board has no starters)")
     a = ap.parse_args()
     d = load_dump(a.dump_path)
+    for pair in [x for x in a.drop_weeks.split(',') if x]:
+        y, w = (int(v) for v in pair.split(':'))
+        d = d[~((d['year'] == y) & (d['week'] == w))]
+    d = d.reset_index(drop=True)
+    d['wk_key'] = d['year'] * 100 + d['week']
+    d['start_raw'] = top_n_mask(d, d['raw'].to_numpy())
     d['actual0'] = d['actual'].fillna(0.0)
     d['expected'] = d['avail'] > EXPECTED
     d['_late_offset'] = 0.0

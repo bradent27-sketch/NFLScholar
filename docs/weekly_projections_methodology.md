@@ -6323,3 +6323,21 @@ position worse by more than +0.005, and PLAYED ALL and EVERY-ALL both <= 0. Amon
 flag (`v2_points_scale_v6`) and face one confirming harness run against today's model (2022-2025 weeks 3-17), where the usual
 rule decides (verdict not REJECT, START-ALL not worse, no START position Holm-significantly worse). If no variant is a candidate,
 the shipped scale stays and that is the finding. Shipping needs the user's sign-off.
+
+### 2026-10-25 - Silent games result: all three variants pass; `silent_snapcurve_lite` goes on to the re-fit
+Harness v2, 2022-2025 weeks 3-17, base = the 66-flag default + replay; Δ RMSE variant - base (negative = better), [95% CI over
+weeks], weeks better-worse. PLAYED = the new verdict scopes (box score or silent game = 0).
+
+| variant | PLAYED ALL | PLAYED START-ALL | START QB / RB / WR / TE | EVERY-ALL | BOX-ALL / BOX-START-ALL |
+|---|---|---|---|---|---|
+| `silent` | -0.009 [-0.014,-0.003] 39-21 | -0.008 [-0.016,-0.001] 33-27 | -0.003 / -0.012 / -0.006 / -0.011 | -0.016 [-0.022,-0.010] 46-14 | +0.003 / -0.009 |
+| `silent_snapcurve` | -0.010 [-0.015,-0.005] 42-18 | -0.008 [-0.015,-0.001] 37-23 | -0.003 / -0.011 / -0.007 / -0.008 | -0.016 [-0.021,-0.010] 48-12 | -0.000 / -0.008 |
+| `silent_snapcurve_lite` | **-0.012** [-0.018,-0.006] 43-17 | -0.007 [-0.014,+0.000] 35-25 | -0.003 / -0.004 / -0.008 / -0.018 | -0.008 [-0.014,-0.002] 42-18 (EVERY-RB +0.012) | -0.005 / -0.007 |
+
+Pairwise ranking +0.001 on START-ALL and +0.002 on ALL in every variant; no START position worse (Holm p 1.0 everywhere); bias
+growth negative (-0.04 to -0.11). Every variant clears the bar; by its rule the best PLAYED ALL goes on: `silent_snapcurve_lite`
+(silent games in the history, the snap-appearance WR/TE curve, the RB participation model and the backup-TE discount off - two
+layers fewer). Its cost is EVERY-RB (+0.012 [+0.004,+0.021]): without the RB participation model, backups who end up scratched
+count against it; the re-fit's every-game low end and the confirming run speak to that. With only silent games added (`silent`),
+the old box-score scope reads TE +0.022 worse - the same change read on the old definition, which never saw the games it fixes.
+The base itself on the new definition: START-ALL 7.577 (box score 7.565), ALL 5.894 (box score 6.172).

@@ -1,5 +1,6 @@
 """
-The live record against the market (2026-10-24, user: "How accurate are we compared to the market ... are our leans sharp compared to
+The live record against the market (2026-10-24; its leans and movement read the implied mean as the line - superseded by
+scripts/eval_posted_line_record.py, 2026-10-25. User: "How accurate are we compared to the market ... are our leans sharp compared to
 the market ... does the market shift towards our lines from opening to close"), from the saved pre-kickoff boards (data/ledger,
 data/ledger_scorecard.py's rules: the last board before each player's own kickoff, paired pools).
 

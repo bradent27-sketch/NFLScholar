@@ -57,29 +57,38 @@ The market is still about 2.4% better on fantasy points (it was 3.6% with the li
 market, it ends up closer only 36% of the time; its high calls are where it loses. By stat, the gap is largest on passing yards
 (RMSE 77.6 vs 65.7; the model ran 15 yards low on QBs in 2026) and receptions.
 
-**Leans (the model's side of each line; ~52.4% needed to beat -110):** with the median (the number a line is priced at):
+**CORRECTED 2026-10-25 - leans and movement re-scored against the POSTED lines.** The first version of this section read a board's
+`Mkt <stat>` column as the line. It is not: it is the market's implied MEAN (data/market_devig.py removes the vig and, for a count,
+solves a Poisson mean - a 0.5 interceptions line at even money reads 0.69; a bare DFS line is multiplied up). The leans and the
+movement below are re-scored against the lines the books actually posted, from the raw pulls in external_data/props_archive
+(scripts/eval_posted_line_record.py; sharpest book that posted one; the app's own exclusions: no anytime/2+ TD markets, no 0.5 count
+lines, no yardage line under 5). The fantasy-points comparison above is unaffected (it compares means with means).
 
-| stat | leans | hit | stronger leans |
-|---|---|---|---|
-| rushing yards | 324 | 54.9% | 5+ yards gap: 56.8% |
-| rushing attempts | 224 | 50.4% | 1+ gap 58.1%, 2+ gap 65.5% (n=55) |
-| receiving yards | 718 | 52.2% | 5+ gap 54.3%, 10+ gap 56.1% |
-| passing TDs | 114 | 57.0% | - |
-| receptions | 648 | 48.1% | - |
-| passing yards | 114 | 43.9% | (the 2026 passing under-projection) |
-| passing attempts | 114 | 43.9% | 2+ gap 29% |
+**Leans (the model's median against the posted line; ~52.4% needed to beat -110), 2026 weeks 3-7:**
 
-The median beats the mean as a lean on rushing yards (54.9% vs 48.5%), receiving yards and passing TDs, as expected. Five weeks is
-a small sample: none of these is statistically above 52.4% yet (rushing attempts at a 2+ gap comes closest, CI 52-77%).
+| stat | leans | hit | stronger leans | (first version, against the implied mean) |
+|---|---|---|---|---|
+| receiving yards | 713 | 52.9% | 5+ yards gap 55.2% (335), **10+ gap 62.2% (143, CI 54-70%)** | 52.2%, 10+ 56.1% |
+| rushing yards | 305 | 53.4% | 5+ gap 57.2% (138, CI 49-65%) | 54.9% |
+| receptions | 631 | 52.3% | 1+ gap 53% (81) | 48.1% |
+| rushing attempts | 257 | 50.2% | 1+ gap 55.3%, 2+ gap 64.4% (59, CI 52-75%) | 50.4%, 2+ 65.5% |
+| passing TDs | 98 | 57.1% | (CI 47-67%) | 57.0% |
+| passing yards | 114 | 46.5% | 10+ gap 36% | 43.9% |
+| passing attempts | 114 | 44.7% | 2+ gap 36% | 43.9% |
 
-**Line movement - yes, the market moves toward our numbers.** Of the lines that moved between the earliest board built in a week and
-the last board before kickoff, the share that moved toward the model's median: receiving yards 66.2% (526 lines, CI 62-70%), rushing
-yards 63.6% (247), passing attempts 64%, passing yards 58%, receptions 57%; correlation of our lean with the move 0.3-0.4 for yards.
-That is the classic sign of a model with real information (closing-line value). Caveat: the "open" is the earliest board built that
-week (usually Tuesday-Wednesday), not the book's true opening number.
+The line posted when the board was built and the line at kickoff give the same record (few lines moved in between). Receiving yards
+at a 10+ yard gap is the one slice clear of 52.4% at the bottom of its interval; several slices were looked at, so read it as
+promising, not proven. The passing side still loses (the 2026 passing under-projection, W1).
 
-**Reading:** early in the week our numbers point where the market is heading; by kickoff the market has absorbed that and more, and
-is the better number. The practical use is timing: act on leans early, before the line moves.
+**Line movement - not supported.** Of the posted lines one book moved between its first pull and kickoff, the share that moved toward
+the model's median on the week's first board: receiving yards 48.9% (131 lines, CI 41-57%), rushing yards 49.2% (61), passing yards
+69% (29, CI 51-83%), rushing attempts 67% (18). Yardage lines move toward the model about as often as away from it. The first
+version's 57-66% came from the implied mean, which also moves when a price changes or a book joins the pull, not from the line
+itself. Caveat: the archive starts when the app first pulled each week (usually Tuesday-Wednesday), not at the book's true open,
+and most lines did not move between pulls.
+
+**Reading:** the receiving and rushing yardage leans look real at bigger gaps; there is no evidence yet that the market moves toward
+our numbers, so timing (acting early) is not an edge on what we have. The passing leans lose until the 2026 passing level is fixed.
 
 ## 4. What is left, and whether it is worth doing
 
@@ -89,7 +98,7 @@ is the better number. The practical use is timing: act on leans early, before th
 | **Full calibration re-fit** | the v4 points lines and low-end knots were fit before 7+ ships | L4 (TE level, START-TE -0.023 offline) sits here too | **Yes.** One re-fit for the 66-flag set, harness-gated |
 | **Silent games** (CFB) | count snap games with no stat in a player's history | backups' rates run high; the backup-TE and low-end patches treat the symptom | **Yes, worth testing.** Medium build; could let participation layers simplify |
 | **Assumed out** (CFB) | a player with no injury listing who missed 2+ straight team games | 5.9% of projected points; only 21-30% of them play; a 0.4 factor fits | **Yes, cheap test** (partly absorbed by the low-end line already) |
-| **Lean tracking / EDGES view** | the model's median vs each line, with the live lean record | rushing and receiving-yard leans 54-57% at bigger gaps; CLV positive | **Yes.** Build it now that medians exist; it also gathers the sample that tells us which leans are real |
+| **Lean tracking / EDGES view** | the model's median vs each line, with the live lean record | rushing and receiving-yard leans 55-62% at bigger gaps against the posted line (corrected 2026-10-25); no line-movement edge | **Yes.** Build it now that medians exist; it also gathers the sample that tells us which leans are real |
 | L5 RB game script by spread | favored teams' RBs beat the board | START-RB -0.008 offline, 5/5 | Worth a harness test (cheap) |
 | L6 last game's snap share | a jump over the 3-game average is under-read | RB -0.010 (4/5), TE -0.007 offline | Worth a harness test (cheap) |
 | Market availability (CFB) | a posted prop line = the player is active | availability information, not a projection blend | Your call; small, helps edge cases |

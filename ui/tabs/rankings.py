@@ -45,12 +45,9 @@ from data.pass_capacity_allocator import (
     PASS_CAPACITY_DEADBAND, PASS_CAPACITY_TRUSTED_TIER, PASS_CAPACITY_TRUSTED_TIER_RB)
 from data.loaders import load_schedule
 from data.weather import resolve_game_weather, resolve_game_precip
-from data.game_slate import load_slate, slate_team_bridge
 from ui import board_session, freshness
 from ui.tabs import rankings_games
 from data.weekly_median import MEDIAN_STATS, attach_medians
-from ui.report_export import (board_pdf, default_export_dir, export_file_names, game_report_pdf,
-                              save_exports)
 from ui.charts import sparkline_data_uri, C as _CHART_COLORS
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
                         get_diverging_color, get_multiplier_color, get_team_style)
@@ -3313,6 +3310,10 @@ def _render_weekly_market_pull(wk_scoring, name_pool, wk_year=None, wk_week=None
     # never re-concatenated - the operations that would drop .attrs.
     out.attrs['book_lines'] = weekly_market_book_lines(props, board=name_pool)
     out.attrs['consensus_stats'] = [c for c in _MARKET_PROJECTED_STATS if c in scored.columns]
+    # the phone export's cover (when each book's lines were pulled): one pull fetches every book
+    out.attrs['lines_by_book'] = {_bk: int(_g.loc[_bk, 'lines']) for _bk in ('DraftKings', 'Pinnacle', 'Underdog', 'PrizePicks')
+                                  if _bk in _idx}
+    out.attrs['fetched_at'] = stamp
     return out
 
 
@@ -3659,46 +3660,6 @@ def _render_rankings_upload(wk_year, form_df):
     )
 
 
-def _render_phone_export(wk_year, wk_week, wk_scoring, model_df, weather_by_team, precip_by_team):
-    """Two PDFs of the built board for reading on a phone away from this PC (requested 2026-10-18): the week's games
-    with their context and each team's key players, and a bare-bones board. Built on request (not on every rerun -
-    drawing them takes a second or two) and kept for this exact board in session state; each can be downloaded or
-    saved straight into a folder such as OneDrive, which syncs it to the phone. See ui/report_export.py."""
-    with st.expander("📤 Export for phone (PDF)", expanded=False):
-        st.caption("**Game report**: every game in kickoff order with the line, implied team totals, weather and each "
-                   "team's key players and projections. **Board**: a plain list of projections by position.")
-        board_key = (wk_year, wk_week, wk_scoring, len(model_df),
-                     round(float(pd.to_numeric(model_df['Model Proj Pts'], errors='coerce').sum()), 2))
-        if st.button("Create PDFs", key="wr_export_make"):
-            with st.spinner("Drawing the PDFs…"):
-                games, _ = load_slate(wk_year, wk_week)
-                bridge = slate_team_bridge(games) if not games.empty else {}
-                built = datetime.datetime.now().strftime('%b %d, %I:%M %p').replace(' 0', ' ')
-                subtitle = f"NFL Scholar model projections, {wk_scoring} · built {built}"
-                st.session_state['wr_export_files'] = (board_key, {
-                    'games': game_report_pdf(games, model_df, f"{wk_year} Week {wk_week} · games", subtitle,
-                                             weather_by_team, precip_by_team, bridge),
-                    'board': board_pdf(model_df, f"{wk_year} Week {wk_week} · board", subtitle, games, bridge),
-                })
-        stash = st.session_state.get('wr_export_files')
-        if not stash or stash[0] != board_key:
-            return
-        files, names = stash[1], export_file_names(wk_year, wk_week, wk_scoring)
-        c1, c2 = st.columns(2)
-        c1.download_button("⬇️ Game report", data=files['games'], file_name=names['games'], mime='application/pdf',
-                           key="wr_export_dl_games", on_click="ignore", width="stretch")
-        c2.download_button("⬇️ Board", data=files['board'], file_name=names['board'], mime='application/pdf',
-                           key="wr_export_dl_board", on_click="ignore", width="stretch")
-        folder = st.text_input("Or save both to a folder (a OneDrive folder syncs them to your phone)",
-                               value=default_export_dir(), key="wr_export_dir")
-        if st.button("💾 Save to folder", key="wr_export_save"):
-            try:
-                paths = save_exports(files, folder, names)
-                st.success("Saved: " + " · ".join(paths))
-            except OSError as exc:
-                st.error(f"Could not save to {folder}: {exc}")
-
-
 def render():
     st.markdown("<div class='custom-section-header'>WEEKLY RANKINGS</div>", unsafe_allow_html=True)
 
@@ -3898,13 +3859,20 @@ def render():
             # so the whole table reads in the chosen view.
             # The ledger, the projection dialog and every other tab keep the means.
             rankings_games.keep_widget_state()
-            view_col, _view_spare = st.columns([2, 5])
+            view_col, _view_spare, export_col = st.columns([2, 3.5, 1.5], vertical_alignment="center")
             with view_col:
                 projection_view = st.segmented_control(
                     "Projection", ["Average", "Median"], key="weekly_rank_projection_view",
                     help="Average: the expected points and stats (what adds up over a season - use it for fantasy). Median: "
                          "the middle game, half of games above it - a floor reference, and the number an over/under line is "
                          "priced against.") or "Average"
+            with export_col:
+                # EXPORT FOR PHONE (2026-10-25, user: "model after the cfb version entirely"): CFB's games report and board
+                # (ui/export_view.py), in the chosen view
+                rankings_games.render_export(
+                    model_df, lambda: rankings_games.games_board(model_df, market_df, matchup_difficulty, _attach_by_name),
+                    model_meta, wk_year, wk_week, wk_scoring, projection_view, weather_by_team, precip_by_team,
+                    freshness=rankings_games.market_freshness(market_df))
             merged_model = model_df.copy()
             # 'Def Rank' - directly right of Opponent per explicit request -
             # a single combined difficulty read for this position against
@@ -4438,6 +4406,5 @@ def render():
                     selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
                     if selected_state and selected_state.get('config') == detail_config:
                         _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))
-        _render_phone_export(wk_year, wk_week, wk_scoring, model_df, weather_by_team, precip_by_team)
         _render_board()
 

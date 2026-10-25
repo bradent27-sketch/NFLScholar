@@ -126,5 +126,5 @@ external_data/ourlads_archive/*
 # tracked, same as the 2022-2025 set.
 external_data/OurLads Historical Depth Charts - Week Before Season 0901/*.mhtml
 
-# Phone exports (ui/report_export.py) when no OneDrive folder exists - regenerated from a built board on demand.
+# Phone exports (ui/export_view.py: HTML + PDF, logo cache, the copy-folder setting) - regenerated from a built board on demand.
 /exports/

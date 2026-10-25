@@ -109,6 +109,47 @@ class PropsTest(unittest.TestCase):
         self.assertEqual(len(gv.props_table(market, ['KC'], 'Passing')), 0)
         self.assertIn('LEAN', gv.styled_props(props).to_html())
 
+    def test_posted_line_from_the_sharpest_book(self):
+        book_lines = pd.DataFrame([
+            {'player': 'A', 'market': 'receiving_yards', 'provider': 'Underdog', 'line': 58.5},
+            {'player': 'A', 'market': 'receiving_yards', 'provider': 'Pinnacle', 'line': 59.5},
+            {'player': 'A', 'market': 'carries', 'provider': 'PrizePicks', 'line': 2.5},
+            {'player': 'B', 'market': 'receptions', 'provider': 'DraftKings', 'line': 4.5},
+        ])
+        wide = gv.posted_lines(book_lines).set_index('Player')
+        self.assertEqual(wide.loc['A', 'receiving_yards'], 59.5)
+        self.assertEqual(wide.loc['A', 'carries'], 2.5)
+        self.assertEqual(wide.loc['B', 'receptions'], 4.5)
+        self.assertTrue(gv.posted_lines(pd.DataFrame()).empty)
+
+    def test_the_median_reads_against_the_posted_line_and_a_mean_against_an_implied_mean(self):
+        # A: a posted line, so his median is read against it. B: only the market's implied (Poisson) mean for receptions, so his mean
+        # is (a median of 4.2 against an implied mean of 5.1 would read as a big UNDER that is not there).
+        board = pd.DataFrame([
+            _row(Player='A', receiving_yards=60.0, **{'Median receiving_yards': 55.0, 'Line receiving_yards': 52.5,
+                                                      'Mkt receiving_yards': 54.0}),
+            _row(Player='B', receptions=5.0, **{'Median receptions': 4.2, 'Mkt receptions': 5.1}),
+        ])
+        market = gv.long_market(board).set_index('player')
+        self.assertEqual((market.loc['A', 'model'], market.loc['A', 'line']), (55.0, 52.5))
+        self.assertEqual((market.loc['B', 'model'], market.loc['B', 'line']), (5.0, 5.1))
+
+    def test_no_lean_where_the_line_cannot_be_read_against_a_median(self):
+        board = pd.DataFrame([
+            _row(Player='TD', **{'Line receiving_tds': 0.5, 'Median receiving_tds': 0.1}),          # an anytime TD market
+            _row(Player='Catch', receptions=1.2, **{'Line receptions': 0.5}),                        # a 0.5 count line
+            _row(Player='Special', receiving_yards=9.0, **{'Line receiving_yards': 0.5}),            # a sub-5-yard special
+            _row(Player='Out', Availability=0.0, **{'Line receiving_yards': 40.5}),                  # projected out
+            _row(Player='WR runs', rushing_yards=0.0, **{'Line rushing_yards': 6.5}),                # not projected at WR
+            _row(Player='Kept', receiving_yards=48.0, **{'Line receiving_yards': 44.5}),
+        ])
+        self.assertEqual(list(gv.long_market(board)['player']), ['Kept'])
+
+    def test_headline_line_prefers_the_posted_line(self):
+        self.assertEqual(gv.headline_line({'Line receiving_yards': 52.5, 'Mkt receiving_yards': 54.0}, 'WR'), 52.5)
+        self.assertEqual(gv.headline_line({'Mkt rushing_yards': 61.0}, 'RB'), 61.0)
+        self.assertTrue(np.isnan(gv.headline_line({}, 'QB')))
+
 
 class ScoreboardAndWeatherTest(unittest.TestCase):
     def test_market_points_from_spread_and_total(self):

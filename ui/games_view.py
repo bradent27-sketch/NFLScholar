@@ -301,7 +301,7 @@ def team_table(group, display_stats, position='ALL', role_only=False, explanatio
                 applies = position != 'ALL' or stat in ALL_POSITION_STATS[pos]
                 value = _num(rec.get(value_column(stat, view)))
                 shown[label] = float(value) if applies and not out and np.isfinite(value) else np.nan
-            line = _num(rec.get('Mkt ' + HEADLINE_STAT[pos]))
+            line = headline_line(rec, pos)
             shown['LINE'] = float(line) if np.isfinite(line) else np.nan
             shown['_key'] = key
             shown['_tone'] = health['tone']
@@ -414,27 +414,81 @@ STAT_LABELS = {'passing_yards': 'Pass yards', 'passing_attempts': 'Pass attempts
 # the market pull's name for a board stat where the two differ (data.draft_projections.PROJECTED_STATS)
 MARKET_STAT_NAME = {'rushing_attempts': 'carries', 'passing_attempts': 'attempts'}
 
+# THE POSTED LINE (2026-10-25). A board's 'Mkt <stat>' is the market's IMPLIED MEAN (data/market_devig.py: the vig removed and a
+# Poisson mean solved for a count, so a 0.5 interceptions line priced at even money reads 0.69), the right number beside a mean,
+# the wrong one beside a median or as "the line". 'Line <stat>' is the line a book actually posted: the sharpest book that posted
+# one (this order), so the LINE column is a number that can be bet and a median can be read against it.
+LINE_BOOKS = ('Pinnacle', 'DraftKings', 'FanDuel', 'Underdog', 'PrizePicks')
+# market stats whose implied mean is a Poisson mean (above the line it came from); a yardage implied mean is the market's median
+_MEAN_STATS = {'receptions', 'targets', 'passing_tds', 'rushing_tds', 'receiving_tds', 'passing_interceptions', 'passing_completions',
+               'passing_attempts', 'rushing_attempts'}
+# A line too low to read a median against: a count's 0.5 line (an anytime TD, an interception, "a catch") is a yes/no bet priced
+# far from even money, where the price carries the market's view and the median of a rare count sits near 0 (every one would read
+# as a -95% UNDER), and a yardage line under 5 is a special, not the stat's market. Below these (counts: 1.0) a line is left out.
+MIN_LEAN_LINE = {'passing_yards': 5.0, 'rushing_yards': 5.0, 'receiving_yards': 5.0}
+# A rushing or receiving TD line is an anytime-TD market (0.5) or its "2+ TDs" version (1.5, priced around 1-5% to go over): a
+# yes/no bet carried by its price, never a median line, so the props and edges leave it out.
+NO_LEAN_STATS = {'rushing_tds', 'receiving_tds'}
+
+
+def posted_lines(book_lines):
+    """One row per player with each market stat's posted line from the sharpest book that posted it (LINE_BOOKS order): a frame with
+    'Player' and one column per market stat (the market's own names: 'carries', 'attempts', ...). Empty without book lines.
+    `book_lines`: data.odds_projections.market_book_stat_lines (player, market, provider, line)."""
+    if book_lines is None or len(book_lines) == 0 or not {'player', 'market', 'provider', 'line'} <= set(book_lines.columns):
+        return pd.DataFrame()
+    frame = book_lines[['player', 'market', 'provider', 'line']].copy()
+    frame['line'] = pd.to_numeric(frame['line'], errors='coerce')
+    book = frame['provider'].astype(str).str.split(' (', regex=False).str[0]
+    frame['_rank'] = book.map({b: i for i, b in enumerate(LINE_BOOKS)}).fillna(len(LINE_BOOKS))
+    frame = frame.dropna(subset=['line']).sort_values(['_rank', 'line'])
+    best = frame.drop_duplicates(['player', 'market'], keep='first')
+    wide = best.pivot(index='player', columns='market', values='line')
+    wide.columns.name = None
+    return wide.reset_index().rename(columns={'player': 'Player'})
+
 
 def long_market(board):
-    """The board's priced props, one row per (player, stat): player, team, Pos, stat, model, line, diff, diff_pct, _key. From the
-    'Mkt <stat>' columns the market pull attaches, under the market's own stat names (empty when there are none). The model side is
-    the MEDIAN wherever the board carries one ('Median <stat>'): an over/under line is priced against the middle game."""
+    """The board's priced props, one row per (player, stat): player, team, Pos, stat, model, line, diff, diff_pct, _key. The line is
+    the posted one ('Line <stat>', see posted_lines) and the model side the MEDIAN ('Median <stat>'): a line is priced against the
+    middle game. A board with only the implied means ('Mkt <stat>') compares like with like instead: the median against a yardage
+    mean (a symmetric market, so its median) and the model's mean against a count's Poisson mean. Under the market's own stat names;
+    empty when there are none."""
     if board is None or board.empty:
         return pd.DataFrame()
     rows = []
+    records = board.to_dict('records')
     for stat in STAT_LABELS:
-        col = 'Mkt ' + MARKET_STAT_NAME.get(stat, stat)
-        if col not in board.columns or stat not in board.columns:
+        name = MARKET_STAT_NAME.get(stat, stat)
+        posted, implied = 'Line ' + name, 'Mkt ' + name
+        if stat in NO_LEAN_STATS or stat not in board.columns or (posted not in board.columns and implied not in board.columns):
             continue
-        part = board[pd.to_numeric(board[col], errors='coerce').notna()]
-        for rec in part.to_dict('records'):
-            line, model = float(_num(rec[col])), _num(rec.get('Median ' + stat, rec.get(stat)))
-            if not np.isfinite(model):
+        for rec in records:
+            # no number to read against the line: a stat the model does not project at his position (a receiver's rushing), a player
+            # it has out, or no volume at all (his zeros would list as -100% edges)
+            if (stat not in ALL_POSITION_STATS.get(rec.get('Pos'), ()) or _num(rec.get('Availability')) <= SIDELINED
+                    or not _num(rec.get(stat)) > 0):
+                continue
+            line = _num(rec.get(posted))
+            model = _num(rec.get('Median ' + stat, rec.get(stat)))
+            if not np.isfinite(line):
+                line = _num(rec.get(implied))
+                if stat in _MEAN_STATS:
+                    model = _num(rec.get(stat))
+            if not np.isfinite(line) or not np.isfinite(model) or line < MIN_LEAN_LINE.get(stat, 1.0 if stat in _MEAN_STATS else 0.0):
                 continue
             rows.append({'player': rec['Player'], 'team': rec['Team'], 'Pos': rec['Pos'], 'stat': stat, 'model': float(model),
-                         'line': line, 'diff': float(model) - line, 'diff_pct': (float(model) - line) / line if line else np.nan,
+                         'line': float(line), 'diff': float(model) - line, 'diff_pct': (float(model) - line) / line if line else np.nan,
                          '_key': (rec['Player'], rec['Pos'], rec['Team'])})
     return pd.DataFrame(rows)
+
+
+def headline_line(rec, position):
+    """The LINE column's number for a player: the posted line on his headline stat, else the market's number for it (a yardage implied
+    mean is the market's median), NaN with neither."""
+    stat = MARKET_STAT_NAME.get(HEADLINE_STAT[position], HEADLINE_STAT[position])
+    line = _num(rec.get('Line ' + stat))
+    return line if np.isfinite(line) else _num(rec.get('Mkt ' + stat))
 
 
 def props_table(market, teams, group='All'):

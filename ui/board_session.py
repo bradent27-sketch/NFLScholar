@@ -16,6 +16,7 @@ import streamlit as st
 
 from data.availability_overrides import availability_fingerprint, AVAILABILITY_OVERRIDE_PATH
 from data.fantasypros_availability import FANTASYPROS_INJURY_PATH
+from data.odds_weekly import rb_lines_fingerprint
 from data.weekly_projections import LeagueContextMissing, build_weekly_projections, load_qb1_overrides
 from ui import board_pin
 
@@ -36,9 +37,11 @@ def qb1_override_signature(year):
 
 
 def board_inputs(year, week):
-    """What a kept board depends on beyond its key: this week's availability overrides and the season's QB1 choices."""
+    """What a kept board depends on beyond its key: this week's availability overrides, the RBs with a posted line
+    (v2_ps_line_routing reads them; folded into the build's cache key so a new line reaches the next build) and the
+    season's QB1 choices."""
     avail_fp = availability_fingerprint(year, week, AVAILABILITY_OVERRIDE_PATH, FANTASYPROS_INJURY_PATH)
-    return avail_fp, qb1_override_signature(year)
+    return f'{avail_fp}:{rb_lines_fingerprint(year, week)}', qb1_override_signature(year)
 
 
 def _boards():

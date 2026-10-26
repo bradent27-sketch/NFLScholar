@@ -37,8 +37,9 @@ def model_signature():
 
 
 def ruling_snapshot(year, week):
-    """{team: frozenset of that team's rows} over the three ruling sources for this (year, week): your availability
-    overrides, the FantasyPros injury pull and the season's QB1 choices."""
+    """{team: frozenset of that team's rows} over the ruling sources for this (year, week): your availability
+    overrides, the FantasyPros injury pull, the season's QB1 choices, and (2026-10-25, v2_ps_line_routing) the team's
+    RBs with a posted line this week."""
     from data.weekly_projections import load_qb1_overrides
     frames = []
     for path in (AVAILABILITY_OVERRIDE_PATH, FANTASYPROS_INJURY_PATH):
@@ -59,6 +60,13 @@ def ruling_snapshot(year, week):
         for rec in frame.astype(str).to_dict('records'):
             team = str(rec.get('team', '')).strip().upper()
             out.setdefault(team, set()).add((source,) + tuple(sorted(rec.items())))
+    try:
+        from data.odds_weekly import rb_lines_by_team
+        lines = rb_lines_by_team(year, week)
+    except Exception:
+        lines = {}
+    for team, names in lines.items():
+        out.setdefault(team, set()).update(('lines', name) for name in names)
     return {team: frozenset(rows) for team, rows in out.items()}
 
 

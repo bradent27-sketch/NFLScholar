@@ -49,9 +49,9 @@ def _row(frame, name):
     return frame.loc[frame['Player'].eq(name)].iloc[0]
 
 
-def test_flag_is_registered_and_not_default():
+def test_flag_is_registered_and_shipped():
     assert 'v2_rb_lone_lead_vacancy' in wp.MODEL_FEATURES
-    assert 'v2_rb_lone_lead_vacancy' not in wp.DEFAULT_FEATURES
+    assert 'v2_rb_lone_lead_vacancy' in wp.DEFAULT_FEATURES     # shipped 2026-10-25 (user: "all three on")
 
 
 def test_without_the_flag_the_lead_back_takes_the_reusable_volume_and_the_practice_squad_nothing():
@@ -126,9 +126,9 @@ def test_a_room_with_a_second_healthy_back_is_untouched():
 # v2_ps_line_routing (candidate 2026-10-25; user: a practice-squad back with a market line should get the volume, an
 # even split only when none has one). ATL week 7: Khalil Herbert has lines at four books, Jam Miller none.
 
-def test_line_routing_flag_is_registered_and_not_default():
+def test_line_routing_flag_is_registered_and_shipped():
     assert 'v2_ps_line_routing' in wp.MODEL_FEATURES
-    assert 'v2_ps_line_routing' not in wp.DEFAULT_FEATURES
+    assert 'v2_ps_line_routing' in wp.DEFAULT_FEATURES     # shipped 2026-10-25
 
 
 def test_the_practice_squad_back_with_a_line_takes_the_whole_practice_squad_share():
@@ -218,3 +218,18 @@ def test_a_depth_back_with_a_line_takes_the_whole_rest():
     out, _ = _run(_ten(), lone_lead_share=share, rb_line_holders=frozenset({'Depth Two', 'Lead RB'}))
     assert abs((_row(out, 'Depth Two')['rushing_attempts'] - 0.1) - 3.7 * (rba.VACANCY_SURVIVAL - share)) < 0.02
     assert _row(out, 'Depth One')['rushing_attempts'] == 0.5
+
+
+def test_rb_lines_by_team_and_its_fingerprint(tmp_path):
+    import json
+    from data.odds_weekly import rb_lines_by_team, rb_lines_fingerprint
+    row = {'provider': 'DraftKings', 'market': 'rushing_yards', 'scorable': True, 'line': 7.5, 'period': 'game'}
+    rows = [{**row, 'player': 'Khalil Herbert', 'team': 'ATL', 'position': 'RB'},
+            {**row, 'player': 'Drake London', 'team': 'ATL', 'position': 'WR'},       # not a back
+            {**row, 'player': 'No Team RB', 'team': '', 'position': 'RB'}]            # no team: skipped
+    (tmp_path / '2026_wk07_20261024T000000Z.json').write_text(json.dumps({'rows': rows}))
+    assert rb_lines_by_team(2026, 7, archive_dir=str(tmp_path)) == {'ATL': frozenset({'Khalil Herbert'})}
+    before = rb_lines_fingerprint(2026, 7, archive_dir=str(tmp_path))
+    (tmp_path / '2026_wk07_20261025T000000Z.json').write_text(json.dumps({'rows': [
+        {**row, 'player': 'Jam Miller', 'team': 'ATL', 'position': 'RB'}]}))
+    assert rb_lines_fingerprint(2026, 7, archive_dir=str(tmp_path)) != before   # a new line changes the build's cache key

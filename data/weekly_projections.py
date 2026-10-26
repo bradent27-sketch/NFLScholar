@@ -2383,12 +2383,12 @@ MODEL_FEATURES = (
                              # (_keep_fully_excluded_players). HARNESS 2026-10-25: misses
                              # its bar (START-ALL +0.002 vs +0.001; veterans whose only
                              # game was cut short lose their prior-season line).
-    'v2_keep_fully_excluded_no_prior',  # CANDIDATE (2026-10-25, the revision): the same, only for
+    'v2_keep_fully_excluded_no_prior',  # SHIPPED 2026-10-25 (user: "all three on"; was a candidate) (2026-10-25, the revision): the same, only for
                              # a player with no eligible prior-season game at his
                              # position - the one who would otherwise be off the board. HARNESS
                              # 2026-10-25: passes its bar (START-ALL +0.0005, EVERY-ALL
                              # +0.0003; restored players under, not over). Awaits sign-off.
-    'v2_rb_lone_lead_vacancy',  # CANDIDATE (2026-10-25, user: ATL week 7, Brian Robinson out and Bijan
+    'v2_rb_lone_lead_vacancy',  # SHIPPED 2026-10-25 (user: "all three on"; was a candidate) (2026-10-25, user: ATL week 7, Brian Robinson out and Bijan
                              # Robinson given all of his carries, the practice-squad
                              # backs at 0). When the only surviving back with a role
                              # is the lead back, he takes LONE_LEAD_VACANCY_SHARE (25%)
@@ -2398,7 +2398,7 @@ MODEL_FEATURES = (
                              # HARNESS 2026-10-25: misses its bar (31 rows in 4 seasons;
                              # lead backs' carries fixed, points worse on 13 games; the
                              # 121-game study says points follow carries). User's call.
-    'v2_ps_line_routing',  # CANDIDATE (2026-10-25, user: "if there is a market line available for one of the
+    'v2_ps_line_routing',  # SHIPPED 2026-10-25 (user: "all three on"; was a candidate) (2026-10-25, user: "if there is a market line available for one of the
                              # practice squad backs the volume should entirely or
                              # partially go to that backup"). The practice-squad share
                              # of an out back's volume (v2_rb_depleted_room_fill /
@@ -3071,6 +3071,12 @@ DEFAULT_FEATURES = frozenset({
     # shipped scale. Undo: remove both flags.
     'v2_silent_games',
     'v2_silent_participation',
+    # SHIPPED 2026-10-25 (user: "all three on yes"): DEFAULT_FEATURES = 71. Harness run 3 (methodology 2026-10-25):
+    # keep_no_prior passed its bar; lone_lead missed it on 13 games against a 121-game study that supports it (the user's
+    # call); line routing cannot be backtested (no archived lines before 2026 week 3).
+    'v2_keep_fully_excluded_no_prior',
+    'v2_rb_lone_lead_vacancy',
+    'v2_ps_line_routing',
 })
 
 

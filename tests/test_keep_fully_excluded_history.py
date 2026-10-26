@@ -45,9 +45,9 @@ def test_nothing_to_keep_is_unchanged():
 # v2_keep_fully_excluded_no_prior (candidate 2026-10-25, the revision after the first flag's harness): only a player with no
 # eligible prior-season game at his position keeps his excluded games; a veteran stays on his prior-season line.
 
-def test_no_prior_flag_is_registered_and_not_default():
+def test_no_prior_flag_is_registered_and_shipped():
     assert 'v2_keep_fully_excluded_no_prior' in wp.MODEL_FEATURES
-    assert 'v2_keep_fully_excluded_no_prior' not in wp.DEFAULT_FEATURES
+    assert 'v2_keep_fully_excluded_no_prior' in wp.DEFAULT_FEATURES     # shipped 2026-10-25 (user: "all three on")
 
 
 def test_with_a_prior_season_role_the_excluded_games_stay_excluded():

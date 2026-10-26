@@ -6550,3 +6550,12 @@ points, and the books' carries lines on the live board) and the harness (13 game
 bar it does not ship. The user's call, as with v2_backup_te_discount; the share is not swept on the harness.
 
 `v2_ps_line_routing` was not in the run (no lines before 2026 week 3); the user's call on its logic.
+
+### 2026-10-25 - SHIPPED: `v2_keep_fully_excluded_no_prior`, `v2_rb_lone_lead_vacancy`, `v2_ps_line_routing` (DEFAULT_FEATURES = 71)
+User: "all three on yes". keep_no_prior on its bar; lone_lead on the user's call against its bar (the 121-game study and the books'
+carries lines against 13 harness games); line routing on its logic (no archived lines to test it). Week 7 with the default: Bijan
+Robinson 19.2 carries / 21.8 pts (was 24.0 / 24.8), Khalil Herbert 4.8 / 4.4, Tony Pollard 17.4, Chuba Hubbard 17.2, Michael
+Carter 2.3, Trevor Etienne 2.5, Ja'Kobi Lane 5.3 pts (was off the board). The app: ui/board_session.board_inputs folds a
+fingerprint of the week's RB lines (data.odds_weekly.rb_lines_fingerprint) into the build's cache key, and
+ui/board_pin.ruling_snapshot adds each team's RBs with a line, so a line posted after a build re-projects that team. Undo: remove
+the three flags from DEFAULT_FEATURES. Watch: the lone-lead rows in the weekly ledger (lead backs' points against their carries).

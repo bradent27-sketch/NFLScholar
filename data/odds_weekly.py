@@ -30,6 +30,7 @@ staleness rule should be allowed to overrule.
 """
 import datetime
 import functools
+import hashlib
 import json
 import os
 
@@ -211,12 +212,48 @@ def players_with_lines(year, week, archive_dir=PROPS_ARCHIVE_DIR):
     ``week`` - v2_ps_line_routing reads it to see which practice-squad back the books expect to play. A union over the
     week's pulls, not the latest: a partial pull (one book up) must not erase a line the full pulls carried. Only that a
     line exists is read, never its number. Empty when nothing is archived (every week before 2026 week 3)."""
+    files = _week_archive_files(year, week, archive_dir)
+    return _players_with_lines(archive_dir, files) if files else frozenset()
+
+
+def _week_archive_files(year, week, archive_dir):
     prefix = f'{int(year)}_wk{int(week):02d}_'
     try:
-        files = tuple(sorted(f for f in os.listdir(archive_dir) if f.startswith(prefix) and f.endswith('.json')))
+        return tuple(sorted(f for f in os.listdir(archive_dir) if f.startswith(prefix) and f.endswith('.json')))
     except OSError:
-        return frozenset()
-    return _players_with_lines(archive_dir, files)
+        return ()
+
+
+def rb_lines_by_team(year, week, archive_dir=PROPS_ARCHIVE_DIR):
+    """{team: frozenset of RB names} with a posted game line in any pull archived for ``year`` week ``week``; rows with
+    no team or no RB position are skipped. The app's kept board re-projects a team when its set changes
+    (ui/board_pin.ruling_snapshot) - v2_ps_line_routing reads these lines."""
+    return _rb_lines_by_team(archive_dir, _week_archive_files(year, week, archive_dir))
+
+
+def rb_lines_fingerprint(year, week, archive_dir=PROPS_ARCHIVE_DIR):
+    """A short hash of rb_lines_by_team: part of the build cache key (ui/board_session.board_inputs), so a line posted
+    after a build reaches the next one."""
+    lines = rb_lines_by_team(year, week, archive_dir)
+    text = repr(sorted((team, sorted(names)) for team, names in lines.items()))
+    return hashlib.md5(text.encode('utf-8')).hexdigest()[:12]
+
+
+@functools.lru_cache(maxsize=8)
+def _rb_lines_by_team(archive_dir, files):
+    out = {}
+    for fname in files:
+        try:
+            with open(os.path.join(archive_dir, fname), encoding='utf-8') as handle:
+                rows = json.load(handle).get('rows') or []
+        except (OSError, ValueError):
+            continue
+        for r in rows:
+            team = str(r.get('team') or '').strip().upper()
+            if (r.get('player') and team and team != 'NAN' and str(r.get('position') or '').upper() == 'RB'
+                    and r.get('scorable', True) and str(r.get('period', 'game')) == 'game'):
+                out.setdefault(team, set()).add(str(r['player']))
+    return {team: frozenset(names) for team, names in out.items()}
 
 
 @functools.lru_cache(maxsize=8)

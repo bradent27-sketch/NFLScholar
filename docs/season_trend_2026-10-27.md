@@ -84,7 +84,7 @@ Player rows are played games with a projection of at least 5 points.
 - **Weeks 3-6 2026 were not the seasonal pattern.** Teams threw 34.5 and 35.3 a game, against 31.8 and 32.7 in 2025. The normal
   early-to-late gap is about 1 attempt; 2026 ran 2-3 above recent seasons.
 - **The board caught up just as passing cooled.** Projected / actual team attempts by 2026 week: 0.905, 0.926, 0.939, 0.847, then
-  **1.046 in week 7** (projected 33.0, actual 31.5).
+  **1.046 in week 7** (projected 33.0, actual 31.5; 26 teams, Monday's DAL-PHI not in the data yet).
 - **Faster in-season volume weights (M2) would have hurt week 7.** The seasonal lean says passing keeps cooling from here, which
   also argues against chasing the early surge. W1 waits for week 8.
 

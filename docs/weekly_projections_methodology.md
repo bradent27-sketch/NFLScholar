@@ -6559,3 +6559,140 @@ Carter 2.3, Trevor Etienne 2.5, Ja'Kobi Lane 5.3 pts (was off the board). The ap
 fingerprint of the week's RB lines (data.odds_weekly.rb_lines_fingerprint) into the build's cache key, and
 ui/board_pin.ruling_snapshot adds each team's RBs with a line, so a line posted after a build re-projects that team. Undo: remove
 the three flags from DEFAULT_FEATURES. Watch: the lone-lead rows in the weekly ledger (lead backs' points against their carries).
+
+### 2026-10-26 - Model sense-check audit: the in-season share pulled toward last season's (CANDIDATE), pre-set bar
+User: "dig through projections and try to find bugs in the model ... things that don't make sense in trying to accurately predict
+future games". Lead from the audit: in season a RB/WR/TE's expected snap share is the plain mean of his last <=4 appearances
+(`expected_snap_share`), and nothing pulls it toward his prior role - the prior season's per-game rate is rescaled by current share
+/ prior share, so the share decides the prior side of every volume rate too. One odd game is a whole role: Dylan Sampson (CLE 2026
+week 7) had one appearance, week 1 with 0 offensive snaps (kick returns), and projected 0.0 against a 27% share in 2025 (36% before
+his 2025 absence); Raheim Sanders and Audric Estimé were out, Sanders' carries went to Judkins and McLaughlin, Sampson scored 10.7.
+
+Offline screen (scratchpad share_shrink_study.py; nflverse snap counts 2022-2025 weeks 3-17; RB/WR/TE with a snap-table row that
+week; history = offensive-snap games; prior = last season's share when active, 4+ games; 15,115 rows): predict next week's share by
+(n x observed + k x prior) / (n + k), n = appearances in the 4-game window.
+
+| pos | pooled k | share RMSE k=0 | shrunk | fit without each season, scored on it |
+|---|---|---|---|---|
+| WR | 0.75 | 0.1853 | 0.1771 | 4 of 4 better |
+| TE | 0.75 | 0.1549 | 0.1505 | 4 of 4 better |
+| RB | 0.25 | 0.1415 | 0.1397 | 3 of 4 (2022 a tie) |
+
+Both directions regress: a first game 0.25+ below the prior (obs 0.20, prior 0.57) went on at 0.28; 0.25+ above (obs 0.71, prior
+0.32) at 0.61. Candidate `v2_share_prior_shrink` (SHARE_PRIOR_SHRINK_K = RB 0.25, WR 0.75, TE 0.75): applied to the observed share
+(never a percentile fallback) of a player with n >= 1 and a prior share, before the depth-chart and vacancy steps; n = 0 stays with
+the returning-role restoration. The offline screen scores shares, not points - the rate blend, the participation curve and the
+team budgets sit between the two, so the harness decides.
+
+**Pre-set bar (written before the run).** Harness 2022-2025 weeks 3-17 against the 71-flag default: verdict not REJECT; START-ALL
+dRMSE <= -0.003; EVERY-ALL <= 0; START-WR <= 0; START-RB and START-TE no worse than +0.002; START-QB within +0.002; bias growth
+within 0.3. Ship-eligible on the user's sign-off.
+
+### 2026-10-26 - Sense-check audit: an excluded partial game still shows the role (CANDIDATE), pre-set bar
+Second lead from the audit. The partial-game filter (`annotate_player_history_participation`) leaves an established player's sudden
+low-snap game out of his history ("abrupt partial role after established workload": median of his last 3 shares >= 0.65, this game
+<= 0.50 and <= 0.6 x that), reading it as an injury exit after which the old role stands. The data say the role does not stand.
+
+Snap counts 2019-2025 (scratchpad partial_exclusion_study.py; the rule replicated on offensive-snap games; 625 such games with a
+next appearance): the next share is 0.47 from a 0.77 role when he plays the next week (464 games) and 0.57 from 0.79 when he returns
+from a missed game (161). Predicting it from the last 4 appearances:
+
+| next appearance | without the game (the model) | with it | with it at weight 2 |
+|---|---|---|---|
+| played the next week | RMSE 0.332, bias +0.24 | 0.275, +0.15 | 0.244 |
+| back from a missed game | 0.294, +0.19 | 0.233, +0.06 | 0.227 |
+
+Without the game is the worst reading in all 7 seasons, every position, both groups. In points (scratchpad partial_points_check.py,
+the 68-flag base arm of the 2026-10-25 harness boards, 2022-2025 weeks 3-17, rows with Availability > 0.5 that played): rows whose
+last appearance was such a game run +1.49 pts over (243, played the next week) and +0.91 (92, after a missed game), every other row
+-0.25; projected share 0.68 vs 0.48 played (WR 0.72 / 0.48, TE 0.71 / 0.50, RB 0.53 / 0.54 but points +1.73); every season over
+(+0.44, +2.25, +2.18, +0.44), every projection band. C15 (2026-10-21) switched every exclusion off for rates and shares alike and
+lowered every position (a third of a game read as a whole one in the per-game rates). This keeps the game out of the rates and lets
+only the role read it.
+
+Candidate `v2_partial_game_role_carry`: a RB/WR/TE whose last <=4 appearances include such a game has his counting stats scaled by
+expected_snap_share with the game over expected_snap_share without it (`partial_game_role_multiplier`, weight 1, floor 0.40); the
+game rolls out of the window like any other. Other exclusion types (blowout rest, partial replacement, QB splits) are unchanged.
+
+**Pre-set bar (written before the run).** It moves about 2% of rows, so the paired scopes mostly show harm or none: (1) START-ALL and
+EVERY-ALL no worse than +0.000 (point estimates), no START position worse at Holm p < 0.05, START-QB unchanged; (2) on the rows it
+moves (scripts/eval_changed_rows.py, games played) RMSE lower than the base and the bias closer to 0. Both parts to pass;
+ship-eligible on the user's sign-off. Same harness run as `v2_share_prior_shrink`, each its own variant against the 71-flag default.
+
+### 2026-10-26 - Sense-check audit: the latest game counts double in the share (CANDIDATE, backlog L6), pre-set bar
+Third lead, found while scoring the partial-game rule (the next share is predicted better with the latest game at weight 2 than 1).
+Offline on every player-week (snap counts 2022-2025 weeks 3-17, RB/WR/TE active that week with 1+ appearance; next week's share):
+
+| pos | equal weights | latest x2 | latest x2 + v2_share_prior_shrink |
+|---|---|---|---|
+| WR | 0.1815 | 0.1763 | 0.1737 |
+| TE | 0.1510 | 0.1474 | 0.1454 |
+| RB | 0.1442 | 0.1415 | 0.1404 |
+
+Better in all four seasons at each position, alone and with the shrink. Candidate `v2_share_recency`: `expected_snap_share` weights
+the latest of the <=4 appearances SHARE_RECENCY_LAST_WEIGHT = 2 (3 scores a little better; 2 is the round step, not swept).
+
+**Pre-set bar (written before the run):** the `v2_share_prior_shrink` bar (verdict not REJECT; START-ALL <= -0.003; EVERY-ALL <= 0;
+START-WR <= 0; START-RB and START-TE no worse than +0.002; START-QB within +0.002; bias growth within 0.3). A third variant in the same
+run. If two or more of the three pass, their combination is the next run (they act on the same share), not a ship of each.
+
+### 2026-10-26 - Data fix: a played week whose snap counts are not posted yet reads as unknown, not 0% (not a model flag)
+Found by the sense-check audit. `data/loaders.py` fills a box-score row with no snap match with 0 and sets `has_snap_match` per
+season, so from a Sunday until the snap counts are posted every player's latest game reads as a 0% snap game. On Monday evening
+2026-10-26 (snap cache refreshed 18:16) the week 7 box scores were in and the snap counts held only the Thursday game: a week 8
+board built then would have cut 67% of the 128 RB/WR/TE with a 60%+ share by 15% or more (Garrett Wilson 0.96 -> 0.73), every team
+but Chicago. `mask_unposted_snap_weeks` (called right after the silent-games join) blanks `weekly_snap_pct` on the rows of a
+team-week the snap source does not have, so the expected share and the other snap reads (all NaN-skipping) use the last known
+appearances while the box-score stats still count; the build's data contract lists the team-weeks (`snap_counts_not_posted`).
+Regular seasons 2021-2025 have snap counts for every team-week (only playoff weeks are missing), so history and the harness are
+unchanged; a CLE week 7 rebuild is identical to before; a NYJ week 8 build now reads Garrett Wilson at 0.962. The first version
+crashed every build (a missing team is NaN under pandas' string dtype and broke the sort) for about 1.5 hours on 2026-10-26 before
+it was caught by the audit's own rebuild and fixed; `tests/test_unposted_snap_weeks.py` (3) covers it.
+
+### 2026-10-26 - Sense-check audit harness: shrink, partial-game carry and recency all miss their bars (none shipped)
+Harness 2022-2025 weeks 3-17 against the 71-flag default (`.sweeps/harness_audit_share_partial_2022-2025_wk3-17.log`, run 21:29-23:04
+after the first launch ran out of memory when four CFB week_review jobs started a minute after it; both arms include the 10-26 data
+fixes below). Each variant against its pre-set bar (entries above):
+- `v2_share_prior_shrink`: START-ALL -0.001 [-0.004, +0.001] (bar <= -0.003), EVERY-ALL +0.001 (bar <= 0). **FAIL.**
+- `v2_share_recency`: START-ALL -0.001 [-0.004, +0.003], START-TE +0.003 (bar <= +0.002). **FAIL.** (Backlog L6: tested.)
+- `v2_partial_game_role_carry`: part 1 passes (START-ALL -0.001, EVERY-ALL -0.006 [-0.010, -0.003], EVERY-WR -0.011, no START
+  position worse at Holm p < 0.05, START-QB unchanged); part 2 fails - on the 6,250 played rows it moves RMSE falls 6.310 -> 6.299 but
+  the bias moves away from 0 (-0.21 -> -0.27; WR rows it lowered +0.28 -> -0.34, TE -0.01 -> -0.48). **FAIL.** Its gain is on
+  games the player then sits: the partial game is often the first sign of an injury, which the share cannot know.
+The offline share studies were right about the share (next-week share RMSE -2% to -4%), but at points level each moves ~0.001: the
+per-game rates, team budgets and vacancy rules absorb most of a share error. All three stay CANDIDATE, off.
+
+### 2026-10-26 - Data fixes: same-name players (not model flags)
+Found by the sense-check audit tracing Justin Jefferson (MIN), whose 2026 history was read through a CLE rookie linebacker of the same
+name. Four places read players by name, each fixed where it happens; none changes a player whose name nobody else carries.
+1. **Snap counts** (`data/loaders.py` `snap_name_collisions` / `apply_snap_name_collisions`): the snap table is pivoted by name with
+   `aggfunc='mean'`, so two players with one name in one week were averaged (Jefferson's 89% read 44.5% in week 5; Michael Thomas
+   NO 2022 30/38/34% for 61/76/68%). Those player-weeks are re-read by the game's team (`game_team`, else the merged team). Such
+   player-weeks with an offensive player, 2019-2026: Michael Thomas 2019 (15), Lamar Jackson 2020 (11), A.J. Green 2021-2022 (24),
+   DJ Turner 2023-2024 (20), Jefferson 2026 (1). `tests/test_snap_name_collisions.py` (4).
+2. **Roster merge** (`load_year_data`): the roster was deduped by full name before the gsis_id join, so one of two same-named
+   players lost his team and dropped off the board. Backtests had no Josh Allen in 2022 (a JAX LB shares the name) and no Quinshon
+   Judkins in 2025 (a stray id-less GB row in week 18), nor Michael Carter 2022-2023, Michael Thomas 2022-2023, DJ Turner 2023, Russell
+   Gage 2025, Xavier Weaver 2024 - 145 player-weeks, back in the 10-26 harness base. Deduped by gsis_id now; an id-less row is kept
+   only if no identified player has its name. 2026 had no skill player with a blank team, so live boards did not move.
+3. **Identity by name** (`_identity_by_name`): a shared name took the id of whichever row sorted last - in 2026 the linebacker - so
+   Jefferson's totals carried an id with no 2025 season and his prior was the WR position average from week 6 on. The offensive
+   player's id now wins (`OFFENSE_IDENTITY_POSITIONS`). Where both seasons picked the same wrong id the prior still matched (checked:
+   Lamar Jackson 2025 has his own prior either way).
+4. **Name-grouped history** (`drop_shared_name_defenders`, current and prior seasons): `expected_snap_share` and the other
+   name-grouped reads averaged the linebacker's 0% week into Jefferson's window (0.705 for his own 0.935). A defender's rows go when
+   an offensive player with a different id has his name; a two-way player (one id) stays; the build lists them
+   (`shared_name_defenders_dropped`: 2026 Brandon Johnson, Cam Miller, Devin Neal, DeVonta Smith, Justin Jefferson).
+   `tests/test_identity_same_name.py` (5).
+Week 8 (live build), Jefferson: share 0.705 -> 0.935, prior WR average -> his own (8.4 targets), 11.66 -> 13.07 pts.
+Also: `scripts/eval_today_vs_market.py` now skips a week that is not final (week 7 on Monday evening built as a live week with no
+injury report at all; weeks 3-6 re-score: today 7.31, live 7.40, Market 7.13, start-worthy).
+
+### 2026-10-27 - Data fix: snap counts found by PFR id when the name differs (not a model flag)
+User: "join Bam and Zonovan Knight's id". Bam Knight (ARI) is "Zonovan Knight" in the snap counts, so every 2026 game read 0%
+(sense check #8). After the two name tiers and the same-name re-read, a row still without a snap value is filled from the raw snap
+counts by (PFR id, week) - the roster's `pfr_id` against the snap counts' `pfr_player_id` - and `has_snap_match` / `snap_pct_avg` /
+`snap_games_played` get the same season-level fallback (`snap_pct_by_pfr_id`, `fill_snap_pct_by_pfr_id` in data/loaders.py). A row
+the name match found is never overwritten. Skill-position rows changed: 2019 22 (Bisi Johnson, Benjamin Watson), 2020 9, 2021 12
+(Dee Eskridge, Joseph Fortson), 2022 18, 2023 5, 2024 8, 2025 0, 2026 4 (Bam Knight: 6 / 8 / 44 / 53%).
+`tests/test_snap_name_collisions.py`.

@@ -5,7 +5,10 @@ board had), and score it beside the market total and FantasyPros saved on that w
 (the ledger scorecard's paired start-worthy pool). The live record (scripts/eval_market_record.py) scores the model each week actually
 ran; this scores the model as it is now.
 
-    python scripts/eval_today_vs_market.py [--year 2026] [--weeks 3,4,5,6,7]
+    python scripts/eval_today_vs_market.py [--year 2026] [--weeks 3,4,5,6,7] [--boards-out DIR] [--out FILE]
+
+--boards-out keeps each rebuilt board (every column) as DIR/board_<year>_wk<NN>.parquet, for audits that read today's model
+without rebuilding it.
 """
 import argparse
 import logging
@@ -29,6 +32,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--year', type=int, default=2026)
     ap.add_argument('--weeks', default='3,4,5,6,7')
+    ap.add_argument('--boards-out', default=None)
+    ap.add_argument('--out', default='.sweeps/eval_today_vs_market.txt')
     a = ap.parse_args()
     stats_df, _t, name_col, _ = load_and_merge_data(a.year, 'Full PPR')
     frame, _info = sc.load_scored_ledger(a.year, stats_df, name_col, load_schedule(a.year))
@@ -37,16 +42,30 @@ def main():
     today = []
     for week in [int(w) for w in a.weeks.split(',')]:
         build_weekly_projections.clear()
-        board, _meta = build_weekly_projections(a.year, week, 'Full PPR', as_of_week=week, apply_injury=False, features=feats)
+        board, meta = build_weekly_projections(a.year, week, 'Full PPR', as_of_week=week, apply_injury=False, features=feats)
         if board is None or board.empty:
+            continue
+        if not ((meta or {}).get('source_contract') or {}).get('historical_target', False):
+            # A week not yet final (Monday night still to play) builds as a LIVE week: the injury replay is off, and with
+            # apply_injury=False there is no injury report at all (2026-10-26: week 7 rebuilt with nobody out), while the
+            # live-only sources come on. Not a time-valid rebuild; score it once the week is final.
+            print(f'skipped week {week}: not final yet, so it would build as a live week with no injury report', flush=True)
             continue
         today.append(pd.DataFrame({'_key': clean_name_exact(board['Player']), 'week': week,
                                    'today_pts': pd.to_numeric(board['Model Proj Pts'], errors='coerce')}))
+        if a.boards_out:
+            os.makedirs(a.boards_out, exist_ok=True)
+            keep = board.copy()
+            for c in keep.columns:
+                if keep[c].dtype == object:
+                    keep[c] = keep[c].map(lambda v: v if v is None or isinstance(v, (str, int, float, bool)) else str(v))
+            keep.to_parquet(os.path.join(a.boards_out, f'board_{a.year}_wk{week:02d}.parquet'), index=False)
         print(f'built week {week}: {len(board)} players', flush=True)
     today = pd.concat(today, ignore_index=True).drop_duplicates(['_key', 'week'])
     m = frame.merge(today, on=['_key', 'week'], how='inner')
     m['model_pts_live'] = m['model_pts']
-    lines = [f'{a.year} weeks {a.weeks}: today\'s model rebuilt as of each week vs the market / FantasyPros saved then', '']
+    built = ','.join(str(w) for w in sorted(today['week'].unique()))
+    lines = [f'{a.year} weeks {built}: today\'s model rebuilt as of each week vs the market / FantasyPros saved then', '']
     for bench, col in (('Market', 'market_pts'), ('FantasyPros', 'fp_pts')):
         for startable in (True, False):
             rows = []
@@ -69,7 +88,7 @@ def main():
                          f"weeks today better {weeks_better} of {allp['week'].nunique()}")
     text = '\n'.join(lines)
     print(text)
-    with open('.sweeps/eval_today_vs_market.txt', 'w', encoding='utf-8') as fh:
+    with open(a.out, 'w', encoding='utf-8') as fh:
         fh.write(text + '\n')
 
 

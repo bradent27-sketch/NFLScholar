@@ -129,6 +129,103 @@ def _pivot_nflreadpy_snap_counts(year):
     return pivoted
 
 
+def snap_pct_by_pfr_id(year):
+    """Series indexed (pfr_player_id, week) -> the snap pct the wide table holds (max of offense/defense, x100), regular
+    season only. For players the snap counts spell differently from the stats (Bam Knight is "Zonovan Knight"); the
+    roster's ``pfr_id`` is the same PFR id. Empty on any failure."""
+    try:
+        raw = _load_snap_counts_raw(year)
+        if raw is None or raw.empty or not {'pfr_player_id', 'week'}.issubset(raw.columns):
+            return pd.Series(dtype=float)
+        if 'game_type' in raw.columns:
+            raw = raw[raw['game_type'] == 'REG']
+        ids = raw['pfr_player_id'].astype(object).where(raw['pfr_player_id'].notna(), '').astype(str).str.strip()
+        off = pd.to_numeric(raw.get('offense_pct', 0), errors='coerce').fillna(0)
+        dfn = pd.to_numeric(raw.get('defense_pct', 0), errors='coerce').fillna(0)
+        out = pd.DataFrame({'pfr': ids, 'week': pd.to_numeric(raw['week'], errors='coerce'),
+                            'pct': pd.concat([off, dfn], axis=1).max(axis=1) * 100})
+        out = out[out['pfr'].ne('') & out['week'].notna()].drop_duplicates(['pfr', 'week'])
+        return out.set_index(['pfr', 'week'])['pct']
+    except Exception:
+        return pd.Series(dtype=float)
+
+
+def fill_snap_pct_by_pfr_id(stats, by_id):
+    """stats with weekly_snap_pct filled by (pfr_id, week) on the rows the name match left empty. Rows the name match
+    found are untouched."""
+    if by_id is None or by_id.empty or stats.empty or 'pfr_id' not in stats.columns:
+        return stats
+    pfr = stats['pfr_id'].astype(object).where(stats['pfr_id'].notna(), '').astype(str).str.strip()
+    vals = pd.Series(pd.MultiIndex.from_arrays([pfr, pd.to_numeric(stats['week'], errors='coerce')]).map(by_id),
+                     index=stats.index)
+    fill = stats['weekly_snap_pct'].isna() & pfr.ne('') & vals.notna()
+    if fill.any():
+        stats = stats.copy()
+        stats.loc[fill, 'weekly_snap_pct'] = vals[fill].astype(float)
+    return stats
+
+
+_SNAP_COLLISION_COLS = ['exact_name', 'week', 'team', 'pct']
+
+
+def snap_name_collisions(year):
+    """Long table (exact_name, week, team, pct) of the player-weeks where two or more DIFFERENT players share one name
+    in the snap counts. The wide table above is keyed by name alone, so such a week reads as the two players' mean:
+    Justin Jefferson (MIN WR, 89%) and a CLE linebacker of the same name read 44.5% in 2026 week 5, which the
+    partial-game screen then set aside as an injury exit. Others, 2019-2025: Michael Thomas (NO WR / NYG SS),
+    Lamar Jackson (BAL QB / a CB), A.J. Green (ARI WR / CLE CB), DJ Turner (LV WR / CIN CB). load_year_data re-reads
+    those weeks by team (apply_snap_name_collisions). A same-name pair on the same team cannot be told apart that
+    way and is left out. Empty on any failure."""
+    try:
+        raw = _load_snap_counts_raw(year)
+        if raw is None or raw.empty or not {'player', 'week', 'team'}.issubset(raw.columns):
+            return pd.DataFrame(columns=_SNAP_COLLISION_COLS)
+        if 'game_type' in raw.columns:
+            raw = raw[raw['game_type'] == 'REG']
+        raw = raw.copy()
+        raw['exact_name'] = clean_name_exact(raw['player'].astype(str))
+        raw['week'] = pd.to_numeric(raw['week'], errors='coerce')
+        id_col = 'pfr_player_id' if 'pfr_player_id' in raw.columns else 'team'
+        many = raw.groupby(['exact_name', 'week'])[id_col].transform('nunique') > 1
+        c = raw[many]
+        if c.empty:
+            return pd.DataFrame(columns=_SNAP_COLLISION_COLS)
+        off = pd.to_numeric(c.get('offense_pct', 0), errors='coerce').fillna(0)
+        dfn = pd.to_numeric(c.get('defense_pct', 0), errors='coerce').fillna(0)
+        out = pd.DataFrame({'exact_name': c['exact_name'], 'week': c['week'],
+                            'team': c['team'].astype(str).str.strip().str.upper(),
+                            'pct': pd.concat([off, dfn], axis=1).max(axis=1) * 100})
+        return out.drop_duplicates(['exact_name', 'week', 'team'], keep=False).reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame(columns=_SNAP_COLLISION_COLS)
+
+
+def apply_snap_name_collisions(stats, collisions, team_col):
+    """stats with weekly_snap_pct re-read by team on the rows whose (exact_name, week) is a same-name collision (see
+    snap_name_collisions). The team is the raw feed's ``game_team`` (the offense in that game - the roster merge can
+    blank the visible team of a same-name player: Michael Thomas, NO 2022), else ``team_col``. A row whose team has no
+    entry keeps what the name-keyed merge gave it."""
+    if collisions is None or collisions.empty or stats.empty:
+        return stats
+    blank = pd.Series('', index=stats.index, dtype=object)
+
+    def _teams(col):
+        if col not in stats.columns:
+            return blank
+        return stats[col].astype(object).where(stats[col].notna(), '').astype(str).str.strip().str.upper()
+
+    teams = _teams('game_team')
+    teams = teams.where(teams.ne(''), _teams(team_col))
+    weeks = pd.to_numeric(stats['week'], errors='coerce')
+    lookup = collisions.set_index(['exact_name', 'week', 'team'])['pct']
+    vals = pd.Series(pd.MultiIndex.from_arrays([stats['exact_name'], weeks, teams]).map(lookup), index=stats.index)
+    hit = vals.notna()
+    if hit.any():
+        stats = stats.copy()
+        stats.loc[hit, 'weekly_snap_pct'] = vals[hit].astype(float)
+    return stats
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
 def build_veteran_database(target_year):
     try:
@@ -496,7 +593,19 @@ def load_year_data(year):
     # retired) was still receiving a full Week 1 2026 WR projection off his
     # 2025 role/snap history.
     bio_cols = ['gsis_id', 'pfr_id', 'espn_id', 'full_name', 'team', 'position', 'depth_chart_position', 'status', 'age', 'height', 'weight', 'jersey_number', 'years_exp', 'rookie_year', 'birth_date', 'draft_number', 'draft_club', 'entry_year']
-    rosters_clean = rosters[[c for c in bio_cols if c in rosters.columns]].drop_duplicates(subset=['full_name']) if 'full_name' in rosters.columns else rosters
+    # One row per player, keyed the way the merge below joins (gsis_id), latest week first. Deduping by full_name (as this
+    # did until 2026-10-26) kept ONE of two same-named players and left the other's stat rows with no team, so the model
+    # dropped him: Josh Allen (BUF QB; a JAX LB shares the name) was off every 2022 board, Quinshon Judkins (CLE RB; a
+    # stray id-less GB row in week 18) off every 2025 board, also Michael Carter 2021-2023, Michael Thomas 2022-2023,
+    # DJ Turner 2023. A row with no gsis_id cannot join the stats; it is kept only when no identified player has its name.
+    rosters_clean = rosters[[c for c in bio_cols if c in rosters.columns]] if 'full_name' in rosters.columns else rosters
+    if 'full_name' in rosters_clean.columns and 'gsis_id' in rosters_clean.columns:
+        _has_id = rosters_clean['gsis_id'].notna() & rosters_clean['gsis_id'].astype(str).str.strip().ne('')
+        _with_id = rosters_clean[_has_id].drop_duplicates(subset=['gsis_id'])
+        _no_id = rosters_clean[~_has_id & ~rosters_clean['full_name'].isin(set(_with_id['full_name']))]
+        rosters_clean = pd.concat([_with_id, _no_id.drop_duplicates(subset=['full_name'])], ignore_index=True)
+    elif 'full_name' in rosters_clean.columns:
+        rosters_clean = rosters_clean.drop_duplicates(subset=['full_name'])
 
     # roster_weekly_*.csv's own 'position' column is a coarse group (DB/DL/LB/
     # OL for defense/O-line) compared to the granular codes
@@ -583,6 +692,7 @@ def load_year_data(year):
         # from before this session's addition.
         pct_cols = [c for c in snaps.columns if 'pct' in c.lower()]
         week_pct_cols = [c for c in pct_cols if c != 'snap_pct_avg']
+        snaps_by_pfr = snap_pct_by_pfr_id(year)
         if pct_cols and 'week' in stats.columns:
             melted = snaps.melt(id_vars=['exact_name', 'clean_merge_name'], value_vars=pct_cols, var_name='week_str', value_name='weekly_snap_pct')
             melted['week'] = melted['week_str'].str.extract(r'(\d+)').astype(float)
@@ -597,6 +707,10 @@ def load_year_data(year):
                 fallback_map = fallback_pool.set_index(['clean_merge_name', 'week'])['weekly_snap_pct']
                 idx = pd.MultiIndex.from_arrays([stats.loc[unmatched, 'clean_merge_name'], stats.loc[unmatched, 'week']])
                 stats.loc[unmatched, 'weekly_snap_pct'] = idx.map(fallback_map).to_numpy()
+            # two players with one name in the same week: the name-keyed table above averaged them
+            stats = apply_snap_name_collisions(stats, snap_name_collisions(year), team_col)
+            # a name the snap counts spell differently (Bam Knight / "Zonovan Knight"): the same PFR id
+            stats = fill_snap_pct_by_pfr_id(stats, snaps_by_pfr)
             stats['weekly_snap_pct'] = stats['weekly_snap_pct'].fillna(0.0)
         else:
             stats['weekly_snap_pct'] = 0.0
@@ -646,6 +760,12 @@ def load_year_data(year):
             snap_avg = snap_avg.fillna(stats['clean_merge_name'].map(snap_avg_by_loose))
             games_by_loose = fallback_snaps.groupby('clean_merge_name')['_snap_games_row'].max()
             snap_games = snap_games.fillna(stats['clean_merge_name'].map(games_by_loose))
+        if snap_avg.isna().any() and not snaps_by_pfr.empty and 'pfr_id' in stats.columns:
+            # the same PFR-id fallback as the weekly merge, season-level
+            _pfr = stats['pfr_id'].astype(object).where(stats['pfr_id'].notna(), '').astype(str).str.strip()
+            _by = snaps_by_pfr.groupby(level=0)
+            snap_avg = snap_avg.fillna(_pfr.map(_by.mean()))
+            snap_games = snap_games.fillna(_pfr.map(_by.size().astype(float)))
         # has_snap_match captures whether a real snap-count match was ever
         # found, BEFORE the fillna(0.0) collapses "no data available at all"
         # and "genuinely played 0% of snaps" into the same displayed value.

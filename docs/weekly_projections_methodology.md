@@ -6696,3 +6696,20 @@ counts by (PFR id, week) - the roster's `pfr_id` against the snap counts' `pfr_p
 the name match found is never overwritten. Skill-position rows changed: 2019 22 (Bisi Johnson, Benjamin Watson), 2020 9, 2021 12
 (Dee Eskridge, Joseph Fortson), 2022 18, 2023 5, 2024 8, 2025 0, 2026 4 (Bam Knight: 6 / 8 / 44 / 53%).
 `tests/test_snap_name_collisions.py`.
+
+### 2026-10-27 - Season trend study: the league leans to the run late, the board follows (no change)
+User: does passing volume start high and lean to the run as the season goes on, partly from weather?
+`scripts/analyze_season_trend.py`, docs/season_trend_2026-10-27.md.
+- **League (2020-2025 pbp, 3,230 team-games).** Per week: pass attempts -0.065, designed rushes +0.068, neutral pass rate -0.0018.
+  Over a season that is about 1 pass turning into 1 run per team-game (~3%). The rate is flat through week 8 and falls after.
+- **Weather.** Outdoors, temperature takes the week slope on neutral pass rate from -0.0022 to -0.0004 (temperature +0.00084 per
+  degree F, wind -0.0012 per mph; team-season fixed effects). Indoors neutral pass rate barely moves, but attempts fall about as
+  much as outdoors. Yards per dropback: +0.0096 per degree, -0.042 per mph.
+- **Board (2022-2025 weeks 3-17 base).** No drift in team or QB passing volume, nor in QB, WR, RB or TE points, by week or by game
+  temperature. Two stat-level drifts did not survive a fast screen (fit on two seasons, scored on the other two, four ways):
+  - RB carries run under in cold outdoor games (0.945 at 32F and below). A cold carries lift picks no lift or hurts held out.
+  - TE1 targets run under late (0.901 -> 0.823; the league TE target share rises, the board's does not). A week-growing lift
+    helps 3 of 4 folds slightly and hurts one. Watch item W9.
+- **2026.** Weeks 3-6 ran 2-3 attempts above recent seasons, more than the normal lean explains. The board reached 1.046
+  projected/actual in week 7 as passing cooled (W1).
+Temperature stays out of the model.

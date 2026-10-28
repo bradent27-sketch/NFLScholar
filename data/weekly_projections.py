@@ -2411,6 +2411,9 @@ MODEL_FEATURES = (
     'v2_points_scale_v6',  # CANDIDATE (2026-10-25, user: "Refit the points scale"). The points lines, the low
                              # end and (if re-fit) the season anchor's s from one re-fit
                              # on the current model (POINTS_SCALE_V6 / points_scale).
+    'v2_recency_calibration_wrte',  # SHIPPED 2026-10-27 (user, from the CFB app). The WR/TE points lines weighted
+                             # toward recent seasons (RECENCY_CALIBRATION_DELTA on the
+                             # shipped lines); QB/RB unchanged. See points_scale.
     'v2_silent_participation',  # SHIPPED 2026-10-25 (with v2_silent_games). The WR/TE participation curve
                              # read as P(any offensive snap | share) (silent games are
                              # appearances), not P(box-score row | share), so a silent
@@ -3101,6 +3104,12 @@ DEFAULT_FEATURES = frozenset({
     'v2_keep_fully_excluded_no_prior',
     'v2_rb_lone_lead_vacancy',
     'v2_ps_line_routing',
+    # SHIPPED 2026-10-27 (user: "yeah do this for WR/TE"): DEFAULT_FEATURES = 72. The WR/TE points lines weighted toward recent
+    # seasons (RECENCY_CALIBRATION_DELTA, see points_scale). Not harness-testable (the lines are fit on the harness's seasons);
+    # forward-chained 2023-2025 against the shipped lines: START-ALL -0.0008 [-0.0022, +0.0005], START-TE -0.0049, ALL -0.0008
+    # [-0.0016, -0.0001], no season or position worse. Part of the calibration step (inert without 'calibration'). Undo: remove
+    # this flag.
+    'v2_recency_calibration_wrte',
 })
 
 
@@ -3471,9 +3480,38 @@ def points_line(pos, week, raw, low_end=False, scale=None):
 POINTS_SCALE_V6 = None
 
 
+# 'v2_recency_calibration_wrte' (SHIPPED 2026-10-27, user, from the CFB app: weight the calibration toward recent seasons; backlog
+# M11). The v4 lines count every season 2021-2025 the same. The QB and RB lines bounce season to season, but the WR/TE in-season
+# lines drift (each season's own slope: WR 0.950 in 2021 -> ~1.0 in 2024-25, TE 0.990 -> 1.03-1.06; recent seasons want less
+# shrink at the top). The shipped WR/TE lines get the difference between a fit weighting each season 0.5 ** (seasons back from
+# 2025) and an equal-weight fit, both on the 2026-10-25 calibration_lab_silent dump (scripts/eval_recency_calibration.py).
+# Forward-chained (each of 2023-2025 from earlier seasons only), this exact form against the shipped lines: START-ALL -0.0008
+# [-0.0022, +0.0005] 27-18 weeks, START-TE -0.0049, START-WR -0.0005, ALL -0.0008 [-0.0016, -0.0001], EVERY-ALL +0.0001, no
+# season worse (2023 -0.0002, 2024 -0.0023, 2025 -0.0000). QB/RB, the low end and the season anchor are unchanged.
+RECENCY_CALIBRATION_DELTA = {                    # bucket: {pos: (slope delta, intercept delta)}
+    'cold': {'WR': (-0.0036, -0.0277), 'TE': (0.0004, -0.0230)},
+    'rest': {'WR': (0.0094, -0.0614), 'TE': (0.0201, -0.0348)},
+}
+
+
+def recency_calibration_scale():
+    """The shipped tables with RECENCY_CALIBRATION_DELTA added to the WR/TE season-phase lines (a points_scale dict)."""
+    by_bucket = {b: dict(lines) for b, lines in WEEKLY_CALIBRATION_BY_BUCKET.items()}
+    for bucket, deltas in RECENCY_CALIBRATION_DELTA.items():
+        for pos, (d_slope, d_icept) in deltas.items():
+            slope, icept = WEEKLY_CALIBRATION_BY_BUCKET.get(bucket, {}).get(pos, WEEKLY_CALIBRATION[pos])
+            by_bucket.setdefault(bucket, {})[pos] = (slope + d_slope, icept + d_icept)
+    return {'lines': WEEKLY_CALIBRATION, 'by_bucket': by_bucket}
+
+
 def points_scale(feats):
-    """The re-fit points scale when 'v2_points_scale_v6' is on and fit, else None (the shipped tables)."""
-    return POINTS_SCALE_V6 if 'v2_points_scale_v6' in feats and POINTS_SCALE_V6 else None
+    """The points scale in place of the shipped tables: the re-fit when 'v2_points_scale_v6' is on and fit (it wins), the
+    recency-weighted WR/TE lines with 'v2_recency_calibration_wrte', else None (the shipped tables)."""
+    if 'v2_points_scale_v6' in feats and POINTS_SCALE_V6:
+        return POINTS_SCALE_V6
+    if 'v2_recency_calibration_wrte' in feats:
+        return recency_calibration_scale()
+    return None
 
 
 # Subtraction candidates (2026-10-23, from the CFB comparison's multiplier strength audit, scripts/audit_factor_gamma.py on the

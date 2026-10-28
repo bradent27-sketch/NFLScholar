@@ -9,7 +9,8 @@ with week 7 in (all but Monday's DAL-PHI game, which is not in the data yet). Ev
 
 ## 1. Where the model stands
 
-- **DEFAULT_FEATURES = 71**, unchanged since 10-25. The branch `open-items-2026-10-07` is pushed; `main` is untouched.
+- **DEFAULT_FEATURES = 72** (update, later on 10-27): `v2_recency_calibration_wrte` shipped - the WR/TE points lines weighted
+  toward recent seasons (backlog M11). It was 71 when the numbers below were measured. The branch `open-items-2026-10-07` is pushed; `main` is untouched.
 - **Since 10-26:**
   - Six data fixes from the sense check, none of them model flags:
     - four same-name joins (Justin Jefferson, Josh Allen 2022, Quinshon Judkins 2025 and others);

@@ -6736,3 +6736,30 @@ User (an idea from the CFB app): weight the calibration toward recent seasons in
   judge either, because the lines are fit on its seasons.
 
 Backlog M11, candidate (not built).
+
+### 2026-10-27 - Shipped: `v2_recency_calibration_wrte` (DEFAULT_FEATURES = 72)
+User: "yeah do this for WR/TE" (follow-up to the first read above).
+- **What it does.** The shipped WR/TE points lines (WEEKLY_CALIBRATION_BY_BUCKET cold/rest) get the difference between two fits on
+  the 2026-10-25 `calibration_lab_silent` dump, 2021-2025: one weighting each season 0.5 ** (seasons back from 2025), one equal.
+  - The deltas (RECENCY_CALIBRATION_DELTA, slope / intercept): WR cold -0.0036 / -0.0277, WR rest +0.0094 / -0.0614, TE cold
+    +0.0004 / -0.0230, TE rest +0.0201 / -0.0348.
+  - QB/RB lines, the low end and the season anchor are unchanged.
+  - It is a `points_scale` dict, so every calibration call site reads it. A fit `v2_points_scale_v6` takes precedence.
+- **Why the delta, not a re-fit.** The 2026-10-25 re-fit of the lines did not beat the shipped scale held out, so only the part the
+  season weights add is moved onto the shipped lines.
+- **Evidence for this exact form** (forward-chained: each of 2023-2025 takes its delta from earlier seasons only, scored against the
+  shipped lines):
+  - START-ALL -0.0008 [-0.0022, +0.0005] (27-18 weeks);
+  - START-TE -0.0049, START-WR -0.0005, ALL -0.0008 [-0.0016, -0.0001], EVERY-ALL +0.0001;
+  - by season: 2023 -0.0002, 2024 -0.0023, 2025 -0.0000;
+  - TE bias -0.63 -> -0.58.
+  - This is smaller than the first read's re-fit-against-re-fit -0.0019. A harness run cannot judge it, because the lines are fit
+    on its seasons.
+- **2026 week 6 rebuild, on against off.**
+  - Top WRs rise +0.05 to +0.08 (Nacua 22.41 -> 22.49) and top TEs +0.22 to +0.26 (McBride 17.37 -> 17.63, Kittle 15.31 ->
+    15.54).
+  - QB and RB points are unchanged except through the vacancy pass, which runs after calibration and weighs recipients partly by
+    calibrated points. On SF and PHI (players out), seven pass catchers moved +/-0.07 targets and Dameon Pierce -0.37 carries.
+- **Note for later re-fits:** a new calibration dump's `final` includes the flag, so `fit_points_scale.py`'s shipped-pipeline
+  reproduction will differ on WR/TE rows unless it adds the delta.
+- `tests/test_recency_calibration_wrte.py` (5).

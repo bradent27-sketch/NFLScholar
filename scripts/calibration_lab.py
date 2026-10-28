@@ -36,7 +36,7 @@ import pandas as pd  # noqa: E402
 
 from data.transforms import load_and_merge_data  # noqa: E402
 from data.weekly_projections import (  # noqa: E402
-    DEFAULT_FEATURES, _ALL_PROJECTION_STATS, _played_weeks_before, build_weekly_projections)
+    DEFAULT_FEATURES, _ALL_PROJECTION_STATS, _played_weeks_before, build_weekly_projections, drop_shared_name_defenders)
 from data.silent_games import played_players, with_silent_games  # noqa: E402
 from scripts.eval_weekly_model import _actual_points  # noqa: E402
 
@@ -87,8 +87,9 @@ def do_dump(years, weeks, scoring, dump_path, features=HARNESS_BASE_FEATURES):
                 continue
             keep = [c for c in CONTEXT_COLS if c in proj.columns]
             d = proj[keep].rename(columns=CONTEXT_COLS).copy()
-            # the season anchor's inputs, from the frame the build itself passes apply_season_anchor
-            hist = _played_weeks_before(hist_source, week)
+            # the season anchor's inputs, from the frame the build itself passes apply_season_anchor (with the defenders who
+            # share an offensive player's name dropped, as the build does since 2026-10-26)
+            hist = _played_weeks_before(drop_shared_name_defenders(hist_source, name_col)[0], week)
             if not hist.empty and 'fantasy_points' in hist.columns:
                 g = pd.to_numeric(hist['fantasy_points'], errors='coerce').groupby(hist[name_col]).agg(['mean', 'count'])
                 d['anchor_mean'] = d['player'].map(g['mean'])

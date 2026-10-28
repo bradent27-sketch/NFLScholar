@@ -6763,3 +6763,141 @@ User: "yeah do this for WR/TE" (follow-up to the first read above).
 - **Note for later re-fits:** a new calibration dump's `final` includes the flag, so `fit_points_scale.py`'s shipped-pipeline
   reproduction will differ on WR/TE rows unless it adds the delta.
 - `tests/test_recency_calibration_wrte.py` (5).
+
+### 2026-10-28 - Calibration audit, plan and pre-set bars (written before the dump and any analysis)
+User: "check and make sure we are calibrating to the best of our ability, this is the final step of the model essentially and it
+can really complete the accuracy but can also really falter and fail so make sure we are doing it completely and accurately. If you
+think of any new ideas/changes do it for the other positions as well."
+
+The calibration step is everything between the stat line and the shown total: top-end yardage (weeks 3+), the points lines
+(WEEKLY_CALIBRATION, WR/TE cold/rest + RECENCY_CALIBRATION_DELTA, half strength), the low end, the sidelined/zero restore, the
+opening-week stat lines (weeks 1-2), the season anchor, the Questionable cut and the expected-points luck step.
+
+**Found before any data (code read).**
+- The last two calibration checks (the 2026-10-25 points-scale re-fit and the 2026-10-27 recency deltas) used
+  `calibration_lab_silent.csv`, a dump of `silent_snapcurve_lite`: the RB participation model and the backup-TE discount OFF. What
+  shipped (`silent_snapcurve`) keeps both, and three flags and the 10-26/27 data fixes came after. Those layers act on low RB/TE
+  projections, where the low end works. So nothing has yet checked the calibration on the model as it ships.
+- Every call site (the per-position pass, the re-score after vacancy/capacity, top-end yardage, the anchor) reads the same
+  `points_scale(feats)` and low-end switch; the order is the documented one.
+- The lines are fit on Full PPR and applied in every scoring mode. All 27 live ledger boards are Full PPR, so the record is not
+  affected; Half-PPR/Standard boards get Full-PPR intercepts.
+
+**Dump.** `.sweeps/calibration_lab_v8.csv`: today's 72-flag default as the harness base arm (+ the replay flags, +
+v2_historical_ourlads for week 1), 2021-2025 weeks 1-18, every stage recorded (scripts/calibration_lab.py).
+
+**Part 1, is today's calibration still fit to today's model (in sample, all five seasons).** Each fitted set re-fit on the v8 dump
+with its own structure and target: the points lines (played rows, k 0.5) with the recency delta re-derived, the low end (every
+expected game), the anchor s, the Questionable factor, the luck factors. A set is called stale when its re-fit gains more than
+0.002 RMSE on its own scope (START-ALL for the lines and anchor, EVERY-ALL for the low end, START-WR for the Questionable cut,
+START-WR/TE for luck); a stale set then needs the held-out check below before any change. Also read: bias by projection band and
+position, the slope of actual on shown points by position and season phase (weeks 3-4, 5-8, 9-12, 13-17), and weeks 1-2 and 18.
+
+**Part 2, new ideas, every position.** Forward-chained (each of 2023-2025 from earlier seasons only, the way 2026 is predicted),
+the idea re-fit against the shipped structure re-fit on the same seasons, scored harness-style (PLAYED START pools = union of both
+arms' top-N, PLAYED ALL, EVERY-ALL; weeks 3-17; 95% CI over weeks):
+- recency-weighted lines at QB and RB (re-derived on v8; WR/TE re-derived too);
+- season-phase lines at QB and RB, and the cold/rest boundary (week 4 now) at 5-8, and three phases;
+- a top-end knot (its own slope above a high knot, the mirror of the low end), every position;
+- a shrink that depends on the evidence behind the projection (games this season), every position;
+- a low end for QB (QB has none: a QB projected 1-5 raw points gets the 4.15 intercept);
+- the post-line steps at the positions that do not have them: anchor s for QB, the Questionable cut for RB/TE/QB, luck for RB/QB.
+
+An idea passes when START-ALL dRMSE <= -0.001 with the CI upper bound below +0.001, no START position worse by more than +0.002,
+ALL and EVERY-ALL no worse than +0.0005, and no test season worse than +0.001 on START-ALL. An idea aimed at another scope (the QB
+low end: EVERY-QB/ALL) passes when that scope improves with its CI below 0 and START-ALL moves less than 0.0005. A passing idea's
+shippable form (moved onto the shipped constants, as the recency delta was) must then be no worse than shipped on START-ALL
+forward-chained, with no season worse than +0.001. Each goes behind a named flag and ships only on the user's sign-off.
+
+**Added before the v8 run, after a debug run of the script on the old dump** (so these were written having seen that dump's
+reliability table: week 18 runs +0.7 to +1.8 high at every position, and the QB low end's knot of 12 reached the START pool):
+- the QB low-end knot grid is 4 / 6 / 8 raw points (12 touched startable QBs; the idea is about QBs projected a few points);
+- a week-18 line at every position, scored on week 18 alone, forward-chained: same bar as the other ideas, read on week 18
+  (small samples: about 100 START rows per position across the three test seasons);
+- the shippable-form check runs automatically for each passing idea: a line idea moves onto today's constants as the delta (idea
+  minus reference, fit on earlier seasons only), any other part is taken as fit; bar: START-ALL <= 0 against today's pipeline, no
+  season worse than +0.001.
+- added after reading the 2026 live boards (weeks 3-7, pre-kickoff, paired START pool, n 715): the calibration step helps a little
+  overall (raw 7.346 -> shown 7.321; QB 6.775 -> 6.608, RB 7.256 -> 7.236, WR 7.680 -> 7.674, TE 7.190 -> 7.249), but the slope of
+  actual on the shown number is 0.75-0.82 at every position against the market's 0.90-0.99: the board's spread is too wide. The
+  lines calibrate the raw number; the anchor, the Questionable cut and the luck step then move it, and nothing calibrates the
+  number that is shown. Idea: a **final-stage line** - after every step, actual = a + b * shown per position (all weeks, or weeks
+  3-8 / 9+), fit on START rows, k 0.5 and 1.0 - forward-chained under the same bar; and every idea is also scored on 2026 weeks
+  3-7 rebuilt with today's code (`.sweeps/calibration_lab_v8_2026.csv`), fit on 2021-2025, as a read (one season, not a gate).
+- added after the first v8 results and the 2026 read (written before this idea was run): a re-fit of the season anchor's single s
+  (RB 0.75 -> 0.88, WR 0.69 -> 0.82, TE 0.84 -> 1.03) is mixed forward on history (2023 +0.016, 2024 -0.003, 2025 -0.010) but
+  -0.036 START-ALL on 2026 weeks 3-7. The anchor's own write-up found the model's departure from a player's to-date mean
+  right-sized in weeks 3-6 and too big only from week 7, yet one s is used from the second game on. Idea: **the anchor's s by the
+  number of games in the player's mean** (2-3 / 4-6 / 7+), fit per position on training START rows; RB/WR/TE, and the same with
+  QB added. Same bar, forward-chained on 2023-2025, then the 2026 read.
+
+### 2026-10-28 - Calibration audit, results: two re-fits pass; the anchor is the user's call; everything else stays
+Dumps: `.sweeps/calibration_lab_v8.csv` (today's 72 flags, 2021-2025 weeks 1-18, 45,270 rows) and
+`.sweeps/calibration_lab_v8_2026.csv` (2026 weeks 3-7, 2,384 rows). scripts/audit_calibration.py; outputs
+`.sweeps/audit_calibration_v8.txt`, `_v8_2026.txt`, `_v8_anchor_games.txt`, `_v8_2026_anchor_games.txt`.
+
+**A dump bug found and fixed.** The replay of today's constants missed 33 rows by up to 1.5 points: A.J. Green (2021-22) and
+Spencer Brown (2022). scripts/calibration_lab.py built the anchor's season mean by name without the 10-26 namesake drop, so a
+defender's games got in; the board itself was right. Fixed in the dump script (drop_shared_name_defenders), and both dumps
+patched (scripts/patch_dump_anchor_inputs.py, 61 + 1 rows). After that the replay reproduces the board to 0.015 on every row.
+
+**Part 1, today's constants against an in-sample re-fit on today's model (weeks 3-17).**
+
+| set | re-fit | gain on its own scope | stale (> 0.002)? |
+|---|---|---|---|
+| points lines (the shipped way, every played row) | QB (0.850, 2.13) etc. | START-ALL +0.0044 (worse) | no |
+| recency delta re-derived | within 0.02 of shipped | - | no |
+| low end | WR/TE slope 1.2 -> 1.1 | EVERY-ALL -0.0008 | no |
+| anchor s | RB 0.88, WR 0.82, TE 1.03 | START-ALL -0.0018 | no (borderline) |
+| Questionable WR | 0.79 | START-WR -0.0010 | no |
+| luck WR / TE | -0.21 / -0.33 | START-WR -0.0002 / START-TE -0.0077 | **TE yes** |
+
+Reliability (shown vs actual, weeks 3-17): every position within about +-0.5 in the bands that matter; the top of the pool runs a
+little high (QB #1-3 +0.68, TE #1-3 +0.52, WR #9-12 +0.67); week 18 runs high at every position (+0.8 to +1.85, QB slope 0.42);
+week 1 QB +1.34; weeks 3-4 are over-dispersed (slope of actual on shown WR 0.74, TE 0.48, RB 0.80).
+
+**Part 2, ideas, forward-chained 2023-2025 against the shipped structure re-fit (bar above); then 2026 weeks 3-7 (fit 2021-2025).**
+
+| idea | history START-ALL [CI], by season | verdict | 2026 read |
+|---|---|---|---|
+| lines fit on START rows | -0.0015 [-0.0038,+0.0007]; -0.0026 / -0.0007 / -0.0011 | **PASS**; shippable -0.0010, ALL -0.0050 | -0.0110 (TE -0.035) |
+| luck step for QB | -0.0024 [-0.0043,-0.0004], QB -0.0136 | pass; shippable form misses (2023 +0.0011) | -0.0071 |
+| recency at QB / RB (0.7, 0.5) | +0.0000 to +0.0001 | fail | ~0 |
+| WR/TE recency off (equal weights) | +0.0013 (recency better: 2024, 2025) | fail | -0.0037 (equal better) |
+| fit on the weeks the line applies | +0.0003 | fail | - |
+| fit above the low-end knot | +0.0000 (ALL -0.0050) | fail | - |
+| strength k 0.75 / 1.0 | -0.0005 / +0.0036 (seasons swing +-0.015) | fail | - |
+| phase split, every position, cold <= 4/5/6/8 | +0.0010 to +0.0055 | fail | - |
+| three phases | +0.0004 to +0.0021 | fail | - |
+| top-end knot, any position | -0.0003 to +0.0018 | fail | - |
+| slope by games this season | -0.0004 to +0.0012 | fail | - |
+| QB low end | no change (nothing beats today's line on QBs under 8 raw) | fail | - |
+| anchor for QB; Questionable cut for RB/TE/QB; luck for RB | +0.0004; -0.0004/+0.0020/+0.0011; +0.0060 | fail | RB luck -0.015, QB anchor -0.006 |
+| final-stage line (k 0.5/1.0, one or two phases) | -0.0019 to +0.0058 (2024 worse) | fail | -0.012 to -0.019, CIs span 0 |
+| week-18 line (scored on week 18) | -0.0081 [-0.070,+0.091] | fail | - |
+| anchor s by games in the mean | +0.0061 / +0.0059 | fail | -0.024 / -0.031 |
+| anchor s re-fit (single s) | +0.0008; +0.0159 / -0.0031 / -0.0105 | fail | **-0.0356** |
+
+The stale TE luck factor, its held-out check (TE re-fit on earlier seasons only, today's other constants): START-ALL -0.0012
+[-0.0033,+0.0006], START-TE -0.0092, better in all three seasons (START-TE -0.0083 / -0.0036 / -0.0151) - **passes**.
+
+**The constants as coded** (`points_scale`, `expected_points_luck_factors`, `season_anchor_factors`), against today's board:
+
+| flag(s) | history 2021-2025 (in sample) | 2026 weeks 3-7 (unseen) |
+|---|---|---|
+| `v2_points_lines_start_rows` | START-ALL -0.0026, every season better | -0.0110 [-0.0205,-0.0013] |
+| `v2_luck_te_refit` | -0.0010 (EVERY-ALL +0.0020) | -0.0106 [-0.0150,-0.0043], TE -0.075 |
+| both | -0.0031, every season better | **-0.0206 [-0.0322,-0.0090]**, TE -0.102, ALL -0.031, EVERY -0.025 |
+| `v2_anchor_s_refit` | -0.0022; 2021 +0.010, 2022 -0.011, 2023 +0.008, 2024 -0.0075, 2025 -0.0106 | -0.0344 [-0.0392,-0.0270] |
+| all three | -0.0045 | -0.0467 [-0.0643,-0.0260] |
+
+The start-row lines act mostly in weeks 1-4 (history weeks 3-4 START-ALL -0.0055 and every game -0.0082; weeks 5-17 flat): the
+WR/TE cold lines fit on every row were pulled by the low bulk (WR cold (0.859, 1.264) -> (0.754, 2.692), TE cold (0.818, 0.964) ->
+(0.663, 2.704)). A rebuilt 2026 week 7 with all three flags matches the offline replay to 0.05 on 460 of 467 rows (the rest are
+the vacancy pass's knock-on, up to 0.30, PIT/SF/GB); the biggest moves are TEs (+-1.3) and a few RBs (about 1).
+
+**Status.** `v2_points_lines_start_rows` and `v2_luck_te_refit` passed their pre-set bars: candidates for the default on the user's
+sign-off. `v2_anchor_s_refit` missed (2023 worse in every phase; 2024, 2025 and 2026 better): the user's call. Watch: QB luck
+(near-miss), the WR/TE recency weighting (2026 so far prefers equal weights), week 18 (+1 high at every position; a week-18 line is
+too noisy to fit). Not changed: Half-PPR/Standard boards still use Full-PPR lines (every live board is Full PPR).
+`tests/test_calibration_audit_flags.py` (6).

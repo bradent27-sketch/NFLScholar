@@ -2414,6 +2414,13 @@ MODEL_FEATURES = (
     'v2_recency_calibration_wrte',  # SHIPPED 2026-10-27 (user, from the CFB app). The WR/TE points lines weighted
                              # toward recent seasons (RECENCY_CALIBRATION_DELTA on the
                              # shipped lines); QB/RB unchanged. See points_scale.
+    'v2_points_lines_start_rows',  # CANDIDATE (2026-10-28, calibration audit). Every points line moved to its fit
+                             # on the startable rows (START_ROW_LINE_DELTA); passed its
+                             # pre-set bar. See points_scale.
+    'v2_luck_te_refit',  # CANDIDATE (2026-10-28, calibration audit). The TE luck factor re-fit on today's
+                             # model, -0.16 -> EXPECTED_POINTS_LUCK_TE_REFIT (-0.33).
+    'v2_anchor_s_refit',  # CANDIDATE (2026-10-28, calibration audit; missed its bar on 2023). The season
+                             # anchor's s re-fit on today's model (SEASON_ANCHOR_S_REFIT).
     'v2_silent_participation',  # SHIPPED 2026-10-25 (with v2_silent_games). The WR/TE participation curve
                              # read as P(any offensive snap | share) (silent games are
                              # appearances), not P(box-score row | share), so a silent
@@ -3494,24 +3501,86 @@ RECENCY_CALIBRATION_DELTA = {                    # bucket: {pos: (slope delta, i
 }
 
 
+def _moved_scale(scale, deltas):
+    """``scale`` (a points_scale dict) with ``deltas`` added: {'all': {pos: (d_slope, d_icept)}} moves a position's single line
+    (QB/RB), {'cold'|'rest': {pos: ...}} its season-phase line."""
+    lines = dict(scale['lines'])
+    by_bucket = {b: dict(v) for b, v in scale['by_bucket'].items()}
+    for pos, (d_slope, d_icept) in deltas.get('all', {}).items():
+        slope, icept = lines[pos]
+        lines[pos] = (slope + d_slope, icept + d_icept)
+    for bucket in ('cold', 'rest'):
+        for pos, (d_slope, d_icept) in deltas.get(bucket, {}).items():
+            slope, icept = by_bucket.get(bucket, {}).get(pos, scale['lines'][pos])
+            by_bucket.setdefault(bucket, {})[pos] = (slope + d_slope, icept + d_icept)
+    return {**scale, 'lines': lines, 'by_bucket': by_bucket}
+
+
 def recency_calibration_scale():
     """The shipped tables with RECENCY_CALIBRATION_DELTA added to the WR/TE season-phase lines (a points_scale dict)."""
-    by_bucket = {b: dict(lines) for b, lines in WEEKLY_CALIBRATION_BY_BUCKET.items()}
-    for bucket, deltas in RECENCY_CALIBRATION_DELTA.items():
-        for pos, (d_slope, d_icept) in deltas.items():
-            slope, icept = WEEKLY_CALIBRATION_BY_BUCKET.get(bucket, {}).get(pos, WEEKLY_CALIBRATION[pos])
-            by_bucket.setdefault(bucket, {})[pos] = (slope + d_slope, icept + d_icept)
-    return {'lines': WEEKLY_CALIBRATION, 'by_bucket': by_bucket}
+    return _moved_scale({'lines': WEEKLY_CALIBRATION, 'by_bucket': WEEKLY_CALIBRATION_BY_BUCKET}, RECENCY_CALIBRATION_DELTA)
+
+
+# 'v2_points_lines_start_rows' (CANDIDATE 2026-10-28, calibration audit; user: "make sure we are calibrating to the best of our
+# ability ... do it for the other positions as well"). The points lines are fit on every played row, most of them projections
+# nobody starts, which pull the line toward the low bulk; below the knots the low end replaces the line anyway. Fit on the rows the
+# line is judged on - the startable top-N by raw points (STARTABLE_N) - the lines move by START_ROW_LINE_DELTA (start-row fit minus
+# every-row fit, both at k 0.5 with the WR/TE season weights, on the 2026-10-28 calibration_lab_v8 dump of today's 72-flag model,
+# 2021-2025). Mostly the WR/TE weeks 1-4 lines (a harder shrink, a higher floor); in-season WR a little wider, TE a little
+# narrower; QB/RB small. Forward-chained (each of 2023-2025 from earlier seasons only) against today's pipeline: START-ALL -0.0010
+# [-0.0035, +0.0012], ALL -0.0050, EVERY-ALL -0.0004 (weeks 3-4 START-ALL -0.0055, every game -0.0082; weeks 5-17 flat); 2026
+# weeks 3-7 rebuilt with today's code, fit on 2021-2025: START-ALL -0.0110 [-0.0205, -0.0013], START-TE -0.035. scripts/
+# audit_calibration.py; methodology 2026-10-28.
+START_ROW_LINE_DELTA = {
+    'all': {'QB': (-0.0260, 0.5294), 'RB': (-0.0184, 0.2611)},
+    'cold': {'WR': (-0.1054, 1.4280), 'TE': (-0.1550, 1.7399)},
+    'rest': {'WR': (0.0391, -0.4660), 'TE': (-0.0296, 0.1926)},
+}
+
+# 'v2_luck_te_refit' (CANDIDATE 2026-10-28, calibration audit): the TE luck factor re-fit on today's model. Re-fit in sample on
+# 2021-2025 it is -0.33, not -0.16 (WR -0.21, about as shipped); forward-chained with only TE re-fit: START-TE -0.0092, START-ALL
+# -0.0012 [-0.0033, +0.0006], better in 2023, 2024 and 2025; 2026 weeks 3-7: START-TE -0.076, START-ALL -0.011.
+EXPECTED_POINTS_LUCK_TE_REFIT = -0.33
+
+# 'v2_anchor_s_refit' (CANDIDATE 2026-10-28, calibration audit; MISSED its pre-set bar): the season anchor's s re-fit on today's
+# model (fit 2021-2025: RB 0.88, WR 0.82, TE 1.03, capped at 1 = no pull). Since the anchor shipped (2026-10-06) the raw projection
+# has taken in silent games, participation and share recency, and the newer seasons want a weaker pull toward the player's own
+# mean: forward-chained against today's pipeline 2023 +0.0119 (worse in every phase), 2024 -0.0079, 2025 -0.0102; 2026 weeks 3-7
+# -0.0356 [-0.0399, -0.0268] (RB -0.048, WR -0.030, TE -0.065). An s by games-in-the-mean failed (unstable). User's call.
+SEASON_ANCHOR_S_REFIT = {'RB': 0.88, 'WR': 0.82, 'TE': 1.0}
 
 
 def points_scale(feats):
-    """The points scale in place of the shipped tables: the re-fit when 'v2_points_scale_v6' is on and fit (it wins), the
-    recency-weighted WR/TE lines with 'v2_recency_calibration_wrte', else None (the shipped tables)."""
+    """The points scale in place of the shipped tables: the re-fit when 'v2_points_scale_v6' is on and fit (it wins), else the
+    shipped tables moved by the recency-weighted WR/TE lines ('v2_recency_calibration_wrte') and the start-row fit
+    ('v2_points_lines_start_rows'); None when nothing moves them (the shipped tables)."""
     if 'v2_points_scale_v6' in feats and POINTS_SCALE_V6:
         return POINTS_SCALE_V6
-    if 'v2_recency_calibration_wrte' in feats:
-        return recency_calibration_scale()
-    return None
+    deltas = [d for flag, d in (('v2_recency_calibration_wrte', RECENCY_CALIBRATION_DELTA),
+                                ('v2_points_lines_start_rows', START_ROW_LINE_DELTA)) if flag in feats]
+    if not deltas:
+        return None
+    scale = {'lines': WEEKLY_CALIBRATION, 'by_bucket': WEEKLY_CALIBRATION_BY_BUCKET}
+    for d in deltas:
+        scale = _moved_scale(scale, d)
+    return scale
+
+
+def season_anchor_factors(feats):
+    """The anchor's s by position: a fit v6 scale's 'anchor_s', else SEASON_ANCHOR_S_REFIT with 'v2_anchor_s_refit', else None
+    (SEASON_ANCHOR_S)."""
+    fitted = (points_scale(feats) or {}).get('anchor_s')
+    if fitted:
+        return fitted
+    return dict(SEASON_ANCHOR_S_REFIT) if 'v2_anchor_s_refit' in feats else None
+
+
+def expected_points_luck_factors(feats):
+    """The luck step's factor by position: EXPECTED_POINTS_LUCK, with TE re-fit under 'v2_luck_te_refit'."""
+    factors = dict(EXPECTED_POINTS_LUCK)
+    if 'v2_luck_te_refit' in feats:
+        factors['TE'] = EXPECTED_POINTS_LUCK_TE_REFIT
+    return factors
 
 
 # Subtraction candidates (2026-10-23, from the CFB comparison's multiplier strength audit, scripts/audit_factor_gamma.py on the
@@ -14090,7 +14159,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # v2_season_anchor: last step on the points total, after calibration and the sidelined/zero restore.
     season_anchor_info = {}
     if 'v2_season_anchor' in feats and not cold_start:
-        result, season_anchor_info = apply_season_anchor(result, hist, name_col, factors=(points_scale(feats) or {}).get('anchor_s'))
+        result, season_anchor_info = apply_season_anchor(result, hist, name_col, factors=season_anchor_factors(feats))
         if season_anchor_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
@@ -14106,7 +14175,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     luck_info = {}
     if 'v2_expected_points_luck' in feats and not cold_start:
         result, luck_info = apply_expected_points_luck(
-            result, expected_points_luck_table(year, as_of_week, scoring_mode))
+            result, expected_points_luck_table(year, as_of_week, scoring_mode), factors=expected_points_luck_factors(feats))
         if luck_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 

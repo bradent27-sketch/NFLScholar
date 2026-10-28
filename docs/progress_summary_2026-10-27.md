@@ -9,6 +9,9 @@ with week 7 in (all but Monday's DAL-PHI game, which is not in the data yet). Ev
 
 ## 1. Where the model stands
 
+- **DEFAULT_FEATURES = 76** (update, 10-28): the calibration audit's four changes shipped (backlog M12): points lines fit on
+  the startable rows, TE luck -0.33, a weaker season anchor (RB 0.88 / WR 0.82 / TE 1.0) and a centered QB luck step; 2026
+  weeks 3-7 START-ALL -0.0505 against the 72-flag board.
 - **DEFAULT_FEATURES = 72** (update, later on 10-27): `v2_recency_calibration_wrte` shipped - the WR/TE points lines weighted
   toward recent seasons (backlog M11). It was 71 when the numbers below were measured. The branch `open-items-2026-10-07` is pushed; `main` is untouched.
 - **Since 10-26:**

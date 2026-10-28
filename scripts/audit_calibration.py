@@ -29,9 +29,10 @@ import pandas as pd  # noqa: E402
 
 from data.expected_points import load_ff_opportunity_weekly, luck_per_game  # noqa: E402
 from data.utils import clean_name_exact  # noqa: E402
-from data.weekly_projections import (EXPECTED_POINTS_LUCK, LOW_END_POINTS_LINE, QUESTIONABLE_WORKLOAD_FACTORS,  # noqa: E402
-                                     SEASON_ANCHOR_MIN_GAMES, SEASON_ANCHOR_S, SIDELINED_AVAILABILITY, WEEKLY_CALIBRATION,
-                                     WEEKLY_CALIBRATION_BY_BUCKET, recency_calibration_scale)
+from data.weekly_projections import (DEFAULT_FEATURES, EXPECTED_POINTS_LUCK_CENTER, LOW_END_POINTS_LINE,  # noqa: E402
+                                     QUESTIONABLE_WORKLOAD_FACTORS, SEASON_ANCHOR_MIN_GAMES, SEASON_ANCHOR_S,
+                                     SIDELINED_AVAILABILITY, WEEKLY_CALIBRATION, WEEKLY_CALIBRATION_BY_BUCKET,
+                                     expected_points_luck_factors, points_scale, season_anchor_factors)
 from scripts.eval_calibration_schemes import POS, boot_ci, load_dump, top_n_mask  # noqa: E402
 
 MIN_ROWS = 60
@@ -131,15 +132,17 @@ def bucket_array(A, bucket):
     return out
 
 
-def shipped_config(recency=True):
-    scale = recency_calibration_scale() if recency else {'lines': WEEKLY_CALIBRATION, 'by_bucket': WEEKLY_CALIBRATION_BY_BUCKET}
+def shipped_config(feats=DEFAULT_FEATURES):
+    """The calibration constants a build with ``feats`` uses (the points scale, the anchor's s, the luck factors)."""
+    scale = points_scale(feats) or {'lines': WEEKLY_CALIBRATION, 'by_bucket': WEEKLY_CALIBRATION_BY_BUCKET}
     lines = {}
     for p in POS:
         lines[(p, 'all')] = scale['lines'][p]
         for b in ('cold', 'rest'):
             lines[(p, b)] = scale['by_bucket'].get(b, {}).get(p, scale['lines'][p])
     return {'bucket': shipped_bucket, 'lines': lines, 'low': dict(LOW_END_POINTS_LINE), 'top': {}, 'evid': None,
-            'anchor_s': dict(SEASON_ANCHOR_S), 'q': dict(QUESTIONABLE_WORKLOAD_FACTORS), 'luck': dict(EXPECTED_POINTS_LUCK)}
+            'anchor_s': dict(season_anchor_factors(feats) or SEASON_ANCHOR_S), 'q': dict(QUESTIONABLE_WORKLOAD_FACTORS),
+            'luck': dict(expected_points_luck_factors(feats)), 'luck_center': dict(EXPECTED_POINTS_LUCK_CENTER)}
 
 
 def line_stage(A, C, barr=None):
@@ -185,7 +188,7 @@ def late_stage(A, cal, C):
         shown[m] = shown[m] * f
     for p, b in C['luck'].items():
         m = A.posm[p] & ~np.isnan(A.luck) & (A.lgames >= 1) & (A.avail > SIDELINED_AVAILABILITY) & (shown > 0.005)
-        shown[m] = np.clip(shown[m] + b * A.luck[m], 0.0, None)
+        shown[m] = np.clip(shown[m] + b * (A.luck[m] - C.get('luck_center', {}).get(p, 0.0)), 0.0, None)
     return shown
 
 
@@ -665,6 +668,9 @@ def main():
     ap.add_argument('--dump-path', default='.sweeps/calibration_lab_v8.csv')
     ap.add_argument('--part', default='all', choices=('1', '2', 'all'))
     ap.add_argument('--no-recency', action='store_true', help='the dump was built without v2_recency_calibration_wrte')
+    ap.add_argument('--replay-without', default='',
+                    help='flags of DEFAULT_FEATURES the dump was built without, e.g. the four shipped 2026-10-28 for the '
+                         'calibration_lab_v8 dumps: v2_points_lines_start_rows,v2_luck_te_refit,v2_anchor_s_refit,v2_luck_qb')
     ap.add_argument('--only', default='', help='part 2: comma-separated substrings of the idea labels to run')
     ap.add_argument('--extra-dump', default='', help='a second dump appended (the 2026 weeks rebuilt with the current code)')
     ap.add_argument('--tests', default='2023,2024,2025', help='part 2: the forward-chained test seasons')
@@ -672,7 +678,8 @@ def main():
     a = ap.parse_args()
     d = prepare(a.dump_path, a.extra_dump)
     A = Arr(d)
-    C_ship = shipped_config(recency=not a.no_recency)
+    without = {f for f in a.replay_without.split(',') if f} | ({'v2_recency_calibration_wrte'} if a.no_recency else set())
+    C_ship = shipped_config(frozenset(DEFAULT_FEATURES - without))
     rep = run(A, C_ship, np.zeros(A.n))
     diff = (A.final - rep)
     win = A.window & A.applies

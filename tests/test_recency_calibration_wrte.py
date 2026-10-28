@@ -19,7 +19,7 @@ def test_flag_is_registered_and_shipped():
 
 def test_off_is_the_shipped_tables():
     assert wp.points_scale(set()) is None
-    assert wp.points_scale(wp.DEFAULT_FEATURES - {FLAG}) is None
+    assert wp.points_scale(wp.DEFAULT_FEATURES - {FLAG, 'v2_points_lines_start_rows'}) is None   # the other line delta
 
 
 def test_on_moves_only_the_wr_te_season_phase_lines():

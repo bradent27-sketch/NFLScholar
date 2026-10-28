@@ -2123,9 +2123,11 @@ def _render_points_path(detail):
     if luck:
         before, after = float(luck['before']), float(luck['after'])
         ahead = float(luck['luck_pg']) > 0
+        center = float(luck.get('center', 0.0) or 0.0)
+        against = (f" (measured against the average {detail.get('position', 'QB')}'s {center:+.1f})" if center else '')
         rows.append({'Stage': 'Usage vs results', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
                      'Basis': (f"Over {int(luck['games'])} earlier games he scored {abs(float(luck['luck_pg'])):.1f} pts per game "
-                               f"{'more' if ahead else 'less'} than his usage was worth (nflverse expected points); "
+                               f"{'more' if ahead else 'less'} than his usage was worth (nflverse expected points){against}; "
                                f"{abs(float(luck['factor'])):.2f} of that comes back.")})
     if not rows:
         return

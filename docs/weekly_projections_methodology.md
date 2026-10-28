@@ -6901,3 +6901,57 @@ sign-off. `v2_anchor_s_refit` missed (2023 worse in every phase; 2024, 2025 and 
 (near-miss), the WR/TE recency weighting (2026 so far prefers equal weights), week 18 (+1 high at every position; a week-18 line is
 too noisy to fit). Not changed: Half-PPR/Standard boards still use Full-PPR lines (every live board is Full PPR).
 `tests/test_calibration_audit_flags.py` (6).
+
+### 2026-10-28 - Calibration audit, shipped: start-row lines, TE luck, a weaker anchor and QB luck (DEFAULT_FEATURES = 76)
+User: "ok yeah go ahead and weaken the season anchor if that looks good" and "the QB luck correlation is really close and
+generally helps? This is probably worthwhile". On: `v2_points_lines_start_rows`, `v2_luck_te_refit`, `v2_anchor_s_refit` and a
+new `v2_luck_qb`. Checks made before shipping (scratch scripts on the v8 dumps, offline replay):
+
+**How far to weaken the anchor.** s = shipped + f x (re-fit - shipped), on top of the start-row lines and TE luck, START-ALL
+against that board:
+
+| f | s RB / WR / TE | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 wk 3-7 |
+|---|---|---|---|---|---|---|---|
+| 0.5 | 0.815 / 0.755 / 0.92 | +0.0028 | -0.0092 | +0.0020 | -0.0062 | -0.0069 | -0.0188 |
+| 0.75 | 0.848 / 0.787 / 0.96 | +0.0064 | -0.0108 | +0.0049 | -0.0078 | -0.0090 | -0.0246 |
+| 1.0 (shipped) | 0.88 / 0.82 / 1.0 | +0.0109 | -0.0108 | +0.0079 | -0.0081 | -0.0099 | -0.0284 |
+
+Half costs the two bad seasons less but gains less in every season since 2023, and a fit on 2024-2025 alone is weaker still (RB
+0.92, WR 0.88, TE 1.13): the full re-fit.
+
+**QB luck, centered.** The feed over-expects QBs: their mean luck on the fit rows is -0.50 per game (2022 -1.26, 2025 +0.08; WR
++0.33, TE +0.36), so a plain b x luck nudges every QB up (START-QB bias +0.32 -> +0.38) and hurts every late scratch (actual 0):
+EVERY-QB +0.015 [+0.003, +0.027] in sample. Centered, b x (luck + 0.50), the bias stays put. b = -0.11 (2021-2025 in sample; by
+season -0.18 / +0.08 / -0.02 / -0.18 / -0.50, 2026 -0.30). Forward-chained (b and the center fit on earlier seasons) against
+today's board, START-ALL by season:
+
+| QB luck | 2023-2025 START-QB [CI] | EVERY-QB | 2023 | 2024 | 2025 | 2026 START-QB |
+|---|---|---|---|---|---|---|
+| plain | -0.0075 [-0.0154, +0.0006] | +0.0015 | +0.0007 | -0.0012 | -0.0034 | -0.0284 |
+| centered (shipped) | -0.0072 [-0.0151, +0.0007] | -0.0019 | +0.0002 | -0.0006 | -0.0033 | -0.0273 |
+
+In sample at -0.11 the QB step is worse in 2022 and 2023 (START-QB +0.028, +0.006): the newer seasons carry it. Typical move
++-0.3 points (QB luck sd 2.8 per game). The board's "how the point total is built" row names the center.
+
+**TE/WR luck under the weaker anchor.** The in-sample luck fit moves to TE -0.24, WR -0.13 once the anchor is weaker; 2021-2025
+prefers TE -0.24 (START-TE -0.004) but 2026 weeks 3-7 prefer -0.33 (START-TE +0.018 at -0.24), and the TE fit has grown more
+negative season by season (fit on seasons before 2023/24/25/26: -0.14/-0.17/-0.19/-0.24). Kept at TE -0.33, WR -0.18.
+
+**The four together against today's (72-flag) board:**
+
+| scope | 2021-2025 (in sample) | 2026 weeks 3-7 (fit 2021-2025 only) |
+|---|---|---|
+| START-ALL | -0.0053 [-0.0157, +0.0043] | **-0.0505 [-0.0737, -0.0214]** |
+| START QB / RB / WR / TE | -0.004 / -0.011 / -0.001 / -0.008 | -0.032 / -0.055 / -0.033 / -0.111 |
+| ALL / EVERY-ALL | +0.0010 / +0.0047 | -0.0447 / -0.0343 |
+| EVERY-QB | +0.0268 [+0.0124, +0.0412] | +0.0001 |
+| START-ALL by season | 2021 +0.0061, 2022 -0.0072, 2023 +0.0067, 2024 -0.0127, 2025 -0.0196 | |
+
+On record: 2021 and 2023 are worse (the anchor), and in sample the every-game QB scope is worse (the start-row QB line lifts low
+QB projections, backups and late scratches; the QB luck step adds a little), not in 2026. The audit script now replays the
+constants of DEFAULT_FEATURES (`shipped_config(feats)`, the luck center included); the v8 dumps were built on the 72-flag model,
+so replay them with `--replay-without v2_points_lines_start_rows,v2_luck_te_refit,v2_anchor_s_refit,v2_luck_qb`.
+
+Wiring: 2026 week 7 rebuilt with the 76 flags (harness base arm) matches the offline replay to 0.05 on 460 of 467 rows (the rest
+the vacancy pass's knock-on, up to 0.30, PIT/SF/GB). Mean |move| against the 72-flag board QB 0.15, RB 0.16, WR 0.20, TE 0.28;
+the biggest are TEs (+-1.35) and a few RBs (about 1); QBs move up to +0.77 (Brissett, Jones: unlucky so far). Suite: 1001 passed.

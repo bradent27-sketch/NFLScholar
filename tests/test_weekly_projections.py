@@ -3985,7 +3985,8 @@ def test_v2_season_anchor_moves_the_built_board_toward_the_players_to_date_avera
         wp.build_weekly_projections.clear()
     off, on = boards['off'].loc['KC Alpha', 'Model Proj Pts'], boards['on'].loc['KC Alpha', 'Model Proj Pts']
     assert off < 30.0                                                   # his projection is below his 30.0 average...
-    assert on == pytest.approx(30.0 + wp.SEASON_ANCHOR_S['WR'] * (off - 30.0), abs=0.02) and on > off   # ...so it is pulled up
+    s = (wp.season_anchor_factors(wp.DEFAULT_FEATURES) or wp.SEASON_ANCHOR_S)['WR']    # the shipped s (v2_anchor_s_refit)
+    assert on == pytest.approx(30.0 + s * (off - 30.0), abs=0.02) and on > off   # ...so it is pulled up
     assert boards['on'].loc['KC QB', 'Model Proj Pts'] == boards['off'].loc['KC QB', 'Model Proj Pts']   # QB untouched
     assert boards['on'].loc['KC Alpha', 'Raw Model Proj Pts'] == boards['off'].loc['KC Alpha', 'Raw Model Proj Pts']
     anchor = metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['season_anchor']

@@ -6713,3 +6713,26 @@ User: does passing volume start high and lean to the run as the season goes on, 
 - **2026.** Weeks 3-6 ran 2-3 attempts above recent seasons, more than the normal lean explains. The board reached 1.046
   projected/actual in week 7 as passing cooled (W1).
 Temperature stays out of the model.
+
+### 2026-10-27 - Recency-weighted calibration: a first read (no change)
+User (an idea from the CFB app): weight the calibration toward recent seasons instead of giving every past season equal value.
+- **Current state: not done.** Every season in the calibration window counts the same. The points lines (WEEKLY_CALIBRATION,
+  WR/TE cold/rest) are an unweighted `np.polyfit` over 2021-2025. The low end, the season anchor's s, the weather slopes
+  (2015-2025) and the median curves are pooled the same way. Recency lives only in the player projections: in-season weights,
+  and the prior season against the current one.
+- **Test** (`scripts/eval_recency_calibration.py`): forward-chained, so each of 2023-2025 is calibrated from earlier seasons only,
+  as live 2026 is from 2021-2025. Season weights are decay ** (seasons back). The baseline is the same forward fit at equal
+  weights. The low end and the anchor stay as shipped.
+- **QB and RB:** each season's own line bounces with no trend; recency only adds noise (RB +0.001 to +0.006).
+- **WR and TE:** the in-season lines drift. The WR slope goes 0.950 (2021) to about 1.0 (2024-25); TE goes 0.990 to 1.03-1.06.
+  Recent seasons want less shrink at the top.
+- **Result, WR/TE lines only, decay 0.5:** START-ALL -0.0019 [-0.0033, -0.0006] (30-15 weeks), TE -0.0068, WR -0.0025,
+  EVERY-ALL -0.0008. No season is worse (2023 -0.0001, 2024 -0.0035, 2025 -0.0023).
+- **Size of the move for 2026** (decay 0.5 against an equal fit):
+  - a WR rest-of-season raw 22 goes 21.79 -> 21.94;
+  - a TE raw 15 goes 15.42 -> 15.69;
+  - a TE raw 22 goes 22.49 -> 22.89.
+- **Caveat:** it rides on a line re-fit, and the 2026-10-25 re-fit did not beat the shipped scale held out. A harness run cannot
+  judge either, because the lines are fit on its seasons.
+
+Backlog M11, candidate (not built).

@@ -33,7 +33,7 @@ from data import ledger_scorecard as sc  # noqa: E402
 from data.loaders import load_schedule  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
 from data.utils import clean_name_exact  # noqa: E402
-from data.weekly_median import stat_median  # noqa: E402
+from data.weekly_median import recal_mask, stat_median  # noqa: E402
 from scripts.eval_market_record import GAPS, wilson  # noqa: E402
 from ui.games_view import LINE_BOOKS, MIN_LEAN_LINE, _MEAN_STATS  # noqa: E402
 
@@ -109,7 +109,8 @@ def main():
         if stat not in live.columns or acol not in live.columns:
             continue
         mean = pd.to_numeric(live[stat], errors='coerce')
-        med = pd.Series([stat_median(p, stat, m) if np.isfinite(m) else np.nan for p, m in zip(live['Pos'], mean)], index=live.index)
+        med = pd.Series([stat_median(p, stat, m, r) if np.isfinite(m) else np.nan
+                         for p, m, r in zip(live['Pos'], mean, recal_mask(live, stat))], index=live.index)
         act = pd.to_numeric(live[acol], errors='coerce')
         for label, lines in (('at board', at_build), ('at close', at_close)):
             line = pd.Series([lines.get((w, k, market), np.nan) for w, k in zip(live['week'], live['_key'])], index=live.index)
@@ -146,6 +147,8 @@ def main():
     builds = pd.concat([pd.read_parquet(p) for p in paths], ignore_index=True)
     builds['_key'] = clean_name_exact(builds['Player'])
     builds['build_ts'] = pd.to_datetime(builds['build_ts'], utc=True)
+    for stat in LINE_STATS:      # a flag, not the NaN-able column: groupby().first() would skip a first build's NaN
+        builds['_rc_' + stat] = recal_mask(builds, stat)
     first = builds.sort_values('build_ts').groupby(['week', '_key']).first()
     mrows = []
     for stat, market in LINE_STATS.items():
@@ -155,8 +158,9 @@ def main():
         idx = pd.MultiIndex.from_arrays([p['week'], p['_key']])
         mean = pd.to_numeric(first[stat].reindex(idx), errors='coerce').to_numpy()
         pos = first['Pos'].reindex(idx).to_numpy()
-        p['model'] = [stat_median(ps, stat, mu) if isinstance(ps, str) and np.isfinite(mu) and mu > 0 else np.nan
-                      for ps, mu in zip(pos, mean)]
+        rc = first['_rc_' + stat].reindex(idx).fillna(False).to_numpy(bool)
+        p['model'] = [stat_median(ps, stat, mu, r) if isinstance(ps, str) and np.isfinite(mu) and mu > 0 else np.nan
+                      for ps, mu, r in zip(pos, mean, rc)]
         p = p[[leanable(stat, v) for v in p['open']]]
         p['move'] = p['close'] - p['open']
         p['lean'] = p['model'] - p['open']

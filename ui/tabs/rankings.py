@@ -947,7 +947,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     stage_totals = {stage: {} for stage in (
         'raw_average', 'season_adj', 'player_projection', 'after_defense',
         'after_context', 'after_capacity', 'after_budget', 'after_vacancy', 'after_top_end', 'after_opening',
-        'final')}
+        'after_own_history', 'final')}
     raw_average_notes = set()
     prior2_weights = []
     context_ingredients = None
@@ -1000,6 +1000,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         # stat line; they never fire in the same week.
         top_end_raw = float(values.get('top_end_delta', 0.0) or 0.0)
         opening_raw = float(values.get('opening_calibration_delta', 0.0) or 0.0)
+        # v2_stat_recal_own_history: the very last stage on the stat line (re-predicted from his own history); points unchanged.
+        own_raw = float(values.get('own_history_delta', 0.0) or 0.0)
 
         raw_avg_val = values.get('raw_prior_rate')
         season_adj_val = values.get('defense_adjusted_prior_rate')
@@ -1020,6 +1022,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
                              if after_vacancy_val is not None else None)
         after_opening_val = (after_top_end_val + opening_raw
                              if after_top_end_val is not None else None)
+        after_own_val = (after_opening_val + own_raw
+                         if after_opening_val is not None else None)
         final_val = values.get('final_projection', values.get('projection'))
         for stage, val in (
             ('raw_average', raw_avg_val), ('season_adj', season_adj_val),
@@ -1027,7 +1031,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             ('after_context', after_context_val), ('after_capacity', after_capacity_val),
             ('after_budget', after_budget_val),
             ('after_vacancy', after_vacancy_val), ('after_top_end', after_top_end_val),
-            ('after_opening', after_opening_val), ('final', final_val),
+            ('after_opening', after_opening_val), ('after_own_history', after_own_val), ('final', final_val),
         ):
             if val is not None and pd.notna(val):
                 stage_totals[stage][stat] = float(val)
@@ -1057,6 +1061,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             'Vacancy Δ': _fmt_stat(stat, vacancy_raw, signed=True),
             'Top-end yardage Δ': _fmt_stat(stat, top_end_raw, signed=True),
             'Opening-week calibration Δ': _fmt_stat(stat, opening_raw, signed=True),
+            'Own-history Δ': _fmt_stat(stat, own_raw, signed=True),
             'Projected value': _fmt_stat(stat, final_val),
             # The de-vigged, reliability-weighted multi-book consensus for the
             # SAME stat (data.odds_projections.market_stat_lines). Dashes when
@@ -1068,6 +1073,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             '_budget_raw': budget_raw,
             '_top_end_raw': top_end_raw,
             '_opening_raw': opening_raw,
+            '_own_raw': own_raw,
             '_defense_mult': matchup_mult,
             '_context_mult': context_mult,
         })
@@ -1081,6 +1087,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     show_top_end = any(abs(v) > 0.0005 for v in top_end_vals)
     opening_vals = table['_opening_raw'].tolist()
     show_opening = any(abs(v) > 0.0005 for v in opening_vals)
+    own_vals = table['_own_raw'].tolist()
+    show_own = any(abs(v) > 0.0005 for v in own_vals)
     display_cols = ['Stat', 'Previous Avg', 'Previous Adj Avg']
     if has_current_season_data:
         display_cols.append('Current Season Avg')
@@ -1096,6 +1104,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         display_cols.append('Top-end yardage Δ')
     if show_opening:
         display_cols.append('Opening-week calibration Δ')
+    if show_own:
+        display_cols.append('Own-history Δ')
     display_cols.append('Projected value')
     show_market = market_detail is not None and (
         market_detail.get('consensus') or market_detail.get('market_points_partial') is not None)
@@ -1114,7 +1124,8 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         'Player Projection': 'player_projection', 'Defense multiplier': 'after_defense',
         'Context multiplier': 'after_context', 'Team capacity Δ': 'after_capacity', 'Carry budget Δ': 'after_budget',
         'Vacancy Δ': 'after_vacancy', 'Top-end yardage Δ': 'after_top_end',
-        'Opening-week calibration Δ': 'after_opening', 'Projected value': 'final',
+        'Opening-week calibration Δ': 'after_opening', 'Own-history Δ': 'after_own_history',
+        'Projected value': 'final',
     }
     points_row = {'Stat': 'Fantasy points at this stage'}
     for col in display_cols[1:]:
@@ -1173,6 +1184,10 @@ def _render_decomposition_primary_table(detail, market_detail=None):
                 v = opening_vals[i]
                 out.append(f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;')
                 continue
+            elif col == 'Own-history Δ':
+                v = own_vals[i]
+                out.append(f'background-color:{get_diverging_color(v, 2.0)}; color:#ffffff; font-weight:bold;')
+                continue
             else:
                 out.append('')
                 continue
@@ -1220,6 +1235,13 @@ def _render_decomposition_primary_table(detail, market_detail=None):
         bullets.append(
             "**Carry budget Δ**: the running-back room's carries (and rushing yards; rushing TDs are left as "
             "projected) scaled by one factor to the team's expected carry budget — runs before Vacancy Δ."
+        )
+    if 'Own-history Δ' in display_cols:
+        bullets.append(
+            "**Own-history Δ**: the last step on the stat line — each volume stat re-predicted from this projection "
+            "together with the player's own box scores (season to date, last 3 games and last season; last season "
+            "alone in weeks 1-2), since a departure from his usual level only partly comes true. The point total is "
+            "not re-scored, so 'Projected value' can differ from Raw Model Proj Pts by this column."
         )
     if 'Top-end yardage Δ' in display_cols:
         bullets.append(

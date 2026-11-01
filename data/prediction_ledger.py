@@ -104,6 +104,10 @@ def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, fea
     for stat in STAT_COLS:
         if stat in model_df.columns:
             out[stat] = model_df[stat]
+    # the stat before v2_stat_recal_own_history re-predicted it from the player's own history (the prop engine reads this one)
+    for stat in STAT_COLS:
+        if f'_pre_recal_{stat}' in model_df.columns:
+            out[f'_pre_recal_{stat}'] = model_df[f'_pre_recal_{stat}']
     out['_key'] = clean_name_exact(out['Player'])
 
     if market_df is not None and not market_df.empty:

@@ -18,8 +18,11 @@ Both fall out of one step: pick a distribution for the stat, and solve for
 the parameter that puts the de-vigged tail probability where the market put
 it. That parameter IS the mean.
 
-  - COUNTS (TDs, receptions, INTs, completions, attempts): Poisson. Solve
-    P(Poisson(lambda) >= ceil(line)) = p_over  ->  lambda.
+  - COUNTS (TDs, receptions, INTs, completions, carries, targets): Poisson.
+    Solve P(Poisson(lambda) >= ceil(line)) = p_over  ->  lambda.
+  - PASS ATTEMPTS: the same with a negative binomial (variance mu + mu^2 / r,
+    r in _COUNT_NB_SIZE). A QB's attempts swing more than Poisson allows
+    (blowouts, game script), so the Poisson read the vig lean too timidly.
   - YARDS: Normal. mu = line + Phi^-1(p_over) * sigma. p_over = 0.5 -> mu =
     line exactly (a yardage line really is ~symmetric, so the skew term is
     zero and only the vig lean moves it).
@@ -29,8 +32,9 @@ back to line * MEDIAN_TO_MEAN, the old timid multiplier, so those sources
 degrade to exactly the previous behaviour instead of guessing at odds.
 
 Dependency-free on purpose (no scipy): Acklam's rational approximation for
-the inverse normal CDF, a short bisection on the Poisson upper tail. Both
-are accurate well past what a betting line's precision could justify.
+the inverse normal CDF, a short bisection on the Poisson (or negative
+binomial) upper tail. Both are accurate well past what a betting line's
+precision could justify.
 """
 import math
 
@@ -50,6 +54,14 @@ _COUNT_STATS = frozenset({
     'passing_attempts', 'attempts', 'rushing_attempts', 'carries', 'targets',
 })
 _YARD_STATS = frozenset({'passing_yards', 'rushing_yards', 'receiving_yards'})
+
+# Count markets read as a negative binomial instead of Poisson: market -> size r (variance mu + mu^2 / r). Fit 2026-11-01
+# (scripts/eval_count_line_shape.py, bar in .sweeps/count_shape_bar.md) on 145 de-vigged pass-attempt lines, 2026 weeks 3-7,
+# against the result: r = 25 beat Poisson on log-likelihood in 5 of 5 weeks (held out by week), the implied mean's squared
+# error 72.9 -> 72.0 and its bias -1.10 -> -0.74 attempts, and 0.57 of results inside the central half (Poisson 0.39: too
+# narrow). Carries (r ~ 15) and receptions (r ~ 10) also fit wider on likelihood but their implied means scored worse, so they
+# stay Poisson.
+_COUNT_NB_SIZE = {'attempts': 25.0, 'passing_attempts': 25.0}
 
 # A "scores a TD" (anytime) market is posted at a 0.5 line, so a de-vigged
 # P(over) near 0.7 inverts to a Poisson mean near 1.2 - and real single-game
@@ -203,6 +215,41 @@ def poisson_mean_for_upper_tail(line, p_over, iters=100, tol=1e-7):
     return 0.5 * (lo + hi)
 
 
+def _nb_upper_tail(k, mu, r):
+    """P(NB(mean mu, size r) >= k) = 1 - sum_{i<k} pmf(i), pmf(0) = (r / (r + mu))^r and
+    pmf(i) = pmf(i - 1) * (i - 1 + r) / i * mu / (r + mu)."""
+    if k <= 0:
+        return 1.0
+    if mu <= 0.0:
+        return 0.0
+    q = mu / (r + mu)
+    term = math.exp(r * math.log(r / (r + mu)))      # i = 0
+    cdf = term
+    for i in range(1, k):
+        term *= (i - 1 + r) / i * q
+        cdf += term
+    return min(1.0, max(0.0, 1.0 - cdf))
+
+
+def nb_mean_for_upper_tail(line, p_over, r, iters=100, tol=1e-7):
+    """mu such that P(NB(mu, r) >= ceil(line)) == p_over (the negative-binomial twin of poisson_mean_for_upper_tail; the
+    tail rises with mu at a fixed size r)."""
+    k = int(math.ceil(line - 1e-9))
+    if k <= 0:
+        return max(0.0, float(line))
+    p = min(max(float(p_over), _EPS), 1 - _EPS)
+    lo, hi = 1e-6, k + 10.0 * math.sqrt(k + k * k / r) + 20.0
+    for _ in range(iters):
+        mid = 0.5 * (lo + hi)
+        if _nb_upper_tail(k, mid, r) < p:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < tol:
+            break
+    return 0.5 * (lo + hi)
+
+
 def _yard_sigma(position, market, period):
     sigma = _YARD_SIGMA_GAME.get((str(position).upper(), market), _YARD_SIGMA_DEFAULT)
     if period == 'season':
@@ -218,7 +265,8 @@ def implied_mean_from_line(line, p_over, market, position=None, period='game'):
 
     None / non-finite p_over  -> line * MEDIAN_TO_MEAN_FALLBACK.get(market, 1),
                                  or line * the yard-skew factor for a yard stat
-    count stat  -> Poisson upper-tail inversion (handles skew AND vig lean)
+    count stat  -> Poisson upper-tail inversion (handles skew AND vig lean);
+                   negative binomial for a market in _COUNT_NB_SIZE
     yard stat   -> (line + Phi^-1(p_over) * sigma) * yard-skew factor
                    (vig lean from the Normal, median->mean skew from
                    YARD_MEDIAN_TO_MEAN; a 'season' period skips the skew term)
@@ -245,7 +293,8 @@ def implied_mean_from_line(line, p_over, market, position=None, period='game'):
         return value * MEDIAN_TO_MEAN_FALLBACK.get(market, 1.0)
 
     if market in _COUNT_STATS:
-        mean = poisson_mean_for_upper_tail(value, p)
+        size = _COUNT_NB_SIZE.get(market)
+        mean = nb_mean_for_upper_tail(value, p, size) if size else poisson_mean_for_upper_tail(value, p)
         if market in _TD_STATS and value <= _ANYTIME_TD_LINE_MAX:
             return min(mean, _ANYTIME_TD_MEAN_CAP)
         return mean

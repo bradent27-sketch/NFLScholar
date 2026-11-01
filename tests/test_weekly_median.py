@@ -56,6 +56,19 @@ class AttachMediansTest(unittest.TestCase):
         self.assertEqual(out.loc[1, 'Median receiving_yards'], 0.0)
         self.assertEqual(list(out['receiving_yards']), [70.0, 0.0])
 
+    def test_a_stat_moved_by_the_recal_uses_its_own_curve(self):
+        board = pd.DataFrame([{'Player': 'A', 'Pos': 'WR', 'Availability': 1.0, 'Model Proj Pts': 14.0, 'targets': 7.0,
+                               'receptions': 4.5, '_pre_recal_targets': 8.0, '_pre_recal_receptions': float('nan')},
+                              {'Player': 'B', 'Pos': 'WR', 'Availability': 1.0, 'Model Proj Pts': 14.0, 'targets': 7.0,
+                               'receptions': 4.5, '_pre_recal_targets': float('nan'), '_pre_recal_receptions': float('nan')}])
+        out = wm.attach_medians(board)
+        a, b = wm.MEDIAN_CURVES_RECAL[('WR', 'targets')]
+        self.assertAlmostEqual(out.loc[0, 'Median targets'], round(7.0 * (a + b * math.log(7.0)), 2))
+        self.assertAlmostEqual(out.loc[1, 'Median targets'], round(wm.stat_median('WR', 'targets', 7.0), 2))
+        self.assertEqual(out.loc[0, 'Median receptions'], out.loc[1, 'Median receptions'])   # not moved: today's curve
+        # a pair with no recal curve falls back to today's
+        self.assertEqual(wm.stat_median('QB', 'passing_yards', 250.0, recal=True), wm.stat_median('QB', 'passing_yards', 250.0))
+
     def test_a_stat_the_position_does_not_project_stays_blank(self):
         board = pd.DataFrame([{'Player': 'A', 'Pos': 'WR', 'Availability': 1.0, 'Model Proj Pts': 14.0,
                                'receiving_yards': 70.0, 'passing_yards': float('nan')}])

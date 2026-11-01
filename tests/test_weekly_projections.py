@@ -3396,9 +3396,11 @@ def test_rb_carry_budget_fits_the_room_on_the_real_board_and_rescores():
             'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
         wp.team_rb_carry_budgets = lambda *a, **k: pd.DataFrame({'budget': {'KC': 12.0}}).rename_axis('team')
         # v2_top_end_yardage is held off in both arms: it bends rushing yards above 60, and this test checks that the
-        # carry budget scales yards exactly with carries
-        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_rb_carry_budget', 'v2_top_end_yardage'}),
-                           ('flag', (wp.DEFAULT_FEATURES | {'v2_rb_carry_budget'}) - {'v2_top_end_yardage'})):
+        # carry budget scales yards exactly with carries. So are the stat recal flags, which act last and would pull the
+        # budgeted carries back toward each back's own history.
+        held = {'v2_top_end_yardage', 'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges'}
+        for arm, feats in (('base', wp.DEFAULT_FEATURES - {'v2_rb_carry_budget'} - held),
+                           ('flag', (wp.DEFAULT_FEATURES | {'v2_rb_carry_budget'}) - held)):
             wp.build_weekly_projections.clear()
             boards[arm] = wp.build_weekly_projections(
                 2026, 6, 'Full PPR', as_of_week=6, apply_injury=False, features=feats)

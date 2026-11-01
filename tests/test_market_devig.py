@@ -6,8 +6,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.market_devig import (  # noqa: E402
-    implied_mean_from_line, norm_ppf, poisson_mean_for_upper_tail,
-    _poisson_upper_tail, _yard_skew_factor,
+    implied_mean_from_line, nb_mean_for_upper_tail, norm_ppf, poisson_mean_for_upper_tail,
+    _nb_upper_tail, _poisson_upper_tail, _yard_skew_factor,
 )
 
 
@@ -52,15 +52,18 @@ def test_even_count_line_still_lifts_for_skew():
 def test_attempts_and_carries_are_devigged_as_counts():
     # The app's canonical prop names for pass/rush attempts are 'attempts'
     # and 'carries' (not 'passing_attempts'/'rushing_attempts'). They must
-    # hit the Poisson path, not fall straight through un-devigged.
-    # Dak Prescott: 33.5 pass-att, both books lean UNDER -> mean below 33.5.
+    # hit the count path, not fall straight through un-devigged.
+    # Pass attempts read as a negative binomial (r = 25, 2026-11-01): an exactly
+    # even line is a MEDIAN and the wider, right-skewed mean sits ~0.6 above it;
+    # Dak Prescott's 33.5 with both books leaning UNDER pulls below that.
     under = implied_mean_from_line(33.5, 0.481, 'attempts', 'QB')
-    assert 33.0 < under < 33.45
-    # An exactly even line is a MEDIAN; the large-count Poisson mean sits a
-    # hair above the number, and a juiced under still pulls below that.
     even = implied_mean_from_line(33.5, 0.5, 'attempts', 'QB')
-    assert 33.5 <= even < 34.0
-    assert under < even
+    assert 33.5 < even < 34.3
+    assert 33.4 < under < even
+    assert implied_mean_from_line(33.5, 0.481, 'passing_attempts', 'QB') == under
+    # the wider shape reads a lean further than the Poisson did
+    poisson_lean = poisson_mean_for_upper_tail(33.5, 0.6) - poisson_mean_for_upper_tail(33.5, 0.5)
+    assert implied_mean_from_line(33.5, 0.6, 'attempts', 'QB') - even > poisson_lean
     # 'carries' takes the same path.
     rb = implied_mean_from_line(15.5, 0.44, 'carries', 'RB')
     assert 14.5 < rb < 15.5
@@ -175,3 +178,12 @@ def test_season_yardage_uses_wider_sigma():
     game_vig_only = game / _yard_skew_factor('WR', 'receiving_yards', 900.5)
     # same p_over, but the season sigma is sqrt(17)x, so the shift is bigger
     assert (season - 900.5) > (game_vig_only - 900.5) * 3
+
+
+def test_negative_binomial_tail_matches_the_closed_form_and_tends_to_poisson():
+    # pmf(0) = (r / (r + mu))^r; P(X >= 1) = 1 - pmf(0)
+    assert abs(_nb_upper_tail(1, 4.0, 25.0) - (1 - (25.0 / 29.0) ** 25)) < 1e-12
+    assert abs(_nb_upper_tail(34, 34.0, 1e8) - _poisson_upper_tail(34, 34.0)) < 1e-5
+    # wider than Poisson: more mass above a line well over the mean
+    assert _nb_upper_tail(45, 34.0, 25.0) > _poisson_upper_tail(45, 34.0)
+    assert abs(nb_mean_for_upper_tail(33.5, 0.6, 1e8) - poisson_mean_for_upper_tail(33.5, 0.6)) < 1e-3

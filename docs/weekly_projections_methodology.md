@@ -6987,3 +6987,224 @@ New `data/prop_probability.py`:
 
 `scripts/prop_scorecard.py` keeps the record weekly; `--sheet WEEK` writes a week's sheet. Neither the board nor the app's
 numbers change. Suite: 1006 passed.
+
+### 2026-11-01 - Stat columns pulled toward the player's own level (candidates, off), and the count-line shape
+User: "yeah start working through this: Board flag v2_stat_recal_own_history (backlog M13) ... Also look into the too narrow
+poisson shape for attempts targets and receptions".
+
+**`v2_stat_recal_own_history` (weeks 3-17) and `v2_stat_recal_own_history_edges` (weeks 1, 2, 18), both off.** Each listed stat
+moves to b + k (stat - b) on the if-active level (the stat / (Availability x Workload If Active), multiplied back):
+- b = the player's box-score season to date after 3+ games, else last season's per-game after 4+ games; no b, no change.
+- Only rows projected for 3+ points, the population k was fit on. Without that floor a player the board has near 0 (usually not
+  expected to play) is pulled up: 2026 week 8, Van Jefferson at 0.00 points went from 0.06 to 1.36 targets.
+- QB rows only for the projected starter. QB passing, completions and TDs are not touched.
+- The point total is not changed, so the stat line no longer scores to 'Model Proj Pts' exactly (as with the points line, anchor
+  and luck). The earlier value is kept in `_pre_recal_<stat>`; the ledger records it and `data/prop_probability.py` reads it,
+  since the prop engine does its own recalibration. The Rankings popup shows the step as "Own-level pull Δ".
+
+Bar set first (`.sweeps/stat_recal_bar.md`). `scripts/eval_stat_recal_own_history.py` on the deep-audit panel, k fit held out
+by season, stat MSE on rows projected 3+ points (weeks 3-17):
+
+| stat | k (up / down) | 2021-2025 pooled | seasons better | 2026 wk 3-7 |
+|---|---|---|---|---|
+| QB rushing attempts | 0.33 / 0.93 | -5.9% | 5 of 5 | -3.4% |
+| QB rushing yards | 0.33 / 0.99 | -3.4% | 5 | -1.7% |
+| RB carries | 0.80 / 0.69 | -1.8% | 4 | -1.6% |
+| RB rushing yards | 0.85 | -0.3% | 4 | -0.5% |
+| RB targets | 0.76 | -0.9% | 4 | -1.4% |
+| RB receptions | 0.61 / 0.92 | -1.0% | 4 | +0.1% |
+| RB receiving yards | 0.67 / 0.96 | -0.5% | 5 | -1.3% |
+| WR targets | 0.64 | -2.3% | 5 | -1.6% |
+| WR receptions | 0.58 / 0.78 | -1.3% | 4 | -2.1% |
+| WR receiving yards | 0.76 | -0.7% | 4 | +0.2% |
+| TE targets | 0.59 | -2.7% | 5 | -5.1% |
+| TE receptions | 0.58 | -2.4% | 5 | -2.5% |
+| TE receiving yards | 0.69 | -1.0% | 5 | +0.5% |
+
+QB passing attempts and yards failed (k 0.98 / 1.00; 1 and 0 seasons better). Asymmetric k only where it beat one k in 4 of 5
+seasons and pooled.
+
+Weeks 1, 2 and 18 sit under their own flag, with one symmetric k per week. Their asymmetric fits went negative or above 1 (TE
+week-2 receiving yards up -0.40, RB week-18 receiving yards down 1.37), so they take one k: stricter than the bar.
+- 2021-2025: the week-1 board's departures from last season mostly do not come true. Week-1 k: WR targets 0.17, RB carries 0.27.
+- Gains: WR week-1 targets -14% (5 of 5), RB week-1 carries -27% (4 of 5), TE week-2 targets -10%.
+- **2026 went the other way for WR** (one week each, about 90 rows): week-1 targets +5.7% MSE, week-2 targets +6.7%. RB week 1
+  improved (carries -19%).
+- Left out: TE week 1 (k ~1), RB week-2 targets, RB week-1 receiving yards, week-18 RB rushing and WR.
+
+Checks:
+- The 2026 posted-line side record (board stat vs the market's implied mean, last priced line before kickoff) is not gated. ALL
+  51.9% -> 51.7%; at a 5%+ gap 51.7% -> 52.7%. WR receptions went 50.2% -> 54.4% and WR yards 52.0% -> 52.8%; RB carries
+  57.3% -> 54.1% and QB rushing yards 49.6% -> 47.1%.
+- **Medians.** `data/weekly_median.py`'s curves were fit on unpulled means. On pulled means their absolute error is lower for most
+  stats, but TE share above the median falls from 0.47-0.48 to about 0.45 and QB rushing rises from 0.50 to 0.53. If the flag
+  ships, re-fit MEDIAN_CURVES on the pulled means.
+- **Wiring.**
+  - 2026 week 8 live, 76 flags with and without the flag: 'Model Proj Pts' and 'Raw Model Proj Pts' identical.
+  - 83 carry rows and 186 receiving rows moved. Mean |move|: 0.11 targets, 0.07 receptions, 0.68 receiving yards, 0.18 carries.
+  - Largest moves: Zay Flowers receiving yards 61.3 -> 71.0; Josh Allen rushing yards 49.2 -> 43.0; Savion Williams targets
+    4.16 -> 2.98.
+  - The popup stat lines match the board.
+  - 2025 week 10 replay: the builder reproduces the offline formula, with the panel's history columns as baselines, on 1,646
+    player-stat rows, 0 mismatches.
+- If shipped, both flags join POST_CALIBRATION_FEATURES (the opening-week stat lines are fit on a dump's stat lines).
+- Suite: 1016 passed.
+
+**Count-line shape (`scripts/eval_count_line_shape.py`, bar `.sweeps/count_shape_bar.md`).** Only `data/market_devig.py`
+inverts a count line with a Poisson. The model's count medians are an empirical curve, and the prop engine reads an empirical
+spread. Neither uses a Poisson for volume counts.
+
+The 2026 archive has priced lines for attempts, carries and receptions; there are none for targets or completions.
+
+2026 weeks 3-7, last priced line before kickoff, NB size r fit leave-one-week-out:
+
+| market | lines | r | log-lik/line Poisson -> NB | weeks NB better | 50% interval Poisson -> NB | implied-mean MSE Poisson -> NB | bias Poisson / NB / line |
+|---|---|---|---|---|---|---|---|
+| passing attempts | 145 | 25 | -3.789 -> -3.594 | 5 of 5 | 0.39 -> 0.57 | 72.87 -> 72.01 | -1.10 / -0.74 / -1.18 |
+| carries | 235 | 15 (RB 12, QB Poisson) | -2.899 -> -2.810 | 5 | 0.44 -> 0.56 | 20.17 -> 20.34 | +0.18 / +0.42 / +0.04 |
+| receptions | 768 | 10 (RB 6, TE 8, WR 15) | -2.079 -> -2.059 | 4 | 0.44 -> 0.50 | 4.603 -> 4.618 | -0.06 / +0.05 / -0.18 |
+
+The shape is too narrow, but the implied mean (the only thing market_devig returns) barely moves: +0.4 attempts, +0.2 carries,
++0.1 receptions. Its accuracy differences are within 1-2 standard errors, and each direction traces to a market bias, not the
+shape:
+- **Attempts:** the NB's higher mean helps because 2026 QBs out-threw their lines (line bias -1.18). A wider symmetric shape fits
+  attempts best (log-lik -3.573) but gives the worst mean.
+- **Receptions:**
+  - WR/TE, where the over is priced fairly (over rate 0.48 vs p_over 0.48-0.49): the NB removes a small low bias (-0.09 / -0.07 ->
+    +0.02 / +0.03) at equal MSE.
+  - RB: the over is overpriced (hit 0.43 vs 0.49), so the NB's higher mean loses.
+- **Carries:** wider than Poisson but not right-skewed. A symmetric shape with variance 2 x mean fits RB carries best and the line
+  alone is nearly unbiased. QB carries are narrower than Poisson.
+
+By the bar only passing attempts switch to NB, and attempts carry no fantasy points: the change would move 'Mkt passing_attempts'
+only, never Market Proj Pts. Not switched; proposed to the user.
+
+### 2026-11-01 - Shipped: stat columns re-predicted from the player's own history (DEFAULT_FEATURES = 78); medians re-fit; pass attempts read as a negative binomial
+User: "yes ship recal own history if you are sure this is the best it can get ... be sure that if there is any doubt in the
+strength, implementation, etc that it is optimal before pushing. do the same with edges and let me know if you think week 1
+and 2 2026 was just noisy/surprising data? Id switch passing attempts to the wider poisson as well".
+
+**The form changed before shipping.** The candidate above moved each stat to b + k (stat - b). Six other forms were tested
+against it on the same rows (`scripts/eval_stat_recal_forms.py`, bar `.sweeps/stat_recal_forms_bar.md`, set before the run,
+with addenda set before each follow-up run). Held out by season on the deep-audit panel, weeks 3-17, rows projected 3+ points
+with a baseline and 1+ game this season; score = stat MSE gain vs the board, mean over the 13 stats:
+
+| form | 2021-2025 pooled | seasons beating the pull | 2026 wk 3-7 |
+|---|---|---|---|
+| F1: the pull, b + k (p - b) | 1.88% | - | 1.37% |
+| F2: the pull toward a blended baseline (g s2d + 6 ps) / (g + 6) | 2.52% | 5 of 5 | 3.85% |
+| F4: the prop engine's form, const + projection + season to date + last 3 + last season | 2.99% | 5 | 4.27% |
+| **F4B: F4 plus the blended baseline** | **3.18%** | **5** | **4.68%** |
+| F4B without last 3 (its sign flips by fold) | 3.08% | 5 | 4.66% |
+| F4P: F4 fit separately for weeks 3-8 and 9-17 | 3.04% | 5 | 4.62% |
+
+F4B ships for weeks 3-17 (`STAT_RECAL_OWN_HISTORY`, seven coefficients per stat, fit on 2021-2026). By stat, pooled / 2026:
+
+| stat | pull | F4B | F4B seasons better | pull 2026 | F4B 2026 |
+|---|---|---|---|---|---|
+| QB rushing attempts | 5.9 | 7.7 | 5 of 5 | 3.4 | 12.3 |
+| QB rushing yards | 3.4 | 4.9 | 5 | 1.7 | 10.2 |
+| RB carries | 1.7 | 3.4 | 5 | 1.3 | 2.3 |
+| RB rushing yards | 0.4 | 0.8 | 4 | 0.5 | -0.7 |
+| RB targets | 0.9 | 2.4 | 5 | 1.2 | 5.2 |
+| RB receptions | 1.1 | 2.2 | 5 | -0.2 | 5.3 |
+| RB receiving yards | 0.5 | 2.3 | 5 | 1.3 | 4.3 |
+| WR targets | 2.2 | 3.1 | 5 | 1.5 | 2.8 |
+| WR receptions | 1.3 | 2.2 | 5 | 2.1 | 2.1 |
+| WR receiving yards | 0.7 | 1.3 | 5 | -0.2 | 1.3 |
+| TE targets | 2.8 | 4.4 | 5 | 4.5 | 7.2 |
+| TE receptions | 2.4 | 3.7 | 5 | 1.8 | 5.9 |
+| TE receiving yards | 1.0 | 2.9 | 5 | -1.2 | 2.9 |
+
+(% MSE reduction; positive is better.) RB rushing yards is the weak one: it passes the bar (pooled +0.8%, 4 of 5) but 2026 is
+0.7% worse. Coefficients on season to date, last season and the blend trade sign across folds (they overlap); the held-out
+gains do not move.
+
+**Two rules found while checking the implementation.**
+- **1+ game this season from week 2 on.** A player's first game back (no box score this season yet, about 21 rows per stat in
+  weeks 3-17) lost badly under F4B held out (-14% to -116%) and about 0 under the pull. Week 2's first-game rows lost -12% to
+  -49%. Those rows are left alone, and F4B was re-fit without them; it still won by the same rule.
+- **3+ projected points** (kept from the candidate).
+- **Catches never outrun targets.** Each stat has its own fit. On the panel, 44 moved rows ended with receptions above targets:
+  - 40 were week-2 backs whose receptions moved and targets did not (RB week-2 targets failed the bar). RB week-2 receptions
+    are now left out with them, giving up a 3.7% pooled gain that was 3.1% worse in 2026.
+  - For the rest (3 week-1 WRs, 1 week-2 TE), the step keeps the board's own catch rate on the new targets.
+  - Weeks 3-17 had none; the highest catch rate after the step is 0.995.
+
+**Edges (`v2_stat_recal_own_history_edges`).** Per window, the pull against F4B, each fit held out by season on that window's
+rows. A stat goes in only if its form gains pooled and in 4+ of 5 seasons.
+- **Week 1: F4B (pooled 9.8% over its 11 stats vs the pull's 7.4%).** No game yet, so it collapses to const + projection + last
+  season (`STAT_RECAL_OWN_HISTORY_EDGES[1]`).
+  - The week-1 board runs high on these stats in almost every season (RB targets +4% to +20% in all six seasons, WR targets +7%
+    to +23%). The fitted form is roughly unbiased season by season: a persistent correction, not one season's.
+  - When every input agrees, week 1 still cuts 5-13% (RB 5-9%, WR 10-11%, TE 10-13%).
+  - Gains: WR targets 16.8%, RB carries 26.9%. No QB stat passes.
+- **Week 2: the pull toward last season, one k per stat** (pooled 6.7% over its 8 stats; F4B and the pull tie over all 13).
+- **Week 18: dropped.** Only RB receptions and WR targets passed, each with a season of -12% to -17%.
+
+**Were 2026 weeks 1-2 just noise?** Partly, not entirely.
+- **2026 is still net better:** week 1 +2.5% over the 11 stats, week 2 +1.5% over the 8.
+- **WR targets were the worst of the six seasons in both weeks:** week 1 +0.7% against +3.8% to +23.0%, week 2 -6.6% against
+  +6.3% to +16.3%.
+- **For WR, the history is outside 2026's own range.** On a player bootstrap, the 2021-2025 pooled gain lies outside 2026's 90%
+  interval for week-1 targets and receptions and for week-2 targets. That is more than sampling noise inside one season.
+- **But single seasons swing this much routinely:** 2023 week-1 RB targets -22.9%, 2024 week-2 TE targets -14.3%, 2021 week-1
+  TE targets -10.6%.
+- **What is measurably different:** the 2026 boards' early departures from last season tracked the results more closely than
+  any replayed season. The correlation of (projection - last season) with (result - last season) was 0.45 in week 2 (2021-2025:
+  0.17-0.32) and 0.29 in week 1 (0.02-0.20).
+- **Likely reasons, unverified:** 2026 boards carry current inputs the replays lack (2026 PFF imports, the QB1 overrides, the
+  injury report), and the model's 2026 tuning saw these weeks.
+- **Read:** the early-week fits may pull a little harder than a live 2026 board needs. Both weeks still help on balance, so
+  they ship; the week-1/2 ledger is the check.
+
+**Medians of moved stats re-fit** (`scripts/eval_stat_recal_medians.py`, bar `.sweeps/stat_recal_median_bar.md`, set before the
+run). Today's curves carry the board's overshoot: the ratio falls as the mean rises. On recal'd means they put the median too
+high: share of results above the median TE 0.42, WR 0.46-0.47, QB carries 0.54.
+
+The same fit on recal'd means (`MEDIAN_CURVES_RECAL`, used where a row has `_pre_recal_<stat>`), leave-one-season-out
+2021-2025:
+- share above the median 0.496-0.508 on all 13 stats (mean |share - 0.5| 0.040 -> 0.002);
+- by third of the mean, 0.467-0.538 (today's curves 0.355-0.615);
+- absolute error lower on all 13;
+- 2026 (mean |share - 0.5| 0.029 -> 0.018) and weeks 1-2 (0.056 -> 0.018) closer to one half.
+- Weeks 3-17 and weeks 1-2 are jittered by separate seeded generators, so the shipped constants reproduce from the script.
+
+A quadratic in log mean passed the numeric rule narrowly (worst third 0.026; MAE up to +0.2%) but turns the wrong way outside
+the fit range:
+- WR receiving yards' ratio rises again below 15 yards.
+- An RB at 8.9 targets would get a 7.1 median.
+
+The curve is applied to moved rows below the fit's projection floor, so the straight form ships (an override of the rule,
+recorded in the bar file). `scripts/eval_market_record.py` and `scripts/eval_posted_line_record.py` use the same curve choice
+for ledger boards that carry `_pre_recal_`.
+
+**Pass attempts read as a negative binomial** (`data/market_devig.py`, `_COUNT_NB_SIZE`, r = 25; backlog M14). This moves 'Mkt
+passing_attempts' only, never Market Proj Pts.
+- Dak Prescott's 33.5 with both books leaning under (p_over 0.481) now implies 33.69 (Poisson 33.39).
+- An even 33.5 implies 34.12 (Poisson 33.67).
+- Carries and receptions stay Poisson.
+
+**Checks.**
+- **Builder vs formula.** `apply_stat_recal_own_history` reproduces the F4B / week-1 / pull formula on panel boards with the
+  panel's history (2023 and 2026, weeks 1-17): 16,772 moved values; the only difference is the one row the catch guard
+  changed. Unmoved rows are unchanged, with `_pre_recal_` blank.
+- **The build's own history.** In a 2025 week 10 replay build, all 780 moved rows equal the formula applied to the plain
+  board's stats with the panel's history columns. So the live history is the one the constants were fit on.
+- **Builds with and without the two flags:**
+
+  | build | points max diff | moved rushing / receiving rows | popup mismatches |
+  |---|---|---|---|
+  | 2026 week 8 live | 0.0 | 82 / 185 | 0 |
+  | 2025 week 10 replay | 0.0 | 90 / 200 | 0 |
+  | 2025 week 1 replay | 0.0 | 50 / 179 | 0 |
+  | 2025 week 2 replay (no RB receptions) | 0.0 | 57 / 131 | 0 |
+
+  - No moved row catches more than it is targeted.
+  - The smallest moved row on the live board projects 3.04 points.
+  - Largest live moves: Lamar Jackson rushing yards 43.4 -> 32.6, Josh Allen 49.2 -> 39.0, Rhamondre Stevenson receiving yards
+    52.3 -> 37.8, Kenyon Sadiq targets 2.0 -> 3.3.
+- **Feature sets.** Both flags are in DEFAULT_FEATURES (78) and POST_CALIBRATION_FEATURES. CALIBRATION_INPUT_FEATURES is
+  unchanged (68), so no calibration line needs a re-fit. The harness scores points, which do not move.
+- **Tests.** `tests/test_weekly_projections.py`'s RB carry-budget test holds the recal flags off in both arms: it checks that
+  the budget scales carries exactly, and the budget flag is not shipped. Suite passes.

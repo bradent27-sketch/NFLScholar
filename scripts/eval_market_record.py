@@ -31,7 +31,7 @@ from data import ledger_scorecard as sc  # noqa: E402
 from data.loaders import load_schedule  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
 from data.utils import clean_name_exact  # noqa: E402
-from data.weekly_median import stat_median  # noqa: E402
+from data.weekly_median import recal_mask, stat_median  # noqa: E402
 
 LINE_STATS = {'receiving_yards': 'receiving_yards', 'rushing_yards': 'rushing_yards', 'passing_yards': 'passing_yards',
               'receptions': 'receptions', 'targets': 'targets', 'rushing_attempts': 'carries', 'passing_attempts': 'attempts',
@@ -102,8 +102,8 @@ def main():
         mean = pd.to_numeric(live[stat], errors='coerce')
         line = pd.to_numeric(live[mcol], errors='coerce')
         act = pd.to_numeric(live[acol], errors='coerce')
-        med = pd.Series([stat_median(p, stat, m) if np.isfinite(m) else np.nan for p, m in zip(live['Pos'], mean)],
-                        index=live.index)
+        med = pd.Series([stat_median(p, stat, m, r) if np.isfinite(m) else np.nan
+                         for p, m, r in zip(live['Pos'], mean, recal_mask(live, stat))], index=live.index)
         for label, model in (('mean', mean), ('median', med)):
             for gap in GAPS[stat]:
                 ok = model.notna() & line.notna() & act.notna() & ((model - line).abs() > max(gap, 1e-9)) & (act != line)
@@ -137,7 +137,7 @@ def main():
         mcol = f'Mkt {mkt}'
         if mcol not in builds.columns or stat not in builds.columns:
             continue
-        b = builds[['week', '_key', 'Pos', 'build_ts', stat, mcol]].dropna(subset=[mcol])
+        b = builds[['week', '_key', 'Pos', 'build_ts', stat, mcol]].assign(_rc=recal_mask(builds, stat)).dropna(subset=[mcol])
         b = b.sort_values('build_ts')
         first = b.groupby(['week', '_key']).first()
         last = b.groupby(['week', '_key']).last()
@@ -147,8 +147,8 @@ def main():
         move = j[mcol + '_c'] - j[mcol + '_o']
         moved = move.abs() > 1e-9
         model_o = pd.to_numeric(j[stat + '_o'], errors='coerce')
-        med_o = pd.Series([stat_median(p, stat, m) if np.isfinite(m) else np.nan for p, m in zip(j['Pos_o'], model_o)],
-                          index=j.index)
+        med_o = pd.Series([stat_median(p, stat, m, r) if np.isfinite(m) else np.nan
+                           for p, m, r in zip(j['Pos_o'], model_o, j['_rc_o'])], index=j.index)
         for label, model in (('mean', model_o), ('median', med_o)):
             lean = model - j[mcol + '_o']
             ok = moved & lean.notna() & (lean.abs() > 1e-9)

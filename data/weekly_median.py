@@ -20,6 +20,13 @@ depends on position and projected level only. A player's own spread still drives
 (data/weekly_distribution.py).
 
 Fantasy points: fit on Full PPR; applied to Half-PPR and Standard as is (the shape is set by the same games).
+
+A stat moved by v2_stat_recal_own_history (the row has a '_pre_recal_<stat>') takes its ratio from MEDIAN_CURVES_RECAL, the same
+fit on recal'd means (2026-11-01, scripts/eval_stat_recal_medians.py, bar in .sweeps/stat_recal_median_bar.md): the recal takes
+out the board's overshoot on high calls, so today's curves - which carry that overshoot (the ratio falls as the mean rises) - put
+the median too high: 0.42 of TE results and 0.46-0.47 of WR results landed above it. Re-fit, leave-one-season-out on the
+deep-audit panel 2021-2025: the share above the median 0.496-0.508 on all 13 stats (0.467-0.538 by third of the mean), with a
+lower absolute error on all 13; 2026 and weeks 1-2 closer to one half too.
 """
 import math
 
@@ -48,6 +55,22 @@ MEDIAN_CURVES = {
     ('WR', 'receptions'): (0.9823, -0.0049),
     ('WR', 'targets'): (1.0970, -0.0610),
 }
+# the same fit on the means v2_stat_recal_own_history leaves (deep-audit panel 2021-2026, weeks 3-17, rows it moved)
+MEDIAN_CURVES_RECAL = {
+    ('QB', 'rushing_attempts'): (0.8189, 0.0824),
+    ('QB', 'rushing_yards'): (0.0289, 0.2436),
+    ('RB', 'receiving_yards'): (-0.1755, 0.3143),
+    ('RB', 'receptions'): (0.7758, 0.1178),
+    ('RB', 'rushing_attempts'): (0.4579, 0.2029),
+    ('RB', 'rushing_yards'): (-0.0228, 0.2308),
+    ('RB', 'targets'): (0.6675, 0.1928),
+    ('TE', 'receiving_yards'): (0.0100, 0.2380),
+    ('TE', 'receptions'): (0.8151, 0.0973),
+    ('TE', 'targets'): (0.7484, 0.1273),
+    ('WR', 'receiving_yards'): (0.2611, 0.1542),
+    ('WR', 'receptions'): (0.7100, 0.1724),
+    ('WR', 'targets'): (0.6961, 0.1413),
+}
 RATIO_CLIP = (0.35, 1.25)
 POISSON_STATS = ('passing_tds', 'rushing_tds', 'receiving_tds', 'passing_interceptions')
 # a count with no fitted curve and a mean below this takes the Poisson median; above it the median is read as the mean
@@ -72,23 +95,25 @@ def poisson_median(mean):
     return k - 0.5 + (0.5 - below) / pmf
 
 
-def median_ratio(position, stat, mean):
-    """The fitted median / mean ratio at this projected level, or None when there is no curve for (position, stat)."""
-    coef = MEDIAN_CURVES.get((str(position), stat))
+def median_ratio(position, stat, mean, recal=False):
+    """The fitted median / mean ratio at this projected level, or None when there is no curve for (position, stat). ``recal``:
+    the mean was moved by v2_stat_recal_own_history (MEDIAN_CURVES_RECAL where it has the pair)."""
+    coef = (recal and MEDIAN_CURVES_RECAL.get((str(position), stat))) or MEDIAN_CURVES.get((str(position), stat))
     if coef is None:
         return None
     m = max(float(mean), 1e-6)
     return float(min(max(coef[0] + coef[1] * math.log(m), RATIO_CLIP[0]), RATIO_CLIP[1]))
 
 
-def stat_median(position, stat, mean):
-    """The median of one projected stat (or 'points') for a player at `position` whose mean projection is `mean`."""
+def stat_median(position, stat, mean, recal=False):
+    """The median of one projected stat (or 'points') for a player at `position` whose mean projection is `mean`; ``recal``
+    when v2_stat_recal_own_history moved that mean."""
     m = float(mean) if mean is not None and np.isfinite(mean) else 0.0
     if m <= 0:
         return 0.0
     if stat in POISSON_STATS:
         return poisson_median(m)
-    ratio = median_ratio(position, stat, m)
+    ratio = median_ratio(position, stat, m, recal)
     if ratio is not None:
         return m * ratio
     if stat != 'points' and m < POISSON_FALLBACK_MAX_MEAN:
@@ -96,10 +121,17 @@ def stat_median(position, stat, mean):
     return m
 
 
+def recal_mask(frame, stat):
+    """True on the rows where v2_stat_recal_own_history moved `stat` (a '_pre_recal_<stat>' value)."""
+    col = '_pre_recal_' + stat
+    return frame[col].notna().to_numpy() if col in frame.columns else np.zeros(len(frame), bool)
+
+
 def attach_medians(board):
     """`board` with 'Median <stat>' beside every projected stat column and 'Median Proj Pts' beside Model Proj Pts. A player
     projected out (Availability at or below SIDELINED) has a median of 0; a stat his position does not project (a blank mean)
-    stays blank. Nothing else changes."""
+    stays blank; a stat moved by v2_stat_recal_own_history (a '_pre_recal_<stat>' value) uses MEDIAN_CURVES_RECAL. Nothing else
+    changes."""
     if board is None or board.empty:
         return board
     out = board.copy()
@@ -109,8 +141,9 @@ def attach_medians(board):
     live = avail > SIDELINED
     for stat in [s for s in MEDIAN_STATS if s in out.columns]:
         means = pd.to_numeric(out[stat], errors='coerce').to_numpy()
-        out['Median ' + stat] = [np.nan if not np.isfinite(m) else (round(stat_median(p, stat, m), 2) if ok else 0.0)
-                                 for p, m, ok in zip(positions, means, live)]
+        recal = recal_mask(out, stat)
+        out['Median ' + stat] = [np.nan if not np.isfinite(m) else (round(stat_median(p, stat, m, r), 2) if ok else 0.0)
+                                 for p, m, ok, r in zip(positions, means, live, recal)]
     if 'Model Proj Pts' in out.columns:
         points = pd.to_numeric(out['Model Proj Pts'], errors='coerce').fillna(0.0).to_numpy()
         out['Median Proj Pts'] = [round(stat_median(p, 'points', m), 2) if ok else 0.0 for p, m, ok in zip(positions, points, live)]

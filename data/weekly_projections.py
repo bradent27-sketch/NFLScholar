@@ -2425,6 +2425,12 @@ MODEL_FEATURES = (
     'v2_luck_qb',  # SHIPPED 2026-10-28 (user: "the QB luck ... is probably worthwhile"; missed its bar
                              # by 0.0001 on 2023). The luck step at QB, centered on the
                              # average QB's luck (EXPECTED_POINTS_LUCK_QB / _CENTER).
+    'v2_stat_recal_own_history',  # SHIPPED 2026-11-01 (backlog M13; user: "yes ship recal own history").
+                             # Weeks 3-17: the stat columns re-predicted from the board's stat
+                             # and the player's own history (STAT_RECAL_OWN_HISTORY); points
+                             # untouched. Held out by season: stat MSE -3.2% over the 13 stats.
+    'v2_stat_recal_own_history_edges',  # SHIPPED 2026-11-01 (user: "do the same with edges"). Weeks 1 and 2
+                             # (STAT_RECAL_OWN_HISTORY_EDGES); week 18 left alone.
     'v2_silent_participation',  # SHIPPED 2026-10-25 (with v2_silent_games). The WR/TE participation curve
                              # read as P(any offensive snap | share) (silent games are
                              # appearances), not P(box-score row | share), so a silent
@@ -3132,6 +3138,14 @@ DEFAULT_FEATURES = frozenset({
     'v2_luck_te_refit',
     'v2_anchor_s_refit',
     'v2_luck_qb',
+    # SHIPPED 2026-11-01 (backlog M13; user: "yes ship recal own history ... do the same with edges"): DEFAULT_FEATURES = 78.
+    # The stat columns re-predicted from the board's stat and the player's own history (STAT_RECAL_OWN_HISTORY, weeks 3-17;
+    # STAT_RECAL_OWN_HISTORY_EDGES, weeks 1 and 2). Points untouched, so not harness-testable (the harness scores points);
+    # held out by season on the deep-audit panel, stat MSE over the 13 stats: weeks 3-17 -3.2% (5 of 5 seasons, 2026 -4.7%),
+    # week 1 -9.8% (2026 -2.5%), week 2 -6.7% (2026 -1.5%). Acts after every points step (POST_CALIBRATION_FEATURES). Undo:
+    # remove the flag(s).
+    'v2_stat_recal_own_history',
+    'v2_stat_recal_own_history_edges',
 })
 
 
@@ -3159,10 +3173,12 @@ def resolve_model_features(features=None):
 # These flags act AFTER the points line and are not inputs to it: the season anchor (2026-10-06), the opening-week
 # per-stat lines and the Questionable-tag cut (both 2026-10-08), the luck step (2026-10-20) and the 2026-10-28 re-fits of
 # the anchor and the luck step. A dump built with them on would record already adjusted totals as the "raw" the lines are
-# fitted to, so they are left out of the input set.
+# fitted to, so they are left out of the input set. So are 'v2_stat_recal_own_history' / '_edges' (2026-11-01, measured on
+# the finished board): the opening-week stat lines are fit on a dump's stat lines.
 POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat_calibration',
                                        'v2_questionable_workload', 'v2_expected_points_luck',
-                                       'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb'})
+                                       'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
+                                       'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
@@ -3789,6 +3805,170 @@ def apply_expected_points_luck(result, table, factors=None, centers=None):
     for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
         if col in out.columns:
             out.loc[eligible, col] = new[eligible]
+    return out, info
+
+
+# --- v2_stat_recal_own_history / v2_stat_recal_own_history_edges (backlog M13) --------------------------------------------
+# The board's STAT columns overshoot whenever they leave the player's own level. Deep audit 2026-10-28 (scripts/deep_audit.py
+# --stage overshoot) on today's board, 2021-2025 weeks 3-17, played rows projected 3+ points: of the gap between the projected
+# stat and the player's own average, 58-81% came true for RB/WR/TE volume and about 45% for QB rushing; QB passing ~100%. The
+# points layer absorbs this for the total, but the stat columns - what a prop is priced on, and what the app's market leans
+# read - kept it. Each listed stat is re-predicted from the board's stat and the player's own box-score history, on the
+# if-active level (the stat / (Availability x Workload If Active), multiplied back after):
+#   weeks 3-17   const + a projection + b season to date + c last 3 + d last season + e (last season missing) + f blended
+#                baseline, the blend = (g s2d + 6 ps) / (g + 6) over g games this season when last season has 4+ games (else
+#                the season to date); a missing last season reads as the projection. STAT_RECAL_OWN_HISTORY.
+#   week 1       const + a projection + b last season (STAT_RECAL_OWN_HISTORY_EDGES[1]).
+#   week 2       last season + k (projection - last season) (STAT_RECAL_OWN_HISTORY_EDGES[2]).
+#   week 18      not touched (two stats passed, each with a season of -12 to -17%).
+# Chosen over the simple b + k (p - b) pull and five other forms (scripts/eval_stat_recal_forms.py, bars in
+# .sweeps/stat_recal_bar.md and .sweeps/stat_recal_forms_bar.md, all set before their runs). Held out by season on the rows it
+# moves, stat MSE: mean over the 13 stats -3.2% (simple pull -1.9%), better in 5 of 5 seasons; 2026 weeks 3-7 -4.7% (pull
+# -1.4%); 12 of 13 stats better in every season (RB rushing yards 4 of 5, and 0.7% worse in 2026). Final fits on 2021-2026.
+# Eligible rows: projected STAT_RECAL_MIN_POINTS+ points (below that a player is usually not expected to play: Van Jefferson,
+# 2026 week 8, 0.00 points, went from 0.06 to 1.36 targets without the floor); a baseline (STAT_RECAL_MIN_GAMES games this
+# season or STAT_RECAL_MIN_PRIOR_GAMES last season); and from week 2 on at least one game this season (a player's first game
+# back lost badly held out: weeks 3-17 -14% to -116%, week 2 -12% to -49%). QB rows only for the projected starter. QB
+# passing, completions and TDs are not touched. The points total is NOT changed, so the stat line no longer scores to 'Model
+# Proj Pts' exactly (as with the points line, anchor and luck steps). The earlier value stays in '_pre_recal_<stat>' on the rows
+# moved (NaN elsewhere): data/prop_probability.py reads it (its engine recalibrates on its own) and data/weekly_median.py takes
+# the median of a moved stat from MEDIAN_CURVES_RECAL.
+STAT_RECAL_OWN_HISTORY = {   # (const, projection, season to date, last 3, last season, last season missing, blended baseline)
+    'QB': {'rushing_attempts': (0.3293, 0.3465, 0.049, -0.0129, 0.1003, 0.3528, 0.3975),
+           'rushing_yards': (1.4287, 0.3845, -0.1339, 0.0734, -0.0076, 4.3557, 0.5566)},
+    'RB': {'rushing_attempts': (0.3148, 0.6427, -0.0412, 0.2645, 0.0065, 0.7107, 0.0989),
+           'rushing_yards': (0.8099, 0.7927, -0.0248, 0.0975, -0.0243, 3.762, 0.159),
+           'targets': (0.3965, 0.5519, 0.0183, 0.0883, -0.0364, 0.0866, 0.2207),
+           'receptions': (0.3441, 0.5614, 0.0044, 0.0686, -0.028, 0.0442, 0.2163),
+           'receiving_yards': (3.2699, 0.5393, 0.1039, -0.0117, 0.1185, 0.3932, 0.0313)},
+    'WR': {'targets': (0.2445, 0.5046, -0.0476, 0.1173, -0.0508, 0.2457, 0.4234),
+           'receptions': (0.1432, 0.5026, 0.0138, 0.0924, -0.0056, 0.188, 0.3357),
+           'receiving_yards': (0.4885, 0.6175, -0.0652, -0.0007, -0.0387, 2.0886, 0.4738)},
+    'TE': {'targets': (0.2856, 0.5788, -0.1917, 0.0884, -0.1066, 0.3611, 0.6069),
+           'receptions': (0.3108, 0.5634, -0.1585, -0.0037, -0.1172, 0.1759, 0.659),
+           'receiving_yards': (3.3358, 0.6678, -0.1468, -0.0622, -0.0141, 2.4929, 0.5121)},
+}
+STAT_RECAL_BLEND_K = 6.0
+# Weeks 1 and 2 under their own flag. Held out by season (2021-2025 pooled): week 1 mean -9.8% (WR targets -16.8%, RB carries
+# -26.9%), week 2 -6.7%. 2026 smaller but still net better (week 1 -2.5%, week 2 -1.5% over the stats; WR week-2 targets +6.6%
+# worse): the 2026 boards' early-week departures from last season tracked the result more closely than any replayed season
+# (correlation 0.45 in week 2 against 0.17-0.32), so these fits may pull a little harder than a live board needs. RB week-2
+# receptions passed alone but are left out: RB targets did not pass, and moving the catches without the targets left 40 of 331
+# panel backs catching more balls than they were thrown.
+STAT_RECAL_OWN_HISTORY_EDGES = {
+    1: {'RB': {'receiving_yards': (0.6765, 0.1785, 0.6988), 'receptions': (0.1713, 0.2001, 0.6906),
+               'rushing_attempts': (-0.9525, 0.2685, 0.7324), 'rushing_yards': (-3.9249, 0.5415, 0.4574),
+               'targets': (0.2112, 0.2001, 0.674)},
+        'TE': {'targets': (-0.3831, 0.8004, 0.1856), 'receptions': (-0.0666, 0.6765, 0.2276),
+               'receiving_yards': (0.0417, 0.5271, 0.3374)},
+        'WR': {'targets': (-0.4056, 0.2619, 0.7014), 'receptions': (-0.0993, 0.2412, 0.677),
+               'receiving_yards': (-3.1965, 0.3777, 0.5752)}},
+    2: {'RB': {'rushing_attempts': 0.656, 'rushing_yards': 0.639},
+        'TE': {'targets': 0.457, 'receptions': 0.418, 'receiving_yards': 0.412},
+        'WR': {'targets': 0.503, 'receptions': 0.49, 'receiving_yards': 0.495}},
+}
+STAT_RECAL_MIN_GAMES = 3
+STAT_RECAL_MIN_PRIOR_GAMES = 4
+STAT_RECAL_MIN_POINTS = 3.0
+
+
+def stat_recal_table(feats, week):
+    """(form, {pos: {stat: coefficients}}) for this week under `feats`: form 'linear' (weeks 3-17), 'week1' or 'pull' (week 2);
+    (None, {}) when neither flag covers the week."""
+    week = int(week)
+    if 3 <= week <= 17:
+        return ('linear', STAT_RECAL_OWN_HISTORY) if 'v2_stat_recal_own_history' in feats else (None, {})
+    if week in STAT_RECAL_OWN_HISTORY_EDGES and 'v2_stat_recal_own_history_edges' in feats:
+        return ('week1' if week == 1 else 'pull'), STAT_RECAL_OWN_HISTORY_EDGES[week]
+    return None, {}
+
+
+def apply_stat_recal_own_history(result, history, form, table):
+    """(result, info): re-predict each listed stat from the board's stat and the player's own history (module comment above).
+    ``history`` is data.prop_probability.player_history (index (_key, pos): h_s2d_/h_l3_/h_ps_<stat>, h_games, h_ps_games);
+    ``form`` and ``table`` from stat_recal_table. Skips rows under STAT_RECAL_MIN_POINTS, sidelined rows, non-starting QBs, rows
+    without a baseline (or, from week 2, without a game this season) and a (name, position) that appears twice on the board
+    (one history row cannot tell them apart). Points are untouched. ``info`` maps (Player, Pos, Team) -> {'stats': {stat:
+    (before, after)}, 'games': games this season, 'form': form}."""
+    if result is None or result.empty or not table or history is None or len(history) == 0:
+        return result, {}
+    out = result.copy()
+    keys = clean_name_exact(out['Player'].astype(str))
+    h = history.reindex(pd.MultiIndex.from_arrays([keys, out['Pos'].astype(str)]))
+
+    def col(name):
+        return pd.to_numeric(h[name], errors='coerce').to_numpy(float) if name in h else np.full(len(out), np.nan)
+
+    games, ps_games = np.nan_to_num(col('h_games')), np.nan_to_num(col('h_ps_games'))
+    avail = np.ones(len(out))
+    for c in ('Availability', 'Workload If Active'):
+        if c in out.columns:
+            avail = avail * pd.to_numeric(out[c], errors='coerce').fillna(1.0).to_numpy()
+    ok = (avail > SIDELINED_AVAILABILITY) & ~pd.Series(list(zip(keys, out['Pos']))).duplicated(keep=False).to_numpy()
+    if 'Model Proj Pts' in out.columns:
+        ok &= pd.to_numeric(out['Model Proj Pts'], errors='coerce').fillna(0).to_numpy() >= STAT_RECAL_MIN_POINTS
+    if 'QB Projected Starter' in out.columns:
+        starter = out['QB Projected Starter'].astype(str).str.lower().isin(('true', '1', '1.0')).to_numpy()
+        ok &= out['Pos'].ne('QB').to_numpy() | starter
+    has_prior = ps_games >= STAT_RECAL_MIN_PRIOR_GAMES
+    if form == 'week1':
+        ok &= has_prior
+    else:
+        ok &= (games >= 1) & ((games >= STAT_RECAL_MIN_GAMES) | has_prior)
+    info = {}
+    for pos, stats in table.items():
+        pos_rows = out['Pos'].eq(pos).to_numpy() & ok
+        for stat, coef in stats.items():
+            if stat not in out.columns:
+                continue
+            cur = pd.to_numeric(out[stat], errors='coerce').to_numpy(float)
+            s2d, l3, ps = col(f'h_s2d_{stat}'), col(f'h_l3_{stat}'), col(f'h_ps_{stat}')
+            level = cur / np.where(avail > 0, avail, 1.0)
+            if form == 'linear':
+                c0, c_proj, c_s2d, c_l3, c_last, c_miss, c_blend = coef
+                miss = np.isnan(ps)
+                blend = np.where(has_prior, (games * s2d + STAT_RECAL_BLEND_K * np.nan_to_num(ps)) / (games + STAT_RECAL_BLEND_K),
+                                 s2d)
+                new = (c0 + c_proj * level + c_s2d * s2d + c_l3 * l3 + c_last * np.where(miss, level, ps) + c_miss * miss
+                       + c_blend * blend)
+            elif form == 'week1':
+                c0, c_proj, c_last = coef
+                new = c0 + c_proj * level + c_last * ps
+            else:
+                base = np.where(games >= STAT_RECAL_MIN_GAMES, s2d, ps)
+                new = base + float(coef) * (level - base)
+            new = np.maximum(new, 0.0) * avail
+            sel = pos_rows & np.isfinite(cur) & np.isfinite(new)
+            if not sel.any():
+                continue
+            pre_col = f'_pre_recal_{stat}'
+            if pre_col not in out.columns:
+                out[pre_col] = np.nan
+            out.loc[out.index[sel], pre_col] = cur[sel]
+            if not pd.api.types.is_float_dtype(out[stat]):
+                out[stat] = out[stat].astype(float)
+            out.loc[out.index[sel], stat] = np.round(new[sel], 3)
+            for j in np.flatnonzero(sel):
+                row = out.iloc[j]
+                rec = info.setdefault((row['Player'], row['Pos'], row['Team']),
+                                      {'stats': {}, 'games': int(games[j]), 'form': form})
+                rec['stats'][stat] = (float(cur[j]), float(round(new[j], 3)))
+    # Each stat has its own fit, so a rare row can end up catching more than it is thrown (panel 2021-2026: 4 of about 17,000
+    # moved rows, all weeks 1-2). There the board's own catch rate is kept on the new targets.
+    if '_pre_recal_receptions' in out.columns and 'targets' in out.columns:
+        tgt = pd.to_numeric(out['targets'], errors='coerce').to_numpy(float)
+        rec_now = pd.to_numeric(out['receptions'], errors='coerce').to_numpy(float)
+        over = out['_pre_recal_receptions'].notna().to_numpy() & (rec_now > tgt)
+        if over.any():
+            board_tgt = (out['_pre_recal_targets'].fillna(out['targets']) if '_pre_recal_targets' in out.columns
+                         else out['targets']).to_numpy(float)
+            board_rec = out['_pre_recal_receptions'].to_numpy(float)
+            rate = np.clip(np.divide(board_rec, board_tgt, out=np.ones(len(out)), where=board_tgt > 0), 0.0, 1.0)
+            fixed = np.round(tgt * rate, 3)
+            out.loc[out.index[over], 'receptions'] = fixed[over]
+            for j in np.flatnonzero(over):
+                row = out.iloc[j]
+                info[(row['Player'], row['Pos'], row['Team'])]['stats']['receptions'] = (float(board_rec[j]), float(fixed[j]))
     return out, info
 
 
@@ -14220,6 +14400,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if luck_info:
             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
+    # v2_stat_recal_own_history (weeks 3-17) / _edges (weeks 1, 2): the stat columns re-predicted from the player's own history,
+    # measured on the finished board. After every points step; the total is not changed.
+    own_history_info = {}
+    _recal_form, _recal_table = stat_recal_table(feats, week)
+    if _recal_table:
+        from data.prop_probability import player_history
+        _own_history = player_history(hist, name_col, as_of_week,
+                                      prior_stats if prior_stats is not None and not prior_stats.empty else None,
+                                      prior_name_col)
+        result, own_history_info = apply_stat_recal_own_history(result, _own_history, _recal_form, _recal_table)
+
     # Raw per-week slot/wide/inline defense-allowed evidence, grouped for
     # per-player lookup by (defense_team, position) - the pre-shrinkage
     # ingredients behind alignment_scheme_evidence's season-aggregate
@@ -14328,9 +14519,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         row_carry_budget_snapshot = carry_budget_snapshot.get(key, {})
         row_opening = opening_calibration_info.get(key, {}).get('stats', {})
         row_top_end = top_end_info.get(key, {}).get('stats', {})
+        row_own = own_history_info.get(key, {}).get('stats', {})
         for stat, values in detail.get('stats', {}).items():
             final_value = pd.to_numeric(pd.Series([row.get(stat, 0.0)]), errors='coerce').fillna(0.0).iloc[0]
             final_value = float(final_value)
+            # v2_stat_recal_own_history is the very last stage on the stat line, after the two below.
+            own_delta = 0.0
+            if stat in row_own:
+                pre_own, post_own = row_own[stat]
+                own_delta = float(post_own) - float(pre_own)
+                final_value = float(pre_own)
             # v2_top_end_yardage then v2_opening_week_stat_calibration are the last stages on the stat line: the
             # stages below are split against the line BEFORE the first of them, and their own changes are reported
             # separately (they never fire in the same week).
@@ -14373,7 +14571,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 values['vacancy_delta'] = round(final_value - pre_vacancy, 3)
             values['top_end_delta'] = round(top_end_delta, 3)
             values['opening_calibration_delta'] = round(opening_delta, 3)
-            final_value = final_value + top_end_delta + opening_delta
+            values['own_history_delta'] = round(own_delta, 3)
+            final_value = final_value + top_end_delta + opening_delta + own_delta
             values['final_projection'] = round(final_value, 3)
             # Retain the original field for consumers of the V2 explanation
             # payload while making it agree with ``final_projection``.
@@ -14388,6 +14587,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if key in top_end_info:
             # raw_points above is already the re-scored compressed line; this records the step from the uncompressed one
             detail['top_end_yardage'] = top_end_info[key]
+        if key in own_history_info:
+            # the stat line only: the point total is not re-scored
+            detail['stat_recal_own_history'] = own_history_info[key]
         if key in opening_calibration_info:
             # the points line was replaced, not applied: the total is the re-scored calibrated stat line
             detail['opening_week_calibration'] = opening_calibration_info[key]

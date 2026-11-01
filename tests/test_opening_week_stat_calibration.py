@@ -53,7 +53,8 @@ def test_post_calibration_steps_are_not_inputs_of_the_calibration_lines():
     from data.weekly_projections import CALIBRATION_INPUT_FEATURES, POST_CALIBRATION_FEATURES
     assert POST_CALIBRATION_FEATURES == {'v2_season_anchor', 'v2_opening_week_stat_calibration',
                                          'v2_questionable_workload', 'v2_expected_points_luck',
-                                         'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb'}
+                                         'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
+                                         'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges'}
     assert POST_CALIBRATION_FEATURES <= DEFAULT_FEATURES
     assert not (CALIBRATION_INPUT_FEATURES & POST_CALIBRATION_FEATURES)
     assert 'calibration' not in CALIBRATION_INPUT_FEATURES

@@ -7208,3 +7208,105 @@ passing_attempts' only, never Market Proj Pts.
   unchanged (68), so no calibration line needs a re-fit. The harness scores points, which do not move.
 - **Tests.** `tests/test_weekly_projections.py`'s RB carry-budget test holds the recal flags off in both arms: it checks that
   the budget scales carries exactly, and the budget flag is not shipped. Suite passes.
+
+### 2026-11-01 - QB stat columns read the game script (CANDIDATE `v2_stat_recal_game_script`, off; backlog M15)
+User: "generally we are above the market for QB props on teams that are larger favoriates...generally because less close
+games where they are forced to scramble or pass as they are running more with running backs to chew clock...lets work on
+this". (Week 18 is out of scope by the user's call: teams resting starters is handled by judgement, not a rule.)
+
+**What was wrong** (deep-audit panel, projected starters, weeks 3-17, 2021-2025):
+- QBs favored by more than 7.5 implied points ran +5.9 rushing yards, +0.7 carries and +11.7 passing yards high on the board.
+  2026 is worse on rushing: +14.2 yards.
+- Holding the other fixed, the QB rushing miss follows the implied team total (-0.5 to -0.8 yards per point, 2023-2026). The
+  passing-yards and attempts miss follows the margin (negative in 5 of 6 and 6 of 6 seasons).
+- The board's passing yards also spread the QBs too wide: its top fifth by projection ran +19.7 high, its bottom fifth -12.8.
+- QB points show no steady bias by spread, so this is a stat-column (prop) problem, not a points one.
+
+**Test** (`scripts/eval_stat_recal_game_script.py`, bar `.sweeps/stat_recal_game_script_bar.md`, set before the run). Inputs
+from `game_environment`:
+- m = own implied points - the opponent's;
+- t = own implied points - the week's league mean.
+
+Forms, each fit held out by season on the same rows (2,137 starter rows with a line):
+- F4B: the shipped recal form.
+- G1: F4B + m + t.
+- G2: G1 + max(m - 7, 0).
+- H: F4B + max(m - 7, 0) only. This was an addendum for QB rushing, set before its run. The MSE rule barely sees a bias
+  confined to the 10% of rows that are big favorites, so the addendum judges the big-favorite bucket directly and allows no
+  loss on all rows.
+
+Stat MSE gain vs the board, pooled 2021-2025 (2026 weeks 3-7):
+
+| QB stat | chosen | gain | seasons better | 2026 | 7.5+ favorites' bias: board -> chosen (2026) |
+|---|---|---|---|---|---|
+| passing yards | G1 | 3.5% (F4B 2.1%) | 5 of 5; beats F4B 5 of 5 | 6.7% | +11.7 -> +3.5 (+11.0 -> +0.3) |
+| passing TDs | G1 | 3.0% (F4B 1.5%) | 4 of 5; beats F4B 4 of 5 | 1.7% | |
+| interceptions | F4B | 5.2% | 5 of 5 | 0.0% | |
+| carries | H | 7.9% (shipped 7.7%) | 5 of 5 | 12.9% (12.3%) | +0.69 -> +0.04 (+1.94 -> +1.50) |
+| rushing yards | H | 5.0% (shipped 4.9%) | 5 of 5 | 10.5% (10.2%) | +5.9 -> +1.6 (+14.2 -> +10.3) |
+| passing attempts | none | G1 1.9% | 3 of 5 | | |
+| completions | none | G1 1.6% | 3 of 5 | | |
+
+- For passing yards, no spread bucket's |bias| grew by more than 0.94 (favored 3-7.5: +2.45 -> -3.39). The board's top fifth
+  by projection goes from +19.7 to -1.3.
+- For QB rushing, the H form's big-favorite bias was closer to zero than the shipped form's in 4 of 5 seasons (carries) and 5 of
+  5 (yards). Its bucket MSE was lower and its all-rows gain higher.
+- G1 and G2 did not beat the shipped form for QB rushing in 4 of 5 seasons.
+- 2026's big favorites stay high (12 rows, +10.3 yards): those QBs ran far less than any form expected.
+- RB/WR/TE stats were scored as a secondary check. Only WR receiving yards' G1 passed (+0.01% pooled), which is negligible, so
+  it is left alone.
+
+**In the flag** (`STAT_RECAL_GAME_SCRIPT`, fit on 2021-2026; requires `v2_stat_recal_own_history`; weeks 3-17 only).
+- The linear table's QB entries take ten terms: the seven shipped ones, then m, t and max(m - 7, 0).
+- In-sample mean change on the panel:
+
+  | QB stat | underdog 3+ | pick'em | favored 3-7.5 | favored 7.5+ |
+  |---|---|---|---|---|
+  | passing yards | -1.2 | -4.5 | -5.1 | -7.5 |
+  | passing TDs | -0.03 | -0.04 | -0.09 | -0.16 |
+  | carries | -0.22 | -0.27 | -0.27 | -0.69 |
+  | rushing yards | +0.2 | -0.9 | -1.6 | -4.5 |
+
+- Rows without a line read m = t = 0.
+- Attempts and completions do not move, so completions never pass attempts. A big favorite's yards per attempt comes down
+  instead.
+- Points are untouched.
+- `_pre_recal_<stat>` is kept on the moved rows, so the prop engine still reads the board's stat.
+- The existing median curves keep the share of results above the median at 0.46-0.54 by third of the mean for passing yards,
+  the band the shipped re-fit accepted, so there is no re-fit.
+
+**2026 posted lines** (reported, not gating; last line before kickoff):
+- **Big-favorite rushing yards:** the board sat 4.2 yards above the market and H sits 0.8 above. The actual came in 5.3 below
+  the market. The board's side won 1 of 10, H's 3 of 10.
+- **Passing yards, everyone else (124 rows):** the side record falls from 0.476 to 0.427. G1 sits 0.1 above the market (the
+  board 3.1 above), but 2026 QBs out-threw the market by 7.4, so any lower projection loses sides this season.
+- **Big-favorite passing yards (12 rows):** 0.583 -> 0.667.
+
+**Checks.**
+- Builder vs formula on the panel boards: 10,685 QB values, 0 mismatches. Exactly the evaluator's 2,137 rows move per stat.
+- Builds with and without the flag, 2025 week 10 replay and 2026 week 9 live:
+  - points max diff 0.0;
+  - only the five QB stats move (28 / 30 starters);
+  - the m / t the builder passes equal the schedule's, computed independently;
+  - formula mismatches 0 of 140 / 150; popup mismatches 0.
+- **A big favorite in a high-total game can go UP in passing yards.** The margin pulls down (-1.65 yards a point) and the team
+  total pushes up (+5.76 a point, against a 0.46 weight on the board's own number). Josh Allen, 2025 week 10 (favored by 8.5,
+  team total 6.9 above average), goes 234 -> 254. Big favorites in ordinary totals come down (Sam Darnold, 2026 week 9:
+  254 -> 247).
+- **The form leans more on the game lines.** These are the spread and total the model already reads, not player prop lines.
+  So its passing yards sit closer to the prop market: 0.1 yards above it on 2026 non-favorites, against the board's 3.1.
+
+**Call: the user's.** The flag was built off; shipping it adds it to DEFAULT_FEATURES (78 -> 79).
+
+### 2026-11-01 - Shipped: `v2_stat_recal_game_script` (DEFAULT_FEATURES = 79)
+User, after the entry above: "sounds like it is good to push? Go ahead".
+- **In DEFAULT_FEATURES and POST_CALIBRATION_FEATURES.** CALIBRATION_INPUT_FEATURES is unchanged (68): the step acts on the
+  finished board and never changes points, so no line re-fit and no harness run (the harness scores points).
+- **Caveats the user saw before the call:**
+  - a big favorite in a high-total game can go up in passing yards;
+  - the passing-yards column sits closer to the prop market;
+  - 2026's big-favorite QBs still ran 10+ rushing yards under every form.
+- **Undo:** remove the flag.
+- **What to watch** on the Track Record page, weeks 9-17:
+  - QB passing yards and rushing yards against posted lines, big favorites split out;
+  - whether INTs (now pulled hard toward about 0.65 a game) keep their held-out gain live.

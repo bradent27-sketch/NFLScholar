@@ -181,6 +181,82 @@ def test_shipped_tables_barely_move_a_player_whose_history_agrees():
             assert abs(out.at[0, stat] / x - 1) < 0.08, (pos, stat, out.at[0, stat], x)
 
 
+def test_game_script_flag_is_shipped_on_the_linear_table():
+    flag = 'v2_stat_recal_game_script'
+    assert flag in wp.MODEL_FEATURES and flag in wp.DEFAULT_FEATURES and flag in wp.POST_CALIBRATION_FEATURES
+    assert flag not in wp.CALIBRATION_INPUT_FEATURES
+    feats = {'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges', flag}
+    form, table = wp.stat_recal_table(feats, 9)
+    assert form == 'linear'
+    assert table['QB'] == wp.STAT_RECAL_GAME_SCRIPT['QB']                  # QB rushing replaced, passing added
+    for pos in ('RB', 'WR', 'TE'):
+        assert table[pos] == wp.STAT_RECAL_OWN_HISTORY[pos]
+    assert wp.STAT_RECAL_OWN_HISTORY['QB']['rushing_yards'][0] == 1.4287   # the shipped table is not mutated
+    assert all(len(c) == 10 for c in wp.STAT_RECAL_GAME_SCRIPT['QB'].values())
+    # weeks 1, 2 and 18 and a build without the core flag are unchanged
+    assert wp.stat_recal_table(feats, 1) == ('week1', wp.STAT_RECAL_OWN_HISTORY_EDGES[1])
+    assert wp.stat_recal_table(feats, 2) == ('pull', wp.STAT_RECAL_OWN_HISTORY_EDGES[2])
+    assert wp.stat_recal_table(feats, 18) == (None, {})
+    assert wp.stat_recal_table({flag}, 9) == (None, {})
+    # attempts and completions are not in it, so completions can never pass attempts
+    assert not {'passing_attempts', 'passing_completions'} & set(wp.STAT_RECAL_GAME_SCRIPT['QB'])
+
+
+def test_game_script_inputs_margin_and_total():
+    env = {'AAA': {'implied': 30.0}, 'BBB': {'implied': 20.0}, 'CCC': {'implied': 22.0}, 'DDD': {'implied': 24.0},
+           'EEE': {'implied': None}, 'FFF': {'implied': 21.0}}
+    opponents = {'AAA': 'BBB', 'BBB': 'AAA', 'CCC': 'DDD', 'DDD': 'CCC', 'EEE': 'FFF', 'FFF': 'EEE'}
+    out = wp.stat_recal_script_inputs(env, opponents)
+    league = (30 + 20 + 22 + 24 + 21) / 5
+    assert out['AAA'] == pytest.approx((10.0, 30 - league)) and out['BBB'] == pytest.approx((-10.0, 20 - league))
+    assert out['CCC'] == pytest.approx((-2.0, 22 - league))
+    assert 'EEE' not in out and 'FFF' not in out                          # the opponent has no line
+    assert wp.stat_recal_script_inputs({}, opponents) == {}
+
+
+def test_game_script_terms_and_the_knee():
+    c = (1.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, -1.0, 2.0, -0.5)
+    table = {'QB': {'passing_yards': c}, 'WR': {'targets': (0.0, 1.0, 0, 0, 0, 0, 0)}}
+    board = pd.DataFrame({'Player': ['Big Fav', 'Small Dog', 'No Line', 'Wide Out'], 'Pos': ['QB', 'QB', 'QB', 'WR'],
+                          'Team': ['AAA', 'BBB', 'CCC', 'AAA'], 'passing_yards': [260.0, 240.0, 250.0, 0.0],
+                          'targets': [0.0, 0.0, 0.0, 7.0], 'Availability': 1.0, 'Model Proj Pts': [20.0, 18.0, 19.0, 12.0],
+                          'QB Projected Starter': [True, True, True, False]})
+    hist = _history([('Big Fav', 'QB', 6, 17, {'passing_yards': (250.0, 250.0, 250.0)}),
+                     ('Small Dog', 'QB', 6, 17, {'passing_yards': (230.0, 230.0, 230.0)}),
+                     ('No Line', 'QB', 6, 17, {'passing_yards': (240.0, 240.0, 240.0)}),
+                     ('Wide Out', 'WR', 6, 17, {'targets': (7.0, 7.0, 7.0)})])
+    script = {'AAA': (10.0, 4.0), 'BBB': (-3.0, -1.0)}
+    out, info = wp.apply_stat_recal_own_history(board, hist, 'linear', table, script=script)
+    assert out.at[0, 'passing_yards'] == pytest.approx(1 + 0.5 * 260 - 10 + 8 - 0.5 * 3)    # 3 points past the knee
+    assert out.at[1, 'passing_yards'] == pytest.approx(1 + 0.5 * 240 + 3 - 2)               # under the knee
+    assert out.at[2, 'passing_yards'] == pytest.approx(1 + 0.5 * 250)                       # no line: m = t = 0
+    assert out.at[3, 'targets'] == pytest.approx(7.0)                                       # seven terms ignore script
+    assert out.at[0, '_pre_recal_passing_yards'] == 260.0
+    assert info[('Big Fav', 'QB', 'AAA')]['stats']['passing_yards'][0] == 260.0
+    # without script every row reads 0, 0
+    out0, _ = wp.apply_stat_recal_own_history(board, hist, 'linear', table)
+    assert out0.at[0, 'passing_yards'] == pytest.approx(1 + 0.5 * 260)
+
+
+def test_game_script_table_moves_a_typical_qb_in_a_neutral_game_little():
+    """A guard on coefficient order: a QB whose board and history agree on a typical value (the panel's starter averages,
+    weeks 3-17 2021-2026), in a pick'em game of average total, moves under 8%; a 10-point favorite in a game 4 points richer
+    than average runs fewer rushing yards and carries than the same QB in a pick'em."""
+    typical = {'passing_yards': 230.0, 'passing_tds': 1.46, 'passing_interceptions': 0.69, 'rushing_attempts': 4.0,
+               'rushing_yards': 20.0}
+    for stat, coef in wp.STAT_RECAL_GAME_SCRIPT['QB'].items():
+        x = typical[stat]
+        board = pd.DataFrame({'Player': ['Even Passer', 'Big Favorite'], 'Pos': 'QB', 'Team': ['AAA', 'BBB'],
+                              stat: [x, x], 'Availability': 1.0, 'Model Proj Pts': 18.0, 'QB Projected Starter': True})
+        hist = _history([('Even Passer', 'QB', 6, 17, {stat: (x, x, x)}), ('Big Favorite', 'QB', 6, 17, {stat: (x, x, x)})])
+        out, _ = wp.apply_stat_recal_own_history(board, hist, 'linear', {'QB': {stat: coef}},
+                                                 script={'AAA': (0.0, 0.0), 'BBB': (10.0, 4.0)})
+        assert out[f'_pre_recal_{stat}'].notna().all()
+        assert abs(out.at[0, stat] / x - 1) < 0.08, (stat, out.at[0, stat], x)
+        if stat.startswith('rushing'):
+            assert out.at[1, stat] < out.at[0, stat], stat
+
+
 def test_no_table_is_a_no_op():
     board = _board([['Ace Wideout', 'WR', 'AAA', 10.0, 6.0, 0.0, 1.0, 15.0]])
     hist = _history([('Ace Wideout', 'WR', 4, 17, {'targets': (6.0, 7.0, 9.0)})])

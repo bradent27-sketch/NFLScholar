@@ -2431,6 +2431,10 @@ MODEL_FEATURES = (
                              # untouched. Held out by season: stat MSE -3.2% over the 13 stats.
     'v2_stat_recal_own_history_edges',  # SHIPPED 2026-11-01 (user: "do the same with edges"). Weeks 1 and 2
                              # (STAT_RECAL_OWN_HISTORY_EDGES); week 18 left alone.
+    'v2_stat_recal_game_script',  # SHIPPED 2026-11-01 (backlog M15; user: "we are above the market for QB
+                             # props on teams that are larger favorites"). Weeks 3-17, with
+                             # v2_stat_recal_own_history: the QB entries read the game's
+                             # margin and implied total (STAT_RECAL_GAME_SCRIPT).
     'v2_silent_participation',  # SHIPPED 2026-10-25 (with v2_silent_games). The WR/TE participation curve
                              # read as P(any offensive snap | share) (silent games are
                              # appearances), not P(box-score row | share), so a silent
@@ -3146,6 +3150,11 @@ DEFAULT_FEATURES = frozenset({
     # remove the flag(s).
     'v2_stat_recal_own_history',
     'v2_stat_recal_own_history_edges',
+    # SHIPPED 2026-11-01 (backlog M15; user: "sounds like it is good to push? Go ahead"): DEFAULT_FEATURES = 79. With
+    # v2_stat_recal_own_history, weeks 3-17: the QB entries read the game's margin and implied team total
+    # (STAT_RECAL_GAME_SCRIPT). Held out by season: QB passing yards +3.5% MSE (5 of 5, 2026 +6.7%), 7.5+ favorites' passing
+    # yards bias +11.7 -> +3.5, rushing yards +5.9 -> +1.6. Points untouched (POST_CALIBRATION_FEATURES). Undo: remove the flag.
+    'v2_stat_recal_game_script',
 })
 
 
@@ -3173,12 +3182,13 @@ def resolve_model_features(features=None):
 # These flags act AFTER the points line and are not inputs to it: the season anchor (2026-10-06), the opening-week
 # per-stat lines and the Questionable-tag cut (both 2026-10-08), the luck step (2026-10-20) and the 2026-10-28 re-fits of
 # the anchor and the luck step. A dump built with them on would record already adjusted totals as the "raw" the lines are
-# fitted to, so they are left out of the input set. So are 'v2_stat_recal_own_history' / '_edges' (2026-11-01, measured on
+# fitted to, so they are left out of the input set. So are 'v2_stat_recal_own_history' / '_edges' / '_game_script' (2026-11-01, measured on
 # the finished board): the opening-week stat lines are fit on a dump's stat lines.
 POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat_calibration',
                                        'v2_questionable_workload', 'v2_expected_points_luck',
                                        'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
-                                       'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges'})
+                                       'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
+                                       'v2_stat_recal_game_script'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
@@ -3829,7 +3839,7 @@ def apply_expected_points_luck(result, table, factors=None, centers=None):
 # 2026 week 8, 0.00 points, went from 0.06 to 1.36 targets without the floor); a baseline (STAT_RECAL_MIN_GAMES games this
 # season or STAT_RECAL_MIN_PRIOR_GAMES last season); and from week 2 on at least one game this season (a player's first game
 # back lost badly held out: weeks 3-17 -14% to -116%, week 2 -12% to -49%). QB rows only for the projected starter. QB
-# passing, completions and TDs are not touched. The points total is NOT changed, so the stat line no longer scores to 'Model
+# passing is not touched here (v2_stat_recal_game_script adds QB passing yards, TDs and INTs). The points total is NOT changed, so the stat line no longer scores to 'Model
 # Proj Pts' exactly (as with the points line, anchor and luck steps). The earlier value stays in '_pre_recal_<stat>' on the rows
 # moved (NaN elsewhere): data/prop_probability.py reads it (its engine recalibrates on its own) and data/weekly_median.py takes
 # the median of a moved stat from MEDIAN_CURVES_RECAL.
@@ -3871,25 +3881,83 @@ STAT_RECAL_MIN_GAMES = 3
 STAT_RECAL_MIN_PRIOR_GAMES = 4
 STAT_RECAL_MIN_POINTS = 3.0
 
+# --- v2_stat_recal_game_script (SHIPPED 2026-11-01, backlog M15) ------------------------------------------------------------
+# User 2026-11-01: "we are above the market for QB props on teams that are larger favorites ... less close games where they are
+# forced to scramble or pass as they are running more with running backs to chew clock". On the deep-audit panel (starters,
+# weeks 3-17, 2021-2025) a QB favored by more than 7.5 ran +5.9 rushing yards and +11.7 passing yards high on the board.
+# Holding the other fixed, the QB rushing miss follows the implied team total and the passing miss the margin. The board's
+# passing yards also spread the QBs too wide: its top fifth by projection ran +19.7 high, its bottom fifth -12.8.
+# With the flag, the weeks 3-17 linear form's QB entries take three more inputs:
+#   m = own implied points - the opponent's, t = own implied points - the week's league mean (game_environment), and
+#   max(m - STAT_RECAL_SCRIPT_KNEE, 0).
+# Rows without a line read m = t = 0 (a pick'em in an average game).
+# Each tuple: the seven STAT_RECAL_OWN_HISTORY terms, then m, t, max(m - 7, 0). Bar in .sweeps/stat_recal_game_script_bar.md
+# (set before the run; addendum for QB rushing set before its run); scripts/eval_stat_recal_game_script.py --qb-only.
+# Held out by season, stat MSE gain against the board, pooled 2021-2025 (2026 weeks 3-7 in brackets):
+#   passing yards (F4B + m + t): 3.5% (6.7%), better than the board 5 of 5 seasons and better than the form without m/t
+#       5 of 5. QBs favored by 7.5+: bias +11.7 -> +3.5 (2026 +11.0 -> +0.3). Board's top fifth: +19.7 -> -1.3.
+#   passing TDs (F4B + m + t): 3.0% (1.7%), 4 of 5.
+#   interceptions (F4B): 5.2% (0.0%), 5 of 5. This is the between-QB spread, not game script.
+#   QB carries / rushing yards (the shipped form + max(m - 7, 0) only, refit): 7.9% / 5.0% (12.9% / 10.5%), against the
+#       shipped form's 7.7% / 4.9% (12.3% / 10.2%). 7.5+ favorites: carries bias +0.38 -> +0.04, rushing yards +3.3 -> +1.6
+#       (board +5.9). 2026 +11.6 -> +10.3: this season's big favorites' QBs ran far less than any model said.
+# Passing attempts and completions failed the bar (better than the board in 3 of 5 seasons) and stay as projected, so a big
+# favorite's yards per attempt comes down. Completions never exceed attempts (neither moves). Points untouched.
+# Medians: the existing curves keep the share above the median at 0.46-0.54 by third of the mean, the band the shipped re-fit
+# accepted, so there is no re-fit. Fit on 2021-2026 (all 2,137 starter rows with a line).
+STAT_RECAL_GAME_SCRIPT = {
+    'QB': {'passing_yards': (115.3633, 0.4642, -0.0674, 0.036, 0.0196, -1.3888, 0.0343, -1.6499, 5.7594, 0.0),
+           'passing_tds': (1.0359, 0.1951, -0.2609, 0.0856, -0.1084, -0.022, 0.3589, -0.0132, 0.0869, 0.0),
+           'passing_interceptions': (0.5997, 0.3429, 0.0592, -0.0739, 0.0089, 0.016, -0.2166, 0.0, 0.0, 0.0),
+           'rushing_attempts': (0.3514, 0.3462, 0.0525, -0.0103, 0.1169, 0.3214, 0.3808, 0.0, 0.0, -0.0925),
+           'rushing_yards': (1.5866, 0.4018, -0.1396, 0.072, -0.0001, 4.2452, 0.542, 0.0, 0.0, -0.5134)},
+}
+STAT_RECAL_SCRIPT_KNEE = 7.0
+
 
 def stat_recal_table(feats, week):
     """(form, {pos: {stat: coefficients}}) for this week under `feats`: form 'linear' (weeks 3-17), 'week1' or 'pull' (week 2);
-    (None, {}) when neither flag covers the week."""
+    (None, {}) when neither flag covers the week. With 'v2_stat_recal_game_script' the linear table's QB entries come from
+    STAT_RECAL_GAME_SCRIPT (ten terms)."""
     week = int(week)
     if 3 <= week <= 17:
-        return ('linear', STAT_RECAL_OWN_HISTORY) if 'v2_stat_recal_own_history' in feats else (None, {})
+        if 'v2_stat_recal_own_history' not in feats:
+            return None, {}
+        if 'v2_stat_recal_game_script' in feats:
+            table = {pos: dict(stats) for pos, stats in STAT_RECAL_OWN_HISTORY.items()}
+            for pos, stats in STAT_RECAL_GAME_SCRIPT.items():
+                table.setdefault(pos, {}).update(stats)
+            return 'linear', table
+        return 'linear', STAT_RECAL_OWN_HISTORY
     if week in STAT_RECAL_OWN_HISTORY_EDGES and 'v2_stat_recal_own_history_edges' in feats:
         return ('week1' if week == 1 else 'pull'), STAT_RECAL_OWN_HISTORY_EDGES[week]
     return None, {}
 
 
-def apply_stat_recal_own_history(result, history, form, table):
+def stat_recal_script_inputs(env, opponents):
+    """{team: (m, t)} for v2_stat_recal_game_script from game_environment's {team: {'implied'}} and {team: opponent}: m = own
+    implied points - the opponent's, t = own implied points - the mean over the week's teams with a line. Teams without both
+    lines are left out (read as 0, 0)."""
+    implied = {str(k): v.get('implied') for k, v in (env or {}).items() if v.get('implied')}
+    if not implied:
+        return {}
+    league = float(np.mean(list(implied.values())))
+    out = {}
+    for team, own in implied.items():
+        opp = implied.get(str((opponents or {}).get(team)))
+        if opp:
+            out[team] = (float(own) - float(opp), float(own) - league)
+    return out
+
+
+def apply_stat_recal_own_history(result, history, form, table, script=None):
     """(result, info): re-predict each listed stat from the board's stat and the player's own history (module comment above).
     ``history`` is data.prop_probability.player_history (index (_key, pos): h_s2d_/h_l3_/h_ps_<stat>, h_games, h_ps_games);
     ``form`` and ``table`` from stat_recal_table. Skips rows under STAT_RECAL_MIN_POINTS, sidelined rows, non-starting QBs, rows
     without a baseline (or, from week 2, without a game this season) and a (name, position) that appears twice on the board
     (one history row cannot tell them apart). Points are untouched. ``info`` maps (Player, Pos, Team) -> {'stats': {stat:
-    (before, after)}, 'games': games this season, 'form': form}."""
+    (before, after)}, 'games': games this season, 'form': form}. ``script`` ({team: (m, t)}, stat_recal_script_inputs) feeds
+    a ten-term linear entry (v2_stat_recal_game_script); a team missing from it reads 0, 0."""
     if result is None or result.empty or not table or history is None or len(history) == 0:
         return result, {}
     out = result.copy()
@@ -3915,6 +3983,9 @@ def apply_stat_recal_own_history(result, history, form, table):
         ok &= has_prior
     else:
         ok &= (games >= 1) & ((games >= STAT_RECAL_MIN_GAMES) | has_prior)
+    teams = out['Team'].astype(str) if 'Team' in out.columns else pd.Series('', index=out.index)
+    margin = teams.map(lambda t: (script or {}).get(t, (0.0, 0.0))[0]).to_numpy(float)
+    total = teams.map(lambda t: (script or {}).get(t, (0.0, 0.0))[1]).to_numpy(float)
     info = {}
     for pos, stats in table.items():
         pos_rows = out['Pos'].eq(pos).to_numpy() & ok
@@ -3925,12 +3996,15 @@ def apply_stat_recal_own_history(result, history, form, table):
             s2d, l3, ps = col(f'h_s2d_{stat}'), col(f'h_l3_{stat}'), col(f'h_ps_{stat}')
             level = cur / np.where(avail > 0, avail, 1.0)
             if form == 'linear':
-                c0, c_proj, c_s2d, c_l3, c_last, c_miss, c_blend = coef
+                c0, c_proj, c_s2d, c_l3, c_last, c_miss, c_blend = coef[:7]
                 miss = np.isnan(ps)
                 blend = np.where(has_prior, (games * s2d + STAT_RECAL_BLEND_K * np.nan_to_num(ps)) / (games + STAT_RECAL_BLEND_K),
                                  s2d)
                 new = (c0 + c_proj * level + c_s2d * s2d + c_l3 * l3 + c_last * np.where(miss, level, ps) + c_miss * miss
                        + c_blend * blend)
+                if len(coef) == 10:                                         # v2_stat_recal_game_script
+                    c_m, c_t, c_knee = coef[7:]
+                    new = new + c_m * margin + c_t * total + c_knee * np.maximum(margin - STAT_RECAL_SCRIPT_KNEE, 0.0)
             elif form == 'week1':
                 c0, c_proj, c_last = coef
                 new = c0 + c_proj * level + c_last * ps
@@ -10192,7 +10266,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     env = game_environment(schedule_df, week) if (
         'game_env' in feats or 'v2_game_total_elasticity' in feats
         or 'v2_game_total_elasticity_perstat' in feats or 'v2_venue_mult' in feats
-        or 'v2_xtd' in feats
+        or 'v2_xtd' in feats or 'v2_stat_recal_game_script' in feats
     ) else {}
     league_implied = None
     if env:
@@ -14409,7 +14483,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         _own_history = player_history(hist, name_col, as_of_week,
                                       prior_stats if prior_stats is not None and not prior_stats.empty else None,
                                       prior_name_col)
-        result, own_history_info = apply_stat_recal_own_history(result, _own_history, _recal_form, _recal_table)
+        result, own_history_info = apply_stat_recal_own_history(
+            result, _own_history, _recal_form, _recal_table,
+            script=stat_recal_script_inputs(env, opponents) if 'v2_stat_recal_game_script' in feats else None)
 
     # Raw per-week slot/wide/inline defense-allowed evidence, grouped for
     # per-player lookup by (defense_team, position) - the pre-shrinkage

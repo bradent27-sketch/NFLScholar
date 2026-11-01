@@ -2431,6 +2431,12 @@ MODEL_FEATURES = (
                              # untouched. Held out by season: stat MSE -3.2% over the 13 stats.
     'v2_stat_recal_own_history_edges',  # SHIPPED 2026-11-01 (user: "do the same with edges"). Weeks 1 and 2
                              # (STAT_RECAL_OWN_HISTORY_EDGES); week 18 left alone.
+    'v2_rb_game_script',  # CANDIDATE (2026-11-01, backlog L5; user: big favorites "running more with
+                             # running backs to chew clock"). RB rushing TDs, rushing yards
+                             # and receiving yards scale with the game's margin
+                             # (RB_GAME_SCRIPT); the carry budget already reads the spread.
+    'v2_rb_game_script_rush',  # CANDIDATE, harness passes (2026-11-01, L5): the same on rushing TDs and rushing yards only
+                             # (RB_GAME_SCRIPT_RUSH). Takes precedence over v2_rb_game_script.
     'v2_stat_recal_game_script',  # SHIPPED 2026-11-01 (backlog M15; user: "we are above the market for QB
                              # props on teams that are larger favorites"). Weeks 3-17, with
                              # v2_stat_recal_own_history: the QB entries read the game's
@@ -3914,6 +3920,23 @@ STAT_RECAL_GAME_SCRIPT = {
 }
 STAT_RECAL_SCRIPT_KNEE = 7.0
 
+# --- v2_rb_game_script / v2_rb_game_script_rush (CANDIDATES, backlog L5) -----------------------------------------------------
+# Error-first audit 2026-10-21: RBs on favored teams beat the board (START-RB -0.008 held out, 5 of 5). Measured 2026-11-01 on
+# the deep-audit panel (today's points), START-RB (top 40 played), weeks 3-17 (bar: .sweeps/rb_game_script_bar.md, set first):
+#   points residual by spread: underdog 3+ -0.41, pick'em +0.03, favored 3-7.5 +0.69 (5 of 5 seasons), favored 7.5+ +0.62 (4
+#   of 5); favored 3+ minus the rest +1.07 / +1.28 / +0.99 / +0.75 / +0.34 (2021-2025).
+#   By stat (favored 3+ minus the rest): rushing TDs higher in 5 of 5 seasons, rushing yards in 4 of 5 (yards per carry, not
+#   carries: carries 3 of 5, the team carry budget already reads the spread), receiving yards lower in 4 of 5.
+# A stat's multiplier is 1 + b clip(m, -14, 14) / 7, m = own implied points - the opponent's (game_environment), so b is the
+# change per touchdown of margin. b fit on START-RB rows 2021-2026. Held out by season (b fit on the other seasons, points
+# re-scored PPR x the RB points-line slope 0.899): START-RB points MSE, all three stats -0.076 pooled (4 of 5, 2026 -0.010);
+# rushing TDs + rushing yards only -0.088 (5 of 5, 2026 -0.007).
+# Harness v2 2026-11-01 (2022-2025 weeks 3-17), both arms pass: START-RB -0.0052 (3 of 4), START-ALL -0.0014/-0.0015, no
+# position worse; the pre-set tie-break picks _rush (methodology 2026-11-01). Off until the user's call.
+RB_GAME_SCRIPT = {'rushing_tds': 0.0275, 'rushing_yards': 0.0215, 'receiving_yards': -0.0077}
+RB_GAME_SCRIPT_RUSH = {'rushing_tds': 0.0275, 'rushing_yards': 0.0215}
+RB_GAME_SCRIPT_CLIP = 14.0
+
 
 def stat_recal_table(feats, week):
     """(form, {pos: {stat: coefficients}}) for this week under `feats`: form 'linear' (weeks 3-17), 'week1' or 'pull' (week 2);
@@ -3948,6 +3971,14 @@ def stat_recal_script_inputs(env, opponents):
         if opp:
             out[team] = (float(own) - float(opp), float(own) - league)
     return out
+
+
+def rb_game_script_multipliers(teams, script, table):
+    """{stat: per-row multiplier} for v2_rb_game_script(_rush): 1 + b clip(m, -RB_GAME_SCRIPT_CLIP, RB_GAME_SCRIPT_CLIP) / 7
+    per stat in ``table``, m from ``script`` ({team: (m, t)}, stat_recal_script_inputs); a team without a line reads m = 0."""
+    m = np.array([(script or {}).get(str(t), (0.0, 0.0))[0] for t in teams], dtype=float)
+    z = np.clip(m, -RB_GAME_SCRIPT_CLIP, RB_GAME_SCRIPT_CLIP) / 7.0
+    return {stat: 1.0 + float(b) * z for stat, b in table.items()}
 
 
 def apply_stat_recal_own_history(result, history, form, table, script=None):
@@ -10267,6 +10298,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         'game_env' in feats or 'v2_game_total_elasticity' in feats
         or 'v2_game_total_elasticity_perstat' in feats or 'v2_venue_mult' in feats
         or 'v2_xtd' in feats or 'v2_stat_recal_game_script' in feats
+        or 'v2_rb_game_script' in feats or 'v2_rb_game_script_rush' in feats
     ) else {}
     league_implied = None
     if env:
@@ -13366,6 +13398,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if env_stat_mult and cold_start and 'v2_cold_start_regression' in feats:
             r = 1.0 - COLD_START_MULTIPLIER_REGRESSION
             env_stat_mult = {s: 1.0 + r * (m - 1.0) for s, m in env_stat_mult.items()}
+        if pos == 'RB' and env and not cold_start:
+            # v2_rb_game_script(_rush): RB stats scale with the game's margin (RB_GAME_SCRIPT comment)
+            _rb_table = (RB_GAME_SCRIPT_RUSH if 'v2_rb_game_script_rush' in feats
+                         else RB_GAME_SCRIPT if 'v2_rb_game_script' in feats else None)
+            if _rb_table:
+                env_stat_mult = dict(env_stat_mult or {})
+                for _stat, _mult in rb_game_script_multipliers(
+                        cur['Team'].astype(str).to_numpy(), stat_recal_script_inputs(env, opponents), _rb_table).items():
+                    if _stat in proj_cols:
+                        _prev = env_stat_mult.get(_stat)
+                        env_stat_mult[_stat] = _mult if _prev is None else np.asarray(_prev, dtype=float) * _mult
 
         def _env(stat):
             m = env_stat_mult.get(stat) if env_stat_mult else None

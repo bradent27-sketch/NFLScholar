@@ -7310,3 +7310,100 @@ User, after the entry above: "sounds like it is good to push? Go ahead".
 - **What to watch** on the Track Record page, weeks 9-17:
   - QB passing yards and rushing yards against posted lines, big favorites split out;
   - whether INTs (now pulled hard toward about 0.65 a game) keep their held-out gain live.
+
+### 2026-11-01 - High-call audit, information-focused: no model lead (no flag)
+User: "start with 1 and 2" (backlog next steps: the high-call audit and L5). Bar `.sweeps/high_call_audit_bar.md`, set before
+the run, with an addendum set before its run; `scripts/audit_high_calls.py`.
+
+**The rows.** 2026 live ledger, each player's last pre-kickoff board, weeks 3-7, START pool paired with the market:
+- 105 high calls (model 2+ above the market); the model was closer to the result on 33%.
+- Model 13.94, market 10.90, actual 10.92: on these rows the market is about fully right.
+- Today's code, replayed on the same rows, still says 13.16.
+- FantasyPros sided with the market on 69 of 103.
+
+**Tags known before kickoff, and the rule.** A tag is a model lead only if three things hold:
+- (a) 2026 high calls with the tag: 15+ rows, model closer on 25% or less;
+- (b) on 2021-2025 (no market), the board over-projects that kind of row by 0.5+ points, pooled and in 4+ of 5 seasons;
+- (c) the 2026 replay agrees.
+
+| tag | high calls | model closer | share of the miss | history (actual - board), seasons at -0.5 or worse | verdict |
+|---|---|---|---|---|---|
+| returning player (missed 1 of the team's last 2) | 17 | 24% | 22% | -0.93, 2 of 5 (2026 replay +0.68) | information |
+| vacancy beneficiary | 17 | 35% | 10% | -0.29, 2 of 5 | - |
+| model 3+ over his season to date | 18 | 44% | 6% | -0.50, 2 of 5 | - |
+| snaps down 10+ last game | 15 | 53% | 2% | -0.92, 4 of 5 | - (history only) |
+| snaps up 10+ | 13 | 46% | 2% | +0.50 | - |
+| TD-heavy projection | 11 | 36% | 12% | -0.52, 2 of 5 | - |
+| Questionable / teammate back / rookie | 2 / 4 / 5 | | | | - |
+| top fifth of the board (addendum) | 35 | 43% | 30% | weeks 3-7 -0.07, 2 of 5 | - |
+
+**What it means.**
+- No pre-kickoff fact the model has, and no level of the board, predicts these misses.
+- On history the board shows no matching bias, so a rule fit to them would fit 2026's news, not a structural error.
+- The high calls are information the market has and the model does not: practice and snap plans for returning players, game
+  plans, role news.
+- Low calls break even (progress summary 2026-10-27). Most news the model misses lowers a player's outlook.
+
+**Process items, not flags.**
+- Returning players are the worst group (24%). Check their news, and use the user's overrides.
+- Re-pull injuries after inactives.
+- Display-only option for the user: mark a row where the model is 2+ above the market as "market likely knows something",
+  since history says it is right about two times in three. This is a diagnostic label, not a blend; the projection is
+  unchanged.
+
+**Seen on the way.** On 2021-2025 the board over-projects players whose snaps fell 10+ points last game (-0.92, 4 of 5
+seasons). The 2026 replay goes the other way (+0.93). `v2_share_recency` (the last game counted double) already missed its
+bar on 2026-10-26.
+
+
+### 2026-11-01 - RB game script by spread: both arms pass the harness gate (CANDIDATE `v2_rb_game_script_rush`, off; backlog L5)
+User: "start with 1 and 2" (the second item, L5). Earlier the user said big favorites are "running more with running backs to
+chew clock". Bar `.sweeps/rb_game_script_bar.md`, set before stage 1, with an addendum set before the harness.
+
+**Where the favored back's edge comes from** (deep-audit panel = today's points, START-RB, 2021-2025 weeks 3-17):
+- Points: underdog 3+ -0.41, pick'em +0.03, favored 3-7.5 +0.69 (5 of 5 seasons), favored 7.5+ +0.62 (4 of 5).
+- Favored 3+ minus the rest, by season: +1.07 / +1.28 / +0.99 / +0.75 / +0.34; 2026 +0.06.
+- The channel is what the back does with his carries, not more carries (the team carry budget already reads the spread):
+  rushing TDs higher in 5 of 5 seasons, rushing yards in 4 of 5 (yards per carry; carries 3 of 5), receiving yards lower in
+  4 of 5.
+
+**The candidates.** Each stat is multiplied by 1 + b * clip(m, -14, 14) / 7, where m = own implied points - the opponent's.
+They apply right after the RB environment multipliers; weeks 1-2 cold start excluded. b per 7 points of margin, fit on
+2021-2026:
+- `v2_rb_game_script`: rushing TDs +0.0275, rushing yards +0.0215, receiving yards -0.0077.
+- `v2_rb_game_script_rush`: rushing TDs and rushing yards only. Receiving yards' b flipped sign across the held-out folds.
+
+Held-out START-RB points MSE vs the board: all three -0.076 (4 of 5; 2026 -0.010), rushing only -0.088 (5 of 5; 2026 -0.007).
+
+**Harness v2** (played-only, 2022-2025 weeks 3-17, one run, both arms; RMSE change):
+
+| scope | all3 | rush | gate |
+|---|---|---|---|
+| START-RB | -0.0052 (+0.0006 / -0.0025 / -0.0075 / -0.0112) | -0.0052 (+0.0006 / -0.0023 / -0.0077 / -0.0113) | < 0, 3 of 4: both pass |
+| START-ALL | -0.0015 | -0.0014 | <= 0: both pass |
+| START-WR / TE / QB | -0.0002 / +0.0004 / 0 | +0.0001 / +0.0003 / 0 | <= +0.002: both pass |
+| EVERY-RB | -0.0028 | -0.0029 | <= +0.002: both pass |
+
+- The START-RB 90% interval touches zero (-0.010 to +0.001). The size matches stage 2: -0.088 MSE is about -0.006 RMSE at
+  this error level.
+- **Addendum rule:** 'rush' is preferred if its START-RB change is at or below all3's. It is, by a hair (-0.005211 vs
+  -0.005210), and it has one fewer moving part. The candidate is `v2_rb_game_script_rush`.
+- **Changed rows** (`eval_changed_rows`, played, rush): backs moved up -0.012 RMSE (interval -0.021 to -0.002, 1,300 rows);
+  backs moved down -0.001 (not significant, 1,149 rows). The gain is in raising favored backs.
+- **Size on a board:** 2025 week 10 replay, favored backs +0.09 points on average, underdogs' -0.07. Only RB rows change in
+  the build.
+- **Stat columns:** the shipped own-history recal re-predicts RB rushing yards after points, so the displayed rushing-yards
+  column carries only part of the change. Points carry all of it.
+
+**Seen on the way: an order bug in the receiver vacancy split** (not this flag's doing).
+- About 120 WR/TE rows in 48 team-weeks moved in both arms, by up to 1.25 points (Tyler Johnson, NYJ 2025 week 8). Team
+  targets were conserved; the split between receivers changed.
+- 45 of the 48 team-weeks have 2+ WR/TE out.
+- When two receivers are out, `redistribute_rb_vacancy_with_allocator` hands out their vacated targets one source at a time,
+  each pass seeing the last one's result. The order follows the board's row order after an unstable sort by points, and every
+  out player sits at 0.00 points. Any change elsewhere on the board can reorder them, so the split is arbitrary.
+- It is pre-existing, and the net effect here is neutral (START-WR +0.0001, START-TE +0.0003). It also adds noise to every
+  harness comparison and to live boards with two receivers out. Flagged as its own task; it needs a deterministic source order
+  behind a named flag.
+
+**Call: the user's.** Both flags are off; shipping adds `v2_rb_game_script_rush` to DEFAULT_FEATURES (79 -> 80).

@@ -6955,3 +6955,35 @@ so replay them with `--replay-without v2_points_lines_start_rows,v2_luck_te_refi
 Wiring: 2026 week 7 rebuilt with the 76 flags (harness base arm) matches the offline replay to 0.05 on 460 of 467 rows (the rest
 the vacancy pass's knock-on, up to 0.30, PIT/SF/GB). Mean |move| against the 72-flag board QB 0.15, RB 0.16, WR 0.20, TE 0.28;
 the biggest are TEs (+-1.35) and a few RBs (about 1); QBs move up to +0.77 (Brissett, Jones: unlucky so far). Suite: 1001 passed.
+
+### 2026-10-28 - Deep audit, and a prop probability engine (tooling; no model flag changed)
+User: "build a memory intensive test ... identify flaws, strengths, new factors we can't currently see ... the capability of
+building prop specific accuracy for prop betting going forward". `scripts/deep_audit.py` rebuilt every board of today's model:
+- 2021-2025 weeks 1-18 and 2026 weeks 1-7, with the harness injury replay;
+- 97 boards, 48,609 player-weeks;
+- each row joined to the result, the player's history, the opponent, team volume, the game's context and the teammates out.
+
+Findings are in `docs/deep_audit_2026-10-28.md`. In short:
+- **Points:** clean. A boosted residual model finds nothing held out, and game context shows no bias.
+- **Stat columns:** they overshoot a player's own level.
+  - Of the gap between the projection and the player's own average, only part comes true: WR targets 65%, TE targets 58%, RB
+    carries 75%, QB rushing 43-51%. QB passing is about 100%.
+  - The points layer absorbs this for points; backlog M13 is the board flag candidate.
+- **Week 18 and week 1:** weak (backlog W10).
+- **High calls:** information the market has, not spread.
+
+New `data/prop_probability.py`:
+- Recalibrates each stat projection per position. It is a ridge fit on the projection, the season to date, the last 3 games and
+  last season. QB attempts, completions and INT are left as projected.
+- Reads P(over) from the empirical spread of results at that level.
+- The Poisson/Normal shape that data/market_devig.py assumes is too narrow for volume stats: its 50% interval held 35-43% of
+  results.
+- Engines are in `data/prop_engines.json`, fit 2021-2026.
+
+2026 weeks 3-7, scored with an engine fit on 2021-2025 on the live pre-kickoff boards, closing lines (Pinnacle, then DraftKings):
+- Brier 0.255 against the books' de-vigged 0.248; best shrink toward 1/2 is 0.34.
+- The model's side at a 5%+ gap: receiving yards 55.0% (467), receptions 54.3% (519), rushing yards 53.8% (221), passing yards
+  37% (54), attempts 38% (88).
+
+`scripts/prop_scorecard.py` keeps the record weekly; `--sheet WEEK` writes a week's sheet. Neither the board nor the app's
+numbers change. Suite: 1006 passed.

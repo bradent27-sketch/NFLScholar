@@ -8029,14 +8029,15 @@ def qb1_returning_gate(feats, injury_profiles, as_of_week):
 
 
 def qb1_returning_inputs(year, as_of_week, stats_df, name_col, team_col,
-                         prior_played, prior_name_col, prior_team_col, schedule_df):
+                         prior_played, prior_name_col, prior_team_col, schedule_df, point_in_time=None):
     """Inputs for _returning_qb_starters, from sources that are time-valid for
     a week before ``as_of_week``: the official injury report and the weekly
     reserve-list status of every completed week this season (plus the
     FantasyPros injury file where one was saved for that week), last season's
     QB snap shares, and this season's rostered QBs (so a starter with no game
     yet this season, like a Week-3 return from a preseason injury, is a
-    candidate)."""
+    candidate). ``point_in_time`` (v2_point_in_time_roster, a backtest only):
+    a rostered QB's team is his target-week roster team, not his last game's."""
     out_by_week = {}
     for week in range(1, int(as_of_week)):
         names = set()
@@ -8084,8 +8085,12 @@ def qb1_returning_inputs(year, as_of_week, stats_df, name_col, team_col,
             wk = pd.to_numeric(qbs['week'], errors='coerce')
             qbs = qbs[wk.isna() | wk.lt(float(as_of_week))]
         if not qbs.empty:
+            qb_team = qbs[team_col]
+            if point_in_time is not None:
+                _pit_team, _ = _point_in_time_lookup(qbs, name_col, point_in_time)
+                qb_team = _pit_team.where(_pit_team.notna(), qb_team)
             roster = pd.DataFrame({
-                '_team': _clean_team_key(qbs[team_col]).to_numpy(),
+                '_team': _clean_team_key(qb_team).to_numpy(),
                 '_player': qbs[name_col].astype(str).str.strip().to_numpy(),
             })
             roster['_key'] = clean_name_exact(roster['_player'])
@@ -11039,13 +11044,20 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             if not current_qbs.empty:
                 current_qbs = (current_qbs.assign(_week=pd.to_numeric(current_qbs['week'], errors='coerce'))
                                 .sort_values('_week').drop_duplicates(name_col, keep='last'))
+                if point_in_time is not None:
+                    # v2_point_in_time_roster: a QB's room is his target-week roster team, the board's Team, not the
+                    # team of his last game (2023 LA week 11: Brett Rypien, the week-9 fill-in, was on SEA's practice
+                    # squad by then, but his last LA start took the job and left LA with no projected QB)
+                    _pit_team, _ = _point_in_time_lookup(current_qbs, name_col, point_in_time)
+                    current_qbs[team_col] = _pit_team.where(_pit_team.notna(), current_qbs[team_col])
             _use_returning, _returning_warning = qb1_returning_gate(feats, injury_profiles, as_of_week)
             qb1_resolution = resolve_inseason_qb1s(
                 current_qbs, name_col, team_col,
                 player_hist, name_col, team_col, as_of_week, year,
                 unavailable_players=unavailable_qbs,
                 returning=(qb1_returning_inputs(year, as_of_week, stats_df, name_col, team_col,
-                                                player_prior, prior_name_col, prior_team_col, schedule_df)
+                                                player_prior, prior_name_col, prior_team_col, schedule_df,
+                                                point_in_time=point_in_time)
                            if _use_returning else None),
                 latest_game_signal=('v2_qb1_latest_game_starter' in feats),
                 fallback=('v2_qb1_probable_starter_fallback' in feats),

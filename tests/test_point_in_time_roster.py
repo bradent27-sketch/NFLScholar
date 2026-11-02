@@ -82,3 +82,19 @@ def test_placeholder_needs_the_player_on_the_week_roster(monkeypatch):
     off_wr, on_wr = rows['WR']
     assert set(off_wr[name]) == {'Amari Cooper', 'Gone Guy'}
     assert on_wr[name].tolist() == ['Amari Cooper'] and on_wr['Team'].tolist() == ['CLE']
+
+
+def test_returning_qb_roster_uses_the_week_roster_team(monkeypatch):
+    # 2023 LA week 11: Brett Rypien's last game was a week-9 LA start, but he was on SEA's practice squad by week 11
+    pit = pd.DataFrame({'gsis_id': ['00-R', '00-S'], '_key': wp.clean_name_exact(pd.Series(['Brett Rypien', 'Matthew Stafford'])),
+                        'position': ['QB', 'QB'], 'team': ['SEA', 'LA'], 'status': ['DEV', 'ACT']})
+    for fn in ('historical_injury_profiles', 'historical_reserve_profiles'):
+        monkeypatch.setattr(wp, fn, lambda *a, **k: {})
+    monkeypatch.setattr(wp, 'load_fantasypros_availability', lambda *a, **k: ({}, None))
+    stats = pd.DataFrame({'player_display_name': ['Matthew Stafford', 'Brett Rypien'], 'player_id': ['00-S', '00-R'],
+                          'position': ['QB', 'QB'], 'team': ['LA', 'LA'], 'week': [8, 9]})
+    args = (2023, 11, stats, 'player_display_name', 'team', None, None, None, None)
+    off = wp.qb1_returning_inputs(*args)['roster'].set_index('_player')['_team']
+    on = wp.qb1_returning_inputs(*args, point_in_time=pit)['roster'].set_index('_player')['_team']
+    assert off.to_dict() == {'Matthew Stafford': 'LA', 'Brett Rypien': 'LA'}
+    assert on.to_dict() == {'Matthew Stafford': 'LA', 'Brett Rypien': 'SEA'}

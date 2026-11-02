@@ -7774,3 +7774,39 @@ arm `e12 = +v2_points_from_stat_line, +v2_points_from_stat_line_edges` (pfs alon
 
 With pfs and this extension both on, the points line runs only for QBs in weeks 1-2. The opening-week stat calibration stays:
 it calibrates the stat line that the edges recal starts from.
+
+### 2026-11-02 - Two more audit candidates: `v2_wr1_capacity_relief` and the xTD missing-prior fix (off; harness queued)
+**WR1s run under, and it is the capacity cut, not concentration.** Error map: START WR1s +0.71 (5 of 5 seasons), in every
+spread bucket (+0.62 to +0.91).
+- The WR1's projected share of the team's WR targets is above actual in every season (0.438 vs 0.410 in 2021 ... 0.459 vs
+  0.432 in 2026), so the split is not too flat at the top.
+- Stage capture, played games: of the pass-capacity cut to the WR1's targets / receiving yards only beta 0.72 / 0.80 comes
+  true (2026: 0.31 / 0.64), against WR2 0.95 / 1.16 and WR3 1.09 / 1.04. The vacancy pass also hands WR1s a little too little
+  (beta 1.29).
+- `v2_wr1_capacity_relief` (weeks 3+): each room's lead WR (most targets before the fit, name breaks ties) takes 1 + 0.6 x
+  (factor - 1) of the uniform factor; nothing is reassigned.
+- This is not the 2026-08-29 waterfall the user reverted: there the WR1/WR2/TE1 were fully protected and the tail absorbed
+  everything.
+- Simulated through the recal (pfs scoring): START-WR 7.643 -> 7.633 (4 of 5 seasons, 2021 +0.003); bias +0.33 -> +0.18;
+  2026 7.479 -> 7.462. Bar `.sweeps/wr1_capacity_relief_bar.md`.
+
+**Rookies' expected TDs were cut by a share-blend bug.**
+- START rookie RBs in weeks 3-5 run +1.8 points. Two-thirds is rushing TDs (0.18 projected vs 0.38), and the rookie rate per
+  carry is half the veterans' at every workload.
+- With zero TD events (pure xTD) it is 0.009 vs 0.027 on the same carries; actual 0.035.
+- **Cause:** `xtd_blended_rate` read a player absent from last season's zone usage as a 0.0 prior share. The value is finite,
+  so the "current share only" branch never ran, and his real share was blended with the fake 0 at weight 4 / (games + 4).
+  - That is 0.2x his xTD in week 2, about 0.43x after 3 games, and 0.75x after 12.
+  - Jeanty 2025 week 4: 0.657 computed as 0.282.
+  - Week-2 boards: Nabers 7.1 targets -> 0.02 receiving TDs, McMillan 8.0 -> 0.03.
+- **`v2_xtd_missing_prior_share`:** an absent player has no prior share. **`v2_xtd_missing_prior_overall`:** his prior share
+  is his current share of the team's opportunities over all zones, so a 3-game zone share is shrunk toward his overall role.
+- The plain fix took Hampton (4 of 5 inside-the-5 carries) to 1.08 rush TDs on 16.8 carries; the overall variant gives 0.86.
+- Approximation on the START rows (plain fix): START-RB -0.014 (5 of 5), rookie RB bias +1.00 -> +0.25, START-ALL -0.006.
+- One-board smoke (2025 week 4): only absent players move (20 rows' rushing TDs, 55 rows' receiving TDs).
+- Bar `.sweeps/xtd_missing_prior_share_bar.md`, plus a weeks 1-2 run (week 2 moves the most).
+
+**Logged, not built:**
+- M20, week-1 rookies get almost no volume. Backtests use the 15th-percentile share because the Ourlads floor is live-only;
+  a diagnostic arm with `v2_historical_ourlads` is queued.
+- M19, the recal gate (entry above).

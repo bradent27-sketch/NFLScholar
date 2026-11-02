@@ -1212,6 +1212,7 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                                            receiver_lead_share: float = RECEIVER_VACANCY_LEAD_SHARE,
                                            lone_lead_share: float | None = None,
                                            rb_line_holders: set | frozenset | None = None,
+                                           deterministic_order: bool = False,
                                            ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Redistribute an out core RB's carries and targets with allocator shares.
 
@@ -1241,6 +1242,12 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
     ``rb_line_holders`` (v2_ps_line_routing): board names of the backs with a posted market line this week. When any of
     the backs a share goes to (the lone lead's rest, or the depleted room's practice-squad share) has one, those alone take
     it (split equally); with none, the split stands.
+
+    ``deterministic_order`` (v2_vacancy_source_order): the out players are handed out one at a time, and each pass sees the
+    volumes the earlier ones grew (the pecking rank and the growth cap both read current volume), so the order matters.
+    Without it the order was the board's row order - sorted by points, where every out player has 0.00, so arbitrary: an
+    RB-only change moved ~120 WR/TE rows in teams with 2+ receivers out (2026-11-01). With it a team's sources go by
+    pre-injury volume (carries + targets) descending, then name, and ties in the pecking rank break by name.
     """
     columns = ["team", "volume", "source_player", "functional_source_role", "injury_provenance",
                "vacated", "allocated", "unallocated", "recipients", "reason"]
@@ -1273,7 +1280,20 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                    else pd.Series(0.0, index=out.index))
     pre_carries = (pd.to_numeric(out["_full_rushing_attempts"], errors="coerce") if "_full_rushing_attempts" in out.columns
                    else carries_now).fillna(carries_now).fillna(0.0)
-    for source_index in out.index[sidelined]:
+    source_order = out.index[sidelined]
+    if deterministic_order:
+        def _pre_injury(col: str) -> pd.Series:
+            now = (pd.to_numeric(out[col], errors="coerce") if col in out.columns
+                   else pd.Series(0.0, index=out.index))
+            full = (pd.to_numeric(out[f"_full_{col}"], errors="coerce") if f"_full_{col}" in out.columns
+                    else now)
+            return full.fillna(now).fillna(0.0)
+        keyed = pd.DataFrame({"team": out["Team"].astype(str),
+                              "volume": _pre_injury("rushing_attempts") + _pre_injury("targets"),
+                              "player": out["Player"].astype(str)}).loc[source_order]
+        source_order = keyed.sort_values(["team", "volume", "player"], ascending=[True, False, True],
+                                         kind="mergesort").index
+    for source_index in source_order:
         source = out.loc[source_index]
         team = str(source["Team"])
         source_profile = injury_profiles.get(source["Player"], {})
@@ -1368,7 +1388,12 @@ def redistribute_rb_vacancy_with_allocator(result: pd.DataFrame, injury_profiles
                 # split (this branch is WR/TE only).
                 pecking = receiver_pecking_order and source_role in {"WR", "TE"} and len(shares) > 1
                 if pecking:
-                    order = shares.rank(method="first", ascending=False)
+                    if deterministic_order:
+                        names = out.loc[candidates, "Player"].astype(str)
+                        ranked = sorted(candidates, key=lambda index: (-float(shares.loc[index]), names.loc[index]))
+                        order = pd.Series(np.arange(1.0, len(ranked) + 1.0), index=ranked).reindex(shares.index)
+                    else:
+                        order = shares.rank(method="first", ascending=False)
                     weights = pd.Series(
                         np.power(RECEIVER_VACANCY_RANK_DECAY, (order - 2.0).clip(lower=0.0)),
                         index=order.index)

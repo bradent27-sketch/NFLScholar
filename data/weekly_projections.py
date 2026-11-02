@@ -2439,6 +2439,11 @@ MODEL_FEATURES = (
                              # running backs to chew clock"). RB rushing TDs and rushing yards
                              # scale with the game's margin (RB_GAME_SCRIPT_RUSH); the carry
                              # budget already reads the spread. Takes precedence over v2_rb_game_script.
+    'v2_vacancy_source_order',  # CANDIDATE (2026-11-01): the vacancy pass hands out out players in a fixed order
+                             # (team, pre-injury carries + targets descending, name) and breaks
+                             # pecking-rank ties by name. Before it the order was the board's row
+                             # order, arbitrary for out players (all 0.00 points), so an unrelated
+                             # change re-split a team's vacated targets when 2+ receivers were out.
     'v2_point_in_time_roster',  # SHIPPED 2026-11-01 (backlog D6 / N4; backtest only, no-op live). A backtest
                              # reads the roster as of the target week (nflverse weekly roster):
                              # past games keep the team they were played for, the board's Team
@@ -14439,6 +14444,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                          if 'v2_vacancy_lead_share_050' in feats else RECEIVER_VACANCY_LEAD_SHARE),
                     lone_lead_share=(LONE_LEAD_VACANCY_SHARE if 'v2_rb_lone_lead_vacancy' in feats else None),
                     rb_line_holders=(_rb_backs_with_lines(result, year, week) if 'v2_ps_line_routing' in feats else None),
+                    deterministic_order='v2_vacancy_source_order' in feats,
                 )
                 rb_vacancy_ledger = (rb_vacancy_frame.to_dict('records')
                                      if rb_vacancy_frame is not None and not rb_vacancy_frame.empty else [])

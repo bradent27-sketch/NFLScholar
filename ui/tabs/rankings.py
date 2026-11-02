@@ -52,7 +52,7 @@ from ui.charts import sparkline_data_uri, C as _CHART_COLORS
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
                         get_diverging_color, get_multiplier_color, get_team_style)
 from ui.components import (position_group_buttons, apply_position_group, skeleton_loader,
-                           import_hint, switch_tab, render_weekly_board_uploads)
+                           import_hint, switch_tab, render_weekly_board_uploads, quiet_note)
 
 _MODEL_STAT_COLS = ['passing_yards', 'passing_tds', 'rushing_attempts', 'rushing_yards',
                     'rushing_tds', 'targets', 'receptions', 'receiving_yards', 'receiving_tds']
@@ -79,10 +79,9 @@ def _board_age_caption(built_at, now=None, reprojected=None, reprojected_at=None
     again = ''
     if reprojected and reprojected_at is not None:
         again = f" {', '.join(reprojected)} re-projected at {reprojected_at.strftime('%I:%M %p').lstrip('0')} for a ruling."
-    text = (f"Board built {built_at.strftime('%a %I:%M %p').replace(' 0', ' ')} ({age}).{again} Moving around the tab "
-            "never rebuilds it and a ruling re-projects only that team; **🧮 Build board** rebuilds it.")
+    text = f"Board built {built_at.strftime('%a %I:%M %p').replace(' 0', ' ')} ({age}).{again} **🧮 Build board** rebuilds it."
     if minutes >= _BOARD_AGE_NUDGE_HOURS * 60:
-        st.warning(text + " Rebuild before kickoff to pick up the latest injury and roster news.")
+        st.warning(text + " Rebuild before kickoff for the latest injury and roster news.")
     else:
         st.caption(text)
 
@@ -147,13 +146,13 @@ def _unused_stat_labels(positions):
 # these wide, not the cell content.
 _NARROW_COLS = ('Rank', 'FantasyPros Rank', 'Model Rank', 'Market Rank',
                 'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts', 'Market Coverage',
-                'Def Rank', 'Wind', 'Temp', 'Precip', 'Season Snap %')
+                'Def Mult', 'Wind', 'Temp', 'Precip', 'Season Snap %')
 
 # Wind/Temp/Precip bucket thresholds for the weather columns - icon-only
 # (explicit request, 2026-09-23: the bucket is the useful at-a-glance
 # signal, not the exact mph/degrees), so the column stays compact and
 # consistent with Precip's own already-icon-first labels. Deliberately
-# uncolored (unlike Def Rank right next to it): that column already
+# uncolored (unlike Def Mult right next to it): that column already
 # carries this row's one heavy background color, and three more colored
 # cells beside it would read as noisy rather than informative for what's
 # meant to be a quick glance.
@@ -374,36 +373,43 @@ def _render_distribution_chart(distribution, position_label):
         "wider than a typical player at this tier (a less certain role)" if scale > 1.05 else
         "about the same width as a typical player at this tier"
     )
-    st.caption(
-        f"Built from how this model has actually missed for {distribution['tier']} {position_label}s "
+    quiet_note(f"Built from how this model has actually missed for {distribution['tier']} {position_label}s "
         f"in a real out-of-sample backtest (scripts/fit_weekly_distribution.py), not an arbitrary "
-        f"+/-%. This player's own band is {band_note}."
-    )
+        f"+/-%. This player's own band is {band_note}.", "How this range is built")
 
 
-# Switching a tab inside the projection dialog (the Deep dive stat tabs above all) re-runs the dialog and the
-# frontend empties the tab's panel until the new one arrives, so the dialog momentarily shrinks. On a tall window
-# the shrunken dialog fits the screen, the browser clamps its scroll position to 0, and when the content returns
-# the reader is left at the TOP of the breakdown (reproduced 2026-10-07 at a 1500 px viewport; the user's large
-# monitor). Streamlit has no hook for this, so a small script remembers the scroll position when a tab in the
-# dialog is clicked and puts it back once the content has regrown tall enough. It gives up on any wheel / touch /
-# key scroll by the reader, and after 6 s; it is registered once per page and does nothing when no dialog is open.
+# Switching a tab inside the projection dialog (the Deep dive stat tabs above all) re-runs the dialog, and the frontend
+# empties the tab's panel until the new one arrives, so the dialog momentarily shrinks and the browser clamps its scroll
+# position (to 0 on a tall window: the reader lands at the TOP of the breakdown; reproduced 2026-10-07 at a 1500 px
+# viewport and again 2026-11-02, where the old restore-after-the-fact script left a visible jump to the top, and gave up
+# for good whenever the new tab came back shorter than the old one). Streamlit has no hook for this, so a small script
+# freezes the dialog's content at its current height from the click until the new panel has arrived and the DOM has been
+# quiet for a second - the dialog never shrinks, so nothing is clamped. As a fallback it still puts the scroll position
+# back if it was lost anyway, and gives up on any wheel / touch / key scroll by the reader and after 8 s. It is
+# registered once per page and does nothing when no dialog is open.
 _DIALOG_SCROLL_KEEP_JS = """
 <script>
 (function () {
-  if (window.__wrDialogScrollKeep) return;
-  window.__wrDialogScrollKeep = true;
+  if (window.__wrDialogHold) return;
+  window.__wrDialogHold = true;
   document.addEventListener('click', function (ev) {
     var tab = ev.target && ev.target.closest ? ev.target.closest('[data-testid="stDialog"] [role="tab"]') : null;
     if (!tab) return;
     var box = tab.closest('[data-testid="stDialog"]');
-    if (!box) return;
-    var saved = box.scrollTop, started = Date.now(), moved = false;
+    var body = box && box.firstElementChild;
+    if (!body) return;
+    var saved = box.scrollTop, started = Date.now(), last = started, moved = false;
+    body.style.minHeight = body.offsetHeight + 'px';
+    var watcher = new MutationObserver(function () { last = Date.now(); });
+    watcher.observe(body, { childList: true, subtree: true, attributes: true, characterData: true });
     var stop = function () { moved = true; };
     ['wheel', 'touchmove', 'keydown'].forEach(function (name) { box.addEventListener(name, stop, { once: true, passive: true }); });
     var timer = setInterval(function () {
-      if (moved || !document.body.contains(box) || Date.now() - started > 6000) { clearInterval(timer); return; }
-      if (box.scrollTop < saved - 1 && box.scrollHeight - box.clientHeight >= saved) box.scrollTop = saved;
+      var now = Date.now();
+      if (!document.body.contains(box) || now - started > 8000 || (now - started > 500 && now - last > 1000)) {
+        clearInterval(timer); watcher.disconnect(); body.style.minHeight = ''; return;
+      }
+      if (!moved && box.scrollTop < saved - 1 && box.scrollHeight - box.clientHeight >= saved) box.scrollTop = saved;
     }, 40);
   }, true);
 })();
@@ -570,6 +576,19 @@ def _context_parts(values):
     return parts
 
 
+def _matchup_blend_text(matchup, season_year):
+    """How the Matchup rank weighs this season against last: '2026 37% + 2025 63%', or the one season alone."""
+    weight = matchup.get('current_weight')
+    if weight is None or season_year is None:
+        return str(matchup.get('source') or '')
+    weight, year = float(weight), int(season_year)
+    if weight >= 1.0:
+        return f"{year} only"
+    if weight <= 0.0:
+        return f"{year - 1} only (no {year} games yet)"
+    return f"{year} {weight:.0%} + {year - 1} {1.0 - weight:.0%}"
+
+
 def _render_decomposition_header(detail):
     st.caption(
         f"{detail['position']} · {detail['team']} vs {detail['opponent']} · "
@@ -611,13 +630,11 @@ def _render_decomposition_header(detail):
         cols[-1].metric(
             "Matchup", f"{toughness_rank}/{of}", delta=f"{tier} vs {detail['position']}", delta_arrow='off',
             delta_color={'easiest': 'normal', 'toughest': 'inverse', 'middling': 'off'}[tier], help=matchup_help)
-        st.caption(
-            f"{detail['opponent']} defense vs {detail['position']}: #{toughness_rank} of {of} toughest (allows "
-            f"{matchup['value']:.1f} pts/game to the position, league avg {matchup['league_avg']:.1f}). "
-            f"Source: {matchup.get('source', 'unknown')}. Full breakdown in the Deep Dive tabs below.")
+        st.caption(f"{detail['opponent']} defense vs {detail['position']}: #{toughness_rank} of {of} toughest · "
+                   f"{_matchup_blend_text(matchup, detail.get('season_year'))}")
     else:
         cols[-1].metric("Matchup", "—", help=matchup_help)
-        st.caption("Defense matchup rank: not enough prior weeks of data yet to rank this opponent against this position.")
+        st.caption("Defense rank: not enough prior weeks of data yet.")
 
 
 _ALIGNMENT_MIX_STATS = (
@@ -627,12 +644,11 @@ _ALIGNMENT_MIX_STATS = (
 )
 
 
-def _what_these_mean(text):
-    """Explanatory text under a decomposition table, as a collapsed dropdown like the "What these columns
-    mean" one under the main projection table (requested 2026-10-07: a paragraph of formula text under each
-    worked-calculation table is only useful to someone who asks, so it stays out of the way until opened)."""
-    with st.expander("What these mean:", expanded=False):
-        st.markdown(text)
+def _what_these_mean(text, label="What these mean"):
+    """Explanatory text under a decomposition table, behind a quiet dropdown (requested 2026-10-07: a paragraph of
+    formula text under each worked-calculation table is only useful to someone who asks, so it stays out of the way
+    until opened; 2026-11-02: and without an outline - see ui.components.quiet_note)."""
+    quiet_note(text, label)
 
 
 def _render_alignment_mix(detail, reference_only=False):
@@ -678,11 +694,10 @@ def _render_alignment_mix(detail, reference_only=False):
     st.markdown("**Alignment mix (slot / wide / inline)"
                 + (" — reference only**" if reference_only else "**"))
     weeks = role.get('source_week_count')
-    st.caption(
-        f"Source: {role.get('source_kind', 'unknown')}, {weeks if weeks else 0} week(s) "
+    source_note = (
+        f"**Source:** {role.get('source_kind', 'unknown')}, {weeks if weeks else 0} week(s) "
         f"({role.get('source_weeks', '')}), confidence {role.get('alignment_confidence', 0.0):.2f}. "
-        f"{role.get('alignment_semantics', '')}."
-    )
+        f"{role.get('alignment_semantics', '')}.")
     blend_mode = role.get('alignment_defense_blend_mode', 'slot_non_slot')
     if blend_mode == 'slot_wide_inline':
         aligns = [('slot', 'Slot', slot), ('wide', 'Wide', wide), ('inline', 'Inline', inline)]
@@ -693,10 +708,9 @@ def _render_alignment_mix(detail, reference_only=False):
     shares = ({key: (rates[key] / rate_total if rate_total > 0 else 0.0) for key, _, _ in aligns}
               if rate_total > 0 else {key: 0.0 for key, _, _ in aligns})
     if not role.get('alignment_defense_candidate_available'):
-        st.caption(
-            "Defense-allowed-by-alignment residual is neutral (1.0×) for this matchup: "
-            f"{role.get('alignment_defense_reason') or 'insufficient comparison evidence.'}"
-        )
+        st.caption(f"Alignment adjustment is neutral (1.0×) here: "
+                   f"{role.get('alignment_defense_reason') or 'not enough comparison evidence'}")
+        _what_these_mean(source_note, "Source")
         return
 
     player_label = detail.get('player', 'Player')
@@ -782,6 +796,7 @@ def _render_alignment_mix(detail, reference_only=False):
         "alignment multiplier for that alignment. **Combined** = /Game × Allowed× × game context "
         "(script/pace/availability/environment). " + reconcile_clause
         + (f"\n\n**Evidence:** {evidence_note}" if evidence_note else "")
+        + f"\n\n{source_note}"
     )
 
 
@@ -828,12 +843,9 @@ def _render_scheme_mix(detail):
            else ".")
     )
     if not evidence.get('defense_scheme_candidate_available'):
-        st.caption(
-            "Defense-allowed-by-scheme residual is neutral (1.0×) for this matchup: "
-            + (evidence.get('defense_scheme_reason') or 'insufficient man/zone comparison evidence.')
-            + " The primary table's 'Defense multiplier' falls back to the alignment number "
-              "(or the broad matchup) for this stat - see the reference table below."
-        )
+        st.caption("Scheme adjustment is neutral (1.0×) here: "
+                   + (evidence.get('defense_scheme_reason') or 'not enough man/zone comparison evidence')
+                   + " - the alignment table below stands in.")
         return
 
     splits_col = f"{detail.get('player', 'Player')}'s Splits"
@@ -1257,9 +1269,7 @@ def _render_decomposition_primary_table(detail, market_detail=None):
             "run high, most of all in yards and volume. It is the last step on the stat line, and the point total "
             "is scored from the result instead of using the usual points calibration line."
         )
-    with st.expander("What these columns mean", expanded=False):
-        for bullet in bullets:
-            st.markdown(f"- {bullet}")
+    quiet_note("\n".join(f"- {bullet}" for bullet in bullets), "What these columns mean")
 
     if context_ingredients is not None:
         _render_context_multiplier_table(context_ingredients, weather_by_stat)
@@ -1354,6 +1364,43 @@ def _append_average_row(df, label_col, label, avg_cols, stat=None, avg_mask=None
     return pd.concat([out, pd.DataFrame([row])], ignore_index=True)
 
 
+def _style_log_table(df, team_col=None, pct_cols=None, tone_cols=None):
+    """A Deep Dive table styled like the rest of the app's tables (ui.styling.style_plain_dataframe), with its
+    team-code column in team colours. ``pct_cols``: {column: 0-100 percentile per row} coloured like the board's
+    matchup column (green = soft, red = tough, faint at 50); ``tone_cols``: {column: multiplier-like value per row}
+    coloured green above 1.0 and red below, like the decomposition's own multiplier columns."""
+    styled = style_plain_dataframe(df, centered_pct_cols=pct_cols, multiplier_cols=tone_cols)
+    if team_col and team_col in df.columns:
+        grid = pd.DataFrame('', index=df.index, columns=df.columns)
+        grid[team_col] = [_team_cell_style(v) for v in df[team_col]]
+        styled = styled.apply(lambda _: grid, axis=None)
+    return styled
+
+
+def _allowed_tone(allowed, baseline):
+    """The colour input for an 'Allowed' cell: 1.0 when the defense allowed exactly that offense's own average, above
+    it when it allowed more (green), below it when it allowed less (red). The ratio is squeezed so a 60% swing is full
+    colour - get_multiplier_color saturates at +-15%, far too tight for single games."""
+    a = pd.to_numeric(pd.Series(list(allowed)), errors='coerce')
+    b = pd.to_numeric(pd.Series(list(baseline)), errors='coerce')
+    ratio = (a / b.where(b > 0)).clip(0.4, 1.6)
+    return [None if pd.isna(r) else 1.0 + 0.25 * (float(r) - 1.0) for r in ratio]
+
+
+def _result_score(result, score):
+    """'W 59-37' from the game's result letter and 'own-opponent' score; the letter is read off the score when the
+    schedule gave none. A game with no final yet stays a dash."""
+    if not score or score == NO_SCORE:
+        return NO_SCORE
+    if result in ('W', 'L', 'T'):
+        return f"{result} {score}"
+    try:
+        mine, theirs = (int(x) for x in str(score).split('-'))
+    except ValueError:
+        return score
+    return f"{'W' if mine > theirs else 'L' if mine < theirs else 'T'} {score}"
+
+
 def _render_defense_allowed_by_alignment(detail, stat, label, log):
     """Slot/wide/inline breakout of the SAME defense-allowed evidence the
     whole-position weekly table just above already shows in aggregate -
@@ -1433,21 +1480,26 @@ def _render_defense_allowed_by_alignment(detail, stat, label, log):
     ]
     display = pd.DataFrame(display_data)
     st.markdown(f"**{detail['opponent']} defense — what it's allowed to {label.lower()}, by alignment, by week**")
+    allowed_tones = {}
+    for col in alignment_cols:
+        observed = pd.to_numeric(merged[col], errors='coerce')
+        expected = pd.to_numeric(merged.get(f'{col}_exp', pd.Series(float('nan'), index=merged.index)), errors='coerce')
+        allowed_tones[f'{col.title()} Allowed'] = _allowed_tone(list(observed) + [observed.mean()],
+                                                                list(expected) + [expected.mean()])
     render_game_table(
-        _style_team_column(_append_average_row(display, 'Week', 'AVG', avg_cols, stat=stat, ratio_cols=ratio_cols), 'Offense faced'),
+        _style_log_table(_append_average_row(display, 'Week', 'AVG', avg_cols, stat=stat, ratio_cols=ratio_cols),
+                         'Offense faced', tone_cols=allowed_tones),
         align_games, score_col=align_score_col,
         key=f"wr_box_align_{stat}_{detail['player']}_{detail['team']}_{detail['target_week']}_{align_season}",
         owner=box_owner_key(detail), season=align_season, height=df_auto_height(len(display) + 1))
-    st.caption(
-        "Raw per-week evidence, not the shrunk candidate multiplier shown in the Alignment mix section above "
+    quiet_note("Raw per-week evidence, not the shrunk candidate multiplier shown in the Alignment mix section above "
         "- a thin per-alignment sample there gets pulled most of the way back to a neutral 1.000× until more "
         "weeks of PFF data exist, even when the per-week Ratio here shows real spread. 'Offense Avg' is that "
         "SAME offense's own average in its other games that season (not this defense) - the baseline 'Ratio' "
         "is compared against, same convention as the non-alignment table above. 'Recency weight' matches this "
         "app's usual within-season decay for reference; the alignment aggregation itself does not currently "
         "apply it (it weights every included game equally, using game-count shrinkage instead - see "
-        "aggregate_alignment_defense_profiles's own shrinkage_weight)."
-    )
+        "aggregate_alignment_defense_profiles's own shrinkage_weight).", "How to read this")
 
 
 def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_season, default_year=None):
@@ -1501,16 +1553,28 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
         # schedule join above could not.
         player_games = score_entries(pgl, season_year, detail.get('team'), '_week_num', 'game_id')
         score = [s if s != NO_SCORE else fallback for s, fallback in zip(score, score_texts(player_games))]
-        result = pgl.get('_result', pd.Series('', index=pgl.index)).fillna('').replace('', '—')
-        pgl_display = pd.DataFrame({
-            'Week': pgl['_week_num'].astype(int),
-            'Opponent': pgl.get('opponent_team', ''),
-            'Score': score,
-            'Result': result,
-            f'Raw {label}': [_fmt_stat(stat, v) for v in pgl[stat]],
-            f'Defense-adj {label}': [_fmt_stat(stat, v) for v in pgl.get(adj_col, pd.Series(dtype=float))],
-            'Included': included,
-        })
+        result = pgl.get('_result', pd.Series('', index=pgl.index)).fillna('')
+        score = [_result_score(r, s) for r, s in zip(result, score)]
+        # How soft the defense was for THIS stat (its percentile among the 32), the player's share of his team's
+        # snaps, and the plays his offense ran - each only when the log carries it.
+        nan_series = pd.Series(np.nan, index=pgl.index)
+        matchup_pct = pd.to_numeric(pgl.get(f'_matchup_pct_{stat}', nan_series), errors='coerce')
+        snap_pct = pd.to_numeric(pgl.get('weekly_snap_pct', nan_series), errors='coerce').where(lambda s: s > 0)
+        team_plays = pd.to_numeric(pgl.get('_team_plays', nan_series), errors='coerce')
+        context_columns = {}
+        if matchup_pct.notna().any():
+            context_columns['Matchup %'] = matchup_pct
+        if snap_pct.notna().any():
+            context_columns['Snap %'] = snap_pct
+        if team_plays.notna().any():
+            context_columns['Team plays'] = team_plays
+        display = {'Week': pgl['_week_num'].astype(int), 'Opponent': pgl.get('opponent_team', ''), 'Score': score}
+        for name, values in context_columns.items():
+            display[name] = [f"{v:.0f}" if pd.notna(v) else '—' for v in values]
+        display[f'Raw {label}'] = [_fmt_stat(stat, v) for v in pgl[stat]]
+        display[f'Defense-adj {label}'] = [_fmt_stat(stat, v) for v in pgl.get(adj_col, pd.Series(dtype=float))]
+        display['Included'] = included
+        pgl_display = pd.DataFrame(display)
         spark_values = pd.to_numeric(pgl[stat], errors='coerce').fillna(0.0).tolist()
         season_avg = float(np.mean(spark_values)) if spark_values else None
         st.markdown(
@@ -1520,12 +1584,26 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
         pgl_with_avg = _append_average_row(
             pgl_display, 'Week', 'AVG', [f'Raw {label}', f'Defense-adj {label}'], stat=stat,
             avg_mask=eligible)
+        eligible_mask = eligible.astype(bool).to_numpy()
+        averages = {}
+        for name, values in context_columns.items():
+            kept = values.to_numpy(dtype=float)[eligible_mask]
+            averages[name] = float(np.nanmean(kept)) if np.isfinite(kept).any() else None
+            pgl_with_avg.loc[pgl_with_avg.index[-1], name] = f"{averages[name]:.0f}" if averages[name] is not None else '—'
+        pct_cols = ({'Matchup %': [None if pd.isna(v) else float(v) for v in matchup_pct] + [averages['Matchup %']]}
+                    if 'Matchup %' in context_columns else None)
         if any(player_games):
             st.caption("Click a game's Score to open its full box score.")
         render_game_table(
-            _style_team_column(pgl_with_avg, 'Opponent'), player_games, score_col='Score',
+            _style_log_table(pgl_with_avg, 'Opponent', pct_cols=pct_cols), player_games, score_col='Score',
             key=f"wr_box_player_{box_key}", owner=box_owner, season=season_year,
-            height=df_auto_height(len(pgl_with_avg)))
+            height=df_auto_height(len(pgl_with_avg)),
+            column_config={
+                'Matchup %': st.column_config.Column(
+                    help=f"How soft the defense was for {label.lower()} against this position, as a percentile of "
+                         "the league's defenses: 100 = the softest, 0 = the toughest."),
+                'Snap %': st.column_config.Column(help="Share of his team's offensive snaps he played."),
+                'Team plays': st.column_config.Column(help="Plays his team's offense ran that game.")})
         n_excluded = int((~eligible.astype(bool)).sum())
         if n_excluded:
             st.caption(f"{n_excluded} game(s) excluded from this player's rate evidence (marked above, not hidden).")
@@ -1551,15 +1629,18 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
         })
         dgl_with_avg = _append_average_row(
             dgl_display, 'Week', 'AVG', [f'Allowed {label}', "That offense's own average"], stat=stat)
+        allowed_values = pd.to_numeric(dgl[stat], errors='coerce')
+        baseline_values = pd.to_numeric(dgl.get(baseline_col, pd.Series(np.nan, index=dgl.index)), errors='coerce')
+        allowed_tone = _allowed_tone(list(allowed_values) + [allowed_values.mean()],
+                                     list(baseline_values) + [baseline_values.mean()])
         render_game_table(
-            _style_team_column(dgl_with_avg, 'Offense faced'), defense_games, score_col=defense_score_col,
+            _style_log_table(dgl_with_avg, 'Offense faced', tone_cols={f'Allowed {label}': allowed_tone}),
+            defense_games, score_col=defense_score_col,
             key=f"wr_box_defense_{box_key}", owner=box_owner, season=season_year,
             height=df_auto_height(len(dgl_with_avg)))
-        st.caption(
-            f"Defense multiplier ({values.get('matchup_multiplier', 1.0):.3f}×): each week above compares what "
+        quiet_note(f"Defense multiplier ({values.get('matchup_multiplier', 1.0):.3f}×): each week above compares what "
             f"{detail['opponent']} allowed to that offense's own average, recency-weighted, then re-centered "
-            f"to a league average of 1.0 — this table is that comparison's raw ingredients."
-        )
+            f"to a league average of 1.0 — this table is that comparison's raw ingredients.", "How the multiplier is built")
     else:
         st.caption(f"No {label.lower()} matchup evidence available for {detail['opponent']} yet.")
 
@@ -1649,22 +1730,22 @@ def _render_context_deep_dive(detail):
                          and bool(evidence.get('defense_scheme_candidate_available')))
     if role.get('alignment_defense_candidate_available'):
         if _te_scheme_scored:
-            st.caption("PFF alignment-defense residual: computed but SUPERSEDED for this tight end - the "
+            quiet_note("PFF alignment-defense residual: computed but SUPERSEDED for this tight end - the "
                       "man/zone (scheme) blend below is what replaces the general defense/role matchup in "
-                      "'Defense multiplier'. Alignment is the fallback only where scheme evidence is absent.")
+                      "'Defense multiplier'. Alignment is the fallback only where scheme evidence is absent.", "Alignment status")
         else:
-            st.caption("PFF alignment-defense residual: ACTIVE (v2_pff_alignment_matchup) - this player's own "
+            quiet_note("PFF alignment-defense residual: ACTIVE (v2_pff_alignment_matchup) - this player's own "
                       "allowed-by-alignment mix is replacing the general defense/role matchup for this stat, "
                       "not adding to it. See 'Defense multiplier' in the table above and the always-visible "
-                      "Alignment mix section for the full breakdown.")
+                      "Alignment mix section for the full breakdown.", "Alignment status")
     elif role.get('alignment_available'):
-        st.caption("PFF alignment-defense residual: no comparison evidence for this defense/stat yet - "
+        quiet_note("PFF alignment-defense residual: no comparison evidence for this defense/stat yet - "
                   "falling back to the general defense/role matchup"
-                  + (" (or the scheme blend below, for this tight end)." if _te_scheme_scored else "."))
+                  + (" (or the scheme blend below, for this tight end)." if _te_scheme_scored else "."), "Alignment status")
     if _te_scheme_scored:
-        st.caption("PFF scheme-defense residual: ACTIVE (v2_scheme_matchup, tight ends) - this player's own "
+        quiet_note("PFF scheme-defense residual: ACTIVE (v2_scheme_matchup, tight ends) - this player's own "
                   "man/zone route split against the opponent's allowed-by-scheme ratios is what feeds "
-                  "'Defense multiplier'. Full breakdown in the Scheme mix table on the Overview tab.")
+                  "'Defense multiplier'. Full breakdown in the Scheme mix table on the Overview tab.", "Scheme status")
 
     if evidence.get('player_scheme_available'):
         man, zone = evidence.get('player_man_route_share'), evidence.get('player_zone_route_share')
@@ -1840,11 +1921,9 @@ def _render_pipeline_diagnostics(model_meta):
 
     segments = contract.get('rb_role_segments')
     if isinstance(segments, dict) and segments:
-        st.caption(
-            f"RB role-segment detector: {segments.get('clear_interrupted_returners', 0)} players credited "
+        quiet_note(f"RB role-segment detector: {segments.get('clear_interrupted_returners', 0)} players credited "
             f"with a clear interrupted/returned or season-ending role, "
-            f"{segments.get('teammate_context_rows', 0)} teammate-context rows built."
-        )
+            f"{segments.get('teammate_context_rows', 0)} teammate-context rows built.", "About the role-segment detector")
 
     if contract.get('qb_starter_source'):
         st.caption(f"QB1 selection source: {contract['qb_starter_source']}.")
@@ -1865,11 +1944,9 @@ def _render_pipeline_diagnostics(model_meta):
             'Prior season': exclusions.get('prior_season', 0),
             'Two years back': exclusions.get('two_year_prior', 0),
         }]), hide_index=True, width="stretch", height=df_auto_height(1))
-        st.caption(
-            "Games excluded from rate evidence by the same partial-game filter above, per season - all "
+        quiet_note("Games excluded from rate evidence by the same partial-game filter above, per season - all "
             "three seasons run through the identical eligibility check, so a 2024 QB-split or blowout-rest "
-            "game is screened out exactly like a 2025 one would be."
-        )
+            "game is screened out exactly like a 2025 one would be.", "About excluded games")
 
 
 def _render_role_confidence_table(role):
@@ -1959,10 +2036,10 @@ def _render_pass_capacity_room(detail):
             display.style.apply(lambda _: style_grid, axis=None).format(
                 {'Targets before': '{:.2f}', 'Targets after': '{:.2f}', 'Δ targets': '{:+.2f}'}),
             hide_index=True, width="stretch", height=df_auto_height(len(display)))
-        st.caption("This player's row is highlighted. Everyone in a group is scaled by the same factor "
+        quiet_note("This player's row is highlighted. Everyone in a group is scaled by the same factor "
                   "(budget ÷ claim) - nobody is protected and nobody is pinned. 'Tier' only labels the eight "
                   "highest-projected pass catchers ('trusted') against the rest ('tail'); it does not change the math. "
-                  "Receptions and receiving yards move with targets; receiving TDs are left as projected.")
+                  "Receptions and receiving yards move with targets; receiving TDs are left as projected.", "How the vacancy is shared")
 
 
 _VACANCY_VOLUME_LABELS = {
@@ -2387,10 +2464,8 @@ def _render_decomposition_audit_body(detail):
             or role.get('rb_allocation_eligibility_reason')
             or role.get('rb_allocation_source')):
         st.markdown("**Preseason RB allocation**")
-        st.caption(
-            "Core-RB snaps, carries, and targets are reconciled separately. "
-            "The residual is an explicit other/unallocated bucket rather than a hidden role for every reserve."
-        )
+        quiet_note("Core-RB snaps, carries, and targets are reconciled separately. "
+            "The residual is an explicit other/unallocated bucket rather than a hidden role for every reserve.", "Notes")
         capacity = detail.get('rb_capacity_ledger', [])
         if capacity:
             capacity_frame = pd.DataFrame(capacity)
@@ -2437,12 +2512,10 @@ def _render_decomposition_audit_body(detail):
             (v for v in qb_stats_detail.values() if v.get('qb1_blend_applied')), None)
         if blend_source:
             st.markdown("**QB1 volume blend**")
-            st.caption(
-                "Passing/rushing attempts are rebuilt from team dropback capacity (raw team-game "
+            quiet_note("Passing/rushing attempts are rebuilt from team dropback capacity (raw team-game "
                 "history) and this QB's own rush-share tendency, not carried forward as a flat "
                 "per-game rate - a real rushing floor lowers projected passing volume even when the "
-                "underlying per-game passing history is completely clean."
-            )
+                "underlying per-game passing history is completely clean.", "Notes")
             capacity = blend_source.get('qb1_blend_team_dropback_capacity')
             personal_db = blend_source.get('qb1_blend_personal_dropbacks')
             personal_share = blend_source.get('qb1_blend_personal_rush_share')
@@ -2528,15 +2601,13 @@ def _render_market_lines_tab(detail, market_detail):
     are excluded from scoring and omitted here.
     """
     if not market_detail:
-        st.caption(
-            "No live market lines matched this player. The weekly board (PrizePicks / Underdog / "
-            "DraftKings) is only the CURRENT posted slate — a past week, or a player no book has "
-            "priced yet, shows nothing here. Pull it in **📡 Live data pulls → Market props**."
-        )
+        st.caption("No market lines matched this player (the board is only the current slate) - "
+                   "pull them in **📡 Live data pulls → Market props**.")
         return
 
     book_lines = market_detail.get('book_lines')
     consensus = market_detail.get('consensus') or {}
+    medians = market_detail.get('medians') or {}
     scoring_mode = market_detail.get('scoring_mode') or detail.get('scoring_mode') or 'Full PPR'
 
     summary_bits = []
@@ -2556,10 +2627,7 @@ def _render_market_lines_tab(detail, market_detail):
         st.markdown("  ·  ".join(summary_bits))
 
     if book_lines is None or getattr(book_lines, 'empty', True):
-        st.caption(
-            "A market total is available for this player but no per-book stat lines came through "
-            "with it — nothing to break down."
-        )
+        st.caption("A market total came through with no per-book lines - nothing to break down.")
         return
 
     bl = book_lines.copy()
@@ -2611,20 +2679,24 @@ def _render_market_lines_tab(detail, market_detail):
             row[book] = _cell(stat, br.iloc[0]) if not br.empty else '—'
         avg = consensus.get(stat, np.nan)
         row['De-vig'] = _fmt_num(stat, float(avg)) if pd.notna(avg) else '—'
+        median = medians.get(stat, np.nan)
+        row['Model median'] = _fmt_num(stat, float(median)) if pd.notna(median) else '—'
         rows.append(row)
 
-    tbl = pd.DataFrame(rows, columns=['Stat'] + present + ['De-vig'])
+    tbl = pd.DataFrame(rows, columns=['Stat'] + present + ['De-vig', 'Model median'])
     st.dataframe(style_plain_dataframe(tbl), hide_index=True, width="stretch",
-                 height=df_auto_height(len(tbl)))
-    st.caption(
-        f"One row per stat, re-scored under {scoring_mode}. Each book cell is its posted "
-        "**line**, then its **over/under odds** in parentheses (American — no odds shown means "
-        "a pick'em with no per-side price). **De-vig** is the reliability-weighted multi-book "
-        "consensus of the vig-stripped fair values (real sportsbooks weighted over the pick'em "
-        "products) — the exact figure behind **Market Proj Pts** and the Overview tab's "
-        "**Market avg**. Underdog's shaded lines and PrizePicks demon/goblin picks are excluded "
-        "from scoring and do not appear here."
-    )
+                 height=df_auto_height(len(tbl)),
+                 column_config={'Model median': st.column_config.Column(
+                     help="This model's median for the stat - the middle game, half of games above it - "
+                          "the number a posted line is priced against. The average (the table's De-vig "
+                          "compares with that) sits above it for a skewed stat.")})
+    quiet_note(
+        f"One row per stat, re-scored under {scoring_mode}. Each book cell is its posted **line**, then its "
+        "**over/under odds** in parentheses (American; none shown = a pick'em with no per-side price). "
+        "**De-vig** is the reliability-weighted multi-book consensus of the vig-stripped fair values - the figure "
+        "behind **Market Proj Pts** and the Overview tab's **Market avg**. **Model median** is this model's own "
+        "median for the stat. Underdog's shaded lines and PrizePicks demon/goblin picks are excluded.",
+        "How to read this")
 
 
 def _open_projection_dialog(detail, market_detail=None):
@@ -2960,11 +3032,9 @@ def _render_fantasypros_weekly_pull(wk_year, wk_week, wk_scoring):
         fantasypros_api_calls_today, FANTASYPROS_API_DAILY_LIMIT,
         fetch_fantasypros_weekly_projections,
     )
-    st.caption(
-        "Pulls FantasyPros' own projected stat line for QB/RB/WR/TE for the selected week - "
+    quiet_note("Pulls FantasyPros' own projected stat line for QB/RB/WR/TE for the selected week - "
         "4 calls (one per position; the endpoint requires a position per request). Shown "
-        "alongside this app's model below, never blended into it."
-    )
+        "alongside this app's model below, never blended into it.", "Details")
     secret_key, key_source = get_fantasypros_api_key()
     if key_source == 'secrets':
         st.caption("🔑 Using the key from `.streamlit/secrets.toml`.")
@@ -3015,10 +3085,8 @@ def _render_manual_availability_override(wk_year, wk_week, roster_df):
     from data.availability_overrides import (
         load_availability_overrides, save_availability_override, remove_availability_override,
     )
-    st.caption(
-        "Your own call for this exact week - wins over the FantasyPros feed for the same player. "
-        "Use this when you know something the feed hasn't caught up to yet."
-    )
+    quiet_note("Your own call for this exact week - wins over the FantasyPros feed for the same player. "
+        "Use this when you know something the feed hasn't caught up to yet.", "Details")
     roster = roster_df if isinstance(roster_df, pd.DataFrame) else pd.DataFrame()
     players = roster['Player'].dropna().astype(str).sort_values().tolist() if 'Player' in roster.columns else []
     team_by_player = (dict(zip(roster['Player'], roster['Team']))
@@ -3092,10 +3160,8 @@ def _render_fantasypros_injury_pull(wk_year, wk_week, roster_df=None):
     from data.fantasypros_availability import (
         save_fantasypros_injury_upload, save_fantasypros_injury_api_pull, load_fantasypros_availability,
     )
-    st.caption(
-        "Feeds this app's availability discount. No report for a player this week means "
-        "healthy - never a stale carry-over from a prior week."
-    )
+    quiet_note("Feeds this app's availability discount. No report for a player this week means "
+        "healthy - never a stale carry-over from a prior week.", "Details")
     tab_api, tab_upload, tab_manual = st.tabs(["Live API pull", "Upload export", "Manual override"])
     with tab_api:
         secret_key, key_source = get_fantasypros_api_key()
@@ -3167,12 +3233,10 @@ def _render_pff_weekly_alignment_upload(wk_year, wk_week):
     now rather than claiming a plain, unqualified success.
     """
     from data.pff_alignment import save_weekly_alignment_export, discover_weekly_alignment_exports
-    st.caption(
-        "One league-wide receiving_summary.csv + receiving_concept.csv pair per played week "
+    quiet_note("One league-wide receiving_summary.csv + receiving_concept.csv pair per played week "
         "builds the slot/wide/inline alignment matchup (WR/TE targets, receptions, yards). "
         "The optional receiving_scheme.csv alongside it builds the man/zone scheme matchup - "
-        "TE's own 'Defense multiplier' uses this instead of alignment wherever it's available."
-    )
+        "TE's own 'Defense multiplier' uses this instead of alignment wherever it's available.", "Details")
     upload_week = st.number_input("Week this export covers", min_value=1, max_value=22,
                                   value=int(wk_week) if wk_week else 1, step=1, key="wr_pff_align_week")
     c1, c2 = st.columns(2)
@@ -3202,12 +3266,10 @@ def _render_pff_weekly_alignment_upload(wk_year, wk_week):
         st.caption(f"Weeks archived for {wk_year}: {weeks_present}.")
         if 'scheme_present' in archives.columns:
             scheme_weeks = sorted(int(w) for w in archives.loc[archives['scheme_present'].astype(bool), 'week'].dropna().unique())
-            st.caption(
-                f"Of those, weeks with a receiving_scheme.csv too: {scheme_weeks}."
+            quiet_note(f"Of those, weeks with a receiving_scheme.csv too: {scheme_weeks}."
                 if scheme_weeks else
                 "None of those weeks has a receiving_scheme.csv yet - the man/zone scheme "
-                "matchup is neutral (1.0x) for every week until one is uploaded."
-            )
+                "matchup is neutral (1.0x) for every week until one is uploaded.", "Details")
     else:
         st.caption(f"No weekly archive saved for {wk_year} yet.")
 
@@ -3267,12 +3329,10 @@ def _render_weekly_market_pull(wk_scoring, name_pool, wk_year=None, wk_week=None
     retargeted at an arbitrary year/week from the selectors above. A
     caption says so plainly rather than silently mismatching.
     """
-    st.caption(
-        "PrizePicks, Underdog, DraftKings and Pinnacle — no key, no quota. The same live weekly "
+    quiet_note("PrizePicks, Underdog, DraftKings and Pinnacle — no key, no quota. The same live weekly "
         "board the Live Odds tab pulls, scored under the scoring mode selected above into a "
         "projected-points column here instead of a raw line list. This is always the CURRENT "
-        "posted slate, not necessarily the season/week picked above."
-    )
+        "posted slate, not necessarily the season/week picked above.", "Details")
     # PrizePicks refuses this app (Cloudflare, scripts and browsers alike), so
     # its weekly board only ever arrives as a hand-saved file. Same panel the
     # Live Odds tab carries - offered here too so it can be staged BEFORE the
@@ -3403,57 +3463,65 @@ _RANK_POSITION_ORDER = ['QB', 'RB', 'WR', 'TE', 'K', 'DST']
 _RANK_SLOTS = 10
 
 
-def _matchup_difficulty_by_pos_opponent(model_meta):
-    """{(position, opponent_team): (fantasy pts/game allowed, percentile, rank, of)}
-    for the 'Def Rank' column. rank/of is data.matchup_signals.defense_stat_
-    rank's own literal rank among all `of` (normally 32) defenses, where
-    rank 1 = allows the MOST fantasy points to the position (the softest
-    matchup a player at that position can draw this week) and rank `of` =
-    the hardest - same "1 = softest" convention positional_vulnerability
-    already uses elsewhere in that module, stated explicitly here too since
-    it inverts the naive "rank 1 = best defense" reading. percentile (0-100,
-    100 = softest) is unchanged and still drives the cell's color; the
-    points-allowed value is kept in the tuple for anything that still wants
-    the raw number, but "12/32" is what's actually shown in the cell now -
-    a bare percentile or raw points figure doesn't say where a matchup
-    ranks the way an explicit "X/32" does, and this app's positional
-    vulnerability read already uses the same rank framing elsewhere.
+# The stats the scoring settings give points to - the ones a defense can move a player's total through.
+_ROLE_MATCHUP_STATS = ('passing_yards', 'passing_tds', 'passing_interceptions', 'rushing_yards', 'rushing_tds',
+                       'receptions', 'receiving_yards', 'receiving_tds')
+_ROLE_MATCHUP_POOL_MIN_POINTS = 3.0
 
-    Deliberately reuses data.matchup_signals.defense_stat_rank's own
-    numbers - the SAME ones the decomposition dialog's "toughest matchup"
-    headline already shows (model_meta['explanations'][...]
-    ['defense_matchup'], identical for every player of one position facing
-    one opponent, since it's a team-level stat) - rather than resolving
-    live per-player defense/pace multiplier detail for every row. That
-    per-player detail is intentionally resolved ON DEMAND, only for
-    whichever single player a decomposition is opened for (see
-    _selected_player_detail's docstring on the 2026-09-14 perf pass this
-    protects) - doing it for every row of a several-hundred-player table
-    would reintroduce exactly the cost that pass removed. Fantasy points
-    actually allowed to the position already reflects that defense's pace
-    and quality as one empirical number rather than needing to re-derive
-    them from the model's own multiplier internals, and is real, tested
-    data this app already trusts for this exact "how tough is this
-    matchup" question.
 
-    One pass over model_meta['explanations'] (already fully computed and
-    cached by build_weekly_projections - this reads it, it doesn't
-    recompute anything), taking the first entry seen per (position,
-    opponent) since every player sharing that pair carries the same value.
-    """
-    lookup = {}
-    for (_player, pos, _team), detail in (model_meta.get('explanations') or {}).items():
-        key = (str(pos).upper(), str(detail.get('opponent')))
-        if key in lookup:
-            continue
-        matchup = detail.get('defense_matchup')
-        if not matchup:
-            continue
-        value, pct = matchup.get('value'), matchup.get('pct')
-        rank, of = matchup.get('rank'), matchup.get('of')
-        if value is not None and pct is not None and rank is not None and of is not None:
-            lookup[key] = (float(value), float(pct), int(rank), int(of))
-    return lookup
+def _role_matchup_by_player(model_meta, model_df, scoring_mode):
+    """{(player, position, team): (multiplier, percentile)} - how much this week's opponent moves THIS player's points,
+    for the board's 'Def Mult' column and the games view's matchup tone (2026-11-02 request: "the multiplier for each
+    player ... should be unique to their specific role").
+
+    The multiplier is the points-weighted blend of the defense multipliers the model already applies to each of his
+    stats: his projected points over the points the same stat line would score against a neutral defense, i.e.
+    sum(points_s) / sum(points_s / multiplier_s). A QB who runs weighs the defense's rushing multiplier (a QB-run-soft
+    defense helps him more); a slot WR / TE weighs his alignment- and scheme-specific allowed multiplier (it is the one the
+    model used); a back who catches passes weighs the receiving multiplier for backs. Interceptions carry negative points,
+    so a defense that forces more of them lowers a QB's number.
+
+    The percentile (0-100, 100 = the softest) ranks the multiplier among the position's players who project for
+    ``_ROLE_MATCHUP_POOL_MIN_POINTS`` or more, so the colour reads against the players he is actually compared with."""
+    weights = {s: score_projected_stats({s: 100.0}, scoring_mode) / 100.0 for s in _ROLE_MATCHUP_STATS}
+    multipliers = {}
+    for key, detail in (model_meta.get('explanations') or {}).items():
+        stats = detail.get('stats') or {}
+        scored = neutral = 0.0
+        for stat, weight in weights.items():
+            values = stats.get(stat)
+            if not values or not weight:
+                continue
+            projection, multiplier = values.get('projection'), values.get('matchup_multiplier')
+            if projection is None or not np.isfinite(projection) or projection <= 0:
+                continue
+            multiplier = 1.0 if multiplier is None or not np.isfinite(multiplier) or multiplier <= 0 else float(multiplier)
+            scored += weight * float(projection)
+            neutral += weight * float(projection) / multiplier
+        if scored > 0 and neutral > 0:
+            multipliers[key] = scored / neutral
+    if not multipliers:
+        return {}
+    points = {}
+    if model_df is not None and not model_df.empty and 'Model Proj Pts' in model_df.columns:
+        points = {(p, s, t): v for p, s, t, v in zip(model_df['Player'], model_df['Pos'], model_df['Team'],
+                                                      pd.to_numeric(model_df['Model Proj Pts'], errors='coerce'))}
+    pools = {}
+    for key, value in multipliers.items():
+        if points.get(key, 0.0) >= _ROLE_MATCHUP_POOL_MIN_POINTS:
+            pools.setdefault(key[1], []).append(value)
+    everyone = {}
+    for key, value in multipliers.items():
+        everyone.setdefault(key[1], []).append(value)
+    out = {}
+    for key, value in multipliers.items():
+        pool = np.sort(np.asarray(pools.get(key[1]) or everyone[key[1]], dtype=float))
+        below, through = np.searchsorted(pool, value, 'left'), np.searchsorted(pool, value, 'right')
+        out[key] = (float(value), float(100.0 * (below + through) / 2.0 / len(pool)))
+    return out
+
+
+
 
 
 def _positional_ordinal(df, points_col, pos_col='Pos'):
@@ -3568,12 +3636,10 @@ def _render_qb1_overrides_hub(wk_year, current_stats, team_col, name_col):
     ones that actually need a call, not every team's box open at once.
     """
     from ui.tabs.depth_charts import _render_projection_qb1_control, projection_qb1_resolution
-    st.caption(
-        "Your call on who starts under center overrides this app's own incumbent/depth-chart guess "
+    quiet_note("Your call on who starts under center overrides this app's own incumbent/depth-chart guess "
         "for that team's projection. Every team is listed here so a late-breaking change doesn't "
         "require opening Depth Charts team by team - a box only opens by default when there's no "
-        "unambiguous starter to call."
-    )
+        "unambiguous starter to call.", "Details")
     if current_stats.empty or team_col not in current_stats.columns:
         st.caption("No stats loaded yet for this season.")
         return
@@ -3805,7 +3871,7 @@ def render():
     # see _render_board's own closure over this below) since it only
     # depends on model_meta, which doesn't change until the next "Build
     # board" click.
-    matchup_difficulty = _matchup_difficulty_by_pos_opponent(model_meta) if model_meta else {}
+    role_matchup = _role_matchup_by_player(model_meta, model_df, wk_scoring) if model_meta else {}
 
     # Season Snap % and Wind/Temp/Precip - also computed once per real board
     # build, same reasoning as matchup_difficulty above (df_stats/wk_year/
@@ -3905,57 +3971,39 @@ def render():
                 # EXPORT FOR PHONE (2026-10-25, user: "model after the cfb version entirely"): CFB's games report and board
                 # (ui/export_view.py), in the chosen view
                 rankings_games.render_export(
-                    model_df, lambda: rankings_games.games_board(model_df, market_df, matchup_difficulty, _attach_by_name),
+                    model_df, lambda: rankings_games.games_board(model_df, market_df, role_matchup, _attach_by_name),
                     model_meta, wk_year, wk_week, wk_scoring, projection_view, weather_by_team, precip_by_team,
                     freshness=rankings_games.market_freshness(market_df))
             merged_model = model_df.copy()
-            # 'Def Rank' - directly right of Opponent per explicit request -
-            # a single combined difficulty read for this position against
-            # this opponent (see _matchup_difficulty_by_pos_opponent's own
-            # docstring for what it actually measures and why). Named for
-            # what the cell shows, not "Matchup" - this same tab already has
-            # a "Matchup" multiselect widget (the game-slate filter) right
-            # above the table, and reusing that word for a column too would
-            # read as if one controlled the other. Built here (not eagerly
-            # inside build_weekly_projections) since it's a cheap O(rows)
-            # dict lookup off matchup_difficulty, itself computed once per
-            # real board build, above. '_matchup_pct' is a hidden column that
-            # drives the color only, same pattern as '_tier' below - dropped
-            # before the frame is ever displayed. The cell shows the literal
-            # "rank/of" (e.g. "3/32") rather than the raw points-allowed
-            # number - 1 = allows the MOST fantasy points to the position
-            # (softest matchup), `of` = the least (hardest) - per explicit
-            # request, 2026-09-24.
-            _matchup_lookups = [
-                matchup_difficulty.get((str(p).upper(), str(o)))
-                for p, o in zip(merged_model['Pos'], merged_model['Opponent'])
-            ]
-            # Encoded exactly like _woven_rank below (a real, sortable number
-            # per row + a separate {value: label} dict for display) rather
-            # than a pre-formatted string column - a string "12/32" sorts
-            # lexicographically ("12/32" < "3/32"), which would make this
-            # column's own header-click sort wrong. `rank * 100 + of` keeps
-            # ascending-number order equal to ascending-rank order (of is
-            # always <= 32) and stays unique per (rank, of) pair; missing
-            # (no matchup data yet) gets a sentinel worse than every real
-            # value, same "sorts last either direction" convention _woven_
-            # rank uses for an unranked player.
-            _DEF_RANK_MISSING = 999999
-            def_rank_labels = {}
-            def_rank_values = []
-            for m in _matchup_lookups:
+            # 'Def Mult' - directly right of Opponent: how much this week's opponent moves THIS player's points, given the
+            # stats his role produces (_role_matchup_by_player: the points-weighted blend of the model's own per-stat
+            # defense multipliers - a QB who runs, a slot WR, a back who catches passes each read their own). It was
+            # the position-wide "rank/32" before 2026-11-02, the same cell for every player at the position facing a
+            # defense (that rank is still in the decomposition header). Named for what the cell shows, not "Matchup" -
+            # this tab already has a "Matchup" multiselect (the game-slate filter) right above the table. Built here
+            # off role_matchup, computed once per real board build above. '_matchup_pct' is a hidden column that
+            # drives the colour only (its percentile among the position's players), same pattern as '_tier' below -
+            # dropped before the frame is displayed.
+            _role_lookups = [role_matchup.get((p, s, t))
+                             for p, s, t in zip(merged_model['Player'], merged_model['Pos'], merged_model['Team'])]
+            # Encoded like _woven_rank below (a real, sortable number per row + a separate {value: label} dict for
+            # display) so the column's own header-click sort is numeric: the multiplier x 1000, rounded. Missing (no
+            # projection to read it from) gets a sentinel worse than every real value, the "sorts last either
+            # direction" convention _woven_rank uses for an unranked player.
+            _DEF_MULT_MISSING = 999999
+            def_mult_labels = {_DEF_MULT_MISSING: '—'}
+            def_mult_values = []
+            for m in _role_lookups:
                 if m:
-                    _, _, _rank, _of = m
-                    encoded = int(_rank) * 100 + int(_of)
-                    def_rank_labels[encoded] = f"{_rank}/{_of}"
+                    encoded = int(round(m[0] * 1000))
+                    def_mult_labels[encoded] = f"{m[0]:.2f}×"
                 else:
-                    encoded = _DEF_RANK_MISSING
-                    def_rank_labels[encoded] = '—'
-                def_rank_values.append(encoded)
-            merged_model['Def Rank'] = def_rank_values
-            merged_model['_matchup_pct'] = [m[1] if m else None for m in _matchup_lookups]
+                    encoded = _DEF_MULT_MISSING
+                def_mult_values.append(encoded)
+            merged_model['Def Mult'] = def_mult_values
+            merged_model['_matchup_pct'] = [m[1] if m else None for m in _role_lookups]
 
-            # Wind/Temp/Precip - grouped with Def Rank as pre-game context,
+            # Wind/Temp/Precip - grouped with Def Mult as pre-game context,
             # right after Opponent, rather than off at the end of the table.
             # Keyed by the player's own Team; resolve_game_weather already
             # keys by EITHER side of a game (see its own docstring), so both
@@ -4019,8 +4067,12 @@ def render():
                 merged_model['Market Proj Pts'] = _market_proj_pts_with_backfill(
                     merged_model, consensus_stats, wk_scoring)
 
+                # + the model's own stat line (and the recal markers the median curves key on) for the Market lines
+                # tab's "Model median" column
                 _snapshot_cols = (['Player', 'Pos', 'Team'] + [f'Mkt {s}' for s in consensus_stats]
-                                 + ['Mkt Market Pts', 'Market Proj Pts', 'Market Coverage', 'Mkt player_key'])
+                                 + ['Mkt Market Pts', 'Market Proj Pts', 'Market Coverage', 'Mkt player_key', 'Availability']
+                                 + [s for s in MEDIAN_STATS]
+                                 + [c for c in merged_model.columns if str(c).startswith('_pre_recal_')])
                 market_detail_snapshot = merged_model[
                     [c for c in _snapshot_cols if c in merged_model.columns]].copy()
 
@@ -4055,8 +4107,17 @@ def render():
                                              'under_payout', 'p_over', 'implied_mean')
                                  if c in sub.columns]
                         bl = sub[_keep].copy()
+                medians = {}
+                try:
+                    med_row = attach_medians(match.iloc[[0]]).iloc[0]
+                    for decomp_stat, market_stat in _DECOMP_TO_MARKET_STAT.items():
+                        v = med_row.get(f'Median {decomp_stat}')
+                        if v is not None and pd.notna(v):
+                            medians[market_stat] = float(v)
+                except Exception:       # the median column is a courtesy: the lines table stands without it
+                    medians = {}
                 return {
-                    'consensus': cons, 'book_lines': bl,
+                    'consensus': cons, 'book_lines': bl, 'medians': medians,
                     'market_points_partial': partial_v, 'market_points_full': full_v,
                     'coverage': cov, 'scoring_mode': wk_scoring,
                 }
@@ -4097,7 +4158,7 @@ def render():
             # produced a points column to rank. Computed on the FULL pool, before
             # the position filter and row limit below, so "RB4" always means
             # fourth among every RB rather than fourth among what's on screen.
-            rank_labels = {'Def Rank': def_rank_labels}
+            rank_labels = {'Def Mult': def_mult_labels}
             for rank_col, points_col in (('Model Rank', 'Model Proj Pts'),
                                          ('Market Rank', 'Market Proj Pts'),
                                          ('FantasyPros Rank', 'FantasyPros Proj Pts')):
@@ -4199,7 +4260,7 @@ def render():
                     # columns are now colored by position too (position_values/
                     # position_cols below) so the same at-a-glance signal the Position
                     # column gave survives without spending a column on it.
-                    display_cols = ['Rank', 'Player', 'Team', 'Opponent', 'Def Rank', 'Wind', 'Temp', 'Precip',
+                    display_cols = ['Rank', 'Player', 'Team', 'Opponent', 'Def Mult', 'Wind', 'Temp', 'Precip',
                                     'FantasyPros Proj Pts', 'Market Proj Pts', 'Model Proj Pts', 'Last 5 Weeks']
                     display_cols += [label for _col, label in _STAT_DISPLAY_COLS]
                     display_cols += ['Injury Status', 'Season Snap %', 'Last 5 Snaps',
@@ -4297,19 +4358,19 @@ def render():
                     for c in ('Model Proj Pts', 'Market Proj Pts', 'FantasyPros Proj Pts'):
                         if c in indexed.columns and indexed[c].notna().any():
                             pct_cols[c] = calculate_percentile(indexed.reset_index(), c)
-                    # 'Def Rank' colors off the percentile ALREADY computed for it
+                    # 'Def Mult' colors off the percentile ALREADY computed for it
                     # (matchup_pct_values, from model_meta - see
-                    # _matchup_difficulty_by_pos_opponent), not a fresh percentile of
+                    # _role_matchup_by_player), not a fresh percentile of
                     # the displayed rows the way pct_cols above is - a percentile
                     # recomputed from only the ~50 rows on screen would shift every
                     # time "Show" or a position filter changes, which is exactly
-                    # backwards for a number meant to describe THIS DEFENSE, not
+                    # backwards for a number meant to describe THIS MATCHUP, not
                     # this table's current slice. centered_pct_cols (not
                     # matchup_pct_cols) per explicit request: bright at the extremes,
                     # fading to a muted neutral at a genuinely average (50th
                     # percentile) matchup, rather than matchup_pct_cols' fixed-alpha
                     # ramp through every color at the same intensity.
-                    centered_pct_cols = ({'Def Rank': matchup_pct_values} if 'Def Rank' in indexed.columns else {})
+                    centered_pct_cols = ({'Def Mult': matchup_pct_values} if 'Def Mult' in indexed.columns else {})
                     # Pre-formatted AFTER percentile calc (which needs the real
                     # numeric NaN) for the same reason _STAT_DISPLAY_COLS are -
                     # a player with zero market coverage (no book posted anything)
@@ -4412,11 +4473,10 @@ def render():
                     # (ui.styling.COLUMN_HELP), not a paragraph under the table.
                     _mkt_cols = [f'Mkt {s}' for s in consensus_stats if f'Mkt {s}' in merged_model.columns]
                     priced = int(merged_model[_mkt_cols].notna().any(axis=1).sum()) if _mkt_cols else 0
-                    summary = [f"Showing {len(display_df)} of {total_filtered} {group_label} players"
-                               + (" (widen \"Show\" for more)" if total_filtered > len(display_df) else ""),
+                    summary = [f"Showing {len(display_df)} of {total_filtered} {group_label} players",
                                f"{merged_model['Team'].nunique()} teams",
-                               f"built from weeks before {model_meta.get('as_of_week', wk_week)}",
-                               f"{priced} priced by the market", "hover a column header for what it means"]
+                               f"weeks before {model_meta.get('as_of_week', wk_week)}",
+                               f"{priced} priced by the market"]
                     if projection_view == "Median":
                         summary.insert(1, "medians: half of games land above each number")
                     if form_source_year != wk_year:
@@ -4435,7 +4495,7 @@ def render():
                             }
 
                     rankings_games.render(
-                        rankings_games.games_board(model_df, market_df, matchup_difficulty, _attach_by_name),
+                        rankings_games.games_board(model_df, market_df, role_matchup, _attach_by_name),
                         model_meta, wk_year, wk_week, weather_by_team, precip_by_team, _select_from_games,
                         view=projection_view)
                     selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)

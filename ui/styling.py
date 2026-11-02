@@ -109,7 +109,7 @@ COLUMN_HELP = {
     'Temp': "This game's temperature - 🥶 freezing, ❄️ cold, ☀️ mild, 🥵 hot (recorded once played, forecast otherwise; Open-Meteo, keyless). 🏟️ for an indoor game, where temperature doesn't apply",
     'Precip': "This game's precipitation - Dry / 🌦️ Light Rain / 🌧️ Heavy Rain / 🌨️ Snow, forecast only (Open-Meteo has no historical precipitation field). 🏟️ for an indoor game, where precipitation doesn't apply",
     'Injury Status': "Out/Doubtful flags a player the injury report discounts or zeroes in Model Proj Pts",
-    'Def Rank': "Rank (1-32) of this opponent's defense in fantasy points allowed per game to this position: 1 allows the MOST (softest matchup), 32 the least. This season's games blended with last season's, weighted games/(games + 12) toward this season - the same weighting the model uses for defense matchups (about 25% this season after four games, 50% after twelve). Raw points allowed, not adjusted for the offenses faced. Colored by percentile: green easiest, red hardest",
+    'Def Mult': "How much this week's defense moves THIS player's points, given what his role produces - the points-weighted blend of the defense multipliers the model applies to each of his stats (a QB who runs weighs the defense's rushing multiplier, a slot WR the slot-allowed number, a back who catches passes the receiving one). 1.00 = a neutral defense. Colored by percentile among the position's players: green softest, red toughest",
     'Market Proj Pts': "This week's live sportsbook player-prop lines, re-scored under this league's scoring settings - independent of this app's own model. A stat no book has posted is filled in from this app's projection so the total is like-for-like; Market Coverage says how much is real lines",
     'Market Coverage': "Share of a typical week's fantasy points the market's posted lines actually covered for this player - a low number means more of Market Proj Pts is filled in from this app's own stat line (open a player's decomposition -> Market lines for each book, with nothing filled in)",
     'Model Proj Pts': "This app's own projection (usage blended toward the current season as it grows; opponent, pace and game-script adjusted - docs/weekly_projections_methodology.md), with the stat line it is built from beside it",
@@ -1286,8 +1286,135 @@ def inject_theme():
             background: rgba(0, 255, 249, 0.17) !important;
             box-shadow: 0 3px 12px rgba(0, 255, 249, 0.18) !important;
         }}
+
+        /* A row of metric tiles is one height: a tile with a delta pill (the decomposition's Matchup tile) used to
+           stand taller than its neighbours, so the row had a ragged bottom edge. The tiles stretch to the tallest. */
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) div[data-testid="stElementContainer"] {{
+            display: flex; flex: 1 1 auto;
+        }}
+        div[data-testid="stHorizontalBlock"]:has(div[data-testid="stMetric"]) div[data-testid="stMetric"] {{
+            flex: 1 1 auto;
+        }}
+
+        /* quiet_note (ui.components): explanatory text that waits behind a small dropdown - no box, no fill, just a
+           dim label with the dropdown arrow, so it does not catch the eye at a glance. */
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpander"] {{
+            background: transparent !important; border: none !important; border-radius: 0 !important;
+        }}
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpander"] details {{
+            border: none !important; background: transparent !important;
+        }}
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpander"] summary {{
+            padding: 0 !important; min-height: 0 !important; width: fit-content;
+            opacity: 0.55; transition: opacity 120ms ease-out;
+        }}
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpander"] summary:hover {{ opacity: 0.9; }}
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpander"] summary p {{
+            font-size: 11.5px !important; font-weight: 500 !important; color: {C['on_surface_variant']} !important;
+        }}
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpander"] summary span[data-testid="stIconMaterial"] {{
+            font-size: 16px !important;
+        }}
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpanderDetails"] {{
+            padding: 2px 0 6px 0 !important;
+        }}
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpanderDetails"] p,
+        div[class*="st-key-quiet_note_"] div[data-testid="stExpanderDetails"] li {{
+            font-size: 12.5px; color: {C['on_surface_variant']};
+        }}
+        /* the same note where Streamlit will not nest an expander (inside another expander): a plain <details> */
+        div[data-testid="stMarkdownContainer"] details {{
+            border: none; background: transparent; margin: 0; padding: 0;
+        }}
+        div[data-testid="stMarkdownContainer"] details > summary {{
+            cursor: pointer; width: fit-content; opacity: 0.55; font-size: 11.5px; font-weight: 500;
+            color: {C['on_surface_variant']};
+        }}
+        div[data-testid="stMarkdownContainer"] details > summary:hover {{ opacity: 0.9; }}
+        div[data-testid="stMarkdownContainer"] details > :not(summary) {{
+            font-size: 12.5px; color: {C['on_surface_variant']};
+        }}
         </style>
     """, unsafe_allow_html=True)
+    install_table_defaults()
+
+
+# Every st.dataframe in the app is centered cell by cell (2026-11-02 request: "center the values in the table
+# cells"), with the header a notch heavier. Streamlit's grid is a canvas, so neither is a CSS job:
+#  - alignment is a per-column column_config option. Rather than touching the ~60 call sites, st.dataframe is wrapped
+#    once and fills in alignment='center' for every column that has no alignment of its own (the index - the player
+#    name - stays left, as a label rather than a value; progress / chart / image / checkbox columns have no
+#    alignment option and are left alone).
+#  - the header's font weight cannot be set from the theme (the grid takes the same weight for header and cells), so a
+#    small script draws header text - the only text the grid paints at 60% white - at weight 600.
+_ALIGNMENT_UNSUPPORTED_TYPES = frozenset({
+    'progress', 'line_chart', 'bar_chart', 'area_chart', 'image', 'audio', 'video', 'checkbox', 'json', 'button'})
+
+
+def _centered_column_config(data, column_config):
+    """``column_config`` with alignment='center' added to every column of ``data`` that has none. Hidden columns
+    (a None / False entry) and column types without an alignment option are left as they are."""
+    frame = getattr(data, 'data', data)
+    columns = getattr(frame, 'columns', None)
+    if columns is None or isinstance(columns, pd.MultiIndex):
+        return column_config
+    merged = dict(column_config or {})
+    for col in columns:
+        if not isinstance(col, str):
+            continue
+        if col in merged:
+            entry = merged[col]
+            if entry is None or entry is False:
+                continue
+            if isinstance(entry, str):
+                entry = {'label': entry}
+            elif isinstance(entry, dict):
+                kind = (entry.get('type_config') or {}).get('type')
+                if entry.get('alignment') is not None or kind in _ALIGNMENT_UNSUPPORTED_TYPES:
+                    continue
+            else:
+                continue
+            merged[col] = {**entry, 'alignment': 'center'}
+        else:
+            merged[col] = {'alignment': 'center'}
+    return merged
+
+
+def install_table_defaults():
+    """Wrap st.dataframe (once per process) so every table centers its cells, and register the header-weight script."""
+    if not getattr(st.dataframe, '_centers_columns', False):
+        original = st.dataframe
+
+        def dataframe(data=None, *args, **kwargs):
+            try:
+                kwargs['column_config'] = _centered_column_config(data, kwargs.get('column_config'))
+            except Exception:       # alignment is cosmetic: never let it break a table
+                pass
+            return original(data, *args, **kwargs)
+
+        dataframe._centers_columns = True
+        dataframe.__wrapped__ = original
+        st.dataframe = dataframe
+    st.html(_TABLE_HEADER_JS, unsafe_allow_javascript=True)
+
+
+_TABLE_HEADER_JS = """
+<script>
+(function () {
+  if (window.__wrHeaderWeight) return;
+  window.__wrHeaderWeight = true;
+  var draw = CanvasRenderingContext2D.prototype.fillText;
+  CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
+    if (this.fillStyle === 'rgba(255, 255, 255, 0.6)' && /^[0-9.]+px/.test(this.font)) {
+      var font = this.font;
+      this.font = '600 ' + font;
+      try { return draw.call(this, text, x, y, maxWidth); } finally { this.font = font; }
+    }
+    return draw.call(this, text, x, y, maxWidth);
+  };
+})();
+</script>
+"""
 
 
 # Full 7-stop diverging scale, poor (0) -> elite (100), per explicit user

@@ -4720,8 +4720,12 @@ def _position_team_games(hist_pos, team_col, stats, name_col=None, roles=None,
     return game, group_keys
 
 
+# A stat where a HIGHER allowed value is the TOUGHER matchup for the player (the defense forces more of what costs him points).
+_MATCHUP_PCT_REVERSED_STATS = frozenset({'passing_interceptions', 'fumbles_lost', 'sacks_suffered'})
+
+
 def _build_player_stat_game_log(hist_annotated_pos, name_col, stats, matchup_matrix,
-                                schedule_df=None, team_col='team'):
+                                schedule_df=None, team_col='team', team_plays=None):
     """Per-game raw + defense-adjusted values for one position's game
     history, keyed by player name (as spelled in ``name_col``).
 
@@ -4741,6 +4745,11 @@ def _build_player_stat_game_log(hist_annotated_pos, name_col, stats, matchup_mat
     score and win/loss - never as a projection input. A missing/unjoinable
     game (a schedule this app doesn't have, or a synthetic test fixture)
     just leaves those columns blank rather than failing the whole log.
+
+    Two more display-only columns (2026-11-02 request): ``_matchup_pct_{stat}``, how soft the opponent was FOR THAT STAT -
+    its multiplier's percentile among every defense in ``matchup_matrix`` (100 = the softest, 0 = the toughest; the same
+    direction as the board's Def Rank colour) - and ``_team_plays``, the plays the player's offense ran that game
+    (``team_plays``: columns team / week / plays, the real count). The record's ``weekly_snap_pct`` already rides along.
     """
     if hist_annotated_pos is None or hist_annotated_pos.empty:
         return {}
@@ -4755,6 +4764,21 @@ def _build_player_stat_game_log(hist_annotated_pos, name_col, stats, matchup_mat
         if matchup_matrix is not None and not matchup_matrix.empty and stat in matchup_matrix.columns:
             mult = opponent.map(matchup_matrix[stat]).fillna(1.0).clip(*HISTORY_MATCHUP_CLIP)
         log[f'_defadj_{stat}'] = raw / mult
+        if matchup_matrix is not None and not matchup_matrix.empty and stat in matchup_matrix.columns:
+            column = pd.to_numeric(matchup_matrix[stat], errors='coerce').dropna()
+            if len(column) >= 2:
+                pct = (column.rank(method='average') - 1.0) / (len(column) - 1.0) * 100.0
+                if stat in _MATCHUP_PCT_REVERSED_STATS:
+                    pct = 100.0 - pct
+                log[f'_matchup_pct_{stat}'] = opponent.map(pct)
+    log['_team_plays'] = np.nan
+    if team_plays is not None and len(team_plays) and 'week' in log.columns:
+        plays = {(str(t), int(w)): float(n) for t, w, n in zip(
+            _clean_team_key(team_plays['team']), pd.to_numeric(team_plays['week'], errors='coerce').fillna(-1),
+            pd.to_numeric(team_plays['plays'], errors='coerce')) if pd.notna(n)}
+        game_team = _historical_game_team(log, team_col)
+        weeks = pd.to_numeric(log['week'], errors='coerce').fillna(-1).astype(int)
+        log['_team_plays'] = [plays.get((str(t), int(w))) for t, w in zip(game_team, weeks)]
     log['_team_score'] = np.nan
     log['_opp_score'] = np.nan
     log['_result'] = ''
@@ -10894,6 +10918,18 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if use_v2_guard and historical_target else load_team_weekly_plays(year))
     prior_plays = _team_game_plays_lookup(load_team_weekly_plays(year - 1))
 
+    # The Deep Dive game logs' "Team plays" column: the real (not overtime-discounted) play count per team game, for
+    # display only. Not loaded for a backtest, whose logs the harness never shows.
+    def _display_team_plays(season):
+        if historical_target:
+            return None
+        try:
+            return load_team_weekly_plays(int(season), discount_overtime=False)
+        except Exception:
+            return None
+    log_plays_cur, log_plays_prior, log_plays_prior2 = (
+        _display_team_plays(year), _display_team_plays(year - 1), _display_team_plays(year - 2))
+
     cold_pool = (_cold_start_pool(stats_df, name_col, team_col, as_of_week,
                                   target_week_played=historical_target)
                  if cold_start else pd.DataFrame())
@@ -11901,7 +11937,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                    if not prior_annotated.empty else prior_annotated)
             game_log_by_name_prior = _build_player_stat_game_log(
                 prior_annotated_pos, prior_name_col, stats, matchup_matrix,
-                schedule_df=prior_schedule_df, team_col=prior_team_col)
+                schedule_df=prior_schedule_df, team_col=prior_team_col, team_plays=log_plays_prior)
             game_log_by_key_prior = {clean_name_exact(pd.Series([p])).iloc[0]: g
                                      for p, g in game_log_by_name_prior.items()}
             player_game_log_prior = clean_name_exact(cur[name_col]).map(game_log_by_key_prior).to_numpy()
@@ -11924,7 +11960,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 if not prior2_annotated.empty else prior2_annotated)
             game_log_by_name_prior2 = _build_player_stat_game_log(
                 prior2_annotated_pos, prior2_name_col, stats, pd.DataFrame(),
-                schedule_df=prior2_schedule_df, team_col=prior2_team_col)
+                schedule_df=prior2_schedule_df, team_col=prior2_team_col, team_plays=log_plays_prior2)
             game_log_by_key_prior2 = {clean_name_exact(pd.Series([p])).iloc[0]: g
                                       for p, g in game_log_by_name_prior2.items()}
             player_game_log_prior2 = clean_name_exact(cur[name_col]).map(game_log_by_key_prior2).to_numpy()
@@ -12039,14 +12075,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             game_log_pos = hist_annotated[hist_annotated['position'].astype(str).str.upper() == pos]
             game_log_by_name = _build_player_stat_game_log(
                 game_log_pos, name_col, stats, matchup_matrix,
-                schedule_df=schedule_df, team_col=team_col)
+                schedule_df=schedule_df, team_col=team_col, team_plays=log_plays_cur)
             player_game_log_current = cur[name_col].map(game_log_by_name).to_numpy()
 
             prior_annotated_pos = (prior_annotated[prior_annotated['position'].astype(str).str.upper() == pos]
                                    if not prior_annotated.empty else prior_annotated)
             game_log_by_name_prior = _build_player_stat_game_log(
                 prior_annotated_pos, prior_name_col, stats, prior_matrix,
-                schedule_df=prior_schedule_df, team_col=prior_team_col)
+                schedule_df=prior_schedule_df, team_col=prior_team_col, team_plays=log_plays_prior)
             game_log_by_key_prior = {clean_name_exact(pd.Series([p])).iloc[0]: g
                                      for p, g in game_log_by_name_prior.items()}
             player_game_log_prior = clean_name_exact(cur[name_col]).map(game_log_by_key_prior).to_numpy()
@@ -12068,7 +12104,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 if not prior2_annotated.empty else prior2_annotated)
             game_log_by_name_prior2 = _build_player_stat_game_log(
                 prior2_annotated_pos, prior2_name_col, stats, pd.DataFrame(),
-                schedule_df=prior2_schedule_df, team_col=prior2_team_col)
+                schedule_df=prior2_schedule_df, team_col=prior2_team_col, team_plays=log_plays_prior2)
             game_log_by_key_prior2 = {clean_name_exact(pd.Series([p])).iloc[0]: g
                                       for p, g in game_log_by_name_prior2.items()}
             player_game_log_prior2 = clean_name_exact(cur[name_col]).map(game_log_by_key_prior2).to_numpy()

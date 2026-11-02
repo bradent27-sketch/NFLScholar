@@ -140,7 +140,7 @@ def test_scheme_mix_explains_the_fallback_when_no_scheme_evidence(monkeypatch):
     rankings._render_scheme_mix(_te_detail(scheme_available=True, defense_evidence=False))
     assert not sink.frames                      # no table
     assert "neutral (1.0" in sink.joined
-    assert "falls back to the alignment number" in sink.joined
+    assert "the alignment table below stands in" in sink.joined
 
 
 def test_alignment_mix_reference_mode_drops_the_reconciles_claim(monkeypatch):

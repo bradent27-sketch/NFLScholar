@@ -1595,7 +1595,7 @@ def load_team_pace(year, through_week=None):
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS)
-def load_team_weekly_plays(year):
+def load_team_weekly_plays(year, discount_overtime=True):
     """
     The same offensive-plays-run source as load_team_pace (attempts +
     carries + sacks_suffered from nflreadpy's weekly team stats), kept at
@@ -1615,6 +1615,9 @@ def load_team_weekly_plays(year):
     denominator, so an OT game would otherwise inflate that game's play
     count the same way it would load_team_pace's season average.
 
+    ``discount_overtime=False`` is the real count of plays the offense ran, for DISPLAY (the Deep Dive game log's
+    "Team plays" column); the discounted default is what the model's own ratios divide by.
+
     Returns columns ['team', 'week', 'plays'] (empty DataFrame if nflreadpy
     has nothing for this year).
     """
@@ -1629,7 +1632,8 @@ def load_team_weekly_plays(year):
         return pd.DataFrame(columns=['team', 'week', 'plays'])
     out = df[['team', 'week']].copy()
     out['plays'] = df[play_cols].sum(axis=1)
-    out['plays'] = _discount_overtime_plays(out['team'], out['week'], out['plays'], year)
+    if discount_overtime:
+        out['plays'] = _discount_overtime_plays(out['team'], out['week'], out['plays'], year)
     return out.groupby(['team', 'week'], observed=True, as_index=False)['plays'].sum()
 
 

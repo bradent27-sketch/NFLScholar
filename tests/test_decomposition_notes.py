@@ -12,12 +12,14 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 pd.options.mode.string_storage = "python"
 
+import ui.components as components  # noqa: E402
 import ui.tabs.rankings as rk  # noqa: E402
 
 
 class _FakeSt:
     def __init__(self):
         self.calls = []
+        self.session_state = {}
 
     def markdown(self, text, *a, **k):
         self.calls.append(('markdown', text))
@@ -28,7 +30,7 @@ class _FakeSt:
     def dataframe(self, frame, *a, **k):
         self.calls.append(('dataframe', frame))
 
-    def expander(self, label, expanded=False):
+    def expander(self, label, expanded=False, **kwargs):
         self.calls.append(('expander', label))
         return contextlib.nullcontext()
 
@@ -44,6 +46,7 @@ def _frame(fake):
 def _fake(monkeypatch):
     fake = _FakeSt()
     monkeypatch.setattr(rk, 'st', fake)
+    monkeypatch.setattr(components, 'st', fake)        # quiet_note (the dropdowns) draws through ui.components
     return fake
 
 
@@ -79,14 +82,14 @@ def test_points_path_lists_only_the_stages_that_fired(monkeypatch):
     assert [r for r in frame['Stage']] == ['Raw model', 'Calibrated', 'Season anchor']
     assert list(frame['Points']) == ['5.20', '6.03', '6.39']
     assert list(frame['Change']) == ['—', '+0.83', '+0.36']
-    assert ('expander', 'What these mean:') in fake.calls                              # the long explanation is folded away
+    assert ('expander', 'What these mean') in fake.calls                              # the long explanation is folded away
 
     only_cal = _fake(monkeypatch)
     rk._render_points_path({'raw_points': 5.0, 'calibrated_points': 5.5,
                             'calibration': {'enabled': True, 'raw_points': 5.0, 'displayed_points': 5.5,
                                             'slope': 1.0, 'intercept': 0.5}})
     assert len(_frame(only_cal)) == 2
-    assert ('expander', 'What these mean:') not in only_cal.calls
+    assert ('expander', 'What these mean') not in only_cal.calls
 
     neither = _fake(monkeypatch)
     rk._render_points_path({'raw_points': 5.0, 'calibrated_points': 5.0, 'calibration': {'enabled': False}})
@@ -133,4 +136,4 @@ def test_a_real_vacancy_still_gets_its_caption_and_table(monkeypatch):
 def test_what_these_mean_is_a_collapsed_dropdown(monkeypatch):
     fake = _fake(monkeypatch)
     rk._what_these_mean('**Combined** = /Game × Allowed×.')
-    assert fake.calls[0] == ('expander', 'What these mean:') and 'Combined' in fake.calls[1][1]
+    assert fake.calls[0] == ('expander', 'What these mean') and 'Combined' in fake.calls[1][1]

@@ -16,6 +16,7 @@ from data.loaders import load_schedule
 from data.prediction_ledger import LEDGER_DIR
 from data.transforms import load_and_merge_data
 from ui.styling import df_auto_height, style_plain_dataframe
+from ui.components import quiet_note  # noqa: E402
 
 _STAT_LABELS = {
     'passing_attempts': 'Pass attempts', 'passing_completions': 'Completions', 'passing_yards': 'Passing yards',
@@ -86,9 +87,9 @@ def _render_disagreements(frame, pos):
         'Market avg': table['Market avg'], 'Actual avg': table['Actual avg']})
     st.dataframe(style_plain_dataframe(shown, decimals_by_col={'Model closer %': 0}), hide_index=True,
                  width="stretch", height=df_auto_height(len(shown)))
-    st.caption("Players whose model and market projections differ by at least the gap, scored on who ended closer to "
+    quiet_note("Players whose model and market projections differ by at least the gap, scored on who ended closer to "
                "the actual points. Under 50% means the market was usually right when the two disagreed. Small samples "
-               "swing a lot - read the player counts.")
+               "swing a lot - read the player counts.", "Details")
 
 
 def _render_stats(frame, bench):
@@ -106,9 +107,9 @@ def _render_stats(frame, bench):
                                        decimals_by_col={'Model edge %': 1, 'Model error': 2, f'{bench} error': 2,
                                                         'Model bias': 2, f'{bench} bias': 2}),
                  hide_index=True, width="stretch", height=df_auto_height(len(shown)))
-    st.caption("Error = root-mean-square miss in that stat's own units (yards, catches, TDs). Model edge % is how much "
+    quiet_note("Error = root-mean-square miss in that stat's own units (yards, catches, TDs). Model edge % is how much "
                f"smaller the model's miss was than {bench}'s (green = model better). Bias = average projection minus "
-               "actual (negative = projected too low).")
+               "actual (negative = projected too low).", "Details")
 
 
 def _render_line_calls(frame):
@@ -124,9 +125,9 @@ def _render_line_calls(frame):
         'Unders': calls['unders'], 'Under hit %': 100 * calls['under_hit'], 'Hit %': 100 * calls['hit']})
     st.dataframe(style_plain_dataframe(shown, decimals_by_col={'Over hit %': 0, 'Under hit %': 0, 'Hit %': 0}),
                  hide_index=True, width="stretch", height=df_auto_height(len(shown)))
-    st.caption("A lean is the side of the market's number the model sits on (model higher = over). Hit % is how often "
+    quiet_note("A lean is the side of the market's number the model sits on (model higher = over). Hit % is how often "
                "the actual result landed on that side. The market number is the de-vigged consensus the board shows, "
-               "not one book's posted line, and a hit rate needs to clear roughly 52.4% to beat -110 pricing.")
+               "not one book's posted line, and a hit rate needs to clear roughly 52.4% to beat -110 pricing.", "Details")
 
 
 def render():
@@ -168,10 +169,10 @@ def render():
                                                    'Model bias': 2, f'{bench} bias': 2, 'Model ranking %': 1,
                                                    f'{bench} ranking %': 1}),
             hide_index=True, width="stretch", height=df_auto_height(len(table)))
-        st.caption(f"Each player is scored from the last board saved before his game kicked off, on the players both "
+        quiet_note(f"Each player is scored from the last board saved before his game kicked off, on the players both "
                    f"the model and {bench} projected. Error = root-mean-square miss in fantasy points ({info['scoring']}); "
                    "Model edge = how many points smaller the model's miss was (green = model better). Bias = average "
-                   "projection minus actual. Ranking % = share of player pairs in the same week put in the right order.")
+                   "projection minus actual. Ranking % = share of player pairs in the same week put in the right order.", "Details")
 
     st.divider()
     _render_disagreements(frame, pos)

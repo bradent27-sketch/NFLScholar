@@ -91,6 +91,7 @@ from data.odds_sources import (  # noqa: E402
     parse_fanduel_payload as _parse_fd, parse_pinnacle_payload as _parse_pin,
     parse_draftkings_payloads as _parse_dk,
 )
+from ui.components import quiet_note  # noqa: E402
 _MARKET_PARSERS = {'Underdog': _parse_ud, 'PrizePicks': _parse_pp,
                    'FanDuel': _parse_fd, 'Pinnacle': _parse_pin,
                    'DraftKings': _parse_dk}
@@ -406,13 +407,11 @@ def _render_fantasypros_api_import(cfg):
         fantasypros_api_calls_today, fetch_fantasypros_players,
         FANTASYPROS_API_DAILY_LIMIT,
     )
-    st.caption(
-        "**FantasyPros API** — one call pulls ECR *and* ADP for the whole player pool at "
+    quiet_note("**FantasyPros API** — one call pulls ECR *and* ADP for the whole player pool at "
         "once, straight from FantasyPros rather than a third-party mirror. Request a key at "
         "[secure.fantasypros.com/api-keys/request](https://secure.fantasypros.com/api-keys/request/) "
         "— this is a manual, button-triggered refresh either way, not something the board "
-        "pulls on its own."
-    )
+        "pulls on its own.", "Details")
     secret_key, key_source = get_fantasypros_api_key()
     if key_source == 'secrets':
         st.caption("🔑 Using the key from `.streamlit/secrets.toml` — never shown in this UI.")
@@ -463,25 +462,21 @@ def _render_fantasypros_api_import(cfg):
 
 
 def _render_projection_imports():
-    st.caption(
-        "Drop in an FFA player export and the board will use their analysts' projected "
+    quiet_note("Drop in an FFA player export and the board will use their analysts' projected "
         "STAT LINE — carries, yards, receptions — re-scored under your league settings, "
         "plus their FFA Value and written player notes. Importing the stat line rather "
         "than their point total is what keeps it correct: their export is half-PPR, so "
-        "reading their points straight off would be wrong in any other format."
-    )
+        "reading their points straight off would be wrong in any other format.", "Details")
     import_hint('ffa')
     ffa_upload = st.file_uploader("FFA players JSON", type=["json"], key="dhq_ffa_upload")
 
     st.markdown("---")
-    st.caption(
-        "A FantasyPros cheat sheet adds auction dollar values, their analysts' tiers alongside "
+    quiet_note("A FantasyPros cheat sheet adds auction dollar values, their analysts' tiers alongside "
         "this board's own, and a written note per player. Auction values are the piece nothing "
         "else here can produce — VORP says who is worth more, not whether that's a $47 player "
         "or a $12 one, which is the entire question in an auction. Drop in the getCheatSheet "
         "response; add the draft room's player array too and every player resolves instead of "
-        "~80%."
-    )
+        "~80%.", "Details")
     import_hint('fantasypros_cheatsheet')
     fp_upload = st.file_uploader("FantasyPros cheat sheet / player array",
                                  type=["json", "html", "txt"], key="dhq_fp_upload")
@@ -495,18 +490,14 @@ def _render_projection_imports():
 
 
 def _render_book_imports():
-    st.caption(
-        "Season-long player over/unders — 1,275.5 receiving yards for the whole year — "
+    quiet_note("Season-long player over/unders — 1,275.5 receiving yards for the whole year — "
         "re-scored under your league settings into a market projection built with no reference "
         "to this app's model. That makes it a real second opinion rather than another view of "
         "the same numbers. The gap shows up as Book Δ on the board and under "
-        "'Market lines vs this board'."
-    )
-    st.caption(
-        "No network access to these endpoints? Click a source, save the JSON, and drop it here. "
+        "'Market lines vs this board'.", "Details")
+    quiet_note("No network access to these endpoints? Click a source, save the JSON, and drop it here. "
         "A saved payload wins over the live fetch and loads automatically from then on — it is "
-        "the reliable path when a book changes or blocks its endpoint, which several of these do."
-    )
+        "the reliable path when a book changes or blocks its endpoint, which several of these do.", "Details")
     from data.import_sources import markdown_list
     st.markdown(markdown_list('underdog', 'prizepicks_season', 'draftkings_season',
                               'fanduel', 'pinnacle'))
@@ -613,13 +604,11 @@ def _render_settings_panel(cfg):
             cfg['fum'] = st.number_input("Fumble lost", -6, 0, int(cfg['fum']))
 
         st.markdown("**Per-game yardage bonuses**")
-        st.caption(
-            "Points awarded in any single game clearing each threshold — leave at 0 if your "
+        quiet_note("Points awarded in any single game clearing each threshold — leave at 0 if your "
             "league doesn't use them. These are scored week by week, not off season totals, so "
             "a back with eight 100-yard games is correctly worth more than one with the same "
             "yardage spread evenly. Turning these on genuinely re-prices the board toward "
-            "boom-week players."
-        )
+            "boom-week players.", "Details")
         cfg['bonus_mode'] = st.radio(
             "When several thresholds are cleared in one game",
             ["cumulative", "highest"], horizontal=True,
@@ -648,15 +637,13 @@ def _render_settings_panel(cfg):
                                            float(cfg[key]), step=0.5)
 
         st.markdown("**Big-play bonuses**")
-        st.caption(
-            "Points for a single PLAY crossing a yard threshold - e.g. +2 points for any "
+        quiet_note("Points for a single PLAY crossing a yard threshold - e.g. +2 points for any "
             "reception of 40+ yards. Different from the per-game bonuses above, which look "
             "at a whole game's total yardage; this looks at one play. Add as many rules as "
             "your league runs and remove any of them - use the blank bottom row to add one, "
             "select a row's checkbox and press delete to remove it. Priced from each "
             "player's own recent history of that exact play length, blended toward his "
-            "position's typical rate so a thin sample doesn't read as an established skill."
-        )
+            "position's typical rate so a thin sample doesn't read as an established skill.", "Details")
         _bp_edit_df = pd.DataFrame([
             {'Play type': draft_big_plays.CATEGORY_LABELS.get(r.get('category'), r.get('category')),
              'Yards ≥': r.get('threshold'), 'Points': r.get('points')}
@@ -722,21 +709,17 @@ def _render_settings_panel(cfg):
                      "VORP itself is never blended — only the ordering moves.",
             )
             cfg['tiers'] = st.slider("Max tiers per position", 3, 12, int(cfg['tiers']))
-            st.caption(
-                "Value-based drafting and the market disagree hardest at QB: with replacement "
+            quiet_note("Value-based drafting and the market disagree hardest at QB: with replacement "
                 "set at the last starting QB, the model prices an elite QB as a top-15 overall "
                 "pick in a 1QB league and real drafts take him ~20 picks later. This blend lets "
-                "you decide how much deference the market gets."
-            )
+                "you decide how much deference the market gets.", "Details")
         with d2:
             st.markdown("**How simulated opponents rank players**")
-            st.caption(
-                "Mock-draft opponents order the board by a weighted blend of these three. Pure "
+            quiet_note("Mock-draft opponents order the board by a weighted blend of these three. Pure "
                 "ADP gives you a room that has memorised the market and never has an opinion; "
                 "pure consensus rank gives you a room of analysts who all read the same page and "
                 "ignore each other. Real drafters do some of both, which is why this starts at "
-                "an even split. Weights are normalized, so only their ratio matters."
-            )
+                "an even split. Weights are normalized, so only their ratio matters.", "Details")
             cfg['bot_adp'] = st.slider("Weight on ADP", 0, 100, int(cfg['bot_adp']), 5)
             cfg['bot_ecr'] = st.slider("Weight on consensus rank (ECR)", 0, 100,
                                        int(cfg['bot_ecr']), 5)
@@ -1444,11 +1427,9 @@ def _render_timing_panel():
     ms = [m for _p, m in hist]
     recent = ms[-5:]
     with st.expander(f"⏱ Render timing — last rerun {ms[-1]:.0f} ms", expanded=False):
-        st.caption(
-            "How long each rerun of this room took, server-side. If a stall shows "
+        quiet_note("How long each rerun of this room took, server-side. If a stall shows "
             "a NORMAL number here, the delay is in the browser/websocket, not in "
-            "Python — which is the single most useful thing to know about it."
-        )
+            "Python — which is the single most useful thing to know about it.", "Details")
         st.dataframe(
             style_plain_dataframe(pd.DataFrame(
                 [{'Picks made': p, 'Render ms': m} for p, m in reversed(hist[-15:])])),
@@ -2060,12 +2041,10 @@ def _render_book_breakdown(row, player):
         title += f" ({' · '.join(headline)})"
     with st.expander(title, expanded=False):
         st.markdown(detail)
-        st.caption(
-            "Where a book posted a line it wins outright — no averaging with this app's "
+        quiet_note("Where a book posted a line it wins outright — no averaging with this app's "
             "number, because a posted line is a price someone will take money on. Everything "
             "the book was silent on falls back to this board's own projection, which is what "
-            "keeps the total a whole player rather than a third of one."
-        )
+            "keeps the total a whole player rather than a third of one.", "Details")
 
 
 def _render_player_detail(board, selected):
@@ -2113,15 +2092,13 @@ def _render_market_comparison(board, settings, meta, status):
         posted = vegas.get('posted', 0)
         total = vegas.get('games', 0)
         st.markdown("**How the market prices each offense**")
-        st.caption(
-            f"From {posted} of {total} games with a posted spread and total "
+        quiet_note(f"From {posted} of {total} games with a posted spread and total "
             f"(weeks {', '.join(str(w) for w in vegas.get('weeks_posted', []))}). "
             f"League average {vegas.get('league_avg_ppg')} points a game. Books post the "
             "first few weeks as lookahead lines and fill the rest in as the season runs, so "
             "an offense's number here is an average over a handful of games and carries the "
             "bias of who it happened to draw. **Context, not a projection input** — scaling "
-            "projections by it was backtested on 748 player-seasons and made them worse."
-        )
+            "projections by it was backtested on 748 player-seasons and made them worse.", "Details")
         st.dataframe(style_plain_dataframe(environment.head(32)), width="stretch",
                      hide_index=True, height=df_auto_height(10))
     elif vegas.get('error'):
@@ -2131,16 +2108,14 @@ def _render_market_comparison(board, settings, meta, status):
     if full_env is not None and not full_env.empty:
         thin = int((full_env['games_posted'] < full_env['games']).sum())
         st.markdown("**Full-season estimate (posted lines + matchup-adjusted fill-in)**")
-        st.caption(
-            f"The table above can be a severely biased read of an offense this early — a team "
+        quiet_note(f"The table above can be a severely biased read of an offense this early — a team "
             f"whose only posted games happen to be against two soft defenses reads as much "
             f"better than a full slate would show. This fills every game WITHOUT a posted line "
             f"using that team's own measured scoring level against its actual SCHEDULED "
             f"opponent's measured defense that week (data.odds_market.estimate_full_season_scoring) "
             f"— real posted lines are used as-is wherever they exist; only the gaps are modeled. "
             f"{thin} of {len(full_env)} teams have at least one modeled game right now. "
-            "Still **context, not a projection input**, for the same measured reason as the table above."
-        )
+            "Still **context, not a projection input**, for the same measured reason as the table above.", "Details")
         show_cols = ['team', 'full_season_ppg', 'posted_ppg', 'games_posted', 'modeled_games']
         st.dataframe(
             full_env[[c for c in show_cols if c in full_env.columns]].rename(columns={
@@ -2189,29 +2164,23 @@ def _render_market_comparison(board, settings, meta, status):
         + (f" · {cmp_meta['thin']} dropped for thin coverage" if cmp_meta['thin'] else "")
         + (f" · {cmp_meta['unmatched']} didn't match a board row" if cmp_meta['unmatched'] else "")
     )
-    st.caption(
-        "**Book Proj** is the number to draft off: this player's projection rebuilt from the "
+    quiet_note("**Book Proj** is the number to draft off: this player's projection rebuilt from the "
         "book's season-long lines, using their figure for every stat they priced and ours "
         "for the rest. Complete, and on the same scale as Proj Pts — Underdog posts no "
         "receptions market at all, so those fall back to our model instead of counting as "
         "zero. **Book Δ** is how far that moves him. **Book Share** is how much of the total "
-        "the book is actually responsible for."
-    )
-    st.caption(
-        "The three columns after it answer a narrower question — whether the model and the "
+        "the book is actually responsible for.", "Details")
+    quiet_note("The three columns after it answer a narrower question — whether the model and the "
         "market disagree. **Market Pts** covers *only* the stats the book priced, so "
         "**Ours (matched)** re-scores our side over that same narrow set and **Edge** is the "
         "like-for-like difference. Comparing the book's partial total against our full one "
-        "was making every receiver look 40–60% underpriced, which is why those two exist."
-    )
-    st.caption(
-        "Two things to read it against. **A big gap is not a bet** — most often it means the "
+        "was making every receiver look 40–60% underpriced, which is why those two exist.", "Details")
+    quiet_note("Two things to read it against. **A big gap is not a bet** — most often it means the "
         "market knows something a statistical model can't see, which is why this board "
         "already blends toward consensus. And season-long lines embed the chance a player "
         "MISSES GAMES, while this projection is closer to a full slate, which shows up as a "
         "steady few percent of positive edge across every position. Treat roughly +4% as the "
-        "zero point, not as free money."
-    )
+        "zero point, not as free money.", "Details")
     show = comparison.head(40).set_index('Player')
     st.dataframe(
         style_plain_dataframe(show, diverging_cols={'Edge %': float(
@@ -2964,11 +2933,9 @@ def _render_draft_room(board, settings, ctx, meta=None, status=None):
                 st.dataframe(
                     style_plain_dataframe(table.sort_values('Wins', ascending=False)),
                     width="stretch", hide_index=True, height=df_auto_height(len(table)))
-                st.caption(
-                    "Wins, not points. Each season redraws the schedule and re-rolls every "
+                quiet_note("Wins, not points. Each season redraws the schedule and re-rolls every "
                     "player's weeks from the real distribution of scores at his projected rank, "
-                    "with lineups set on projections rather than on hindsight."
-                )
+                    "with lineups set on projections rather than on hindsight.", "Details")
 
     round_no = (dc['current_pick'] - 1) // max(dc['num_teams'], 1) + 1
     # The board lives beside the strip rather than in an expander at the
@@ -3154,12 +3121,10 @@ def _render_news(board, settings):
                 st.markdown(f"- [{headline}]({link})" if link else f"- {headline}")
 
     with st.expander("Dynasty / keeper trade values", expanded=False):
-        st.caption(
-            "Redraft value and dynasty value are different questions — a 29-year-old back and a "
+        quiet_note("Redraft value and dynasty value are different questions — a 29-year-old back and a "
             "23-year-old with identical projections are the same redraft pick and very different "
             "keeper assets. Shown separately rather than blended into the board so a one-year "
-            "league's rankings never quietly get contaminated by age."
-        )
+            "league's rankings never quietly get contaminated by age.", "Details")
         vals, verr = load_dynasty_values()
         if verr or vals.empty:
             st.caption(f"Dynasty values unavailable ({verr or 'empty'}).")

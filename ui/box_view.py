@@ -94,14 +94,14 @@ def clicked_entry(selection, entries, score_col):
     return None
 
 
-def render_game_table(styled, entries, *, score_col, key, owner, season, height):
+def render_game_table(styled, entries, *, score_col, key, owner, season, height, column_config=None):
     """``st.dataframe`` with a clickable Score column. A click opens that game's box score and reruns the dialog
     so the box shows at once; with nothing resolvable it is just a table."""
     if not any(entries):
-        st.dataframe(styled, hide_index=True, width='stretch', height=height)
+        st.dataframe(styled, hide_index=True, width='stretch', height=height, column_config=column_config)
         return
     event = st.dataframe(
-        styled, hide_index=True, width='stretch', height=height,
+        styled, hide_index=True, width='stretch', height=height, column_config=column_config,
         on_select='rerun', selection_mode='single-cell', key=f'{key}_{table_generation()}')
     hit = clicked_entry(event, entries, score_col)
     if hit:

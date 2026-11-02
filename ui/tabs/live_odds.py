@@ -12,6 +12,7 @@ from config import ODDS_API_PLAYER_PROP_MARKETS
 from data.loaders import fetch_nfl_odds, fetch_nfl_player_props, load_saved_odds_api_key, save_odds_api_key
 from ui.styling import style_plain_dataframe, df_auto_height
 from ui.components import skeleton_loader, import_hint, render_weekly_board_uploads
+from ui.components import quiet_note  # noqa: E402
 
 
 def _fmt_kickoff(iso_str):
@@ -231,14 +232,12 @@ def _render_weekly_props():
     from data.odds_weekly import weekly_props, weekly_summary, weekly_consensus, posting_anchor
 
     st.markdown("#### This week's player props")
-    st.caption(
-        "PrizePicks, Underdog, DraftKings and Pinnacle — no key, no quota, no request limit. "
+    quiet_note("PrizePicks, Underdog, DraftKings and Pinnacle — no key, no quota, no request limit. "
         "Pinnacle is the sharpest book here and prices its per-game lines with real "
         "over/under odds, so its lean feeds `Market proj` (the de-vigged column) most. "
         "Books post the coming weekend on Tuesday or Wednesday, so this reloads on its "
         "own the first time you open it after Tuesday morning. Hit refresh whenever you "
-        "want the current numbers rather than the ones posted at the start of the week."
-    )
+        "want the current numbers rather than the ones posted at the start of the week.", "Details")
 
     # PrizePicks has always been browser-only, and DraftKings started
     # refusing scripts after a burst of requests. Both serve the same URL to
@@ -358,12 +357,10 @@ def render():
 
     st.divider()
     st.markdown("#### More books, via The Odds API")
-    st.caption(
-        "Everything above is free and uncapped. This section is the metered one — it "
+    quiet_note("Everything above is free and uncapped. This section is the metered one — it "
         "adds the sportsbooks the three above don't cover (BetMGM, Caesars, BetRivers "
         "and the rest) and it spends credits from your plan to do it, so it only ever "
-        "fetches when you ask."
-    )
+        "fetches when you ask.", "Details")
 
     # value= only seeds the widget on its very first render this session
     # (session_state takes over after that) - so this pre-fills the box
@@ -425,13 +422,11 @@ def render():
                 "can shop against."
             )
             st.dataframe(books, width="stretch", hide_index=True)
-            st.caption(
-                "**On the DFS books:** PrizePicks and Underdog are pick'em operators rather "
+            quiet_note("**On the DFS books:** PrizePicks and Underdog are pick'em operators rather "
                 "than sportsbooks and generally are NOT in this feed. Underdog's season-long "
                 "player lines are pulled directly instead — see Draft HQ → Market lines vs "
                 "this board. FanDuel and DraftKings ARE here under licence, which is why "
-                "neither is scraped anywhere in this app."
-            )
+                "neither is scraped anywhere in this app.", "Details")
 
     game_labels = {}
     for g in odds_data:

@@ -43,11 +43,13 @@ def test_edges_flag_ships_for_rb_and_wr_and_leaves_qb_and_te_alone():
 
 def test_points_path_shows_the_stat_line_step_last(monkeypatch):
     import contextlib
+    import ui.components as components
     import ui.tabs.rankings as rk
 
     class _FakeSt:
         def __init__(self):
             self.calls = []
+            self.session_state = {}
 
         def markdown(self, text, *a, **k):
             self.calls.append(('markdown', text))
@@ -58,12 +60,13 @@ def test_points_path_shows_the_stat_line_step_last(monkeypatch):
         def dataframe(self, frame, *a, **k):
             self.calls.append(('dataframe', frame))
 
-        def expander(self, label, expanded=False):
+        def expander(self, label, expanded=False, **kwargs):
             self.calls.append(('expander', label))
             return contextlib.nullcontext()
 
     fake = _FakeSt()
     monkeypatch.setattr(rk, 'st', fake)
+    monkeypatch.setattr(components, 'st', fake)        # quiet_note (the dropdowns) draws through ui.components
     rk._render_points_path({
         'raw_points': 15.0, 'calibrated_points': 14.5, 'target_week': 6,
         'calibration': {'enabled': True, 'slope': 0.9, 'intercept': 1.0, 'raw_points': 15.0, 'displayed_points': 14.5},

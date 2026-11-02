@@ -18,6 +18,7 @@ from data.ourlads_depth_charts import (
 from ui.styling import style_depth_chart_table, df_auto_height
 from ui.components import switch_tab, render_team_banner, skeleton_loader
 from ui.components import default_season_index
+from ui.components import quiet_note  # noqa: E402
 
 
 @st.cache_data
@@ -226,11 +227,9 @@ def _render_projection_qb1_control(year, team, current_stats, team_col, name_col
 
     with st.expander(f'{team} — Weekly projection QB1 selection',
                      expanded=status.get('status') == 'selection_required'):
-        st.caption(
-            'The generated chart below is not the weekly QB1 source. A locally imported Ourlads preseason '
+        quiet_note('The generated chart below is not the weekly QB1 source. A locally imported Ourlads preseason '
             'chart can resolve a healthy listed QB1; a manual selection always wins; otherwise a clear '
-            'incumbent or explicit choice is required.'
-        )
+            'incumbent or explicit choice is required.', "Details")
         if status.get('status') == 'manual_override':
             st.success(f"Manual selection: {selected}. This player receives the full projected QB workload.")
         elif status.get('status') == 'prior_season_incumbent':
@@ -346,11 +345,9 @@ def _render_ourlads_import_control(year, team):
             'Import your saved printer-friendly Ourlads MHTML team pages here. The app stores a local normalized '
             'snapshot—not the raw browser files—and never logs in to or scrapes Ourlads.'
         )
-        st.caption(
-            'One import, two consumers: this same snapshot orders the depth-chart tables above for the current '
+        quiet_note('One import, two consumers: this same snapshot orders the depth-chart tables above for the current '
             "season AND feeds the weekly model's preseason cold-start role signal (QB1 lock + RB/WR/TE role "
-            'floors) — see `weekly_projections.build_weekly_projections`.'
-        )
+            'floors) — see `weekly_projections.build_weekly_projections`.', "Details")
         if problem:
             st.error(problem)
         elif snapshot.empty:
@@ -473,10 +470,8 @@ def _render_ourlads_import_control(year, team):
         elif key_text:
             with st.expander('Saved Ourlads key / legend'):
                 st.text(key_text[:8000])
-        st.caption(
-            'Model use: a healthy imported QB can identify the Week 1 QB1; RB/WR/TE entries only provide a '
-            'conservative low-evidence role floor. Formation starters such as LWR/RWR/SWR never imply equal or full snaps.'
-        )
+        quiet_note('Model use: a healthy imported QB can identify the Week 1 QB1; RB/WR/TE entries only provide a '
+            'conservative low-evidence role floor. Formation starters such as LWR/RWR/SWR never imply equal or full snaps.', "Details")
 
 
 def render():
@@ -559,7 +554,7 @@ def render():
         if ourlads_rank_map:
             st.caption(f"ℹ️ Starter order for {t2_target_year} follows the imported Ourlads depth chart ({len(ourlads_rank_map)} skill players matched). PFF grade, snap % and games played are still each player's own {snap_year_used} data.")
         st.caption("Each cell: **Player · PFF grade · Snap % (games played)** — \"RK\" in place of a grade means a rookie with no PFF grade yet, \"--\" means neither a rookie nor graded (common for deep backups).")
-        st.caption("Snap % shows \"N/A\" (not \"0%\") for players no source has a snap-count row for at all — mostly deep backups with too little playing time to be tracked. Ordering for those rows leans on draft capital and experience instead.")
+        quiet_note("Snap % shows \"N/A\" (not \"0%\") for players no source has a snap-count row for at all — mostly deep backups with too little playing time to be tracked. Ordering for those rows leans on draft capital and experience instead.", "Details")
         st.dataframe(
             style_depth_chart_table(offense_df, sel_team_t2, snap_map, pff['pff_grades_map'], global_rookie_names, veteran_names, pff['league_gold_players'], has_match_map, games_map),
             width="stretch", hide_index=True, height=df_auto_height(len(offense_df)),

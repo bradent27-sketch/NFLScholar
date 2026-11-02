@@ -50,8 +50,8 @@ def _game_column_config(frame):
     config = {}
     for column in [c for c in frame.columns if not c.startswith('_')]:
         width = games_view.COLUMN_WIDTHS.get(column) or games_view.STAT_WIDTHS.get(column, games_view.STAT_COLUMN_WIDTH)
-        help_text = {'MATCHUP': "The opponent's defense against this position, 1-100: 100 = allows the most fantasy points (the "
-                                "softest matchup), 1 = the fewest (the board's Def Rank, as a percentile).",
+        help_text = {'MATCHUP': "How soft the opponent's defense is for THIS player's role, 1-100: 100 = the softest matchup, "
+                                "1 = the toughest (the board's Def Mult, as a percentile among his position).",
                      'HEALTH': 'Blank = nothing in the injury reports or your rulings says he is out or in doubt. Red = projected out, '
                                'amber = in doubt or limited.',
                      'PTS': "This app's projected fantasy points (the board's Model Proj Pts).",
@@ -239,13 +239,13 @@ def render(board, meta, year, week, weather_by_team, precip_by_team, select_play
                      on_select=_on_select_for(key, props), selection_mode='single-row', key=key)
 
 
-def games_board(model_df, market_df, matchup_difficulty, attach_by_name):
-    """The board the GAMES view reads: the built board with 'Matchup Pct' (0-100, 100 = the softest matchup, the Def Rank
-    percentile), the medians beside the means (data/weekly_median.py), and when a market pull is staged the market's implied mean
+def games_board(model_df, market_df, role_matchup, attach_by_name):
+    """The board the GAMES view reads: the built board with 'Matchup Pct' (0-100, 100 = the softest matchup FOR THAT PLAYER'S
+    ROLE: the percentile of the board's Def Mult, rankings._role_matchup_by_player), the medians beside the means (data/weekly_median.py), and when a market pull is staged the market's implied mean
     per stat as 'Mkt <stat>' and the posted line as 'Line <stat>' (games_view.posted_lines: what the props compare the median with)."""
     board = attach_medians(model_df)
-    pct = [(matchup_difficulty.get((str(p).upper(), str(o))) or (None, None))[1]
-           for p, o in zip(board['Pos'], board['Opponent'])]
+    pct = [(role_matchup.get((p, s, t)) or (None, None))[1]
+           for p, s, t in zip(board['Player'], board['Pos'], board['Team'])]
     board['Matchup Pct'] = pd.to_numeric(pd.Series(pct, index=board.index, dtype=object), errors='coerce')
     if market_df is not None and not market_df.empty:
         stats = [s for s in market_df.attrs.get('consensus_stats', []) if s in market_df.columns]

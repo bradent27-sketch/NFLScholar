@@ -7994,3 +7994,27 @@ Both move stat volumes before the points line, so pfs scores them; the points li
 - Two depth WRs jump more than either fix explains: Ted Hurst III 2.8 -> 4.4 (targets 1.86 -> 2.94) and Laquon Treadwell
   2.9 -> 3.8. Both sit at the stat recal's 3.0-point gate, and their xTD receiving TDs rose; most likely they crossed it
   (backlog M19, the gate cliff), not a fault in either flag.
+
+### 2026-11-02 - Display changes: role-specific matchup, Deep Dive columns, centered tables, quieter text (no model change)
+User's display notes. The 2026 week 9 default board is value-for-value identical on the old and new code (515 rows x 120
+columns, 0 numeric cells differ); the data-layer edits only add fields to the explanation logs.
+- **Board column `Def Rank` -> `Def Mult`** (and the games view's MATCHUP tone). Before it was one number per position and
+  opponent. Now `_role_matchup_by_player` (ui/tabs/rankings.py) blends the model's own per-stat defense multipliers by the
+  points each stat scores for THAT player: sum(points) / sum(points / multiplier). A QB who runs weighs the rushing multiplier,
+  a slot WR / TE his alignment- and scheme-specific allowed multiplier, a back who catches passes the receiving one;
+  interceptions weigh negatively. The colour is its percentile among the position's players projected for 3+ points. The
+  position-wide rank still shows in the decomposition header.
+- **Deep Dive player log:** `Result` and `Score` are one column ("W 59-37"); `Matchup %` (the opponent's multiplier for that
+  stat as a percentile of all defenses in the log's matrix, 100 = softest, reversed for interceptions), `Snap %` and
+  `Team plays` (the real count: `load_team_weekly_plays(discount_overtime=False)`, not the overtime-discounted one the model
+  divides by; not loaded for a backtest). The `Allowed` cells of the defense tables are coloured by allowed / the offense's
+  own average (green = more, red = less). A two-years-back log has no matrix, so no `Matchup %`.
+- **Market lines tab:** a `Model median` column after De-vig (data/weekly_median.py).
+- **Decomposition dialog:** the four header tiles share one height; the matchup line reads "BAL defense vs QB: #20 of 32
+  toughest · 2026 37% + 2025 63%"; switching a Deep Dive stat tab no longer jumps to the top (the old script restored the
+  scroll position after the dialog had already collapsed, and gave up when the new tab was shorter; the new one holds the
+  dialog's height until the new panel has arrived).
+- **Every `st.dataframe`** centers its cells (a wrapper adds `alignment='center'`; the index / player name stays left) and
+  draws its header at weight 600 (a canvas script: Streamlit's theme gives header and cells one weight).
+- **Explanatory text:** long captions (200+ characters in every tab, plus the long ones in the decomposition and the Live data
+  hub) became `quiet_note` dropdowns: dim text with a small arrow, no outline.

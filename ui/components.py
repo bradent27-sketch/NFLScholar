@@ -18,6 +18,39 @@ F = THEME['fonts']
 R = THEME['radius']
 
 
+def quiet_note(text, label="Notes", key=None):
+    """Explanatory text that waits behind a small dropdown (2026-11-02 request: "force it into a dropdown that is
+    generally very slight and doesn't catch your eye at a glance ... not outlined ... just text with a little dropdown
+    indicator"). The dim, borderless look comes from the st-key-quiet_note_* rules in ui.styling.inject_theme.
+
+    Use it for how-to-read text that most readers never need; a one-line status that someone does need stays a caption.
+    ``key`` only has to be given when the same label and text are shown twice in one run."""
+    import hashlib
+    import html
+    stem = hashlib.md5(f"{label}|{text}".encode('utf-8')).hexdigest()[:10]
+    # The same note drawn more than once in a run (one per team in a loop) needs a key each: count them per script run.
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        ctx = get_script_run_ctx()
+        run = str(getattr(ctx, 'script_run_id', '') or '')
+    except Exception:
+        run = ''
+    seen = st.session_state.get('_quiet_note_runs')
+    if not isinstance(seen, dict) or seen.get('run') != run:
+        seen = st.session_state['_quiet_note_runs'] = {'run': run, 'counts': {}}
+    seen['counts'][stem] = seen['counts'].get(stem, -1) + 1
+    try:
+        box = st.expander(label, expanded=False, key=f"quiet_note_{key or stem}_{seen['counts'][stem]}")
+    except Exception:
+        # Streamlit refuses an expander inside another expander: the same dropdown as a plain HTML <details> there
+        # (styled by the details rules in ui.styling.inject_theme).
+        st.markdown(f"<details><summary>{html.escape(str(label))}</summary>\n\n{text}\n\n</details>",
+                    unsafe_allow_html=True)
+        return
+    with box:
+        st.markdown(text)
+
+
 def _skel_cells(n):
     return ''.join(f"<div class='skel-cell' style='animation-delay:{i * 45}ms;'></div>" for i in range(n))
 
@@ -1071,11 +1104,9 @@ def render_weekly_board_uploads(key_prefix='weekly', wrap_in_expander=True):
             yield
 
     with _section():
-        st.caption(
-            "Open a source, save the JSON it returns, drop it here. A saved file "
+        quiet_note("Open a source, save the JSON it returns, drop it here. A saved file "
             "wins over the live fetch for that book until you clear it. PrizePicks "
-            "always needs this; Underdog and DraftKings only if a live pull fails."
-        )
+            "always needs this; Underdog and DraftKings only if a live pull fails.", "Details")
         st.markdown(markdown_list(*(hint for *_x, hint in books)))
         st.markdown(
             "Paste-ready URLs (open in your own browser, save the raw JSON):\n\n"
@@ -1112,13 +1143,12 @@ def render_weekly_board_uploads(key_prefix='weekly', wrap_in_expander=True):
                     f"- **{_name}** — `{dk_subcategory_url(_sid, category=_cid)}`"
                     for _cat, _name, _cid, _sid in _dk_subs))
             else:
-                st.caption(
-                    (f"Discovery said: {_dk_err} " if _dk_err else "")
+                quiet_note((f"Discovery said: {_dk_err} " if _dk_err else "")
                     + "No live weekly O/U board right now (normal before Tue/Wed). "
                     "When it posts, open the overview page, find the subcategories whose "
                     "name ends **O/U**, and open "
                     f"`{DK_NASH_BASE}/leagues/{DK_LEAGUE_NFL}/categories/<cid>/subcategories/<sid>` "
-                    "for each. The plain-named ones without \"O/U\" are Milestones markets, not totals.")
+                    "for each. The plain-named ones without \"O/U\" are Milestones markets, not totals.", "Details")
                 st.markdown(f"Overview page: `{DK_NASH_BASE}/leagues/{DK_LEAGUE_NFL}`")
 
         for provider, label, parser, _hint in books:

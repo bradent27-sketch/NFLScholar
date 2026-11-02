@@ -55,6 +55,7 @@ from ui.components import (
 from ui.player_snapshot import build_player_snapshot
 from ui.styling import get_matchup_color, get_pff_color
 from ui.components import default_season_index, scoring_control
+from ui.components import quiet_note  # noqa: E402
 
 C = THEME['colors']
 
@@ -318,11 +319,9 @@ def _render_route_efficiency(pff, player_name, position):
         # (data.matchup_signals.wide_yprr_entry). Shown as the smaller
         # sub-bar under Wide rate, same as Slot YPRR sits under Slot rate.
         if any(e['label'] == 'Wide YPRR' for e in splits['alignment']):
-            st.caption(
-                "Wide YPRR isn't published by PFF — calculated as the rest of his routes once real slot "
+            quiet_note("Wide YPRR isn't published by PFF — calculated as the rest of his routes once real slot "
                 "routes/yards are removed from the season total. For a TE that also folds in in-line routes, "
-                "which PFF has no separate yardage split for."
-            )
+                "which PFF has no separate yardage split for.", "Details")
     if splits['scheme']:
         st.caption("Same player, split by the coverage he faced. Bars are percentiles; the number is the raw value.")
         render_split_bars(splits['scheme'], 'vs Man', 'vs Zone')
@@ -465,12 +464,10 @@ def _render_matchup_curves(series, softness_map, prowess_map, defense_team, stat
         render_tier_curve(
             prowess['tiers'], avg=prowess['season_avg'], avg_label='season avg', highlight=highlight,
         )
-        st.caption(
-            f"{stat_label} per game vs. how weak the opponent's OVERALL defense is (PFF's snap-weighted "
+        quiet_note(f"{stat_label} per game vs. how weak the opponent's OVERALL defense is (PFF's snap-weighted "
             f"team grade, position-independent — 0 = toughest defense in football, 100 = softest), across "
             f"{prowess['games']} games. A defense can be excellent overall and still be this player's "
-            f"softest positional matchup (or the reverse) — that gap is why both curves are shown."
-        )
+            f"softest positional matchup (or the reverse) — that gap is why both curves are shown.", "Details")
     else:
         st.caption(prowess.get('reason', 'Not enough data yet.'))
 
@@ -646,11 +643,9 @@ def _render_coverage(defense_team, season):
     if alignment_allowed['available']:
         st.markdown("**Allowed by alignment**")
         render_split_bars(alignment_allowed['rows'], 'Slot', 'Wide')
-        st.caption(
-            "Real, measured slot-coverage numbers on the left. \"Wide\" is the defense's total coverage line "
+        quiet_note("Real, measured slot-coverage numbers on the left. \"Wide\" is the defense's total coverage line "
             "minus that real slot number — PFF has no separate outside/wide export, so this is the closest "
-            "measured equivalent this app has, not a literal boundary-only stat."
-        )
+            "measured equivalent this app has, not a literal boundary-only stat.", "Details")
 
 
 def _render_run_defense(defense_team, season):
@@ -668,11 +663,9 @@ def _render_run_defense(defense_team, season):
         return
     _section("RUN DEFENSE")
     render_percentile_bar_list(profile['entries'], sort=False)
-    st.caption(
-        "Snap-weighted across the front seven. Higher percentile = softer to run against. "
+    quiet_note("Snap-weighted across the front seven. Higher percentile = softer to run against. "
         "No gap-vs-zone split is shown because no source in this app measures it on the DEFENSE — "
-        "see the rusher's own gap/zone split in Scheme Fit below, where it is measured."
-    )
+        "see the rusher's own gap/zone split in Scheme Fit below, where it is measured.", "Details")
 
 
 def _render_allowed_by_position(stats_df, defense_team, position):
@@ -749,11 +742,9 @@ def _render_scheme_fit(season, player_name, position, defense_team):
          'sub': f"neutral would be {fit['neutral_score']:.0f}", 'accent': get_matchup_color(fit['fit_score'])},
         {'label': 'Verdict', 'value': verdict.split()[0].title(), 'sub': verdict},
     ])
-    st.caption(
-        "The defense's outside/slot softness, weighted by how often THIS receiver lines up in each spot — "
+    quiet_note("The defense's outside/slot softness, weighted by how often THIS receiver lines up in each spot — "
         "a defense soft over the middle matters far more to a slot receiver than to a boundary X. "
-        "Both sides are measured on alignment, so this is a like-for-like comparison."
-    )
+        "Both sides are measured on alignment, so this is a like-for-like comparison.", "Details")
 
 
 def _render_anytime_td(stats_df, name_col, player_name, position, defense_team, softness_map):
@@ -790,11 +781,9 @@ def _render_anytime_td(stats_df, name_col, player_name, position, defense_team, 
         {'label': 'Season TDs', 'value': f"{projection['total_tds']:.0f}",
          'sub': f"in {projection['games']} games"},
     ])
-    st.caption(
-        "Poisson draw on his own per-game touchdown rate, nudged by how soft this defense is to his position "
+    quiet_note("Poisson draw on his own per-game touchdown rate, nudged by how soft this defense is to his position "
         "(capped at ±25% — that softness number is a season-long fantasy signal, not a touchdown-specific one). "
-        "Poisson rather than a plain hit rate because touchdowns are bursty: two in one game shouldn't read as two separate scoring games."
-    )
+        "Poisson rather than a plain hit rate because touchdowns are bursty: two in one game shouldn't read as two separate scoring games.", "Details")
 
 
 def _render_prop_analysis(season, stats_df, name_col, player_name, position, offense_team, defense_team, selected_stat):

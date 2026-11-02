@@ -39,3 +39,40 @@ def test_edges_flag_ships_for_rb_and_wr_and_leaves_qb_and_te_alone():
     assert out.loc[out.Player == 'T', 'Model Proj Pts'].iloc[0] == 7.0        # so does the TE
     assert abs(out.loc[out.Player == 'R', 'Model Proj Pts'].iloc[0] - round(5.0 + 1.8 + 1.5 + 1.0 + 0.3, 1)) < 1e-9
     assert set(info) == {('R', 'RB', 'Y')}
+
+
+def test_points_path_shows_the_stat_line_step_last(monkeypatch):
+    import contextlib
+    import ui.tabs.rankings as rk
+
+    class _FakeSt:
+        def __init__(self):
+            self.calls = []
+
+        def markdown(self, text, *a, **k):
+            self.calls.append(('markdown', text))
+
+        def caption(self, text, *a, **k):
+            self.calls.append(('caption', text))
+
+        def dataframe(self, frame, *a, **k):
+            self.calls.append(('dataframe', frame))
+
+        def expander(self, label, expanded=False):
+            self.calls.append(('expander', label))
+            return contextlib.nullcontext()
+
+    fake = _FakeSt()
+    monkeypatch.setattr(rk, 'st', fake)
+    rk._render_points_path({
+        'raw_points': 15.0, 'calibrated_points': 14.5, 'target_week': 6,
+        'calibration': {'enabled': True, 'slope': 0.9, 'intercept': 1.0, 'raw_points': 15.0, 'displayed_points': 14.5},
+        'points_from_stat_line': {'before': 14.5, 'after': 13.2},
+    })
+    styled = next(c[1] for c in fake.calls if c[0] == 'dataframe')
+    frame = getattr(styled, 'data', styled)
+    assert list(frame['Stage']) == ['Raw model', 'Calibrated', 'Stat line scored']
+    assert frame['Points'].iloc[-1] == '13.20' and frame['Change'].iloc[-1] == '-1.30'
+    assert len(frame['Basis'].iloc[-1]) < 100                                    # fits the cell
+    dropdown = ' '.join(str(c[1]) for c in fake.calls if c[0] == 'markdown')
+    assert 'points and stats agree' in dropdown

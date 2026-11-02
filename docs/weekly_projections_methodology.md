@@ -7938,3 +7938,29 @@ Not built here: a 2026 read for xtdp2 (the xTD rates need a rebuild). WR1 was si
 
 WR1 is not the 2026-08-29 waterfall the user reverted. There, the WR1/WR2/TE1 were fully protected and the tail absorbed
 the cut. Here only the lead WR's cut is softened to 60%, and nothing is reassigned.
+
+### 2026-11-02 - Weeks 1-2: `v2_xtd_missing_prior_overall` passes, the plain fix fails; the depth-chart diagnostic (M20, new M21)
+Harness v2, 2022-2025 weeks 1-2, on the 79-flag default (run 08:10-08:26). Bar (set before the run): START-ALL <= 0, no
+START position worse by more than +0.05.
+- **xtdp2 passes:** START-ALL -0.003 (CI -0.015 to +0.009); RB +0.003, WR -0.002, TE -0.017 (CI below 0), QB -0.003. So
+  `v2_xtd_missing_prior_overall` passes in weeks 3-17 and 1-2.
+- **xtdp (plain) fails:** START-ALL +0.019 (CI +0.001 to +0.043; harness REJECT), WR +0.039, 0 of 4 weeks better. With 1
+  game of zone usage, the raw share is too noisy; the overall-share shrink is what makes the fix safe in week 2.
+
+**Depth-chart diagnostic** (arm `ho = +v2_historical_ourlads`; bar `.sweeps/historical_ourlads_rookies_bar.md`, a
+diagnostic, not a ship test):
+- It did not test the rookie floor. The flag opens the archived chart and the QB1 / roster overlay only. The role floor
+  and the preseason RB allocator stay gated `not historical_target`. Rookie volume was unchanged (M20 stays open).
+- **It found a QB gap (backlog M21).** START-QB -1.65 (CI -2.66 to -0.46), START-ALL -0.39. 44 of 247 week-1/2 starting
+  QBs were projected under 5 points without the chart, 4 with it; all in week 1. Lamar Jackson 2022, Burrow 2024 and
+  Lawrence 2025 were at 0.0: the backtest's week 1 picks the QB who finished last season. Live boards read the chart,
+  so this is a backtest-realism gap.
+- Consequences: weeks 1-2 harness scores and weeks 1-2 fits have used chart-less boards. With the chart, week-1
+  starters run 0.7 over on average (by season +0.70, -2.61, -1.31, +0.44, actual - projected). That is consistent with a
+  week-1 QB line inflated by the zeroed starters it was fit on. RB/WR are untouched (START-WR 0.000, RB -0.024), so the
+  RB/WR edges ship stands.
+- To do before 2027 week 1: force the chart on in weeks 1-2 harness runs, re-fit the week-1 QB line on chart-on dumps,
+  and open the floor / allocator to backtests to answer M20.
+
+App: the rankings tab's "How the point total is built" panel now ends with a "Stat line scored" row when
+`v2_points_from_stat_line` set the total (tests/test_points_from_stat_line.py).

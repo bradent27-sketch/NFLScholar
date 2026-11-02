@@ -2107,6 +2107,7 @@ def _render_points_path(detail):
     questionable = detail.get('questionable_workload')
     top_end = detail.get('top_end_yardage')
     luck = detail.get('expected_points_luck')
+    from_line = detail.get('points_from_stat_line')
     rows = []
     if calibration.get('enabled'):
         raw = float(calibration.get('raw_points', detail['raw_points']))
@@ -2151,12 +2152,17 @@ def _render_points_path(detail):
                      'Basis': (f"Over {int(luck['games'])} earlier games he scored {abs(float(luck['luck_pg'])):.1f} pts per game "
                                f"{'more' if ahead else 'less'} than his usage was worth (nflverse expected points){against}; "
                                f"{abs(float(luck['factor'])):.2f} of that comes back.")})
+    if from_line:
+        before, after = float(from_line['before']), float(from_line['after'])
+        rows.append({'Stage': 'Stat line scored', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
+                     'Basis': ("The stat line shown, scored" + (" (× Questionable cut)" if questionable else "")
+                               + "; rows above only feed the recal's 3-pt gate.")})
     if not rows:
         return
     st.markdown("**How the point total is built**")
     frame = pd.DataFrame(rows)
     st.dataframe(style_plain_dataframe(frame), hide_index=True, width="stretch", height=df_auto_height(len(frame)))
-    if anchor or questionable or top_end or luck:
+    if anchor or questionable or top_end or luck or from_line:
         parts = []
         if top_end:
             parts.append(
@@ -2177,6 +2183,11 @@ def _render_points_path(detail):
                 "played scored about 17% below his projection (yards and touchdowns, not targets), where untagged "
                 "receivers matched it. This is not a chance of sitting out: he is still counted as playing, and the "
                 "stat lines above are his healthy lines. Only Out and Doubtful change availability.")
+        if from_line:
+            parts.append(
+                "**Stat line scored** (since 2026-11-02): the point total is the displayed stat line scored, so points "
+                "and stats agree. Before, a separate chain on the total (points line, season anchor, usage vs results) "
+                "set it; held out it was no more accurate. QBs and TEs in weeks 1-2 still use the points line.")
         if luck:
             parts.append(
                 "**Usage vs results**: a receiver whose results ran ahead of what his targets and touches were worth "

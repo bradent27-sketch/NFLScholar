@@ -2133,6 +2133,11 @@ MODEL_FEATURES = (
                              # rookie's expected TDs ran 0.2x in week 2 and ~0.43x after 3 games
                              # (START rookie RBs: 0.009 rush TDs per carry at zero TD events vs
                              # 0.027 for veterans; actual 0.035). See xtd_blended_rate.
+    'v2_xtd_missing_prior_overall',  # CANDIDATE (2026-11-02 audit), alternative to the flag above: the
+                             # absent player's prior zone share is his current share of the team's
+                             # opportunities over all zones, so a 3-game zone share is shrunk toward
+                             # his overall role (2025 week 4 Hampton: 4 of 5 inside-the-5 carries
+                             # took his rush TDs 0.51 -> 1.08 with the plain fix).
     'v2_offense_prior_blend',  # credibility-blend a thin CURRENT-SEASON
                              # offense's own baseline (the "expected" side of
                              # every defense-game ratio in
@@ -6165,7 +6170,7 @@ def _xtd_zone_context(year, as_of_week, prior_year):
 
 def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_total,
                      player_names, player_teams, env, league_implied, year, as_of_week,
-                     rush_outside_zone=False, missing_prior_unknown=False):
+                     rush_outside_zone=False, missing_prior_unknown=False, missing_prior_overall=False):
     """c*own_rate + (1-c)*xTD for `stat` in XTD_ZONE_STATS - see this
     module's 'v2_xtd' comment block above. All array args are aligned to
     the caller's `cur` frame. Returns `own_rate` unchanged (a strict no-op)
@@ -6180,6 +6185,11 @@ def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_tota
     a player who missed the season) has no prior share, so his current share stands alone. Without it the absent row
     read as a 0.0 share and was blended in at weight K / (games + K), cutting a rookie's xTD to games / (games + K) of
     his real share. A player present last season with no carries/targets in a zone still reads a real 0.
+
+    ``missing_prior_overall`` ('v2_xtd_missing_prior_overall'): for the same absent player, the prior share is his
+    current share of the team's opportunities over all the zones read, so a 3-game zone share is shrunk toward his
+    overall role the way a veteran's is shrunk toward last season (and a zone the team has not reached yet reads it).
+    Takes precedence over ``missing_prior_unknown``.
     """
     cfg = XTD_ZONE_STATS.get(stat)
     rates = _load_xtd_rates()
@@ -6213,6 +6223,12 @@ def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_tota
         cur_player_row = ctx['cur_player'].get(name_key, {})
         prior_player_row = ctx['prior_player'].get(name_key, {})
         cur_team_row = ctx['cur_team'].get(team, {})
+        absent_prior = (missing_prior_unknown or missing_prior_overall) and name_key not in ctx['prior_player']
+        absent_prior_share = np.nan
+        if absent_prior and missing_prior_overall:
+            _team_opps = sum(cur_team_row.get(f'{z}_{suffix}', 0.0) for z in zones)
+            if _team_opps > 0:
+                absent_prior_share = sum(cur_player_row.get(f'{z}_{suffix}', 0.0) for z in zones) / _team_opps
 
         for zone in zones:
             col = f'{zone}_{suffix}'
@@ -6226,8 +6242,8 @@ def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_tota
             cur_share = (cur_player_row.get(col, 0.0) / cur_team_zone) if cur_team_zone > 0 else np.nan
             prior_team_zone = team_prior.get(col, 0.0)
             prior_share = (prior_player_row.get(col, 0.0) / prior_team_zone) if prior_team_zone > 0 else np.nan
-            if missing_prior_unknown and name_key not in ctx['prior_player']:
-                prior_share = np.nan
+            if absent_prior:
+                prior_share = absent_prior_share
 
             if np.isfinite(cur_share) and np.isfinite(prior_share):
                 share = w_share * cur_share + (1.0 - w_share) * prior_share
@@ -13197,7 +13213,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     cur[name_col].to_numpy(dtype=object), cur['Team'].to_numpy(dtype=object),
                     env, league_implied, year, as_of_week,
                     rush_outside_zone=('v2_xtd_rush_outside_zone' in feats),
-                    missing_prior_unknown=('v2_xtd_missing_prior_share' in feats))
+                    missing_prior_unknown=('v2_xtd_missing_prior_share' in feats),
+                    missing_prior_overall=('v2_xtd_missing_prior_overall' in feats))
             if stat == 'targets':
                 # Kept for v2_td_volume_shrink's regression target (the TD-per-
                 # target rate rides on this projected volume). Pre matchup/pace

@@ -7964,3 +7964,15 @@ diagnostic, not a ship test):
 
 App: the rankings tab's "How the point total is built" panel now ends with a "Stat line scored" row when
 `v2_points_from_stat_line` set the total (tests/test_points_from_stat_line.py).
+
+### 2026-11-02 - Live check of the 79-flag default (2026 week 9 board)
+Built live (`apply_injury=True`, as of week 9) on today's default and on the pre-pfs set (the anchor and luck on). Output
+in `.sweeps/live_smoke_79.txt`.
+- 520 rows, no non-finite or negative totals.
+- Every row's total equals its stat line scored (0 of 520 off by more than 0.06). No Questionable-cut rows this week.
+- Top-24 by position, mean points: WR 14.85 -> 14.30 (-0.55), QB 17.18 -> 16.91, RB 14.72 -> 14.86, TE 10.10 -> 10.12.
+  The WR drop is the stat-line shortfall seen in the harness (START WRs ran 0.2-0.4 under on the stat line);
+  `v2_wr1_capacity_relief` would offset part of it at the top.
+- Largest moves: Tanner McKee 13.1 -> 10.2, Colston Loveland 14.5 -> 12.1, Josh Allen 19.9 -> 22.2, Matthew Golden
+  13.5 -> 11.3.
+- The rankings detail for the top row carries `points_from_stat_line` (the app's new "Stat line scored" row).

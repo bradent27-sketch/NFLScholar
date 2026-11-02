@@ -67,7 +67,12 @@ class AttachMediansTest(unittest.TestCase):
         self.assertAlmostEqual(out.loc[1, 'Median targets'], round(wm.stat_median('WR', 'targets', 7.0), 2))
         self.assertEqual(out.loc[0, 'Median receptions'], out.loc[1, 'Median receptions'])   # not moved: today's curve
         # a pair with no recal curve falls back to today's
-        self.assertEqual(wm.stat_median('QB', 'passing_yards', 250.0, recal=True), wm.stat_median('QB', 'passing_yards', 250.0))
+        self.assertEqual(wm.stat_median('QB', 'passing_attempts', 34.0, recal=True), wm.stat_median('QB', 'passing_attempts', 34.0))
+        # QB passing yards moved by v2_stat_recal_game_script: a flatter curve, close to the mean across the range
+        a, b = wm.MEDIAN_CURVES_RECAL[('QB', 'passing_yards')]
+        self.assertAlmostEqual(wm.stat_median('QB', 'passing_yards', 250.0, recal=True), 250.0 * (a + b * math.log(250.0)))
+        for mean in (170.0, 300.0):
+            self.assertLess(abs(wm.stat_median('QB', 'passing_yards', mean, recal=True) / mean - 1.0), 0.03)
 
     def test_a_stat_the_position_does_not_project_stays_blank(self):
         board = pd.DataFrame([{'Player': 'A', 'Pos': 'WR', 'Availability': 1.0, 'Model Proj Pts': 14.0,

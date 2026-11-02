@@ -7426,3 +7426,27 @@ included but if not the rushing only is worth the ship by itself".
 - **What to watch:** favored backs' points and rushing yards in the weekly ledger, weeks 9-17. The harness gain is small and its
   interval touches zero.
 - The user's running apps need a rerun to pick up the new code.
+
+### 2026-11-01 - QB passing-yards median re-fit for the game-script numbers (median curve only; no flag)
+User: "Next go with the qb passing yards median polish". Bar `.sweeps/qb_median_polish_bar.md`, set before the run;
+`scripts/eval_stat_recal_medians.py --game-script`.
+
+**Why.** Since `v2_stat_recal_game_script` shipped, QB passing yards on weeks 3-17 are re-predicted, so the median uses the
+re-fit curve table (`MEDIAN_CURVES_RECAL`). That table had no QB passing-yards pair, so the median fell back to the old
+curve. The old curve was fit on the board's old means, which ran high on high calls, so it fell too steeply: the median sat
+too low for low projections and too high for high ones.
+
+**Test.** Deep-audit panel, starters with a full role, weeks 3-17, the shipped table with each game's margin and implied
+total. Each season held out, 2026 scored on a 2021-2025 fit. Share of results above the median (0.500 is right):
+
+| QB stat | today, low / mid / high third | re-fit, low / mid / high | pooled | MAE | 2026 | verdict |
+|---|---|---|---|---|---|---|
+| passing yards | 0.450 / 0.518 / 0.539 | 0.484 / 0.523 / 0.492 | 0.502 -> 0.500 | -0.31% | 0.543 -> 0.536 | re-fit |
+| carries | 0.503 / 0.510 / 0.495 | 0.505 / 0.515 / 0.499 | 0.503 | +0.14% | 0.471 | keep (already tight) |
+| rushing yards | 0.490 / 0.515 / 0.486 | 0.486 / 0.504 / 0.495 | 0.497 | +0.19% | 0.475 | keep (already tight) |
+
+**Shipped.** `('QB', 'passing_yards'): (1.3380, -0.0621)` in `MEDIAN_CURVES_RECAL`, fit on 2021-2026.
+- The curve is close to flat: the median is about 1.02 times the mean at 166 projected yards and 0.98 times at 304.
+- The old curve gave 1.10 and 0.92 at those points.
+- Only the median columns change, and only for passing yards the game-script table moved.
+- Means, points and the prop engine (which reads the means) are untouched.

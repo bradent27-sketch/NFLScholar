@@ -3916,8 +3916,9 @@ STAT_RECAL_MIN_POINTS = 3.0
 #       (board +5.9). 2026 +11.6 -> +10.3: this season's big favorites' QBs ran far less than any model said.
 # Passing attempts and completions failed the bar (better than the board in 3 of 5 seasons) and stay as projected, so a big
 # favorite's yards per attempt comes down. Completions never exceed attempts (neither moves). Points untouched.
-# Medians: the existing curves keep the share above the median at 0.46-0.54 by third of the mean, the band the shipped re-fit
-# accepted, so there is no re-fit. Fit on 2021-2026 (all 2,137 starter rows with a line).
+# Medians: QB passing yards got their own MEDIAN_CURVES_RECAL pair on 2026-11-01 (the old curve ran 0.45 -> 0.54 above the
+# median from the lowest to the highest third; re-fit 0.48 / 0.52 / 0.49); QB carries / rushing yards keep theirs. Fit on
+# 2021-2026 (all 2,137 starter rows with a line).
 STAT_RECAL_GAME_SCRIPT = {
     'QB': {'passing_yards': (115.3633, 0.4642, -0.0674, 0.036, 0.0196, -1.3888, 0.0343, -1.6499, 5.7594, 0.0),
            'passing_tds': (1.0359, 0.1951, -0.2609, 0.0856, -0.1084, -0.022, 0.3589, -0.0132, 0.0869, 0.0),

@@ -27,6 +27,12 @@ out the board's overshoot on high calls, so today's curves - which carry that ov
 the median too high: 0.42 of TE results and 0.46-0.47 of WR results landed above it. Re-fit, leave-one-season-out on the
 deep-audit panel 2021-2025: the share above the median 0.496-0.508 on all 13 stats (0.467-0.538 by third of the mean), with a
 lower absolute error on all 13; 2026 and weeks 1-2 closer to one half too.
+
+QB passing yards joined MEDIAN_CURVES_RECAL on 2026-11-01 (bar .sweeps/qb_median_polish_bar.md, scripts/eval_stat_recal_medians.py
+--game-script): v2_stat_recal_game_script moves them, and today's curve, fit on the board's old means, fell too steeply - 0.45 of
+results above the median on the lowest third of projections, 0.54 on the highest. Re-fit on the game-script means, held out by
+season: 0.48 / 0.52 / 0.49 by third, 0.500 pooled, MAE -0.3%. QB carries and rushing yards were re-checked on the game-script
+means and kept (every third within 0.49-0.52 already).
 """
 import math
 
@@ -57,6 +63,7 @@ MEDIAN_CURVES = {
 }
 # the same fit on the means v2_stat_recal_own_history leaves (deep-audit panel 2021-2026, weeks 3-17, rows it moved)
 MEDIAN_CURVES_RECAL = {
+    ('QB', 'passing_yards'): (1.3380, -0.0621),   # on the v2_stat_recal_game_script means (2026-11-01)
     ('QB', 'rushing_attempts'): (0.8189, 0.0824),
     ('QB', 'rushing_yards'): (0.0289, 0.2436),
     ('RB', 'receiving_yards'): (-0.1755, 0.3143),

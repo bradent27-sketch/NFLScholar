@@ -7525,3 +7525,39 @@ The user noticed that QB rushing does not appear to have a defense multiplier an
   - In-sample it is worth more than other departures: about 0.54-0.62 of its effect, against 0.29-0.35 for other departures.
   - Held out by season it does not help: carries +0.10% MSE, rushing yards +0.15%, better in 3 of 5 seasons each.
 - **Verdict:** the QB rushing matchup is a weak, noisy signal, and the rebuild already sizes it about right. Nothing changes.
+
+### 2026-11-01 - Backtest leaks D6 / N4: `v2_point_in_time_roster` (candidate, harness passed; awaiting the user's call)
+Bar: `.sweeps/point_in_time_roster_bar.md`, set before the build. This is a leak fix judged on correctness: it would ship even if
+the backtest looked worse.
+
+**The leak.** A backtest read the season's roster merge, which gives every row a player's end-of-season team and status.
+- A traded player sat on his later club all year:
+  - McCaffrey 2022 weeks 3-6 on SF;
+  - Cooper 2024 weeks 3-6 on BUF;
+  - Daniel Jones 2024 on MIN, so NYG had no QB.
+- In 2022-2025 weeks 3-17, 553 projected player-weeks were on the wrong team, about 2,371 points, moving both teams' target and
+  carry budgets.
+- The returning-player placeholder read the whole season, so a player first seen in week 9 (Hockenson 2024, on PUP) had a row
+  from week 3.
+
+**The flag (historical targets only; a live board is unchanged):** the week-W nflverse weekly roster sets each rostered player's
+team and status as of week W (a gameday inactive reads as active).
+- Rows before W keep the team of that game. Later and undated rows take the week-W team.
+- The board's Team is the week-W team.
+- A placeholder needs the player on the week-W roster with an eligible status.
+- The QB1 room and the returning-starter roster use the week-W team.
+
+**Harness run 1** found a bug in the fix. The QB1 room took each QB's team from his last game:
+- Brett Rypien's week-9 start for LA won LA's job while his board row was on SEA, so Stafford projected 0 in 2023 week 11;
+- NYG 2024 week 15 lost two-thirds of DeVito's volume.
+- Both team-weeks were traced and fixed, and the two boards now match the flag-off ones.
+
+**Harness run 2** (2022-2025 weeks 3-17):
+- START-ALL 7.470 -> 7.446 (-0.024, CI [-0.041, -0.007], better in 39 of 60 weeks). QB -0.056, RB -0.007, WR -0.022, TE -0.026;
+  no position worse.
+- By season: 2022 -0.038, 2023 -0.017, 2024 -0.045, 2025 +0.007.
+- Every team-week that moved by more than 15 projected points (12, all raised) is a player put back on his real team. The
+  largest falls (DET 2023 week 5, KC 2022 weeks 3-4) are players taken off a team they had not yet joined.
+
+**If shipped:** every harness base arm changes from then on. Base arms before and after the ship are not comparable, and older
+deltas keep their meaning only against their own base.

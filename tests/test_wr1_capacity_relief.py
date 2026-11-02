@@ -17,8 +17,8 @@ BOARD = pd.DataFrame([_row('SF', 'QB1', 'QB', 0.0, attempts=24.0), _row('SF', 'W
 get = lambda f, p, c='targets': float(f.loc[f['Player'] == p, c].iloc[0])
 
 
-def test_flag_is_a_candidate():
-    assert 'v2_wr1_capacity_relief' in wp.MODEL_FEATURES and 'v2_wr1_capacity_relief' not in wp.DEFAULT_FEATURES
+def test_flag_ships():
+    assert 'v2_wr1_capacity_relief' in wp.MODEL_FEATURES and 'v2_wr1_capacity_relief' in wp.DEFAULT_FEATURES
 
 
 def test_lead_wr_takes_the_elastic_share_and_nothing_is_reassigned():

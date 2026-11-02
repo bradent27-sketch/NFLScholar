@@ -7976,3 +7976,21 @@ in `.sweeps/live_smoke_79.txt`.
 - Largest moves: Tanner McKee 13.1 -> 10.2, Colston Loveland 14.5 -> 12.1, Josh Allen 19.9 -> 22.2, Matthew Golden
   13.5 -> 11.3.
 - The rankings detail for the top row carries `points_from_stat_line` (the app's new "Stat line scored" row).
+
+### 2026-11-02 - SHIPPED: `v2_wr1_capacity_relief` and `v2_xtd_missing_prior_overall` (DEFAULT_FEATURES = 81)
+User: "Ship wr1 relief and if you think rookie td fix is good go ahead". The xTD fix ships on that judgment: it removes a
+real bug (an absent player's prior zone share read as 0) and passed its pre-set bars in weeks 3-17 (START-ALL -0.007, CI
+below 0; START-RB -0.017; pfs world RB -0.016, 4 of 4 seasons) and weeks 1-2 (START-ALL -0.003). The plain
+`v2_xtd_missing_prior_share` stays off (it failed weeks 1-2). Evidence for both: the two 2026-11-02 entries above.
+Both move stat volumes before the points line, so pfs scores them; the points line is not re-fit (CALIBRATION_INPUT_FEATURES
+71 -> 73, as with vso). No 2026 harness read exists for the xTD fix; the live board below is its only 2026 look.
+
+**Live check** (2026 week 9, `apply_injury=True`, 81 flags vs 79; `.sweeps/live_smoke_81.txt`):
+- 520 rows, no non-finite or negative totals; every row's total equals its stat line scored.
+- Top-24 mean points: WR 14.32 -> 14.58 (+0.26, about half of pfs's -0.55 WR drop), QB +0.01, RB and TE 0.00.
+- WR1 relief: 30 lead WRs moved, targets 6.90 -> 7.21, points 11.78 -> 12.25 (Nacua +1.0, Garrett Wilson / Flowers +0.9).
+- xTD fix: 13 RBs' rushing TDs moved, 0.85 -> 1.43 in total, all rookies or players absent last season (Kaelon Black
+  0.21 -> 0.33, Jeremiyah Love 0.07 -> 0.14); rookie WRs' receiving TDs too (KC Concepcion 0.13 -> 0.23).
+- Two depth WRs jump more than either fix explains: Ted Hurst III 2.8 -> 4.4 (targets 1.86 -> 2.94) and Laquon Treadwell
+  2.9 -> 3.8. Both sit at the stat recal's 3.0-point gate, and their xTD receiving TDs rose; most likely they crossed it
+  (backlog M19, the gate cliff), not a fault in either flag.

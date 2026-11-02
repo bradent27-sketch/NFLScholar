@@ -30,9 +30,9 @@ def _full_share_xtd(share):
                for z in ('rz5', 'rz10', 'rz20'))
 
 
-def test_flag_is_a_candidate():
+def test_overall_variant_ships_and_the_plain_fix_stays_off():
     assert 'v2_xtd_missing_prior_share' in wp.MODEL_FEATURES and 'v2_xtd_missing_prior_share' not in wp.DEFAULT_FEATURES
-    assert 'v2_xtd_missing_prior_overall' in wp.MODEL_FEATURES and 'v2_xtd_missing_prior_overall' not in wp.DEFAULT_FEATURES
+    assert 'v2_xtd_missing_prior_overall' in wp.MODEL_FEATURES and 'v2_xtd_missing_prior_overall' in wp.DEFAULT_FEATURES
 
 
 def test_rookie_keeps_his_current_share(monkeypatch):

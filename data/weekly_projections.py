@@ -2129,13 +2129,13 @@ MODEL_FEATURES = (
                              # model (RB and QB; ~13.5% / ~6% of their rushing
                              # TDs come from there). Needs v2_xtd. See
                              # XTD_RUSH_OUTSIDE_ZONE.
-    'v2_xtd_missing_prior_share',  # CANDIDATE (2026-11-02 audit): a player missing from last season's
+    'v2_xtd_missing_prior_share',  # CANDIDATE, superseded (2026-11-02; failed weeks 1-2, the overall variant below ships): a player missing from last season's
                              # zone usage (a rookie) has NO prior zone share in v2_xtd, not a 0% one.
                              # Before it his real share was multiplied by games / (games + 4): a
                              # rookie's expected TDs ran 0.2x in week 2 and ~0.43x after 3 games
                              # (START rookie RBs: 0.009 rush TDs per carry at zero TD events vs
                              # 0.027 for veterans; actual 0.035). See xtd_blended_rate.
-    'v2_xtd_missing_prior_overall',  # CANDIDATE (2026-11-02 audit), alternative to the flag above: the
+    'v2_xtd_missing_prior_overall',  # SHIPPED 2026-11-02 (DEFAULT_FEATURES = 81), alternative to the flag above: the
                              # absent player's prior zone share is his current share of the team's
                              # opportunities over all zones, so a 3-game zone share is shrunk toward
                              # his overall role (2025 week 4 Hampton: 4 of 5 inside-the-5 carries
@@ -2474,7 +2474,7 @@ MODEL_FEATURES = (
     'v2_te_capacity_relief',  # CANDIDATE (2026-11-02 audit): weeks 3+, a tight end takes TE_CAPACITY_ELASTICITY
                              # (0.5) of the pass-capacity factor's move (data/pass_capacity_allocator.py);
                              # the uniform cut took too much from TEs (stage beta 0.58-0.63).
-    'v2_wr1_capacity_relief',  # CANDIDATE (2026-11-02 audit): weeks 3+, each room's lead WR takes
+    'v2_wr1_capacity_relief',  # SHIPPED 2026-11-02 (DEFAULT_FEATURES = 81): weeks 3+, each room's lead WR takes
                              # WR1_CAPACITY_ELASTICITY (0.6) of the pass-capacity factor's move; the
                              # uniform cut took too much from WR1s (stage beta 0.72 targets / 0.80 yards,
                              # WR2-3 ~1.0).
@@ -3235,6 +3235,16 @@ DEFAULT_FEATURES = frozenset({
     # TEs, and every week it sets the number the recal gate and the vacancy pass read. Undo: swap the flags back.
     'v2_points_from_stat_line',
     'v2_points_from_stat_line_edges',
+    # SHIPPED 2026-11-02 (user: "Ship wr1 relief and if you think rookie td fix is good go ahead"): DEFAULT_FEATURES = 81.
+    # v2_wr1_capacity_relief: weeks 3+, each room's lead WR takes WR1_CAPACITY_ELASTICITY (0.6) of the pass-capacity
+    # factor's move; nothing is reassigned. Harness v2 2022-2025 weeks 3-17: START-WR -0.010, START-ALL -0.005; in the
+    # pfs world START-WR -0.011 (4 of 4 seasons) and the WR bias 0.39 -> 0.26 under. 2026 weeks 3-7 START-WR 7.479 -> 7.462.
+    # v2_xtd_missing_prior_overall: a player absent from last season's zone usage (a rookie) gets his current overall
+    # share as the zone prior instead of 0. Weeks 3-17: START-ALL -0.007 (CI below 0), START-RB -0.017 (pfs world -0.016,
+    # 4 of 4 seasons); weeks 1-2: START-ALL -0.003, TE -0.017. Rookie RB rushing TDs per carry 0.018 -> 0.026 (actual
+    # 0.028). Both move stat volumes before the points line (not re-fit: inputs to pfs). Undo: remove the flag(s).
+    'v2_wr1_capacity_relief',
+    'v2_xtd_missing_prior_overall',
 })
 
 

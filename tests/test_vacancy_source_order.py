@@ -22,8 +22,8 @@ def _split(board, deterministic):
     return out.set_index('Player')['targets'].sort_index()
 
 
-def test_flag_is_a_candidate():
-    assert 'v2_vacancy_source_order' in wp.MODEL_FEATURES and 'v2_vacancy_source_order' not in wp.DEFAULT_FEATURES
+def test_flag_ships():
+    assert 'v2_vacancy_source_order' in wp.MODEL_FEATURES and 'v2_vacancy_source_order' in wp.DEFAULT_FEATURES
 
 
 def test_row_order_changes_the_split_without_the_flag():

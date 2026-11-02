@@ -7833,3 +7833,12 @@ Bar `.sweeps/te_capacity_relief_bar.md`, set before the run. Harness v2, 2022-20
 
 By its bar the flag fails, so it stays off. If pfs ships it could come back as a pfs-world test with its own bar (small
 expected gain). The TE stage beta (0.58-0.63) stands as a finding.
+
+### 2026-11-02 - `v2_vacancy_source_order` SHIPPED (DEFAULT_FEATURES = 82)
+User: "receiver vacancy fix can be committed". Evidence in the re-run entry above: a correctness fix (the vacancy split no
+longer depends on the board's row order), START-ALL -0.001 (CI -0.002 to +0.000), no position worse, RMSE -0.022 on the 584
+rows it moves. It changes stat volumes before the points line; the calibration line is not re-fit for a move this small.
+
+Every harness base arm changes with it. Board-to-board comparisons against base boards saved before this commit need the
+`vso` arm's boards, not the old base. The 2026-11-02 weeks 1-2 runs queued behind the WR1/xTD run start after this commit,
+so their base includes it. Undo: remove the flag.

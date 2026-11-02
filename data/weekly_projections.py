@@ -2455,8 +2455,9 @@ MODEL_FEATURES = (
                              # stat line scored (x the Questionable cut), replacing the points
                              # line / season anchor / luck results. Held out it ties the chain
                              # (apply_points_from_stat_line).
-    'v2_vacancy_source_order',  # CANDIDATE (2026-11-01): the vacancy pass hands out out players in a fixed order
-                             # (team, pre-injury carries + targets descending, name) and breaks
+    'v2_vacancy_source_order',  # SHIPPED 2026-11-02 (user: "receiver vacancy fix can be committed"). The
+                             # vacancy pass hands out out players in a fixed order (team,
+                             # pre-injury carries + targets descending, name) and breaks
                              # pecking-rank ties by name. Before it the order was the board's row
                              # order, arbitrary for out players (all 0.00 points), so an unrelated
                              # change re-split a team's vacated targets when 2+ receivers were out.
@@ -3213,6 +3214,11 @@ DEFAULT_FEATURES = frozenset({
     # a player put back on his real team. Every harness base arm changed with it: deltas from before 2026-11-01 are only
     # comparable with their own base. Undo: remove the flag.
     'v2_point_in_time_roster',
+    # SHIPPED 2026-11-02 (user: "receiver vacancy fix can be committed"): DEFAULT_FEATURES = 82. A correctness fix: the
+    # vacancy pass's split no longer depends on the board's row order (sources by team, pre-injury carries + targets, name).
+    # Harness v2 2022-2025 weeks 3-17: START-ALL -0.001 (CI -0.002 to +0.000), no position worse; on the 584 rows it moves
+    # RMSE -0.022. Moves stat volumes before the points line (not re-fit: the move is that small). Undo: remove the flag.
+    'v2_vacancy_source_order',
 })
 
 

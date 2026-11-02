@@ -7730,3 +7730,32 @@ Projected and actual targets per row either side of it (2022-2025 weeks 3-17, ro
   scopes, and for props on backups.
 - Possible fix: ramp the recal in over 2-4 points, or refit the recal's level for the bottom band. Logged as backlog M19. Not
   built: no START gain is expected.
+
+### 2026-11-02 - `v2_points_from_stat_line_edges` (weeks 1-2, RB/WR/TE) passes its bar (candidate, off; user's call)
+Bar `.sweeps/points_from_stat_line_edges_bar.md`, set before the run. It extends pfs to weeks 1-2 for the positions the edges
+recal re-predicts. QBs keep the points line, which helps them on the panel (3 of 5 seasons). Harness v2, 2022-2025 weeks 1-2,
+arm `e12 = +v2_points_from_stat_line, +v2_points_from_stat_line_edges` (pfs alone does nothing in weeks 1-2).
+
+| scope | base | e12 | delta (CI) |
+|---|---|---|---|
+| START-ALL | 7.370 | 7.295 | -0.075 (-0.157, +0.001), 5 of 8 weeks better |
+| START-QB | 8.344 | 8.344 | 0 (untouched) |
+| START-RB / WR / TE | 6.872 / 7.920 / 5.015 | 6.781 / 7.808 / 4.977 | -0.091 / -0.112 / -0.038 |
+| EVERY-START-ALL | 7.423 | 7.355 | -0.068 (-0.155, +0.016) |
+| EVERY-ALL | 5.890 | 5.875 | -0.016 |
+| pairwise (START-ALL) | 0.657 | 0.663 | +0.006 |
+
+- Passes every line of the bar: the harness rule is INCONCLUSIVE (not REJECT); START-ALL is under -0.02; no START position
+  is worse; EVERY-START-ALL is better.
+- **By season** (START-ALL): 2022 -0.139, 2023 -0.007, 2024 -0.081, 2025 -0.089. That is 4 of 4, and both weeks (week 1
+  -0.097, week 2 -0.063).
+- **TE is the weak spot:** -0.26 in 2022, then +0.04 to +0.05 in 2023-2025 (the panel had TE 3 of 5). RB -0.17 in week 1, flat
+  in week 2. WR better in both weeks.
+- **Bias:** START-ALL -0.167 -> -0.190; every-game WR -0.19 -> -0.48 (the same WR stat-line shortfall as weeks 3-17); TE
+  +0.55 -> +0.22.
+- 2,021 player-weeks moved by more than 0.05 (572 players); on them RMSE -0.027.
+- **Largest moves are TE/WR re-levels.** Down: Jake Ferguson 2023 week 2, 10.7 -> 4.8 (actual 10.1). Up: Kupp 2022 week 2,
+  21.2 -> 25.8 (actual 31.8).
+
+With pfs and this extension both on, the points line runs only for QBs in weeks 1-2. The opening-week stat calibration stays:
+it calibrates the stat line that the edges recal starts from.

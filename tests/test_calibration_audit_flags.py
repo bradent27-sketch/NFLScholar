@@ -14,11 +14,15 @@ import data.weekly_projections as wp  # noqa: E402
 from data.utils import clean_name_exact  # noqa: E402
 
 FLAGS = ('v2_points_lines_start_rows', 'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb')
+LUCK_ON = frozenset({'v2_expected_points_luck', 'v2_luck_te_refit', 'v2_luck_qb'})
 
 
-def test_flags_are_registered_and_shipped():
+def test_flags_are_registered_and_the_anchor_and_luck_refits_retired():
     for flag in FLAGS:
-        assert flag in wp.MODEL_FEATURES and flag in wp.DEFAULT_FEATURES
+        assert flag in wp.MODEL_FEATURES
+    # 2026-11-02: the anchor and luck re-fits retired with v2_points_from_stat_line; the start-row lines still ship
+    assert 'v2_points_lines_start_rows' in wp.DEFAULT_FEATURES
+    assert not ({'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb'} & wp.DEFAULT_FEATURES)
     # the anchor and luck re-fits act after the points line (POST_CALIBRATION_FEATURES); the start-row lines are the line itself,
     # inert in a calibration dump (no 'calibration' there)
     assert {'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb'} <= wp.POST_CALIBRATION_FEATURES
@@ -74,7 +78,7 @@ def test_luck_te_refit_factors():
 
 def test_anchor_s_refit_factors():
     assert wp.season_anchor_factors(set()) is None                   # apply_season_anchor's default, SEASON_ANCHOR_S
-    assert wp.season_anchor_factors(wp.DEFAULT_FEATURES) == wp.SEASON_ANCHOR_S_REFIT
+    assert wp.season_anchor_factors({'v2_season_anchor', 'v2_anchor_s_refit'}) == wp.SEASON_ANCHOR_S_REFIT
     assert all(wp.SEASON_ANCHOR_S_REFIT[p] > wp.SEASON_ANCHOR_S[p] for p in wp.SEASON_ANCHOR_S)   # a weaker pull
     assert all(0.0 < s <= 1.0 for s in wp.SEASON_ANCHOR_S_REFIT.values())
     original = wp.POINTS_SCALE_V6
@@ -86,9 +90,9 @@ def test_anchor_s_refit_factors():
 
 
 def test_qb_luck_is_centered_on_the_average_qb():
-    on = wp.expected_points_luck_factors(wp.DEFAULT_FEATURES)
+    on = wp.expected_points_luck_factors(LUCK_ON)
     assert on['QB'] == wp.EXPECTED_POINTS_LUCK_QB == -0.11 and on['TE'] == -0.33 and on['WR'] == -0.18
-    assert 'QB' not in wp.expected_points_luck_factors(wp.DEFAULT_FEATURES - {'v2_luck_qb'})
+    assert 'QB' not in wp.expected_points_luck_factors(LUCK_ON - {'v2_luck_qb'})
     board = pd.DataFrame({'Player': ['A QB', 'B QB', 'C QB', 'A WR'], 'Pos': ['QB', 'QB', 'QB', 'WR'], 'Team': ['KC'] * 4,
                           'Availability': [1.0] * 4, 'Model Proj Pts': [18.0] * 4, 'Calibrated Model Proj Pts': [18.0] * 4})
     table = pd.DataFrame({'games': [5, 5, 5, 5], 'luck_pg': [2.5, -0.5, -4.5, 3.0]},

@@ -7883,3 +7883,27 @@ User: "te capacity has potential maybe? it is lowering bias and error is small i
   Right in direction but worth almost nothing in points: a backup's cut is about 0.14 targets.
 - No flag built, no harness run. `v2_te_capacity_relief` stays off. Revisit when 2026 has more weeks: the TE1 cut's beta
   ran 0.50-0.98 by season, so 2022-2025 alone cannot say which way it goes.
+
+### 2026-11-02 - SHIPPED: points from the stat line (`v2_points_from_stat_line`, `_edges` RB/WR), anchor and luck retired (DEFAULT_FEATURES = 79)
+User: "ship pfs and the 5 removals, edges RB/WR only". Evidence: the pfs, `lean` and `e12` entries above and the per-stat
+check.
+- **On:** `v2_points_from_stat_line` (weeks 3-17: the points total is the displayed, recal'd stat line scored, times the WR
+  Questionable cut) and `v2_points_from_stat_line_edges` (the same in weeks 1-2, for RB and WR only).
+- **Off (retired):** `v2_season_anchor`, `v2_anchor_s_refit`, `v2_expected_points_luck`, `v2_luck_te_refit`, `v2_luck_qb`.
+  With pfs on, their only effect was to move 363 below-START rows across the stat recal's 3.0-point gate. They stay in
+  POST_CALIBRATION_FEATURES, so a run that turns them back on keeps calibration dumps clean.
+- **Edges positions** `POINTS_FROM_STAT_LINE_EDGE_POSITIONS = ('RB', 'WR')`. TEs were better only in 2022 in the weeks 1-2
+  harness, so they keep the points line with the QBs. The RB/WR harness rows are unchanged by dropping TE (the flag
+  changes no stats and acts per position): START-RB -0.091, START-WR -0.112.
+- **What still uses the points line:** QBs and TEs in weeks 1-2. In every week it also sets the number that the recal gate
+  (`Model Proj Pts >= 3`) and the vacancy pass read. Calibration and the opening-week stat calibration stay.
+- **Stats:** pfs changes no stat column. The retirements move stats only on rows near the recal gate (START: 0.0% on
+  every stat).
+- CALIBRATION_INPUT_FEATURES is unchanged (71 flags). pfs and edges joined POST_CALIBRATION_FEATURES.
+- **Harness bases change.** Every arm's base is now the 79-flag model. The 2026-11-02 WR1/xTD weeks 3-17 run was
+  started on the 81-flag default; its `*_pfs` arms are the comparable ones. The weeks 1-2 runs queued behind it start on
+  the new default.
+- Tests updated: tests/test_points_from_stat_line.py, test_opening_week_stat_calibration.py, test_expected_points_luck.py,
+  test_calibration_audit_flags.py, and the season-anchor build test in test_weekly_projections.py (now built without
+  pfs).
+- Undo: swap the flags back.

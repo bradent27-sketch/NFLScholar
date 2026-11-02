@@ -2082,7 +2082,9 @@ MODEL_FEATURES = (
     'v2_qb_passing_td_k',  # TESTED 2026-10-06, INCONCLUSIVE, left UNSHIPPED (harness v2: START-QB -0.010 CI spans 0,
                              # START-ALL -0.002, better in 25 of 60 weeks). K=15 (shared 5) for QB passing_tds: a
                              # slower blend of the QB's own current-season TD rate. See QB_PASSING_TD_K.
-    'v2_season_anchor',  # SHIPPED 2026-10-06 (DEFAULT_FEATURES). Final points total shrunk toward the player's own to-date
+    'v2_season_anchor',  # RETIRED 2026-11-02 (off; superseded by v2_points_from_stat_line, which replaces the weeks 3-17
+                             # total, so the anchor only nudged rows across the stat recal's gate).
+                             # SHIPPED 2026-10-06 (DEFAULT_FEATURES). Final points total shrunk toward the player's own to-date
                              # mean (RB 0.75, WR 0.69, TE 0.84; QB left alone): the model's departures from a
                              # player's own average run ~30% too large for WR/RB from week 7. Held-out RMSE better in
                              # all six year splits (-0.027 ALL). See apply_season_anchor.
@@ -2429,12 +2431,15 @@ MODEL_FEATURES = (
     'v2_points_lines_start_rows',  # SHIPPED 2026-10-28 (calibration audit). Every points line moved to its fit
                              # on the startable rows (START_ROW_LINE_DELTA); passed its
                              # pre-set bar. See points_scale.
-    'v2_luck_te_refit',  # SHIPPED 2026-10-28 (calibration audit). The TE luck factor re-fit on today's
+    'v2_luck_te_refit',  # RETIRED 2026-11-02 (off, with v2_expected_points_luck). SHIPPED 2026-10-28
+                             # (calibration audit). The TE luck factor re-fit on today's
                              # model, -0.16 -> EXPECTED_POINTS_LUCK_TE_REFIT (-0.33).
-    'v2_anchor_s_refit',  # SHIPPED 2026-10-28 (user: "go ahead and weaken the season anchor"; missed its bar
+    'v2_anchor_s_refit',  # RETIRED 2026-11-02 (off, with v2_season_anchor). SHIPPED 2026-10-28 (user: "go
+                             # ahead and weaken the season anchor"; missed its bar
                              # on 2023). The season anchor's s re-fit on today's model
                              # (SEASON_ANCHOR_S_REFIT): a weaker pull toward the mean.
-    'v2_luck_qb',  # SHIPPED 2026-10-28 (user: "the QB luck ... is probably worthwhile"; missed its bar
+    'v2_luck_qb',  # RETIRED 2026-11-02 (off, with v2_expected_points_luck). SHIPPED 2026-10-28 (user:
+                             # "the QB luck ... is probably worthwhile"; missed its bar
                              # by 0.0001 on 2023). The luck step at QB, centered on the
                              # average QB's luck (EXPECTED_POINTS_LUCK_QB / _CENTER).
     'v2_stat_recal_own_history',  # SHIPPED 2026-11-01 (backlog M13; user: "yes ship recal own history").
@@ -2451,7 +2456,7 @@ MODEL_FEATURES = (
                              # running backs to chew clock"). RB rushing TDs and rushing yards
                              # scale with the game's margin (RB_GAME_SCRIPT_RUSH); the carry
                              # budget already reads the spread. Takes precedence over v2_rb_game_script.
-    'v2_points_from_stat_line',  # CANDIDATE (2026-11-01 audit): weeks 3-17, the points total is the displayed (recal'd)
+    'v2_points_from_stat_line',  # SHIPPED 2026-11-02 (user: "ship pfs and the 5 removals"). Weeks 3-17, the points total is the displayed (recal'd)
                              # stat line scored (x the Questionable cut), replacing the points
                              # line / season anchor / luck results. Held out it ties the chain
                              # (apply_points_from_stat_line).
@@ -2461,10 +2466,11 @@ MODEL_FEATURES = (
                              # pecking-rank ties by name. Before it the order was the board's row
                              # order, arbitrary for out players (all 0.00 points), so an unrelated
                              # change re-split a team's vacated targets when 2+ receivers were out.
-    'v2_points_from_stat_line_edges',  # CANDIDATE (2026-11-02 audit): with v2_points_from_stat_line, weeks 1-2 too for
-                             # RB/WR/TE (POINTS_FROM_STAT_LINE_EDGE_POSITIONS, the ones the edges recal
-                             # re-predicts); QBs keep the points line. Panel, weeks 1-2 START:
-                             # 7.652 -> 7.521 (4 of 5 seasons), 2026 8.241 -> 8.138.
+    'v2_points_from_stat_line_edges',  # SHIPPED 2026-11-02 (user: "edges RB/WR only"). With
+                             # v2_points_from_stat_line, weeks 1-2 too for RB and WR
+                             # (POINTS_FROM_STAT_LINE_EDGE_POSITIONS); QBs and TEs keep the points line.
+                             # Harness weeks 1-2: START-RB -0.091, START-WR -0.112 (TE was better only in
+                             # 2022, so it was left out).
     'v2_te_capacity_relief',  # CANDIDATE (2026-11-02 audit): weeks 3+, a tight end takes TE_CAPACITY_ELASTICITY
                              # (0.5) of the pass-capacity factor's move (data/pass_capacity_allocator.py);
                              # the uniform cut took too much from TEs (stage beta 0.58-0.63).
@@ -2502,7 +2508,8 @@ MODEL_FEATURES = (
                              # the per-stat game-total elasticity of passing TDs,
                              # rushing TDs and rushing yards (QB only; the per-stat
                              # clips still apply). Needs v2_game_total_elasticity_perstat.
-    'v2_expected_points_luck',  # SHIPPED 2026-10-20 (was a candidate, backlog N1). Last step on the points total:
+    'v2_expected_points_luck',  # RETIRED 2026-11-02 (off; superseded by v2_points_from_stat_line, which replaces
+                             # the weeks 3-17 total). SHIPPED 2026-10-20 (backlog N1). Last step on the points total:
                              # a WR/TE whose results ran ahead of what his usage was
                              # worth (nflverse ff_opportunity expected points) in his
                              # earlier games this season is pulled back, one who ran
@@ -3050,7 +3057,7 @@ DEFAULT_FEATURES = frozenset({
     # SHIPPED 2026-10-06 (pre-set bar met, harness INCONCLUSIVE by CI): see MODEL_FEATURES. Harness v2 2022-2025
     # wk3-17: START-ALL RMSE 7.642 -> 7.631 (-0.012, CI [-0.030, +0.007], 33-27 weeks better), bias growth -0.064,
     # START-WR -0.018 / RB -0.012 / TE -0.001, no position worse; held-out better in all six year splits. QB untouched.
-    'v2_season_anchor',
+    # 'v2_season_anchor': RETIRED 2026-11-02 with v2_points_from_stat_line (below).
     # SHIPPED 2026-10-06 (pre-set bar met; harness INCONCLUSIVE by CI): see MODEL_FEATURES and QB_PASSING_TD_K. Harness v2
     # 2022-2025 wk3-17: START-QB RMSE 7.481 -> 7.466 (-0.015, CI [-0.042, +0.009], pairwise +0.003), START-ALL -0.003, bias
     # growth +0.008, every other position +-0.000; matches the offline sweep (-0.019). QB TDs react to far fewer games.
@@ -3107,7 +3114,7 @@ DEFAULT_FEATURES = frozenset({
     # Harness v2 2022-2025 wk3-17: START-ALL RMSE 7.611 -> 7.605 (-0.007, CI [-0.015, +0.000]), START-WR -0.013, START-TE
     # -0.010, QB/RB untouched, bias growth +0.032; verdict INCONCLUSIVE (held out by season: -0.0055). Post-calibration step
     # (POST_CALIBRATION_FEATURES). Undo: remove this flag.
-    'v2_expected_points_luck',
+    # 'v2_expected_points_luck': RETIRED 2026-11-02 with v2_points_from_stat_line (below).
     # SHIPPED 2026-10-20 (user: "yes ship it") after the pre-set bar was met in full: see MODEL_FEATURES and
     # ROLE_CONFIDENCE_REVERSED_POSITIONS. For WR/TE targets, receptions and receiving yards K_EFFECTIVE_RANGE is mirrored: an
     # established role leans more on last season, an uncertain one trusts this season sooner (calibration audit C10, found
@@ -3187,9 +3194,7 @@ DEFAULT_FEATURES = frozenset({
     # and 2023 +0.0067 worse, 2022/2024/2025 better), EVERY-QB +0.027 (backups and late scratches nudged up). The start-row lines
     # are part of the calibration step; the other three act after it (POST_CALIBRATION_FEATURES). Undo: remove the flag(s).
     'v2_points_lines_start_rows',
-    'v2_luck_te_refit',
-    'v2_anchor_s_refit',
-    'v2_luck_qb',
+    # 'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb': RETIRED 2026-11-02 with v2_points_from_stat_line (below).
     # SHIPPED 2026-11-01 (backlog M13; user: "yes ship recal own history ... do the same with edges"): DEFAULT_FEATURES = 78.
     # The stat columns re-predicted from the board's stat and the player's own history (STAT_RECAL_OWN_HISTORY, weeks 3-17;
     # STAT_RECAL_OWN_HISTORY_EDGES, weeks 1 and 2). Points untouched, so not harness-testable (the harness scores points);
@@ -3219,6 +3224,17 @@ DEFAULT_FEATURES = frozenset({
     # Harness v2 2022-2025 weeks 3-17: START-ALL -0.001 (CI -0.002 to +0.000), no position worse; on the 584 rows it moves
     # RMSE -0.022. Moves stat volumes before the points line (not re-fit: the move is that small). Undo: remove the flag.
     'v2_vacancy_source_order',
+    # SHIPPED 2026-11-02 (user: "ship pfs and the 5 removals, edges RB/WR only"): DEFAULT_FEATURES = 79.
+    # v2_points_from_stat_line: weeks 3-17, the points total is the displayed (recal'd) stat line scored, times the WR
+    # Questionable cut where it ran. Harness v2 2022-2025 weeks 3-17: START-ALL -0.019 (CI -0.036 to -0.001), QB -0.072
+    # (CI below 0), RB / WR / TE -0.010 / -0.007 / -0.020, EVERY-ALL -0.021; no stat column changes on any row.
+    # v2_points_from_stat_line_edges: weeks 1-2 for RB and WR (harness START-RB -0.091, START-WR -0.112; 4 of 4 seasons
+    # START-ALL with TE in). Retired with them, since pfs overwrites their result: v2_season_anchor, v2_anchor_s_refit,
+    # v2_expected_points_luck, v2_luck_te_refit, v2_luck_qb (the `lean` arm ties pfs: START identical at every position and
+    # every stat; 363 rows below START moved across the recal gate). The points line still sets weeks 1-2 for QBs and
+    # TEs, and every week it sets the number the recal gate and the vacancy pass read. Undo: swap the flags back.
+    'v2_points_from_stat_line',
+    'v2_points_from_stat_line_edges',
 })
 
 
@@ -3247,12 +3263,15 @@ def resolve_model_features(features=None):
 # per-stat lines and the Questionable-tag cut (both 2026-10-08), the luck step (2026-10-20) and the 2026-10-28 re-fits of
 # the anchor and the luck step. A dump built with them on would record already adjusted totals as the "raw" the lines are
 # fitted to, so they are left out of the input set. So are 'v2_stat_recal_own_history' / '_edges' / '_game_script' (2026-11-01, measured on
-# the finished board): the opening-week stat lines are fit on a dump's stat lines.
+# the finished board): the opening-week stat lines are fit on a dump's stat lines. And 'v2_points_from_stat_line' / '_edges'
+# (2026-11-02), which replace the total after the recal. The anchor and luck flags stay listed after their 2026-11-02
+# retirement, so a run that turns them back on keeps calibration dumps clean.
 POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat_calibration',
                                        'v2_questionable_workload', 'v2_expected_points_luck',
                                        'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
                                        'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
-                                       'v2_stat_recal_game_script'})
+                                       'v2_stat_recal_game_script', 'v2_points_from_stat_line',
+                                       'v2_points_from_stat_line_edges'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
@@ -4138,7 +4157,9 @@ def apply_stat_recal_own_history(result, history, form, table, script=None):
     return out, info
 
 
-POINTS_FROM_STAT_LINE_EDGE_POSITIONS = ('RB', 'WR', 'TE')
+# RB and WR only (2026-11-02, user: "edges RB/WR only"): in the weeks 1-2 harness TEs were better only in 2022 (-0.26) and
+# worse in 2023-2025 (+0.04 to +0.05), so they keep the points line with the QBs.
+POINTS_FROM_STAT_LINE_EDGE_POSITIONS = ('RB', 'WR')
 
 
 def apply_points_from_stat_line(result, scoring_mode, questionable_info=None, positions=None):

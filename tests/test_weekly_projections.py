@@ -3976,7 +3976,9 @@ def test_v2_season_anchor_moves_the_built_board_toward_the_players_to_date_avera
         wp.realized_script_by_team_week = lambda year: {}
         wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
             'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
-        for arm, feats in (('off', wp.DEFAULT_FEATURES - {'v2_season_anchor'}), ('on', wp.DEFAULT_FEATURES | {'v2_season_anchor'})):
+        # pfs replaces the weeks 3-17 total (and retired the anchor, 2026-11-02), so the anchor is tested without it
+        _base = wp.DEFAULT_FEATURES - {'v2_points_from_stat_line'}
+        for arm, feats in (('off', _base - {'v2_season_anchor'}), ('on', _base | {'v2_season_anchor'})):
             wp.build_weekly_projections.clear()
             boards[arm], metas[arm] = wp.build_weekly_projections(
                 2026, 5, 'Full PPR', as_of_week=5, apply_injury=False, features=feats)

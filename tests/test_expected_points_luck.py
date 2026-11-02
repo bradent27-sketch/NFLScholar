@@ -25,10 +25,11 @@ def _ff(rows):
                                        'receptions', 'receptions_exp'])
 
 
-def test_flag_is_shipped_as_a_post_calibration_step():
-    # a calibration dump must not record already-adjusted totals, so it is also a post-calibration feature
+def test_flag_is_a_post_calibration_step_retired_with_points_from_stat_line():
+    # a calibration dump must not record already-adjusted totals, so it is also a post-calibration feature; retired
+    # 2026-11-02 (v2_points_from_stat_line replaces the weeks 3-17 total)
     assert 'v2_expected_points_luck' in wp.MODEL_FEATURES
-    assert 'v2_expected_points_luck' in wp.DEFAULT_FEATURES
+    assert 'v2_expected_points_luck' not in wp.DEFAULT_FEATURES
     assert 'v2_expected_points_luck' in wp.POST_CALIBRATION_FEATURES
     assert 'v2_expected_points_luck' not in wp.CALIBRATION_INPUT_FEATURES
 

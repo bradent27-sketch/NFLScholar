@@ -178,7 +178,8 @@ and every-game rows differ. The TE capacity relief targets exactly that gap.
 1. **Ship `v2_points_from_stat_line`** (passed outright) **and take out the season anchor, luck and their three refits.** The
    `lean` arm (pfs minus those five) ties pfs: START RMSE identical at every position, every-game ALL +0.0001. The five flags
    only nudge 358 rows below START across the recal gate. DEFAULT_FEATURES 81 -> 77, and the points equal the stats.
-2. **`v2_points_from_stat_line_edges`** if the weeks 1-2 harness passes. Then the points line survives only for QBs in weeks
+   SHIPPED 2026-11-02 with item 2 (DEFAULT_FEATURES = 79 after the vso ship).
+2. **`v2_points_from_stat_line_edges`** SHIPPED 2026-11-02 for RB/WR only (TE kept the points line). Then the points line survives only for QBs in weeks
    1-2.
 3. **`v2_vacancy_source_order`** SHIPPED 2026-11-02 (DEFAULT_FEATURES = 82). A correctness fix (the split no longer depends on row order). It passed: START-ALL -0.001,
    no position worse. All 584 moved rows trace to team-weeks with 2+ vacancy sources, except one row that crossed the recal

@@ -142,7 +142,7 @@ from data.qb_volume_blend import blend_qb1_volume, QB_STYLE_BLEND_K, QB_STYLE_BL
 from data.fantasypros_availability import load_fantasypros_availability
 from data.expected_points import expected_points_luck_table
 from data.historical_availability import (
-    historical_injury_profiles, historical_reserve_profiles, merge_reserve_profiles, suspended_before)
+    historical_injury_profiles, historical_reserve_profiles, load_weekly_rosters, merge_reserve_profiles, suspended_before)
 from data.matchup_signals import (defense_stat_rank, blended_defense_stat_table,
                                    defense_rank_from_table)
 from data.weekly_distribution import player_distribution
@@ -2439,6 +2439,13 @@ MODEL_FEATURES = (
                              # running backs to chew clock"). RB rushing TDs and rushing yards
                              # scale with the game's margin (RB_GAME_SCRIPT_RUSH); the carry
                              # budget already reads the spread. Takes precedence over v2_rb_game_script.
+    'v2_point_in_time_roster',  # CANDIDATE (2026-11-01, backlog D6 / N4; backtest only, no-op live). A backtest
+                             # reads the roster as of the target week (nflverse weekly roster):
+                             # past games keep the team they were played for, the board's Team
+                             # is the week's roster team, and a returning-player placeholder
+                             # needs the player on that week's roster. Before it a traded player
+                             # sat on his end-of-season club all year (553 projected player-weeks
+                             # 2022-2025), and a player who first plays in week 9 had a week-3 row.
     'v2_stat_recal_game_script',  # SHIPPED 2026-11-01 (backlog M15; user: "we are above the market for QB
                              # props on teams that are larger favorites"). Weeks 3-17, with
                              # v2_stat_recal_own_history: the QB entries read the game's
@@ -8450,15 +8457,84 @@ def _rb_backs_with_lines(result, year, week):
     return holders or None
 
 
+def point_in_time_roster(season, week):
+    """v2_point_in_time_roster: who is on a roster in ``week`` and where, from the nflverse weekly roster of that week
+    (data.historical_availability.load_weekly_rosters, the reserve replay's cache). One row per gsis_id: gsis_id, _key
+    (clean_name_exact), team, status. A gameday inactive (INA) reads as ACT - it is announced ~90 minutes before kickoff,
+    after the board. Empty on any failure (the caller then changes nothing)."""
+    try:
+        rosters = load_weekly_rosters(season)
+    except Exception:
+        return pd.DataFrame()
+    if rosters is None or rosters.empty or not {'week', 'team', 'status', 'gsis_id', 'full_name'} <= set(rosters.columns):
+        return pd.DataFrame()
+    wk = rosters[pd.to_numeric(rosters['week'], errors='coerce') == int(week)]
+    wk = wk[wk['gsis_id'].notna() & wk['gsis_id'].astype(str).str.strip().ne('')]
+    if wk.empty:
+        return pd.DataFrame()
+    out = pd.DataFrame({'gsis_id': wk['gsis_id'].astype(str).str.strip().to_numpy(),
+                        '_key': clean_name_exact(wk['full_name'].astype(str)).to_numpy(),
+                        'position': (wk['position'].astype(str).str.upper().to_numpy() if 'position' in wk.columns
+                                     else ''),
+                        'team': _clean_team_key(wk['team']).to_numpy(),
+                        'status': wk['status'].astype(str).str.strip().str.upper().replace({'INA': 'ACT'}).to_numpy()})
+    return out.drop_duplicates('gsis_id', keep='last').reset_index(drop=True)
+
+
+def _point_in_time_lookup(frame, name_col, pit, id_col='player_id'):
+    """(team, status) Series aligned to ``frame`` from ``point_in_time_roster``: by gsis id where the frame has one, else by
+    exact name when that name is unique among the week's offensive players. NaN where the player is not on the week's
+    roster."""
+    if pit is None or pit.empty or frame.empty:
+        return pd.Series(np.nan, index=frame.index, dtype=object), pd.Series(np.nan, index=frame.index, dtype=object)
+    by_id = pit.set_index('gsis_id')
+    named = pit[pit['position'].isin(('QB', 'RB', 'WR', 'TE', 'FB'))] if 'position' in pit.columns else pit
+    by_name = named[~named['_key'].duplicated(keep=False)].set_index('_key')
+    ids = (frame[id_col].astype(str).str.strip() if id_col in frame.columns
+           else pd.Series('', index=frame.index, dtype=object))
+    keys = clean_name_exact(frame[name_col].astype(str)) if name_col in frame.columns else pd.Series('', index=frame.index)
+    keys = pd.Series(np.asarray(keys), index=frame.index)
+    team = ids.map(by_id['team']).where(lambda s: s.notna(), keys.map(by_name['team']))
+    status = ids.map(by_id['status']).where(lambda s: s.notna(), keys.map(by_name['status']))
+    return team, status
+
+
+def apply_point_in_time_roster(stats_df, name_col, team_col, as_of_week, pit):
+    """v2_point_in_time_roster (backlog D6 / N4; backtest only): the season frame as it stood in week ``as_of_week``. The
+    roster merge gives every row a player's LATEST team and status - in a backtest the end of the season - so a traded
+    player sat on his later club all year (McCaffrey 2022 weeks 3-6 on SF, Cooper 2024 weeks 3-6 on BUF). Here a played
+    week before ``as_of_week`` keeps the team of that game (_historical_game_team); a later or undated row takes the
+    week's roster team; every row of a rostered player takes the week's status."""
+    if stats_df is None or stats_df.empty or team_col not in stats_df.columns:
+        return stats_df
+    out = stats_df.copy()
+    out[team_col] = out[team_col].astype(object)
+    week = (pd.to_numeric(out['week'], errors='coerce') if 'week' in out.columns
+            else pd.Series(np.nan, index=out.index))
+    past = (week < int(as_of_week)).to_numpy()
+    game_team = _historical_game_team(out, team_col)
+    game_team = game_team.where(game_team.ne(''), _clean_team_key(out[team_col]))
+    out.loc[past, team_col] = game_team[past].to_numpy()
+    team, status = _point_in_time_lookup(out, name_col, pit)
+    later = ~past & team.notna().to_numpy()
+    out.loc[later, team_col] = team[later].to_numpy()
+    if 'status' in out.columns:
+        rostered = status.notna().to_numpy()
+        out['status'] = out['status'].astype(object)
+        out.loc[rostered, 'status'] = status[rostered].to_numpy()
+    return out
+
+
 def _add_missing_returning_player_rows(cur, roster_source, player_prior, prior_name_col,
                                         name_col, team_col, stats, pos, practice_squad_teams=None,
-                                        as_of_week=None, current_snapshot=False):
+                                        as_of_week=None, current_snapshot=False, point_in_time=None):
     """The rostered-RB/WR/TE placeholder rows of ``_add_missing_returning_player_rows_core`` (unchanged), plus -
     only when ``practice_squad_teams`` is given - the practice-squad candidates of v2_rb_depleted_room_fill. The
     second part is added AFTER the first and never alters it, so a flag-off board and the non-depleted teams of a
-    flag-on board are identical."""
+    flag-on board are identical. ``point_in_time`` (v2_point_in_time_roster, a backtest's week roster): a placeholder
+    needs the player on that roster with an eligible status, on that team."""
     base = _add_missing_returning_player_rows_core(
-        cur, roster_source, player_prior, prior_name_col, name_col, team_col, stats, pos)
+        cur, roster_source, player_prior, prior_name_col, name_col, team_col, stats, pos, point_in_time)
     if not practice_squad_teams:
         return base
     return _add_practice_squad_candidates(base, roster_source, name_col, team_col, stats, pos,
@@ -8511,7 +8587,7 @@ def _add_practice_squad_candidates(cur, roster_source, name_col, team_col, stats
 
 
 def _add_missing_returning_player_rows_core(cur, roster_source, player_prior, prior_name_col,
-                                        name_col, team_col, stats, pos):
+                                        name_col, team_col, stats, pos, point_in_time=None):
     """Give a rostered RB/WR/TE a Games=0 placeholder row, cold-start style,
     when he has a real prior-season role at this position but has not
     played a single game yet this season - a Sean Tucker / Alvin Kamara /
@@ -8536,6 +8612,11 @@ def _add_missing_returning_player_rows_core(cur, roster_source, player_prior, pr
     unfiltered prior-season frame - never `hist`/`player_hist`/`prior_played`,
     all of which are gated through _played_weeks_before/its prior-season
     analogue and so cannot carry a missed player's roster-only row either.
+
+    ``point_in_time`` (v2_point_in_time_roster, a backtest only): the target
+    week's roster (point_in_time_roster). Without it a backtest reads the
+    whole season - a player who first plays in week 9 got a week-3 row, on
+    his end-of-season team (backlog D6a).
     """
     if (roster_source is None or roster_source.empty or name_col not in roster_source.columns
             or player_prior is None or player_prior.empty or prior_name_col not in player_prior.columns):
@@ -8552,6 +8633,15 @@ def _add_missing_returning_player_rows_core(cur, roster_source, player_prior, pr
     if roster.empty:
         return cur
     roster = roster.drop_duplicates(subset=['_key'], keep='last')
+    if point_in_time is not None:
+        pit_team, pit_status = _point_in_time_lookup(roster, name_col, point_in_time)
+        on_roster = (pit_team.notna() & ~pit_status.astype(str).str.upper().isin(INELIGIBLE_ROSTER_STATUSES)).to_numpy()
+        roster = roster[on_roster].copy()
+        roster[team_col] = pit_team[on_roster].to_numpy()
+        if 'status' in roster.columns:
+            roster['status'] = pit_status[on_roster].to_numpy()
+        if roster.empty:
+            return cur
     prior_pos = player_prior[player_prior['position'].astype(str).str.upper().eq(pos)]
     if prior_pos.empty:
         return cur
@@ -10250,12 +10340,21 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         and (latest_observed_week > as_of_week
              or _week_is_complete(schedule_df, as_of_week))
     )
+    # v2_point_in_time_roster (backlog D6 / N4): a backtest reads the roster as of the target week, not the season's end
+    point_in_time = (point_in_time_roster(year, as_of_week)
+                     if 'v2_point_in_time_roster' in feats and historical_target else None)
+    if point_in_time is not None and not point_in_time.empty:
+        stats_df = apply_point_in_time_roster(stats_df, name_col, team_col, as_of_week, point_in_time)
+    else:
+        point_in_time = None
     use_v2_guard = 'v2_as_of_guard' in feats
     script_curves_section = 'curves_v2' if 'v2_script_neutral_level_fix' in feats else 'curves'
     source_contract = {
         'as_of_week': int(as_of_week),
         'latest_observed_week': latest_observed_week,
         'historical_target': historical_target,
+        # v2_point_in_time_roster: teams and statuses read as of the target week (backtest only)
+        'roster': 'point_in_time_week' if point_in_time is not None else 'season_merge',
         # played team-weeks before this one whose snap counts were not posted yet (read as unknown share, not 0%)
         'snap_counts_not_posted': [f'{team} wk{wk}' for team, wk in unposted_snap_weeks if wk < int(as_of_week)],
         # defenders' rows dropped because an offensive player shares the name (drop_shared_name_defenders)
@@ -11240,9 +11339,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 cur = _add_missing_returning_player_rows(
                     cur, stats_df, player_prior, prior_name_col, name_col, team_col, stats, pos,
                     practice_squad_teams=_ps_teams, as_of_week=as_of_week,
-                    current_snapshot=not bool(historical_target))
+                    current_snapshot=not bool(historical_target), point_in_time=point_in_time)
             if cur.empty:
                 continue
+        if point_in_time is not None:
+            # v2_point_in_time_roster: the board's Team is the target week's roster team (else the last game's)
+            _pit_team, _ = _point_in_time_lookup(cur, name_col, point_in_time)
+            cur['Team'] = _pit_team.where(_pit_team.notna(), cur['Team'])
         if team_filter is not None:
             cur = cur[cur['Team'].astype(str).str.upper().isin(team_filter)].copy()
             if cur.empty:

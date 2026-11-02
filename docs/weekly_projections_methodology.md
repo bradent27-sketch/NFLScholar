@@ -7810,3 +7810,26 @@ spread bucket (+0.62 to +0.91).
 - M20, week-1 rookies get almost no volume. Backtests use the 15th-percentile share because the Ourlads floor is live-only;
   a diagnostic arm with `v2_historical_ourlads` is queued.
 - M19, the recal gate (entry above).
+
+### 2026-11-02 - `v2_te_capacity_relief` misses its bar (stays off)
+Bar `.sweeps/te_capacity_relief_bar.md`, set before the run. Harness v2, 2022-2025 weeks 3-17, arms `te` and `te_pfs`.
+
+| `te` vs today's default | delta (CI) | bar |
+|---|---|---|
+| START-TE | -0.003 (-0.041, +0.033) | <= 0, passes |
+| EVERY-START-TE | **+0.010** (-0.030, +0.048) | <= 0, **fails** |
+| START-ALL | -0.002 (-0.008, +0.003) | within +0.002, passes |
+| START positions | WR -0.001, QB / RB 0 | none worse than +0.005, passes |
+
+- **TE bias overshoots in the chain:** START-TE -0.276 -> +0.155 (harness sign; from 0.28 under to 0.16 over). The points
+  line passes the relief straight into points, so a stat-level move that matched the stage's beta lands too far in points.
+- **The pfs world** (reported, not gating; `te_pfs` against the earlier `pfs` arm, base boards identical, scored on the panel
+  with harness-style START unions):
+  - START-TE -0.014 (CI -0.040 to +0.010), every-game START-TE -0.005, START-ALL -0.002;
+  - TE bias on played START rows +0.39 -> +0.13;
+  - by season +0.028 (2022), -0.015, -0.023, -0.048.
+  - On the stat line it does what the stage sizing said, but the gain is inside the noise.
+- 4,282 player-weeks moved (433 players).
+
+By its bar the flag fails, so it stays off. If pfs ships it could come back as a pfs-world test with its own bar (small
+expected gain). The TE stage beta (0.58-0.63) stands as a finding.

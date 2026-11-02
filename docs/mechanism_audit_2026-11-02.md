@@ -183,7 +183,8 @@ and every-game rows differ. The TE capacity relief targets exactly that gap.
 3. **`v2_vacancy_source_order`**: a correctness fix (the split no longer depends on row order). It passed: START-ALL -0.001,
    no position worse. All 584 moved rows trace to team-weeks with 2+ vacancy sources, except one row that crossed the recal
    gate.
-4. **`v2_te_capacity_relief`**: a small tuning fix (TE about -0.015) if its run passes.
+4. **`v2_te_capacity_relief`** missed its bar (EVERY-START-TE +0.010; in the chain the TE bias overshoots to 0.16 over). In
+   the pfs world it reads START-TE -0.014, inside the noise. It stays off; it could be re-tested after a pfs ship.
 5. **Dead code**: remove the rejected and superseded flags' branches (section 2), verified by identical default boards.
 6. **Leads for the backlog:** rookie RB early-season rushing (M18); WR1 concentration; the stat recal's 3.0-point gate is a
    cliff (M19: targets jump 35-50% across it, below START only). Each needs its own study.

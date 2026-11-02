@@ -73,6 +73,21 @@ The off-by-default switches the harness needs (`v2_historical_injury_replay`, `v
 Removing the rejected and superseded branches changes no projection. Verify with identical default boards before and after, plus
 the test suite. It would cut a large share of the branching. The methodology doc keeps each rejected flag's record.
 
+**The list** (2026-11-02; MODEL_FEATURES 136, DEFAULT_FEATURES 81, 55 off):
+
+| group | flags | proposal |
+|---|---|---|
+| harness switches | `v2_historical_injury_replay`, `v2_historical_reserve_replay`, `v2_historical_ourlads` | keep |
+| this audit's candidates (pending) | `v2_points_from_stat_line`, `_edges`, `v2_vacancy_source_order`, `v2_te_capacity_relief`, `v2_wr1_capacity_relief`, `v2_xtd_missing_prior_share` | ship or reject per section 7 |
+| rejected / not shipped | `v2_td_volume_shrink`, `v2_td_career_regress`, `v2_rb_snap_anchored_volume`, `v2_scheme_alignment_blend`, `v2_cold_start_regression`, `v2_coaching_aware_defense_prior`, `v2_new_team_starter_restoration`, `v2_cold_start_room_budget`, `v2_rookie_backup_wr_dampen`, `v2_vacancy_growth_cap`, `v2_vacancy_chart_split`, `v2_offense_blowout_discount`, `v2_rb_carry_budget_lead`, `v2_qb_passing_td_k`, `v2_own_tempo_regression`, `v2_vacancy_before_capacity`, `v2_qb_style_blend_k80`, `v2_te_fill_in_role`, `v2_backup_te_activity`, `v2_backup_te_bands_silent`, `v2_backup_te_bands_pieces`, `v2_rb_participation_060`, `v2_keep_fully_excluded_history`, `v2_points_scale_v6`, `v2_rb_game_script`, `v2_share_prior_shrink`, `v2_partial_game_role_carry`, `v2_share_recency`, `v2_wr_te_capacity_split` | remove branches |
+| superseded | `v2_game_total_elasticity`, `v2_venue_mult` (the bundled versions ship), `v2_defense_blowout_discount_progressive` | remove branches |
+| ablation arms (remove a shipped piece) | `v2_no_history_exclusions`, `v2_no_td_matchup`, `v2_td_matchup_audit`, `v2_td_matchup_pass_rec_off`, `v2_no_pace` | remove, or keep as audit tools |
+| sweep hook / never built | `v2_defense_prior_games_override`, `v2_channel_matchups` | remove |
+| legacy names | `volume_efficiency`, `role_matchup`, `redzone_tds`, `role_trend`, `volume_faced`, `game_env`, `teammate_vacancy` | check app/UI use first |
+
+Removing the rejected, superseded and hook groups is 34 flags. With the `lean` ship (5 more), MODEL_FEATURES would fall from
+136 to about 97.
+
 ## 3. Checked and fine
 
 - **Vacancy growth compounds across out players.** Each out player's targets are handed out against volume the previous one

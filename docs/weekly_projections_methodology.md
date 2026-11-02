@@ -7715,7 +7715,8 @@ ship (DEFAULT_FEATURES 81 -> 77; the user's call). The points line and the openi
 Seen in both runs above. The recal applies only to rows with `Model Proj Pts >= STAT_RECAL_MIN_POINTS` (3.0), read after the
 points chain. It switches on in full at the gate.
 
-Projected and actual targets per row either side of it (2022-2025 weeks 3-17, rows not sidelined, pfs boards):
+Projected and actual targets per row either side of it (2022-2025 weeks 3-17, pfs boards). These rows are not sidelined,
+and include games the player did not play:
 
 | | 2.75-3.0 projected | 2.75-3.0 actual | 3.0-3.25 projected | 3.0-3.25 actual |
 |---|---|---|---|---|
@@ -7723,13 +7724,27 @@ Projected and actual targets per row either side of it (2022-2025 weeks 3-17, ro
 | WR | 1.77 | 1.58 | 2.32 | 1.99 |
 | TE | 1.31 | 1.38 | 2.00 | 1.55 |
 
-- Just above the gate the recal lifts marginal players past their results: targets +0.14 (RB) to +0.45 (TE).
 - With pfs, projected points jump about one point across a quarter-point step in chain points: TE 2.27 -> 3.38 (actual
   2.43 -> 2.87), RB 2.59 -> 3.57 (actual 2.96 -> 3.04).
+- **The recal is not the part that is wrong. The gate is.** On played games (stage capture, 2021-2026, rows the recal moved)
+  the recal is right just above the gate, even a little low:
+
+  | 3.0-3.5 band | before recal | after | actual | MSE change |
+  |---|---|---|---|---|
+  | TE targets | 1.47 | 2.05 | 2.17 | -16% |
+  | WR targets | 1.94 | 2.41 | 2.70 | -9% |
+  | RB targets | 0.95 | 1.30 | 1.22 | -5% |
+
+  TE receptions and yards gain 9-15% there, the most of any band. The apparent overshoot in the first table comes from the
+  games those players sat (12-18% of them).
+  - So the rows just below 3.0 are the ones short of a recal that would help them when they play.
+  - The gate exists to keep players not expected to play from being lifted. Example: Van Jefferson, 2026 week 8, 0.00
+    points, 0.06 -> 1.36 targets.
+  - Lowering or ramping the gate trades played-game accuracy against surprise DNPs.
 - Only rows below START are affected (START RMSE is identical with and without the five flags above). It matters for EVERY
   scopes, and for props on backups.
-- Possible fix: ramp the recal in over 2-4 points, or refit the recal's level for the bottom band. Logged as backlog M19. Not
-  built: no START gain is expected.
+- Possible fix: a ramp starting below 3.0 (for example 1.5 -> 3.0), scored on both played and every-game rows. Logged as
+  backlog M19. Not built: no START gain is expected.
 
 ### 2026-11-02 - `v2_points_from_stat_line_edges` (weeks 1-2, RB/WR/TE) passes its bar (candidate, off; user's call)
 Bar `.sweeps/points_from_stat_line_edges_bar.md`, set before the run. It extends pfs to weeks 1-2 for the positions the edges

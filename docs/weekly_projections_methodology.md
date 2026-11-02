@@ -7634,3 +7634,29 @@ calibration still set weeks 1-2 and stay.
 projected: WR receiving TDs 0.58, RB rushing TDs 0.69, TE 0.41). A held-out TD recal (the shipped design, leaving each season
 out) trims TD MSE 0.3-0.9% (3-5 of 5 seasons) but leaves START points flat (7.511 -> 7.513). Shrinking TDs lowers the top
 players, so the START pool's level falls. Not worth a flag.
+
+### 2026-11-02 - Stage sizing and error map of today's model (diagnostic); `v2_te_capacity_relief` (candidate, off)
+Mechanism audit sections 5-6 (`docs/mechanism_audit_2026-11-02.md`). A capture of today's 81-flag model, 2021-2025 weeks 3-17
+plus 2026 weeks 3-7 (`.sweeps/stage_capture*.parquet`), scored by `scripts/audit_stage_attribution.py`. Per stage, beta is the
+share of its contribution that came true on played games, with held-out removal and rescale costs.
+
+- **Sized right:** the matchup multiplier (not TDs), the carry budget, vacancy, the stat recal, top-end yardage, QB
+  environment and weather, and the WR Questionable cut.
+- **Already settled, not re-opened:** pace (negligible on stats, but the 2026-10-24 harness kept it) and the pass/receiving TD
+  matchup (half strength since 2026-10-24).
+- **Participation** scores low on played games because it is an every-game device.
+- **The pass-capacity pass over-cuts tight ends:** beta 0.58-0.63 (WR 0.83-0.94), while the team total is right after it
+  (35.6 claimed -> 32.0 vs 31.6 actual targets per team-week).
+  - Simulated through the stat recal, a TE elasticity of 0.4-0.6 takes START-TE 6.797 -> 6.781 (4 of 5 seasons) and its bias
+    +0.40 -> ~+0.1.
+  - Candidate `v2_te_capacity_relief` (weeks 3+, TE_CAPACITY_ELASTICITY 0.5, nothing reassigned). Bar
+    `.sweeps/te_capacity_relief_bar.md`; harness queued with arms `te` and `te_pfs`.
+- **2026 out of sample:** the cut runs strong for every position (WR 0.53-0.76, RB 0.40-0.52). That is the low team pass
+  volume of backlog W1, and the live WR receptions / yards gap to the market. Input for the W1 decision.
+
+**Error map** (START, pfs points):
+- rookie RBs +1.00 (5 of 5 seasons), concentrated early: weeks 3-5 +2.11 falling to +0.09 by weeks 14-17, through rushing;
+- rookie WRs +0.95, late in the season;
+- WR1 +0.71 against WR3 -0.17 (5 of 5);
+- TEs +0.40.
+- The QB miss with teammates out fades in 2024-2025 and is not a lead.

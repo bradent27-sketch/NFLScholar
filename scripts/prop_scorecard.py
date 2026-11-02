@@ -51,7 +51,7 @@ def install_engines(src):
     for path in sorted(glob.glob(os.path.join(src, '*.json'))):
         with open(path, encoding='utf-8') as fh:
             eng = json.load(fh)
-        engines[eng['stat']] = {k: eng[k] for k in ('spec', 'seasons', 'recal', 'M1') if k in eng}
+        engines[eng['stat']] = {k: eng[k] for k in ('spec', 'seasons', 'recal', 'M1', 'mean') if k in eng}
     with open(pp.ENGINE_PATH, 'w', encoding='utf-8') as fh:
         json.dump(engines, fh, separators=(',', ':'))
     print(f'{len(engines)} engines -> {pp.ENGINE_PATH}: {", ".join(engines)}')

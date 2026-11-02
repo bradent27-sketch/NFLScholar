@@ -32,6 +32,12 @@ Read a gap as a lean to track, per stat. scripts/prop_scorecard.py keeps the rec
 
 Engines: data/prop_engines.json (one entry per stat). Refit: run `scripts/deep_audit.py --stage all`, then `--stage props2`, then
 `python scripts/prop_scorecard.py --install-engines`.
+
+Refit 2026-11-01 on the board's shipped columns (scripts/eval_prop_engine_refit.py, bar .sweeps/prop_engine_refit_bar.md):
+passing yards, rushing yards, targets, receptions and receiving yards now read the board's stat as is (no recalibration of
+their own; "mean": "board"). The shipped recal does that job, and adds the game script for QBs; forward-chained CRPS -0.3% to
+-1.2%, better in 4 of 4 seasons. Passing TDs, interceptions and carries keep the engine on the pre-recal column. Re-install
+those five after a deep-audit refit with `python scripts/eval_prop_engine_refit.py --install <stats>`.
 """
 import json
 import os
@@ -156,13 +162,14 @@ def prop_probabilities(frame, stat, line_col='line', history=None):
     """`frame` (one row per player: Pos, _key, the board's `stat` projection and `line_col`) with 'prop_mean' (recalibrated)
     and 'p_over' at that line. `history` from player_history(); None leaves the history inputs missing.
 
-    The engine was fit on the board's stat BEFORE the board flag 'v2_stat_recal_own_history' re-predicted it from the player's
-    own history, so a board built with that flag (it keeps the earlier value in '_pre_recal_<stat>') is read from that column:
-    the engine's own recalibration does the same job and must not run on an already recal'd stat."""
+    An engine marked "mean": "board" (refit 2026-11-01, scripts/eval_prop_engine_refit.py) was fit on the board's stat as
+    shipped and reads it as is. Any other engine was fit on the board's stat BEFORE 'v2_stat_recal_own_history' re-predicted
+    it from the player's own history, so a board built with that flag (it keeps the earlier value in '_pre_recal_<stat>') is
+    read from that column: the engine's own recalibration does the same job and must not run on an already recal'd stat."""
     out = frame.copy()
     proj = pd.to_numeric(out[stat], errors='coerce')
     pre = f'_pre_recal_{stat}'
-    if pre in out.columns:
+    if pre in out.columns and (load_engines().get(stat) or {}).get('mean') != 'board':
         proj = pd.to_numeric(out[pre], errors='coerce').fillna(proj)
     proj = proj.to_numpy(float)
     if history is not None and len(history):

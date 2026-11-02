@@ -7450,3 +7450,44 @@ total. Each season held out, 2026 scored on a 2021-2025 fit. Share of results ab
 - The old curve gave 1.10 and 0.92 at those points.
 - Only the median columns change, and only for passing yards the game-script table moved.
 - Means, points and the prop engine (which reads the means) are untouched.
+
+### 2026-11-01 - Prop engine refit on the shipped stat columns (tooling; no model flag)
+User: "...and then prop engine refit afterwards". Bar `.sweeps/prop_engine_refit_bar.md`, set before the run;
+`scripts/eval_prop_engine_refit.py`.
+
+**Why.** The prop engines (`data/prop_engines.json`, 2026-10-28) were fit on the board's stat columns before the own-history
+and game-script steps re-predicted them. The engine read `_pre_recal_<stat>` and ran its own recalibration, a simpler version
+of what the board now does. The engine never saw the game's margin and team total that the QB game script adds.
+
+**Test.** Deep-audit panel, with today's columns rebuilt on it (the RB spread multiplier, then the shipped stat steps). Each
+version is fit on the seasons before and scored on the next, 2023-2026. 2026's posted lines use the last priced line before
+kickoff.
+- E0: today's engine, the old column plus its own recalibration.
+- E1: the new column plus a recalibration on top.
+- E2: the new column as is.
+
+| stat | E2 CRPS vs E0 (seasons better) | 2026 posted Brier change | side record at a 5%+ gap, E0 -> E2 | installed |
+|---|---|---|---|---|
+| passing yards | -1.23% (4 of 4) | -0.0007 | 0.381 (63) -> 0.415 (82) | E2 |
+| rushing yards | -0.31% (4 of 4) | -0.0039 | 0.508 -> 0.506 | E2 |
+| targets | -0.43% (4 of 4) | no posted lines | | E2 |
+| receptions | -0.40% (4 of 4) | -0.0019 | 0.542 -> 0.539 | E2 |
+| receiving yards | -0.45% (4 of 4) | -0.0010 | 0.516 -> 0.523 | E2 |
+| passing TDs | -0.91% (2 of 4) | +0.006 | | E0 |
+| interceptions | -0.09% (1 of 4) | +0.003 | | E0 |
+| carries | +0.05% (2 of 4) | -0.004 | | E0 |
+
+E1 beat E0 less often than E2 everywhere: two recalibrations in a row over-correct.
+
+**Installed.**
+- The five E2 engines are marked `"mean": "board"`: `prop_probabilities` reads the board's stat as is for those.
+- The other engines still read the pre-recal value. Attempts and completions are not moved by the stat steps, so they were not
+  re-scored.
+- The old file is kept at `.sweeps/prop_refit/prop_engines_before_refit.json`.
+
+**What it does not fix.**
+- The books' close is still the better probability.
+- Passing-yards leans still lose in 2026 (41.5%): 2026 QBs out-threw the market by 7 yards, so any lower projection loses
+  sides this season.
+- Live ledger boards from before 2026-11-01 carry the old columns, so `scripts/prop_scorecard.py`'s record for weeks 3-8 reads
+  the new engines on old numbers. Judge the refit on week 9 onward.

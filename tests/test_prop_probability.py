@@ -69,3 +69,26 @@ def test_prop_probabilities_joins_history_by_player_and_position(engine):
     out = pp.prop_probabilities(frame, 'receptions', history=hist)
     assert out['prop_mean'].tolist() == pytest.approx([4.9, 7.0])
     assert out['p_over'].iloc[0] < out['p_over'].iloc[1]
+
+
+def test_an_engine_fit_on_the_shipped_column_reads_the_board_stat(tmp_path, monkeypatch):
+    """Refit 2026-11-01: an engine marked "mean": "board" reads the board's (recal'd) stat, not '_pre_recal_<stat>', and has
+    no recalibration of its own; any other engine still reads the pre-recal value."""
+    board_engine = {'receptions': {**ENGINE['receptions'], 'recal': {}, 'mean': 'board'}}
+    frame = pd.DataFrame({'_key': ['a', 'b'], 'Pos': ['WR', 'WR'], 'receptions': [5.0, 4.0],
+                          '_pre_recal_receptions': [6.0, np.nan], 'line': [4.5, 4.5]})
+    path = tmp_path / 'engines.json'
+    path.write_text(json.dumps(board_engine), encoding='utf-8')
+    monkeypatch.setattr(pp, 'ENGINE_PATH', str(path))
+    assert pp.prop_probabilities(frame, 'receptions')['prop_mean'].tolist() == [5.0, 4.0]
+    old = tmp_path / 'engines_pre_recal.json'
+    old.write_text(json.dumps({'receptions': {**ENGINE['receptions'], 'recal': {}}}), encoding='utf-8')
+    monkeypatch.setattr(pp, 'ENGINE_PATH', str(old))
+    assert pp.prop_probabilities(frame, 'receptions')['prop_mean'].tolist() == [6.0, 4.0]
+
+
+def test_installed_engines_read_the_board_for_the_refit_stats():
+    engines = pp._read_engines(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'prop_engines.json'))
+    board = {s for s, e in engines.items() if e.get('mean') == 'board'}
+    assert board == {'passing_yards', 'rushing_yards', 'targets', 'receptions', 'receiving_yards'}
+    assert all(not engines[s]['recal'] for s in board)

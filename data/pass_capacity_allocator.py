@@ -205,6 +205,15 @@ PASS_CAPACITY_TRUSTED_TIER_TE = 2
 PASS_CAPACITY_RB_SHARE_BAND = _env_float("PASS_CAPACITY_RB_SHARE_BAND", 0.08, 0.0, 0.5)
 PASS_CAPACITY_FACTOR_DEADBAND = _env_float("PASS_CAPACITY_FACTOR_DEADBAND", 0.0, 0.0, 0.5)
 
+# --- v2_te_capacity_relief (2026-11-02 mechanism audit) ------------------------
+# Stage attribution on today's model (2021-2025 weeks 3-17, played games, .sweeps/stage_capture.parquet): of the cut this
+# pass makes to a tight end's targets / receptions / receiving yards, only beta 0.63 / 0.61 / 0.58 shows up in the result
+# (0.51-0.67 by season), against WR 0.83 / 0.88 / 0.94. The team total is right after the pass (35.6 claimed -> 32.0 vs
+# 31.6 actual targets per team-week); the uniform factor takes too much from the TEs. The stat recal keeps ~0.56-0.67 of
+# the board's TE number, so matching beta on the final line needs about half the cut at this stage: simulated through the
+# recal, elasticity 0.4-0.6 takes START-TE 6.797 -> 6.781 (4 of 5 seasons) and the START-TE bias +0.40 -> ~+0.12.
+TE_CAPACITY_ELASTICITY = 0.5
+
 CAPACITY_LEDGER_COLUMNS = [
     'team', 'position_group', 'capacity', 'capacity_source', 'trusted_claim', 'tail_claim',
     'allocated', 'unallocated', 'trusted_count', 'tail_count', 'reason',
@@ -311,8 +320,13 @@ def apply_pass_capacity_conservation(
         factor_deadband: float | None = None,
         injury_neutral_claim: bool = False,
         keep_tds: bool = False,
+        te_elasticity: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit one team's RB/WR/TE targets (and dependents) to a real pass budget.
+
+    ``te_elasticity`` (default None = off; 'v2_te_capacity_relief', weeks 3+): in a group the uniform factor moves,
+    each tight end takes 1 + te_elasticity * (factor - 1) instead of the factor; the difference is not reassigned.
+    See TE_CAPACITY_ELASTICITY.
 
     ``keep_tds`` (default off; 'v2_pass_capacity_keep_tds'): scale receptions and
     receiving yards with targets but leave ``receiving_tds`` at its pre-budget
@@ -487,6 +501,14 @@ def apply_pass_capacity_conservation(
             allocated.loc[:] = current.loc[:] * factor
             reason = (f"Claim {fit_total:.1f} vs {group_capacity:.1f} budget; every player "
                       f"scaled {'up' if factor > 1.0 else 'down'} proportionally (x{factor:.3f}).")
+            if te_elasticity is not None:
+                # v2_te_capacity_relief: a tight end takes only te_elasticity of the room's move; the rest is not
+                # handed to anyone (see TE_CAPACITY_ELASTICITY).
+                te_rows = out.loc[idx, 'Pos'].astype(str).eq('TE').to_numpy()
+                if te_rows.any():
+                    te_factor = 1.0 + float(te_elasticity) * (factor - 1.0)
+                    allocated.loc[idx[te_rows]] = current.loc[idx[te_rows]] * te_factor
+                    reason += f" Tight ends x{te_factor:.3f} (elasticity {float(te_elasticity):.2f})."
         ledger_row = {
             'capacity': round(group_capacity, 2), 'trusted_claim': round(trusted_claim, 2),
             'tail_claim': round(tail_claim, 2), 'allocated': round(float(allocated.sum()), 2),

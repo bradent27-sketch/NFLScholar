@@ -7407,3 +7407,22 @@ Held-out START-RB points MSE vs the board: all three -0.076 (4 of 5; 2026 -0.010
   behind a named flag.
 
 **Call: the user's.** Both flags are off; shipping adds `v2_rb_game_script_rush` to DEFAULT_FEATURES (79 -> 80).
+
+### 2026-11-01 - Shipped: `v2_rb_game_script_rush` (DEFAULT_FEATURES = 80); the receiving term stays off
+User: "yes ship the running back favorites thing...if the receiving part helps with receiving stats specifically it can be
+included but if not the rushing only is worth the ship by itself".
+
+**The receiving-yards term, judged on receiving yards** (bar addendum 2, set before measuring):
+- Held out, with b fit on the other seasons and the board's column before the recal: START-RB receiving-yards MSE was worse
+  in all 5 seasons (+1.07 / +1.34 / +0.02 / +0.05 / +0.13). Only 2026 was better (-0.13). b flips sign across the folds.
+- Harness boards, the final column after the shipped recal, all3 minus rush: START-RB +0.087 MSE pooled (worse in 3 of 4
+  seasons), every RB +0.041.
+- It fails both reads, so `v2_rb_game_script` stays off.
+
+**Shipped:** `v2_rb_game_script_rush`, in DEFAULT_FEATURES.
+- It moves points before calibration, so it is not a POST_CALIBRATION step. CALIBRATION_INPUT_FEATURES is unchanged (68),
+  like the other points ships since the line fit.
+- **Undo:** remove the flag.
+- **What to watch:** favored backs' points and rushing yards in the weekly ledger, weeks 9-17. The harness gain is small and its
+  interval touches zero.
+- The user's running apps need a rerun to pick up the new code.

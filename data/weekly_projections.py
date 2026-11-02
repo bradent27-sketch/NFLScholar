@@ -2431,12 +2431,14 @@ MODEL_FEATURES = (
                              # untouched. Held out by season: stat MSE -3.2% over the 13 stats.
     'v2_stat_recal_own_history_edges',  # SHIPPED 2026-11-01 (user: "do the same with edges"). Weeks 1 and 2
                              # (STAT_RECAL_OWN_HISTORY_EDGES); week 18 left alone.
-    'v2_rb_game_script',  # CANDIDATE (2026-11-01, backlog L5; user: big favorites "running more with
-                             # running backs to chew clock"). RB rushing TDs, rushing yards
-                             # and receiving yards scale with the game's margin
-                             # (RB_GAME_SCRIPT); the carry budget already reads the spread.
-    'v2_rb_game_script_rush',  # CANDIDATE, harness passes (2026-11-01, L5): the same on rushing TDs and rushing yards only
-                             # (RB_GAME_SCRIPT_RUSH). Takes precedence over v2_rb_game_script.
+    'v2_rb_game_script',  # NOT SHIPPED (2026-11-01, backlog L5): v2_rb_game_script_rush plus RB receiving
+                             # yards scaled down with the margin (RB_GAME_SCRIPT). Passed the
+                             # harness, but the receiving term made RB receiving yards worse
+                             # (held out 5 of 5 seasons; harness 3 of 4), so it stays off.
+    'v2_rb_game_script_rush',  # SHIPPED 2026-11-01 (backlog L5; user: big favorites "running more with
+                             # running backs to chew clock"). RB rushing TDs and rushing yards
+                             # scale with the game's margin (RB_GAME_SCRIPT_RUSH); the carry
+                             # budget already reads the spread. Takes precedence over v2_rb_game_script.
     'v2_stat_recal_game_script',  # SHIPPED 2026-11-01 (backlog M15; user: "we are above the market for QB
                              # props on teams that are larger favorites"). Weeks 3-17, with
                              # v2_stat_recal_own_history: the QB entries read the game's
@@ -3161,6 +3163,11 @@ DEFAULT_FEATURES = frozenset({
     # (STAT_RECAL_GAME_SCRIPT). Held out by season: QB passing yards +3.5% MSE (5 of 5, 2026 +6.7%), 7.5+ favorites' passing
     # yards bias +11.7 -> +3.5, rushing yards +5.9 -> +1.6. Points untouched (POST_CALIBRATION_FEATURES). Undo: remove the flag.
     'v2_stat_recal_game_script',
+    # SHIPPED 2026-11-01 (backlog L5; user: "yes ship the running back favorites thing ... the rushing only is worth the ship
+    # by itself"): DEFAULT_FEATURES = 80. RB rushing TDs and rushing yards x (1 + b clip(m, -14, 14) / 7), m = own implied
+    # points - the opponent's (RB_GAME_SCRIPT_RUSH). Harness v2 2022-2025 weeks 3-17: START-RB -0.0052 (3 of 4 seasons),
+    # START-ALL -0.0014, no position worse. Moves points (before calibration). Undo: remove the flag.
+    'v2_rb_game_script_rush',
 })
 
 
@@ -3920,7 +3927,7 @@ STAT_RECAL_GAME_SCRIPT = {
 }
 STAT_RECAL_SCRIPT_KNEE = 7.0
 
-# --- v2_rb_game_script / v2_rb_game_script_rush (CANDIDATES, backlog L5) -----------------------------------------------------
+# --- v2_rb_game_script_rush (SHIPPED) / v2_rb_game_script (off), backlog L5 -----------------------------------------------------
 # Error-first audit 2026-10-21: RBs on favored teams beat the board (START-RB -0.008 held out, 5 of 5). Measured 2026-11-01 on
 # the deep-audit panel (today's points), START-RB (top 40 played), weeks 3-17 (bar: .sweeps/rb_game_script_bar.md, set first):
 #   points residual by spread: underdog 3+ -0.41, pick'em +0.03, favored 3-7.5 +0.69 (5 of 5 seasons), favored 7.5+ +0.62 (4
@@ -3932,7 +3939,9 @@ STAT_RECAL_SCRIPT_KNEE = 7.0
 # re-scored PPR x the RB points-line slope 0.899): START-RB points MSE, all three stats -0.076 pooled (4 of 5, 2026 -0.010);
 # rushing TDs + rushing yards only -0.088 (5 of 5, 2026 -0.007).
 # Harness v2 2026-11-01 (2022-2025 weeks 3-17), both arms pass: START-RB -0.0052 (3 of 4), START-ALL -0.0014/-0.0015, no
-# position worse; the pre-set tie-break picks _rush (methodology 2026-11-01). Off until the user's call.
+# position worse; the pre-set tie-break picks _rush (methodology 2026-11-01). The receiving term made RB receiving yards worse
+# (held out: START-RB MSE +0.02 to +1.34 in 5 of 5 seasons; harness final column +0.087 pooled, 3 of 4), so only _rush SHIPPED
+# (2026-11-01, user: "yes ship the running back favorites thing").
 RB_GAME_SCRIPT = {'rushing_tds': 0.0275, 'rushing_yards': 0.0215, 'receiving_yards': -0.0077}
 RB_GAME_SCRIPT_RUSH = {'rushing_tds': 0.0275, 'rushing_yards': 0.0215}
 RB_GAME_SCRIPT_CLIP = 14.0

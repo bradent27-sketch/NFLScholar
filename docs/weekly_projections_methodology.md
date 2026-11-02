@@ -7561,3 +7561,11 @@ team and status as of week W (a gameday inactive reads as active).
 
 **If shipped:** every harness base arm changes from then on. Base arms before and after the ship are not comparable, and older
 deltas keep their meaning only against their own base.
+
+### 2026-11-01 - Shipped `v2_point_in_time_roster` (DEFAULT_FEATURES = 81)
+User: "yeah go ahead and ship". Evidence is in the entry above (harness run 2: START-ALL -0.024 CI [-0.041, -0.007], no
+position worse, every large team-week move traced).
+- **Live boards:** no change. The flag acts only on a historical target.
+- **Harness base arms change from this commit.** A delta measured before 2026-11-01 compares only with its own base. To
+  reproduce an older base, remove the flag from the feature set.
+- **Undo:** remove the flag from DEFAULT_FEATURES.

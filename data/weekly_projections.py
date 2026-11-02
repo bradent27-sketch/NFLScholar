@@ -2439,7 +2439,7 @@ MODEL_FEATURES = (
                              # running backs to chew clock"). RB rushing TDs and rushing yards
                              # scale with the game's margin (RB_GAME_SCRIPT_RUSH); the carry
                              # budget already reads the spread. Takes precedence over v2_rb_game_script.
-    'v2_point_in_time_roster',  # CANDIDATE (2026-11-01, backlog D6 / N4; backtest only, no-op live). A backtest
+    'v2_point_in_time_roster',  # SHIPPED 2026-11-01 (backlog D6 / N4; backtest only, no-op live). A backtest
                              # reads the roster as of the target week (nflverse weekly roster):
                              # past games keep the team they were played for, the board's Team
                              # is the week's roster team, and a returning-player placeholder
@@ -3175,6 +3175,12 @@ DEFAULT_FEATURES = frozenset({
     # points - the opponent's (RB_GAME_SCRIPT_RUSH). Harness v2 2022-2025 weeks 3-17: START-RB -0.0052 (3 of 4 seasons),
     # START-ALL -0.0014, no position worse. Moves points (before calibration). Undo: remove the flag.
     'v2_rb_game_script_rush',
+    # SHIPPED 2026-11-01 (backlog D6 / N4; user: "yeah go ahead and ship"): DEFAULT_FEATURES = 81. A backtest reads the roster
+    # as of the target week (point_in_time_roster); a live board is unchanged. Harness v2 2022-2025 weeks 3-17 (run 2, after
+    # the QB1-room fix): START-ALL -0.024 CI[-0.041,-0.007], no position worse, every team-week move over 15 points traced to
+    # a player put back on his real team. Every harness base arm changed with it: deltas from before 2026-11-01 are only
+    # comparable with their own base. Undo: remove the flag.
+    'v2_point_in_time_roster',
 })
 
 

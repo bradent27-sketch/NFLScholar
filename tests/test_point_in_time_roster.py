@@ -23,8 +23,8 @@ def _pit(monkeypatch, week=5):
     return wp.point_in_time_roster(2024, week)
 
 
-def test_flag_is_a_candidate():
-    assert 'v2_point_in_time_roster' in wp.MODEL_FEATURES and 'v2_point_in_time_roster' not in wp.DEFAULT_FEATURES
+def test_flag_is_shipped():
+    assert 'v2_point_in_time_roster' in wp.MODEL_FEATURES and 'v2_point_in_time_roster' in wp.DEFAULT_FEATURES
 
 
 def test_point_in_time_roster_reads_only_the_week_and_ina_reads_active(monkeypatch):

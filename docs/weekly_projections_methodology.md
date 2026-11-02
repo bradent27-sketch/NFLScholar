@@ -7569,3 +7569,68 @@ position worse, every large team-week move traced).
 - **Harness base arms change from this commit.** A delta measured before 2026-11-01 compares only with its own base. To
   reproduce an older base, remove the flag from the feature set.
 - **Undo:** remove the flag from DEFAULT_FEATURES.
+
+### 2026-11-02 - Receiver vacancy row-order bug: `v2_vacancy_source_order` (candidate, off; harness re-queued)
+User: "Do the receiver vacancy bug". Bar: `.sweeps/vacancy_source_order_bar.md`, set before the run.
+
+**The bug.** The vacancy pass hands out each out player's volume one source at a time, and each pass reads volumes the earlier
+ones already grew (the pecking order and the `VACANCY_MAX_GROWTH` cap both read current volume). The source order was the
+board's row order. The board is sorted by points, and every out player has 0.00, so the order among them was arbitrary
+(quicksort).
+- An unrelated change could therefore re-split a team's vacated targets when 2+ receivers were out. The RB game-script harness
+  moved ~120 WR/TE rows in 48 team-weeks with no WR/TE change (45 with 2+ WR/TE out; Tyler Johnson NYJ 2025 week 8
+  11.29 -> 10.04).
+- Repro: the same board in two row orders gave Deep 8.22 / 8.47 targets and Tight 5.73 / 5.59.
+
+**The flag** (`redistribute_rb_vacancy_with_allocator(..., deterministic_order=True)`): sources by team, then pre-injury
+carries + targets descending, then name; pecking-rank ties broken by name. Tests (`tests/test_vacancy_source_order.py`): any
+row order gives the same split, and targets are conserved.
+
+**Harness run 1 (2026-11-02) lost the arm.** `--variant` is not repeatable in `scripts/backtest_component.py`, so the second
+`--variant` replaced the first and only the `pfs` arm ran (entry below). Re-queued with the semicolon form, same bar.
+
+### 2026-11-02 - Points from the stat line: `v2_points_from_stat_line` passes the harness outright (candidate, off; user's call)
+From the mechanism audit (`docs/mechanism_audit_2026-11-02.md` section 1). Bar: `.sweeps/points_from_stat_line_bar.md` (the
+2026-10-23 simplification rule), set before the run.
+
+**The idea.** Two systems now pull a projection toward the player's own level:
+- on the points total: the points line (+ low end, start-row refit, WR/TE recency, zero-row rule), the season anchor (+ s
+  refit) and expected-points luck (+ QB / TE refits);
+- on the stat columns: the stat recal (`v2_stat_recal_own_history`, `_edges`, `_game_script`).
+
+Neither feeds the other. The flag sets the weeks 3-17 total to the displayed (recal'd) stat line scored, times the WR
+Questionable cut where it ran. The displayed points then match the displayed stats.
+
+**Before the run** (deep-audit panel, played rows, weeks 3-17, recal refit leaving each season out): START 7.511 vs the
+chain's 7.518; 2026 weeks 3-7 (out of sample for both) 7.341 vs 7.349.
+
+**Harness v2, 2022-2025 weeks 3-17** (arm `pfs`; the chain's lines were fit in-sample here, which favours the base):
+
+| scope | base | pfs | delta (CI) |
+|---|---|---|---|
+| START-ALL | 7.434 | 7.415 | -0.019 (-0.036, -0.001), 34 of 60 weeks better |
+| START-QB | 7.429 | 7.357 | -0.072 (-0.140, -0.003) |
+| START-RB / WR / TE | | | -0.010 / -0.007 / -0.020, CIs span 0 |
+| EVERY-START-ALL | 7.581 | 7.554 | -0.027 (-0.043, -0.009) |
+| EVERY-ALL | 5.282 | 5.261 | -0.021 (-0.031, -0.010) |
+| pairwise (START-ALL) | 0.657 | 0.659 | +0.003 (+0.001, +0.004) |
+
+- No position worse at any scope except EVERY-RB +0.001. The harness rule says SHIP-ELIGIBLE: the CI is below 0 and bias grows
+  by 0.17, under the 0.3 cap.
+- **Bias.** START-ALL +0.001 -> -0.173, almost all WR (+0.080 -> -0.367). Traced on the boards (played START WRs, actual -
+  projected): the stat line runs 0.21 points low, from WR rushing yards and TDs (+0.17), receiving yards (+0.08) and receptions
+  (+0.04), against receiving TDs (-0.09). The WR Questionable cut adds 0.15; it still holds on the stat line (actual / line
+  0.85 on the 219 cut rows vs the 0.83 factor). The shortfall swings by season (2022 +0.01, 2023 +0.48, 2024 +0.98, 2025
+  -0.05), so it is not a fix target.
+- 21,935 player-weeks moved by more than 0.05 (948 players). QB rows the chain had high and the stat line lowers are the
+  biggest gain (lowered QBs, every-game scope: -0.247).
+
+**What it would retire.** In weeks 3-17 the chain's results are overwritten. The season anchor and luck (with their three
+refits) run only from week 3. What they still touch with pfs on is the stat recal's gate (`Model Proj Pts >= 3` is read after
+them). A `lean` arm (pfs minus those five flags) is queued with the vso re-run. The points line and the opening-week
+calibration still set weeks 1-2 and stay.
+
+**Checked alongside, no flag:** RB/WR/TE touchdowns are not in the recal and are spread too wide (START slope of actual on
+projected: WR receiving TDs 0.58, RB rushing TDs 0.69, TE 0.41). A held-out TD recal (the shipped design, leaving each season
+out) trims TD MSE 0.3-0.9% (3-5 of 5 seasons) but leaves START points flat (7.511 -> 7.513). Shrinking TDs lowers the top
+players, so the START pool's level falls. Not worth a flag.

@@ -21,3 +21,16 @@ def test_total_is_the_stat_line_scored_with_the_questionable_factor():
     assert abs(out.loc[out.Player == 'B', 'Model Proj Pts'].iloc[0] - round(b, 1)) < 1e-9
     assert info[('B', 'RB', 'Y')]['before'] == 9.0
     assert board['Model Proj Pts'].tolist() == [14.0, 9.0]          # the input is not changed
+
+
+def test_edges_flag_is_a_candidate_and_leaves_other_positions_alone():
+    assert 'v2_points_from_stat_line_edges' in wp.MODEL_FEATURES
+    assert 'v2_points_from_stat_line_edges' not in wp.DEFAULT_FEATURES
+    board = pd.DataFrame({'Player': ['Q', 'R'], 'Pos': ['QB', 'RB'], 'Team': ['X', 'Y'], 'Model Proj Pts': [18.0, 9.0],
+                          'passing_yards': [250.0, 0.0], 'passing_tds': [1.8, 0.0], 'passing_interceptions': [0.8, 0.0],
+                          'rushing_yards': [20.0, 50.0], 'rushing_tds': [0.2, 0.3], 'receptions': [0.0, 1.5],
+                          'receiving_yards': [0.0, 10.0], 'receiving_tds': [0.0, 0.05]})
+    out, info = wp.apply_points_from_stat_line(board, 'Full PPR', positions=wp.POINTS_FROM_STAT_LINE_EDGE_POSITIONS)
+    assert out.loc[out.Player == 'Q', 'Model Proj Pts'].iloc[0] == 18.0       # QB keeps the points line
+    assert abs(out.loc[out.Player == 'R', 'Model Proj Pts'].iloc[0] - round(5.0 + 1.8 + 1.5 + 1.0 + 0.3, 1)) < 1e-9
+    assert set(info) == {('R', 'RB', 'Y')}

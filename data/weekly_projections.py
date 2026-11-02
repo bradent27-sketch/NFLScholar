@@ -2448,6 +2448,10 @@ MODEL_FEATURES = (
                              # pecking-rank ties by name. Before it the order was the board's row
                              # order, arbitrary for out players (all 0.00 points), so an unrelated
                              # change re-split a team's vacated targets when 2+ receivers were out.
+    'v2_points_from_stat_line_edges',  # CANDIDATE (2026-11-02 audit): with v2_points_from_stat_line, weeks 1-2 too for
+                             # RB/WR/TE (POINTS_FROM_STAT_LINE_EDGE_POSITIONS, the ones the edges recal
+                             # re-predicts); QBs keep the points line. Panel, weeks 1-2 START:
+                             # 7.652 -> 7.521 (4 of 5 seasons), 2026 8.241 -> 8.138.
     'v2_point_in_time_roster',  # SHIPPED 2026-11-01 (backlog D6 / N4; backtest only, no-op live). A backtest
                              # reads the roster as of the target week (nflverse weekly roster):
                              # past games keep the team they were played for, the board's Team
@@ -4109,9 +4113,13 @@ def apply_stat_recal_own_history(result, history, form, table, script=None):
     return out, info
 
 
-def apply_points_from_stat_line(result, scoring_mode, questionable_info=None):
+POINTS_FROM_STAT_LINE_EDGE_POSITIONS = ('RB', 'WR', 'TE')
+
+
+def apply_points_from_stat_line(result, scoring_mode, questionable_info=None, positions=None):
     """(result, info) for v2_points_from_stat_line: 'Model Proj Pts' = the row's final stat line scored, times its
     Questionable factor when v2_questionable_workload cut it. ``info`` maps (Player, Pos, Team) -> {'before', 'after'}.
+    With ``positions`` only those rows change (v2_points_from_stat_line_edges: weeks 1-2, the edges recal's positions).
 
     Audit 2026-11-01: with the stat recal (v2_stat_recal_own_history / _game_script) on the stat columns, the points chain
     (points line, low-end line, season anchor, expected-points luck and their refits) adds nothing measurable. On the
@@ -4130,8 +4138,10 @@ def apply_points_from_stat_line(result, scoring_mode, questionable_info=None):
             factor[j] = float(q['factor'])
     new = np.round(scored * factor, 2)
     before = pd.to_numeric(out['Model Proj Pts'], errors='coerce').fillna(0.0).to_numpy(float)
+    keep = np.ones(len(out), dtype=bool) if positions is None else out['Pos'].astype(str).isin(positions).to_numpy()
+    new = np.where(keep, new, before)
     info = {(p, ps, t): {'before': float(b), 'after': float(a)}
-            for p, ps, t, b, a in zip(out['Player'], out['Pos'], out['Team'], before, new)}
+            for p, ps, t, b, a, k in zip(out['Player'], out['Pos'], out['Team'], before, new, keep) if k}
     out['Model Proj Pts'] = new
     if 'Calibrated Model Proj Pts' in out.columns:
         out['Calibrated Model Proj Pts'] = new
@@ -14702,9 +14712,15 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
 
     # v2_points_from_stat_line (candidate, 2026-11-01 audit): weeks 3-17, the total is the displayed stat line scored, times the
     # Questionable cut where it ran; the points line, season anchor and luck results above are replaced.
+    # v2_points_from_stat_line_edges: weeks 1-2 as well, for the positions the edges recal re-predicts.
     points_from_line_info = {}
     if 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
         result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, questionable_info)
+        result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+    elif ('v2_points_from_stat_line' in feats and 'v2_points_from_stat_line_edges' in feats
+          and _recal_form in ('week1', 'pull')):
+        result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, questionable_info,
+                                                                    positions=POINTS_FROM_STAT_LINE_EDGE_POSITIONS)
         result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 
     # Raw per-week slot/wide/inline defense-allowed evidence, grouped for

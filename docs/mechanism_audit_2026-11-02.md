@@ -160,11 +160,15 @@ and every-game rows differ. The TE capacity relief targets exactly that gap.
 
 ## 7. What to do (the user's calls)
 
-1. **Ship `v2_points_from_stat_line`** (passed outright). If the `lean` arm matches, also take out the season anchor, luck and
-   their three refits: five fewer flags, and the points equal the stats.
+1. **Ship `v2_points_from_stat_line`** (passed outright) **and take out the season anchor, luck and their three refits.** The
+   `lean` arm (pfs minus those five) ties pfs: START RMSE identical at every position, every-game ALL +0.0001. The five flags
+   only nudge 358 rows below START across the recal gate. DEFAULT_FEATURES 81 -> 77, and the points equal the stats.
 2. **`v2_points_from_stat_line_edges`** if the weeks 1-2 harness passes. Then the points line survives only for QBs in weeks
    1-2.
-3. **`v2_vacancy_source_order`**: a correctness fix (the split no longer depends on row order); ships if its run is neutral.
+3. **`v2_vacancy_source_order`**: a correctness fix (the split no longer depends on row order). It passed: START-ALL -0.001,
+   no position worse. All 584 moved rows trace to team-weeks with 2+ vacancy sources, except one row that crossed the recal
+   gate.
 4. **`v2_te_capacity_relief`**: a small tuning fix (TE about -0.015) if its run passes.
 5. **Dead code**: remove the rejected and superseded flags' branches (section 2), verified by identical default boards.
-6. **Leads for the backlog:** rookie RB early-season rushing; WR1 concentration. Each needs its own study.
+6. **Leads for the backlog:** rookie RB early-season rushing (M18); WR1 concentration; the stat recal's 3.0-point gate is a
+   cliff (M19: targets jump 35-50% across it, below START only). Each needs its own study.

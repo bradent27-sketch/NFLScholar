@@ -7660,3 +7660,73 @@ share of its contribution that came true on played games, with held-out removal 
 - WR1 +0.71 against WR3 -0.17 (5 of 5);
 - TEs +0.40.
 - The QB miss with teammates out fades in 2024-2025 and is not a lead.
+
+### 2026-11-02 - `v2_vacancy_source_order` re-run: passes its bar (candidate, off; user's call)
+Bar `.sweeps/vacancy_source_order_bar.md` (set 2026-11-01, unchanged after run 1 lost the arm). Harness v2, 2022-2025 weeks
+3-17, arm `vso` (semicolon form, run 2026-11-02 02:48-04:14).
+
+| scope | base | vso | delta (CI) |
+|---|---|---|---|
+| START-ALL | 7.462 | 7.461 | -0.001 (-0.002, +0.000) |
+| START-QB / RB / WR / TE | | | +0.000 / -0.000 / -0.001 / -0.001 |
+| EVERY-ALL | 5.282 | 5.281 | -0.001 (-0.001, +0.000) |
+| bias (START-ALL) | +0.027 | +0.027 | |
+
+- Passes: no START position worse (bar: none worse than +0.01), START-ALL within +-0.005. As expected for a correctness fix,
+  there is no accuracy gain to speak of. The harness wording ("INCONCLUSIVE ... keep it shipped as-is") is its generic ablate
+  text.
+- **Rows moved:** 584 player-weeks by more than 0.05 (313 players) in 249 team-weeks. On those rows RMSE 5.878 -> 5.857
+  (-0.022, CI -0.044 to -0.000). RB 78, WR 360, TE 146.
+- **Every moved team-week has 2+ vacancy sources.** 241 of 249 have 2+ receivers or 2+ backs out on the saved board. The
+  other 8 were traced:
+  - LAC 2023 week 4 and NYJ 2025 week 7: one back and one receiver out. The back's targets go to the same receivers.
+  - Five team-weeks have extra out receivers on the reserve list. They are vacancy sources but never reach the saved board:
+    - LA 2024 week 4: Nacua and Higbee, with Kupp;
+    - NYJ 2024 week 13: Malik Taylor, with Lazard;
+    - KC 2023 week 8: Richie James, Remigio and John Ross, with Justyn Ross;
+    - TEN 2024 week 15: Colton Dowell, with Burks;
+    - ATL 2025 week 7: Emory Jones, with McCloud.
+  - WAS 2024 week 8 (Crowder the only receiver out): Luke McCaffrey's chain points moved 3.04 -> 2.94. That crosses the stat
+    recal's 3.0 gate, so his whole stat line lost the recal (targets 2.17 -> 1.43). The 0.1-point move itself was not traced
+    further. This one row is also the largest team-target difference between the arms (0.78; next entry for the gate).
+
+### 2026-11-02 - `lean` arm: pfs without the season anchor, luck and their refits ties pfs (simplification passes)
+Bar `.sweeps/points_chain_lean_bar.md`, set before the run. Arm `lean = +v2_points_from_stat_line, -v2_season_anchor,
+-v2_anchor_s_refit, -v2_expected_points_luck, -v2_luck_te_refit, -v2_luck_qb`, same run as the vso re-run.
+
+**lean vs base** (harness): START-ALL 7.438 -> 7.419 (-0.019, CI -0.036 to -0.001); START-QB -0.072 (CI below 0), RB / WR /
+TE -0.010 / -0.007 / -0.019; EVERY-START-ALL -0.027 (CI below 0); EVERY-ALL -0.021 (CI below 0); pairwise +0.003; bias
+-0.002 -> -0.176 (WR +0.083 -> -0.363). SHIP-ELIGIBLE, the same numbers as the `pfs` arm earlier today.
+
+**lean vs pfs, board to board.**
+- The two runs' base boards are identical: 30,012 rows, every points and stat column equal.
+- Scored on the panel, START rows (the union of base, pfs and lean START sets) give identical RMSE at every position (QB
+  7.4244, RB 7.4513, WR 7.6474, TE 6.7204 in both).
+- Every game: ALL 5.0015 -> 5.0016 (+0.0001); played rows: ALL +0.0010 (WR +0.0016, TE +0.0009). Within the bar (+-0.002, no
+  START position worse than +0.005).
+- 358 rows differ (TE 176, WR 135, RB 47, no QBs), all around the recal gate (chain points 2.6-3.6 across the middle 90%):
+  - Without the anchor and luck, the gate reads a slightly different number, and the recal switches on or off.
+  - Example: Jake Tonges SF 2025 weeks 8-9, 2.6 -> 5.5 / 5.2.
+
+So with pfs on, the five flags do nothing but nudge rows across the gate. The proposal is pfs plus the five removals as one
+ship (DEFAULT_FEATURES 81 -> 77; the user's call). The points line and the opening-week calibration stay for weeks 1-2.
+
+### 2026-11-02 - The stat recal's 3.0-point gate is a cliff (finding, no flag; backlog)
+Seen in both runs above. The recal applies only to rows with `Model Proj Pts >= STAT_RECAL_MIN_POINTS` (3.0), read after the
+points chain. It switches on in full at the gate.
+
+Projected and actual targets per row either side of it (2022-2025 weeks 3-17, rows not sidelined, pfs boards):
+
+| | 2.75-3.0 projected | 2.75-3.0 actual | 3.0-3.25 projected | 3.0-3.25 actual |
+|---|---|---|---|---|
+| RB | 0.78 | 0.84 | 1.23 | 1.08 |
+| WR | 1.77 | 1.58 | 2.32 | 1.99 |
+| TE | 1.31 | 1.38 | 2.00 | 1.55 |
+
+- Just above the gate the recal lifts marginal players past their results: targets +0.14 (RB) to +0.45 (TE).
+- With pfs, projected points jump about one point across a quarter-point step in chain points: TE 2.27 -> 3.38 (actual
+  2.43 -> 2.87), RB 2.59 -> 3.57 (actual 2.96 -> 3.04).
+- Only rows below START are affected (START RMSE is identical with and without the five flags above). It matters for EVERY
+  scopes, and for props on backups.
+- Possible fix: ramp the recal in over 2-4 points, or refit the recal's level for the bottom band. Logged as backlog M19. Not
+  built: no START gain is expected.

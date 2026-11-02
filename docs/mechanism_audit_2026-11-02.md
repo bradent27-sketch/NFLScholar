@@ -192,3 +192,8 @@ and every-game rows differ. The TE capacity relief targets exactly that gap.
 5. **Dead code**: remove the rejected and superseded flags' branches (section 2), verified by identical default boards.
 6. **Leads for the backlog:** rookie RB early-season rushing (M18); WR1 concentration; the stat recal's 3.0-point gate is a
    cliff (M19: targets jump 35-50% across it, below START only). Each needs its own study.
+7. **`v2_wr1_capacity_relief`** passed its bar (START-WR -0.010); in the pfs world START-WR -0.011, 4 of 4 seasons. The
+   user decides.
+8. **xTD missing prior share**: both versions passed. `v2_xtd_missing_prior_overall` is the pick (START-ALL -0.007,
+   START-RB -0.017; pfs world RB -0.016, 4 of 4). Rookie RB TDs per carry 0.018 -> 0.026 (actual 0.028). Weeks 1-2 run
+   pending; the user decides.

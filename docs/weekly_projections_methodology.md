@@ -7907,3 +7907,34 @@ check.
   test_calibration_audit_flags.py, and the season-anchor build test in test_weekly_projections.py (now built without
   pfs).
 - Undo: swap the flags back.
+
+### 2026-11-02 - `v2_wr1_capacity_relief` and the xTD missing-prior fix pass their bars (candidates, off; user's call)
+Bars `.sweeps/wr1_capacity_relief_bar.md` and `.sweeps/xtd_missing_prior_share_bar.md`, set before the run. Harness v2,
+2022-2025 weeks 3-17, run 05:42-08:10 on the 81-flag default (before today's vso and pfs ships). Base boards identical to
+the earlier 2026-11-02 runs (30,012 rows, every points and target value equal).
+
+| arm vs the 81-flag default | START-ALL | START-RB | START-WR | START-TE | START-QB | bar |
+|---|---|---|---|---|---|---|
+| `wr1` | -0.005 (CI -0.011, +0.002) | 0 | -0.010 (EVERY-START-WR -0.005) | -0.001 | 0 | passes |
+| `xtdp` (plain) | -0.006 (CI -0.010, -0.003) | -0.014 (CI below 0) | -0.001 | -0.003 | -0.005 | passes |
+| `xtdp2` (overall) | -0.007 (CI -0.011, -0.004), 43 of 60 weeks | -0.017 (CI below 0) | -0.002 | -0.006 | -0.004 | passes |
+
+- Bias growth within the cap: wr1 +0.077, xtdp +0.052, xtdp2 +0.053. Both xTD arms pass. By the bar's rule (the better
+  START-ALL, a tie within 0.002 going to xtdp2) **xtdp2 (`v2_xtd_missing_prior_overall`) is the pick**.
+- **Rows moved:** wr1 1,808 (173 players; played RMSE -0.023); xtdp 3,229 (RMSE -0.026 every game); xtdp2 3,514 (514
+  players; every game -0.030, played -0.047; raised RBs -0.070 / -0.091).
+- **Rookie rushing TDs** (played RBs with 5+ projected carries): per carry 0.0182 -> 0.0260 with xtdp2 (actual 0.0280);
+  per game 0.177 -> 0.254 (actual 0.281). Veterans unchanged (0.0336 vs actual 0.0335).
+
+**In the pfs world (today's 79-flag default).** Board to board against the `pfs` arm. An arm's pfs points = pfs points + Q
+factor x (its stat line scored - the base stat line scored). The method matches the real `xtdp_pfs` arm within 0.0005 at
+every position. START, union of the two arms' START sets, every game:
+- xtdp2: ALL -0.006 (CI -0.011, -0.002), RB -0.016 (CI below 0; 4 of 4 seasons), WR -0.001, TE -0.003, QB -0.004.
+- wr1: WR -0.011 (CI -0.022, -0.000; 4 of 4 seasons), ALL -0.005 (CI -0.009, +0.001). Played START WR -0.014, and the
+  WR bias falls from 0.39 under to 0.26 under: the relief also offsets part of pfs's WR shortfall.
+
+Not built here: a 2026 read for xtdp2 (the xTD rates need a rebuild). WR1 was simulated on 2026 weeks 3-7 before the run
+(START-WR 7.479 -> 7.462). The weeks 1-2 xtdp / xtdp2 run follows on the 79-flag default. Both flags go to the user.
+
+WR1 is not the 2026-08-29 waterfall the user reverted. There, the WR1/WR2/TE1 were fully protected and the tail absorbed
+the cut. Here only the lead WR's cut is softened to 60%, and nothing is reassigned.

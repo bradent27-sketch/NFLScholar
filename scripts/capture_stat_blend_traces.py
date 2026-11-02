@@ -43,7 +43,10 @@ TRACE_KEYS = ('build_path', 'current_games', 'current_rate', 'prior_rate', 'raw_
               'participation_multiplier', 'weather_stat_multiplier', 'pre_vacancy_projection', 'vacancy_delta',
               'pass_capacity_delta', 'top_end_delta', 'final_projection', 'prior_source', 'expected_snap_share',
               'alignment_residual_available', 'defense_current_games', 'defense_prior_games', 'role_overlay',
-              'defense_estimator')
+              'defense_estimator', 'carry_budget_delta', 'opening_calibration_delta', 'own_history_delta')
+# The points chain after the stat line (2026-11-01, stage-attribution audit): raw stat-line points -> the calibration line
+# (pts_line) -> season anchor -> Questionable cut -> expected-points luck = final. Each step's 'after' (NaN = did not run).
+POINT_STEPS = ('season_anchor', 'questionable_workload', 'expected_points_luck')
 
 # Snap counts for seasons without a local export come from an nflverse download that returns an EMPTY table on any failure,
 # which silently drops every snap-based step for that season and every later season that reads it as history (2026-10-21: a
@@ -589,6 +592,14 @@ def main():
             for st in a_cols:
                 bd[f'a_{st}'] = bd['player'].map(sa[st])
             bd['year'], bd['week'] = year, week
+            chain = {k: [] for k in ('pts_line',) + POINT_STEPS}
+            for _, r in board.iterrows():
+                ex = meta['explanations'].get((r['Player'], r['Pos'], r['Team'])) or {}
+                chain['pts_line'].append((ex.get('calibration') or {}).get('displayed_points', np.nan))
+                for step in POINT_STEPS:
+                    chain[step].append((ex.get(step) or {}).get('after', np.nan))
+            for k, v in chain.items():
+                bd[k if k == 'pts_line' else f'pts_{k}'] = pd.to_numeric(pd.Series(v, index=bd.index), errors='coerce')
             boards.append(bd)
             n = 0
             for _, r in board.iterrows():

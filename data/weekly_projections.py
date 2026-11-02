@@ -2439,6 +2439,10 @@ MODEL_FEATURES = (
                              # running backs to chew clock"). RB rushing TDs and rushing yards
                              # scale with the game's margin (RB_GAME_SCRIPT_RUSH); the carry
                              # budget already reads the spread. Takes precedence over v2_rb_game_script.
+    'v2_points_from_stat_line',  # CANDIDATE (2026-11-01 audit): weeks 3-17, the points total is the displayed (recal'd)
+                             # stat line scored (x the Questionable cut), replacing the points
+                             # line / season anchor / luck results. Held out it ties the chain
+                             # (apply_points_from_stat_line).
     'v2_vacancy_source_order',  # CANDIDATE (2026-11-01): the vacancy pass hands out out players in a fixed order
                              # (team, pre-injury carries + targets descending, name) and breaks
                              # pecking-rank ties by name. Before it the order was the board's row
@@ -4102,6 +4106,35 @@ def apply_stat_recal_own_history(result, history, form, table, script=None):
             for j in np.flatnonzero(over):
                 row = out.iloc[j]
                 info[(row['Player'], row['Pos'], row['Team'])]['stats']['receptions'] = (float(board_rec[j]), float(fixed[j]))
+    return out, info
+
+
+def apply_points_from_stat_line(result, scoring_mode, questionable_info=None):
+    """(result, info) for v2_points_from_stat_line: 'Model Proj Pts' = the row's final stat line scored, times its
+    Questionable factor when v2_questionable_workload cut it. ``info`` maps (Player, Pos, Team) -> {'before', 'after'}.
+
+    Audit 2026-11-01: with the stat recal (v2_stat_recal_own_history / _game_script) on the stat columns, the points chain
+    (points line, low-end line, season anchor, expected-points luck and their refits) adds nothing measurable. On the
+    deep-audit panel, recal refit leaving each season out, START pool: 7.511 against the shipped chain's 7.518 (2021-2025);
+    2026 weeks 3-7, out of sample for both, 7.341 against 7.349. The displayed points then match the displayed stats."""
+    if result is None or result.empty:
+        return result, {}
+    out = result.copy()
+    stat_cols = [c for c in _ALL_PROJECTION_STATS if c in out.columns]
+    scored = np.array([max(0.0, score_projected_stats(d, scoring_mode))
+                       for d in out[stat_cols].fillna(0.0).to_dict('records')], dtype=float)
+    factor = np.ones(len(out))
+    for j, (player, pos, team) in enumerate(zip(out['Player'], out['Pos'], out['Team'])):
+        q = (questionable_info or {}).get((player, pos, team))
+        if q and q.get('factor') is not None:
+            factor[j] = float(q['factor'])
+    new = np.round(scored * factor, 2)
+    before = pd.to_numeric(out['Model Proj Pts'], errors='coerce').fillna(0.0).to_numpy(float)
+    info = {(p, ps, t): {'before': float(b), 'after': float(a)}
+            for p, ps, t, b, a in zip(out['Player'], out['Pos'], out['Team'], before, new)}
+    out['Model Proj Pts'] = new
+    if 'Calibrated Model Proj Pts' in out.columns:
+        out['Calibrated Model Proj Pts'] = new
     return out, info
 
 
@@ -14667,6 +14700,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             result, _own_history, _recal_form, _recal_table,
             script=stat_recal_script_inputs(env, opponents) if 'v2_stat_recal_game_script' in feats else None)
 
+    # v2_points_from_stat_line (candidate, 2026-11-01 audit): weeks 3-17, the total is the displayed stat line scored, times the
+    # Questionable cut where it ran; the points line, season anchor and luck results above are replaced.
+    points_from_line_info = {}
+    if 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
+        result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, questionable_info)
+        result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+
     # Raw per-week slot/wide/inline defense-allowed evidence, grouped for
     # per-player lookup by (defense_team, position) - the pre-shrinkage
     # ingredients behind alignment_scheme_evidence's season-aggregate
@@ -14846,6 +14886,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if key in own_history_info:
             # the stat line only: the point total is not re-scored
             detail['stat_recal_own_history'] = own_history_info[key]
+        if key in points_from_line_info:
+            # v2_points_from_stat_line: the total was replaced by the displayed stat line scored
+            detail['points_from_stat_line'] = points_from_line_info[key]
         if key in opening_calibration_info:
             # the points line was replaced, not applied: the total is the re-scored calibrated stat line
             detail['opening_week_calibration'] = opening_calibration_info[key]

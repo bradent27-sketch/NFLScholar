@@ -7842,3 +7842,44 @@ rows it moves. It changes stat volumes before the points line; the calibration l
 Every harness base arm changes with it. Board-to-board comparisons against base boards saved before this commit need the
 `vso` arm's boards, not the old base. The 2026-11-02 weeks 1-2 runs queued behind the WR1/xTD run start after this commit,
 so their base includes it. Undo: remove the flag.
+
+### 2026-11-02 - pfs and the `lean` removals scored stat by stat (diagnostic; no change)
+User: "did you test each stat for each position to check whether accuracy falls?" Boards of the 2026-11-02 runs (base and
+`pfs` from the first vso run, `lean` from the re-run; 30,012 rows, 29,704 matched to the panel), 2022-2025 weeks 3-17, MSE
+per stat by position (QB passing attempts / yards / TDs and rushing; RB rushing and receiving; WR receiving and rushing
+yards; TE receiving), START (union of the three arms' START sets) and every row, every game and played games:
+- **pfs changes no stat column on any row.** It only replaces the points total with the stat line scored, so every stat's
+  accuracy is identical to today's.
+- **lean changes 363 rows' stats** (rushing attempts / yards, targets, receptions, receiving yards; no QB passing, no TDs),
+  all through the stat recal's 3.0-point gate. START: 0.0% change on every stat at every position. Every row: -0.07% to
+  +0.11% (every game) and 0.00% to +0.24% (played; worst TE receptions +0.24%, TE targets +0.17%). Inside the noise.
+
+### 2026-11-02 - TE capacity relief follow-up: why it overshoots, and why it stays off
+User: "te capacity has potential maybe? it is lowering bias and error is small increase... see if you can get it correct".
+
+**The overshoot is the points chain reading the stat line before the recal** (te boards against base, played START TEs,
+2022-2025):
+- the relief adds +0.18 targets to the final stat line (beta 0.73: most of it comes true);
+- the recal'd stat line scores +0.27 points higher, and all of that comes true (beta 1.08). Bias 0.36 under -> 0.09 under,
+  RMSE 6.743 -> 6.729;
+- the chain's raw points come from the stat line *before* the recal, which carries the full relief (+0.45). The points
+  line passes that through almost one for one (+0.43), so chain points end 0.07 over (every game 0.24 over).
+- So with `v2_points_from_stat_line` the relief lands right on 2022-2025. That is the `te_pfs` result (START-TE -0.014).
+
+**2026 says no.** Simulated through the recal on the 2026 weeks 3-7 capture (pfs scoring; 100 START TE rows): START-TE
+7.342 -> 7.387 at elasticity 0.5, worse at every elasticity from 0.8 down. 2026 START TEs already run 0.36 over.
+
+**Split by the TE's rank in his room** (stage capture, pass-capacity beta, played games):
+
+| | targets 2021-2025 | by season | 2026 | receiving yards 2021-2025 | 2026 |
+|---|---|---|---|---|---|
+| TE1 | 0.67 | 0.50-0.98 (2022 0.98) | 0.82 | 0.60 | 1.33 |
+| TE2+ | 0.32 | -0.06-0.66 | 0.07 | 0.38 | -0.01 |
+
+- The cut that does not come true is the backup TEs'. The TE1 cut mostly holds, fully in 2022 and 2026: the two seasons
+  where lifting every TE hurt START.
+- A backup-only relief (TE1 unchanged; TE2+ elasticity 0.6 / 0.3 / 0) was simulated the same way. START-TE flat
+  (+0.000 to +0.001). Every-game TE 3.9617 -> 3.9616 (2021-2025) and 4.4546 -> 4.4496 (2026). Played TE -0.011 / -0.012.
+  Right in direction but worth almost nothing in points: a backup's cut is about 0.14 targets.
+- No flag built, no harness run. `v2_te_capacity_relief` stays off. Revisit when 2026 has more weeks: the TE1 cut's beta
+  ran 0.50-0.98 by season, so 2022-2025 alone cannot say which way it goes.

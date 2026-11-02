@@ -214,6 +214,15 @@ PASS_CAPACITY_FACTOR_DEADBAND = _env_float("PASS_CAPACITY_FACTOR_DEADBAND", 0.0,
 # recal, elasticity 0.4-0.6 takes START-TE 6.797 -> 6.781 (4 of 5 seasons) and the START-TE bias +0.40 -> ~+0.12.
 TE_CAPACITY_ELASTICITY = 0.5
 
+# --- v2_wr1_capacity_relief (2026-11-02 mechanism audit) -----------------------
+# Same stage attribution, WRs split by the team's projected-target rank (played games): of this pass's cut to the WR1's
+# targets / receiving yards only beta 0.72 / 0.80 shows up (2026 weeks 3-7: 0.31 / 0.64), against WR2 0.95 / 1.16 and WR3
+# 1.09 / 1.04. WR1s run +0.29 targets and +3.2 yards a game under. Simulated through the recal (pfs scoring), elasticity
+# 0.6 takes START-WR 7.643 -> 7.633 (4 of 5 seasons, 2021 +0.003) and the START-WR bias +0.33 -> +0.18; 2026 7.479 -> 7.462.
+# Not the 2026-08-29 waterfall the user reverted: the WR1 still takes most of the room's move, and nothing extra lands on
+# the tail (the difference is not reassigned).
+WR1_CAPACITY_ELASTICITY = 0.6
+
 CAPACITY_LEDGER_COLUMNS = [
     'team', 'position_group', 'capacity', 'capacity_source', 'trusted_claim', 'tail_claim',
     'allocated', 'unallocated', 'trusted_count', 'tail_count', 'reason',
@@ -321,12 +330,16 @@ def apply_pass_capacity_conservation(
         injury_neutral_claim: bool = False,
         keep_tds: bool = False,
         te_elasticity: float | None = None,
+        wr1_elasticity: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit one team's RB/WR/TE targets (and dependents) to a real pass budget.
 
     ``te_elasticity`` (default None = off; 'v2_te_capacity_relief', weeks 3+): in a group the uniform factor moves,
     each tight end takes 1 + te_elasticity * (factor - 1) instead of the factor; the difference is not reassigned.
     See TE_CAPACITY_ELASTICITY.
+
+    ``wr1_elasticity`` (default None = off; 'v2_wr1_capacity_relief', weeks 3+): the same for the group's WR with the most
+    targets before the fit (one per team; name breaks a tie). See WR1_CAPACITY_ELASTICITY.
 
     ``keep_tds`` (default off; 'v2_pass_capacity_keep_tds'): scale receptions and
     receiving yards with targets but leave ``receiving_tds`` at its pre-budget
@@ -509,6 +522,18 @@ def apply_pass_capacity_conservation(
                     te_factor = 1.0 + float(te_elasticity) * (factor - 1.0)
                     allocated.loc[idx[te_rows]] = current.loc[idx[te_rows]] * te_factor
                     reason += f" Tight ends x{te_factor:.3f} (elasticity {float(te_elasticity):.2f})."
+            if wr1_elasticity is not None:
+                # v2_wr1_capacity_relief: the room's lead WR takes only wr1_elasticity of the move; the rest is not
+                # handed to anyone (see WR1_CAPACITY_ELASTICITY).
+                wr = out.loc[idx].loc[lambda f: f['Pos'].astype(str).eq('WR')]
+                if not wr.empty:
+                    lead = (wr.assign(_t=pd.to_numeric(wr['targets'], errors='coerce').fillna(0.0),
+                                      _p=wr['Player'].astype(str))
+                            .sort_values(['_t', '_p'], ascending=[False, True], kind='mergesort').index[0])
+                    wr1_factor = 1.0 + float(wr1_elasticity) * (factor - 1.0)
+                    allocated.loc[lead] = current.loc[lead] * wr1_factor
+                    reason += (f" Lead WR {out.loc[lead, 'Player']} x{wr1_factor:.3f}"
+                               f" (elasticity {float(wr1_elasticity):.2f}).")
         ledger_row = {
             'capacity': round(group_capacity, 2), 'trusted_claim': round(trusted_claim, 2),
             'tail_claim': round(tail_claim, 2), 'allocated': round(float(allocated.sum()), 2),

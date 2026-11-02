@@ -136,7 +136,8 @@ from data.player_aliases import canonical_player_key, stable_roster_identity_key
 from data.availability_overrides import (
     load_availability_overrides, resolve_target_week_availability, _ASSUME_OUT_STATUSES,
 )
-from data.pass_capacity_allocator import apply_pass_capacity_conservation, SIDELINED_AVAILABILITY, TE_CAPACITY_ELASTICITY
+from data.pass_capacity_allocator import (apply_pass_capacity_conservation, SIDELINED_AVAILABILITY, TE_CAPACITY_ELASTICITY,
+                                         WR1_CAPACITY_ELASTICITY)
 from data.rb_carry_budget import team_rb_carry_budgets, apply_rb_carry_budget
 from data.qb_volume_blend import blend_qb1_volume, QB_STYLE_BLEND_K, QB_STYLE_BLEND_K_CANDIDATE
 from data.fantasypros_availability import load_fantasypros_availability
@@ -2455,6 +2456,10 @@ MODEL_FEATURES = (
     'v2_te_capacity_relief',  # CANDIDATE (2026-11-02 audit): weeks 3+, a tight end takes TE_CAPACITY_ELASTICITY
                              # (0.5) of the pass-capacity factor's move (data/pass_capacity_allocator.py);
                              # the uniform cut took too much from TEs (stage beta 0.58-0.63).
+    'v2_wr1_capacity_relief',  # CANDIDATE (2026-11-02 audit): weeks 3+, each room's lead WR takes
+                             # WR1_CAPACITY_ELASTICITY (0.6) of the pass-capacity factor's move; the
+                             # uniform cut took too much from WR1s (stage beta 0.72 targets / 0.80 yards,
+                             # WR2-3 ~1.0).
     'v2_point_in_time_roster',  # SHIPPED 2026-11-01 (backlog D6 / N4; backtest only, no-op live). A backtest
                              # reads the roster as of the target week (nflverse weekly roster):
                              # past games keep the team they were played for, the board's Team
@@ -14452,7 +14457,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 injury_neutral_claim=('v2_pass_capacity_injury_neutral_claim' in feats),
                 keep_tds=('v2_pass_capacity_keep_tds' in feats),
                 te_elasticity=(TE_CAPACITY_ELASTICITY if 'v2_te_capacity_relief' in feats
-                               and not (cold_start or int(as_of_week) <= 2) else None))
+                               and not (cold_start or int(as_of_week) <= 2) else None),
+                wr1_elasticity=(WR1_CAPACITY_ELASTICITY if 'v2_wr1_capacity_relief' in feats
+                                and not (cold_start or int(as_of_week) <= 2) else None))
             ledger = ledger_df.to_dict('records')
             adjusted = bool(not ledger_df.empty
                             and (ledger_df['capacity_source'] != 'no capacity signal').any())

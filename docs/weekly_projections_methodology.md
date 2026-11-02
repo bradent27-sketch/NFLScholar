@@ -7491,3 +7491,37 @@ E1 beat E0 less often than E2 everywhere: two recalibrations in a row over-corre
   sides this season.
 - Live ledger boards from before 2026-11-01 carry the old columns, so `scripts/prop_scorecard.py`'s record for weeks 3-8 reads
   the new engines on old numbers. Judge the refit on week 9 onward.
+
+### 2026-11-01 - Does QB rushing have a defense multiplier? Yes; checked, no change
+The user noticed that QB rushing does not appear to have a defense multiplier anywhere in the model. This is a diagnostic
+(no pre-set bar, no flag).
+
+**In the calculation.** QB carries, rushing yards and rushing TDs each get a defense matchup multiplier.
+- It comes from the QB rushing each defense allowed, measured against the norms of the QBs it faced. It is blended with last
+  season by games / (games + 12) and clipped, the same estimator as other positions (`build_team_game_quality_adjusted_matchup`
+  on QB rows; the role blend path).
+- QB passing uses the overall team-game rating instead.
+- 2026 week 9, the 30 projected starters: carries 0.92-1.15, rushing yards 0.85-1.16 (Purdy 0.85, Mayfield 1.13), rushing TDs
+  0.91-1.11.
+- The app's breakdown table shows it as "Defense multiplier".
+
+**Why it looks absent.**
+- `v2_stat_recal_own_history` and the QB game-script table rebuild QB carries and rushing yards from the board's number plus
+  the QB's own history.
+- They keep 0.35 (carries) and 0.40 (rushing yards) of the board's number, so the defense effect on the displayed column is cut
+  to about 40%. A 1.16 multiplier ends near +6%, a 0.85 near -6%.
+- Rushing TDs are not rebuilt; the TD matchup runs at half strength (`v2_td_matchup_half`).
+
+**Is it the right size?** 2021-2025 projected starters, multipliers from the 2026-10-21 trace capture
+(`.sweeps/matchup_capture.parquet`):
+- **At full strength it adds nothing for QB rushing.** Rushing-yards MSE was the same as with no multiplier.
+- **The best strength on the board's projection, y = base x multiplier^beta:**
+  - rushing yards 0.50 (0.5 to 0.7 in 4 of 5 seasons);
+  - carries 0.55 (noisy, -0.2 to 1.45);
+  - rushing TDs 0.15 (-0.75 to 1.2).
+  - For comparison, QB passing yards is 0.90.
+- **Does the rebuild throw away real matchup information?** The test added the matchup-driven part of the projection as its
+  own term in the shipped QB rushing form.
+  - In-sample it is worth more than other departures: about 0.54-0.62 of its effect, against 0.29-0.35 for other departures.
+  - Held out by season it does not help: carries +0.10% MSE, rushing yards +0.15%, better in 3 of 5 seasons each.
+- **Verdict:** the QB rushing matchup is a weak, noisy signal, and the rebuild already sizes it about right. Nothing changes.

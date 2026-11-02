@@ -180,11 +180,14 @@ and every-game rows differ. The TE capacity relief targets exactly that gap.
    only nudge 358 rows below START across the recal gate. DEFAULT_FEATURES 81 -> 77, and the points equal the stats.
 2. **`v2_points_from_stat_line_edges`** if the weeks 1-2 harness passes. Then the points line survives only for QBs in weeks
    1-2.
-3. **`v2_vacancy_source_order`**: a correctness fix (the split no longer depends on row order). It passed: START-ALL -0.001,
+3. **`v2_vacancy_source_order`** SHIPPED 2026-11-02 (DEFAULT_FEATURES = 82). A correctness fix (the split no longer depends on row order). It passed: START-ALL -0.001,
    no position worse. All 584 moved rows trace to team-weeks with 2+ vacancy sources, except one row that crossed the recal
    gate.
 4. **`v2_te_capacity_relief`** missed its bar (EVERY-START-TE +0.010; in the chain the TE bias overshoots to 0.16 over). In
-   the pfs world it reads START-TE -0.014, inside the noise. It stays off; it could be re-tested after a pfs ship.
+   the pfs world it reads START-TE -0.014, inside the noise. Follow-up: the chain overshoots because it scores the stat line
+   before the recal. With pfs it lands right on 2022-2025, but 2026 weeks 3-7 get worse. The cut that fails to come true is
+   the backup TEs' (beta 0.32, 2026 ~0); the TE1 cut mostly holds (0.67; 2022 and 2026 about 1). A backup-only relief is
+   worth ~0 points. Stays off; revisit with more 2026 weeks.
 5. **Dead code**: remove the rejected and superseded flags' branches (section 2), verified by identical default boards.
 6. **Leads for the backlog:** rookie RB early-season rushing (M18); WR1 concentration; the stat recal's 3.0-point gate is a
    cliff (M19: targets jump 35-50% across it, below START only). Each needs its own study.

@@ -8074,3 +8074,26 @@ audit-pass-2 entry). Registered in POST_CALIBRATION_FEATURES (acts after the rec
   the stat line; the explanation carries `questionable_stat_cut` (stat -> before, after).
 - The uniform 0.83 cut still runs first (it sets the points the stat recal's 3.0-point gate reads, unchanged); only the final
   scoring of the line differs. Undo: remove the flag.
+
+### 2026-11-02 - Are targets and receiving yards too low? Levels are right in the backtests; the capacity cut is the one structural source
+User: "figure out if we can get targets and yards a little higher closer to accuracy". Stage capture (2021-2025 weeks 3-17, 2026
+weeks 3-7), played rows, START-like pools (top 55 WR / 20 TE / 40 RB by that stat's projection each week):
+
+| actual - projected | WR targets | WR rec | WR yards | TE targets | TE yards | RB targets | RB rec yards |
+|---|---|---|---|---|---|---|---|
+| START 2021-2025 | +0.08 (+1.2%) | +0.04 | -0.1 (-0.2%) | +0.10 (+1.8%) | +1.1 (+2.6%) | +0.05 (+1.4%) | +0.1 (+0.6%) |
+| START 2026 weeks 3-7 | +0.31 (+4.8%) | +0.27 (+6.3%) | +2.3 (+4.4%) | +0.08 | -3.8 (-8%) | +0.01 | +0.5 |
+
+- **Backtest levels are right** (every |t| under 1.7). The 2026 WR shortfall is the passing surge (W1: QB attempts +5% over the
+  projection in weeks 3-7), and the market is lower still on WR yards (-5.0 vs the model's -3.4 on the ledger).
+- **Under-projection in the ledger is mostly the low-line tier** (WR yards: bottom line quartile -6.1 model / -8.9 market, top
+  quartile -3.6 / -2.6): conditioning on a low line selects players who then beat it.
+- **A level drift correction does not help:** pool bias over weeks 3..w-1 added to week w gets the next week wrong (MSE +0.1 to
+  +1.4% for WR/TE/RB targets and yards in most seasons; QB attempts -1.0%). Week-to-week league level does not persist.
+- **The pass-capacity cut is the structural piece.** Beta of the cut (fit without each season, START pools): RB targets /
+  receptions / yards 0.71 / 0.69 / 0.65 in 6 of 6 seasons; TE 0.80 / 0.77 / 0.69 (4 of 6); WR1 0.73 / 0.75 / 0.81 (relief shipped);
+  WR2+ 1.06 / 1.15 / 1.18 (not over-cut; left alone). Taking the rest back for backs: receiving-yards bias +0.55 -> -0.02,
+  receiving points MSE -0.45% (6 of 6 seasons).
+- **Built (off): `v2_rb_capacity_relief`** (each back takes 0.6 of the capacity factor's move, nothing reassigned), harness arms
+  `rb6` and `rb6_te` queued (.sweeps/run_rb_capacity.bat, bar .sweeps/rb_capacity_relief_bar.md set first).
+- Left for week 8 final: the 2026 team pass volume (W1 / M2).

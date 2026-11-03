@@ -135,6 +135,7 @@ def test_compression_is_monotone_and_never_raises_a_value():
 
 
 class _FakeSt:
+    session_state = {}
     def __init__(self):
         self.calls = []
 
@@ -147,7 +148,7 @@ class _FakeSt:
     def dataframe(self, frame, *a, **k):
         self.calls.append(('dataframe', frame))
 
-    def expander(self, label, expanded=False):
+    def expander(self, label, expanded=False, **kwargs):
         self.calls.append(('expander', label))
         return contextlib.nullcontext()
 
@@ -165,6 +166,7 @@ def test_the_main_stat_table_renders_a_top_end_stage(monkeypatch):
     import ui.tabs.rankings as rk
     fake = _FakeSt()
     monkeypatch.setattr(rk, 'st', fake)
+    monkeypatch.setattr(__import__('ui.components', fromlist=['st']), 'st', fake)
     stats = {'receiving_yards': _stat(88.0, top_end=-20.0), 'receptions': _stat(7.0), 'targets': _stat(10.0),
              'receiving_tds': _stat(0.6)}
     rk._render_decomposition_primary_table({'stats': stats, 'season_year': 2026, 'scoring_mode': 'Full PPR'}, None)
@@ -185,6 +187,7 @@ def test_points_path_shows_the_top_end_step(monkeypatch):
     import ui.tabs.rankings as rk
     fake = _FakeSt()
     monkeypatch.setattr(rk, 'st', fake)
+    monkeypatch.setattr(__import__('ui.components', fromlist=['st']), 'st', fake)
     rk._render_points_path({
         'raw_points': 20.0, 'calibrated_points': 19.4, 'target_week': 6,
         'calibration': {'enabled': True, 'slope': 0.969, 'intercept': 0.99, 'raw_points': 20.0, 'displayed_points': 20.37},

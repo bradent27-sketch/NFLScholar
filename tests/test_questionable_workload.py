@@ -89,6 +89,7 @@ def test_a_custom_factor_table_is_honoured_and_status_case_is_ignored():
 
 
 class _FakeSt:
+    session_state = {}
     def __init__(self):
         self.calls = []
 
@@ -101,7 +102,7 @@ class _FakeSt:
     def dataframe(self, frame, *a, **k):
         self.calls.append(('dataframe', frame))
 
-    def expander(self, label, expanded=False):
+    def expander(self, label, expanded=False, **kwargs):
         self.calls.append(('expander', label))
         return contextlib.nullcontext()
 
@@ -110,6 +111,7 @@ def test_points_path_lists_the_questionable_step_last(monkeypatch):
     import ui.tabs.rankings as rk
     fake = _FakeSt()
     monkeypatch.setattr(rk, 'st', fake)
+    monkeypatch.setattr(__import__('ui.components', fromlist=['st']), 'st', fake)
     rk._render_points_path({
         'raw_points': 15.0, 'calibrated_points': 10.4, 'target_week': 6,
         'calibration': {'enabled': True, 'slope': 0.9, 'intercept': 1.0, 'raw_points': 15.0, 'displayed_points': 14.5},

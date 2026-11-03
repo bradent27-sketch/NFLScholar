@@ -2303,6 +2303,16 @@ MODEL_FEATURES = (
                              # tags that change availability. Held out by
                              # season: START-ALL RMSE -0.009; harness
                              # v2: START-ALL -0.011, START-WR -0.027.
+    'v2_questionable_stat_cut',  # CANDIDATE (2026-11-02 audit). With points from the stat line
+                             # a Questionable WR's points carry the 0.83 cut but his
+                             # displayed stat line is still the healthy one (yards -7.6,
+                             # receptions -0.49, TDs -0.15 over-projected on the 278 Q-tagged
+                             # START rows, 5 of 5 seasons). This cuts the stat columns
+                             # themselves, per stat (QUESTIONABLE_STAT_FACTORS: targets
+                             # 0.93, receptions 0.89, yards 0.86, TDs 0.56) and scores that
+                             # line, so points and stats agree. Needs v2_questionable_workload
+                             # and v2_points_from_stat_line. Held out by season the points
+                             # RMSE is as good as the uniform cut (6.84 vs 6.81 / 6.85).
     'v2_top_end_yardage',  # SHIPPED 2026-10-13 (was a candidate). From week 3, projected
                              # yards above 60 (receiving: WR/TE/RB; rushing:
                              # RB) count only in part (TOP_END_YARDAGE), the
@@ -3858,6 +3868,43 @@ def apply_questionable_workload(result, injury_profiles, factors=None):
     for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
         if col in out.columns:
             out.loc[eligible, col] = new[eligible]
+    return out, info
+
+
+# v2_questionable_stat_cut: the same Questionable WR, but on the stat line itself. Least-squares-through-the-origin factors on the
+# 278 Q-tagged WR START rows (2021-2025 weeks 3-17, played; the factors fit without each season stay within 0.51-0.62 for TDs and
+# 0.92-0.93 / 0.88-0.89 / 0.85-0.87 for targets / receptions / yards). Scored with the league's weights they cut a typical WR's
+# points by 14-15% (the uniform cut is 17%), the same held-out accuracy (pooled RMSE 6.84 vs 6.81 for the in-sample 0.83 and 6.85
+# for a uniform factor fit out of sample), and each stat's bias goes to zero: yards -7.6 -> +0.6, receptions -0.49 -> +0.04, TDs
+# -0.15 -> +0.02, with 1-3% less stat RMSE. Applied after the stat recal, to the rows the points cut touched.
+QUESTIONABLE_STAT_FACTORS = {'WR': {'targets': 0.926, 'receptions': 0.888, 'receiving_yards': 0.862, 'receiving_tds': 0.564}}
+
+
+def apply_questionable_stat_cut(result, questionable_info, factors=None):
+    """(result, info): scale the stat columns of each row ``questionable_info`` lists (the Questionable rows
+    apply_questionable_workload cut) by ``factors[pos][stat]``. ``info`` maps (Player, Pos, Team) -> {stat: (before, after)}."""
+    factors = QUESTIONABLE_STAT_FACTORS if factors is None else factors
+    if result is None or result.empty or not questionable_info:
+        return result, {}
+    out = result.copy()
+    keys = list(zip(out['Player'], out['Pos'], out['Team']))
+    rows = [j for j, k in enumerate(keys) if k in questionable_info and keys[j][1] in factors]
+    if not rows:
+        return out, {}
+    info = {}
+    for j in rows:
+        per_stat = factors[keys[j][1]]
+        changed = {}
+        for stat, f in per_stat.items():
+            if stat not in out.columns:
+                continue
+            before = pd.to_numeric(out.iat[j, out.columns.get_loc(stat)], errors='coerce')
+            if pd.isna(before):
+                continue
+            after = float(before) * float(f)
+            out.iat[j, out.columns.get_loc(stat)] = after
+            changed[stat] = (float(before), after)
+        info[keys[j]] = changed
     return out, info
 
 
@@ -14830,12 +14877,23 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # Questionable cut where it ran; the points line, season anchor and luck results above are replaced.
     # v2_points_from_stat_line_edges: weeks 1-2 as well, for the positions the edges recal re-predicts.
     points_from_line_info = {}
+    questionable_stat_info = {}
+    _points_info_for_line = questionable_info       # the uniform cut the line is scored with (v2_questionable_stat_cut: none)
+    _pfs_runs = ('v2_points_from_stat_line' in feats and (
+        _recal_form == 'linear' or ('v2_points_from_stat_line_edges' in feats and _recal_form in ('week1', 'pull'))))
+    if 'v2_questionable_stat_cut' in feats and _pfs_runs and questionable_info:
+        # the Questionable cut moves onto the stat line itself: those columns are cut per stat and the line is scored as it
+        # stands (so the points are not cut a second time). Restricted to the positions pfs rewrites this week.
+        _cut_info = (questionable_info if _recal_form == 'linear' else
+                     {k: v for k, v in questionable_info.items() if k[1] in POINTS_FROM_STAT_LINE_EDGE_POSITIONS})
+        result, questionable_stat_info = apply_questionable_stat_cut(result, _cut_info)
+        _points_info_for_line = {k: v for k, v in questionable_info.items() if k not in questionable_stat_info}
     if 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
-        result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, questionable_info)
+        result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, _points_info_for_line)
         result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
     elif ('v2_points_from_stat_line' in feats and 'v2_points_from_stat_line_edges' in feats
           and _recal_form in ('week1', 'pull')):
-        result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, questionable_info,
+        result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, _points_info_for_line,
                                                                     positions=POINTS_FROM_STAT_LINE_EDGE_POSITIONS)
         result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
 

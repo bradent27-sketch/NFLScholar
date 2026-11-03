@@ -303,6 +303,7 @@ def test_the_main_stat_table_shows_the_own_history_step(monkeypatch):
     class FakeSt:
         def __init__(self):
             self.calls = []
+            self.session_state = {}
 
         def markdown(self, text, *a, **k):
             self.calls.append(('markdown', text))
@@ -313,7 +314,7 @@ def test_the_main_stat_table_shows_the_own_history_step(monkeypatch):
         def dataframe(self, frame, *a, **k):
             self.calls.append(('dataframe', frame))
 
-        def expander(self, label, expanded=False):
+        def expander(self, label, expanded=False, **kwargs):
             return contextlib.nullcontext()
 
     def stat(final, own=0.0):
@@ -325,6 +326,7 @@ def test_the_main_stat_table_shows_the_own_history_step(monkeypatch):
 
     fake = FakeSt()
     monkeypatch.setattr(rk, 'st', fake)
+    monkeypatch.setattr(__import__('ui.components', fromlist=['st']), 'st', fake)
     stats = {'targets': stat(7.0, own=-1.0), 'receptions': stat(4.5, own=-0.5), 'receiving_yards': stat(60.0),
              'receiving_tds': stat(0.4)}
     rk._render_decomposition_primary_table({'stats': stats, 'season_year': 2026, 'scoring_mode': 'Full PPR'}, None)

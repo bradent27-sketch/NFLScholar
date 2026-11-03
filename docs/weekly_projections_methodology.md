@@ -8018,3 +8018,35 @@ columns, 0 numeric cells differ); the data-layer edits only add fields to the ex
   draws its header at weight 600 (a canvas script: Streamlit's theme gives header and cells one weight).
 - **Explanatory text:** long captions (200+ characters in every tab, plus the long ones in the decomposition and the Live data
   hub) became `quiet_note` dropdowns: dim text with a small arrow, no outline.
+
+### 2026-11-02 - Audit pass 2 (error-first): the model is right almost everywhere; one consistency candidate, a few parked leads
+User: "keep working through the model ... find more things where we have the right idea, but we're making some small errors."
+Scans, all on the 2021-2025 START pool (error map, pfs world) unless noted; scripts in the session scratchpad.
+- **Residual scan:** 2,800 buckets (position x stat x 28 features, quartiles and categories); 104 clear |t| >= 3 with the same sign
+  in 4+ seasons. Almost all are one lead seen many ways: QB passing attempts (-0.8, over-projected, 5 of 5 seasons) and the
+  Questionable WR rows. Nothing else is above 0.35% of a position's MSE.
+- **Stat level:** START mean bias is under 3% of the projection for every stat (WR targets +0.12 on 6.7, TE yards +1.5 on 42,
+  QB attempts -0.77 on 33). **Team level:** summed projected attempts / carries / targets / TDs / yards are within 0.7-5.6% of the
+  actual team sums; the touchdown slope on the implied team total is 0.91-0.96 of actual (receiving TDs 1.29).
+- **Rookies:** the remaining rookie error was touchdowns only (RB rush +0.11, WR receiving +0.09, TE +0.12 per game). On the
+  `xtdp2` harness arm it is +0.03 / -0.005 / +0.04, so the xTD fix (shipped today) covers it. Volume and yardage are unbiased.
+- **Recency:** last-3 vs season-to-date form adds nothing beyond the projection for rookies or veterans in WR/TE/QB; the one hit
+  is RB carries (vets +0.13 per carry of difference, t 2.9; 0.23 in games 4-6, t 2.4), one of ~30 tests, not built.
+- **Live vs market (2026 weeks 3-8, pre-kickoff boards):** the ledger vintages sit 11% above the market on QB passing yards, but
+  4 of 165 rows are teams the board had NO starting QB for (QB1 selection required, before the M6 fallback shipped): 14% of the
+  QB passing SSE. Replaying today's model on weeks 3-7, starters only: RMSE 64.8 vs the market's 62.6, spread of QB yards 32.5 vs
+  26.7 (the ledger vintages were 38-42; the board for week 9 is 28). So the M15 recal closed most of that gap.
+- **Questionable WRs (built, off): `v2_questionable_stat_cut`.** With points from the stat line the WR points carry a 0.83 cut and
+  the stat line does not: on the 278 Q-tagged START rows the stat columns run over (yards -7.6, receptions -0.49, TDs -0.15, 5 of 5
+  seasons). The flag cuts the columns per stat (targets 0.926, receptions 0.888, yards 0.862, TDs 0.564) and scores that line.
+  Held out by season the points RMSE is 6.841 against 6.808 for the shipped in-sample 0.83 and 6.849 for a uniform factor fit out
+  of sample; stat bias goes to ~0 and stat RMSE falls 1-3%. Points-neutral by design, so the harness cannot see it; only props and
+  the displayed stat line change. Needs v2_questionable_workload and v2_points_from_stat_line. User's call.
+- **Parked (each under 0.2 of a point of MSE, or not a START problem):** QB passing attempts spread across QBs (slope of actual on
+  projection 0.75 in 2021-2025, 0.56 in 2026 weeks 3-7; shrinking the deviation from the week's mean by 0.75 is -1.1% attempts MSE,
+  4 of 5 seasons, and -2.7% in 2026, but attempts feed only attempts props); team targets 1.8% and receiving yards 3.3% under the
+  actual team sums (the pass-capacity cut, beta 0.6-0.9); QB attempts too flat in the implied total (stage beta 3.8, team slope
+  0.50 projected vs 0.68 actual); the stat recal's 3.0-point gate (M19); vet WR receiving TDs -9% over (t -3.6, 4 of 5).
+- **Process note:** the 2026-11-02 UI commit (d1b11d5) broke four test files whose fake `st` predates quiet_note
+  (test_opening_week_stat_calibration, test_stat_recal_own_history, test_top_end_yardage, test_questionable_workload); fixed in
+  the next commit. The whole suite passes.

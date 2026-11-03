@@ -137,6 +137,7 @@ def test_a_back_who_catches_every_target_is_clamped_to_his_targets():
 
 
 class _FakeSt:
+    session_state = {}
     def __init__(self):
         self.calls = []
 
@@ -149,7 +150,7 @@ class _FakeSt:
     def dataframe(self, frame, *a, **k):
         self.calls.append(('dataframe', frame))
 
-    def expander(self, label, expanded=False):
+    def expander(self, label, expanded=False, **kwargs):
         self.calls.append(('expander', label))
         return contextlib.nullcontext()
 
@@ -158,6 +159,7 @@ def test_points_path_names_the_per_stat_stage(monkeypatch):
     import ui.tabs.rankings as rk
     fake = _FakeSt()
     monkeypatch.setattr(rk, 'st', fake)
+    monkeypatch.setattr(__import__('ui.components', fromlist=['st']), 'st', fake)
     rk._render_points_path({
         'raw_points': 15.0, 'calibrated_points': 12.4, 'target_week': 1,
         'calibration': {'enabled': True, 'slope': 0.9, 'intercept': 1.0, 'raw_points': 15.0, 'displayed_points': 12.4},
@@ -184,6 +186,7 @@ def _render_primary_table(monkeypatch, stats):
     import ui.tabs.rankings as rk
     fake = _FakeSt()
     monkeypatch.setattr(rk, 'st', fake)
+    monkeypatch.setattr(__import__('ui.components', fromlist=['st']), 'st', fake)
     rk._render_decomposition_primary_table(
         {'stats': stats, 'season_year': 2027, 'scoring_mode': 'Full PPR'}, None)
     styled = next(c[1] for c in fake.calls if c[0] == 'dataframe')

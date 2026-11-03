@@ -1,0 +1,1478 @@
+From 7937ce7325eb17f9b99fb869c030ea8d2c8e42fd Mon Sep 17 00:00:00 2001
+From: bradent27-sketch <304192343+bradent27-sketch@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 08:41:39 -0600
+Subject: [PATCH] Retire v2_scheme_alignment_blend,
+ v2_coaching_aware_defense_prior and v2_defense_prior_games_override
+
+- v2_scheme_alignment_blend (2026-08-27): evidence-weighted blend of the alignment and scheme matchups. The cross-season sweep
+  (2024+2025 weeks 2-18) found scheme alone is a clean win for TE (shipped as v2_scheme_matchup, TE only) and no startable win for WR
+  at any blend weight (START-WR +0.039 / +0.149 at 0.70); the "START-WR receiving_yards -0.297" lead was one season, -0.073
+  [-0.345, +0.203] across two.
+- v2_coaching_aware_defense_prior: per-team DEFENSE_PRIOR_GAMES by coaching-change cohort (HC+DC reset -> 8, coordinator-only -> 18).
+  The weeks 2-9 gain (START-QB -0.016, START-TE -0.039) was 2 significant cells of 63, flipped sign on weeks 10-17 (START-WR +0.020*) and
+  vanished fit-on-odd/score-on-even. Archived earlier as docs/archive/coaching_defense_prior_RETIRED.md.
+- v2_defense_prior_games_override: a sweep hook for DEFENSE_PRIOR_GAMES, a no-op unless set.
+data/coaching_changes.py stays (cohort labels and the per-team prior-games function, used by the analysis scripts); blend_defense_prior
+still accepts a per-team Series. Removes the branches, SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT, DEFENSE_PRIOR_GAMES_OVERRIDE and seven
+flag-specific sweep / verdict scripts. Restore with git revert of this commit.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ data/weekly_projections.py            | 124 +------
+ scripts/coaching_final_verdict.py     | 477 --------------------------
+ scripts/reconfirm_alignment_scheme.py |  98 ------
+ scripts/sweep_coaching_prior_games.py |  89 -----
+ scripts/sweep_defense_prior_games.py  |  55 ---
+ scripts/sweep_pos_cohort_prior.py     | 135 --------
+ scripts/sweep_scheme_blend_weight.py  |  75 ----
+ scripts/sweep_scheme_blend_weight2.py | 273 ---------------
+ 8 files changed, 4 insertions(+), 1322 deletions(-)
+ delete mode 100644 scripts/coaching_final_verdict.py
+ delete mode 100644 scripts/reconfirm_alignment_scheme.py
+ delete mode 100644 scripts/sweep_coaching_prior_games.py
+ delete mode 100644 scripts/sweep_defense_prior_games.py
+ delete mode 100644 scripts/sweep_pos_cohort_prior.py
+ delete mode 100644 scripts/sweep_scheme_blend_weight.py
+ delete mode 100644 scripts/sweep_scheme_blend_weight2.py
+
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index cdf4055..bd83537 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -169,24 +169,6 @@ ALIGNMENT_SCORING_STAT_MAP = {
+     'targets': 'targets', 'receptions': 'receptions', 'receiving_yards': 'yards',
+ }
+ 
+-# Optional FIXED mixing weight (scheme's own share) per position, overriding
+-# 'v2_scheme_alignment_blend''s default evidence-weighted blend - empty by
+-# default, meaning every position uses that default. Built 2026-08-27 per
+-# explicit request: the component backtest program's evidence-weighted blend
+-# showed a real, positive pattern for BOTH positions but with opposite
+-# implications - WR's blend beat scheme-alone outright (best of every variant
+-# tested), while TE's blend was real but weaker than scheme-alone's own
+-# START-TE win, i.e. alignment context was "diluting, not hurting" TE's
+-# result. The user wants to KEEP alignment context for TE regardless (not
+-# drop it for a pure scheme-wins-outright design) while weighting it less
+-# than the ~50/50 the evidence-weighted default happened to land near - this
+-# lets scripts/sweep_scheme_blend_weight.py test specific fixed ratios (e.g.
+-# {'TE': 0.75}) to find where that tradeoff actually lands, rather than
+-# guessing at one number. Set by a sweep script via monkeypatch + explicit
+-# build_weekly_projections.clear() between runs (the cache key is `features`,
+-# which does not change across weight values - mutating this dict alone
+-# would silently serve a stale cached result otherwise); never set here by
+-# default.
+ # Positions where man/zone scheme evidence REPLACES the broad matchup when
+ # 'v2_scheme_matchup' is on. Deliberately narrower than
+ # SCHEME_DEFENSE_SUPPORTED_POSITIONS ({TE, WR}), which governs where the
+@@ -219,8 +201,6 @@ ALIGNMENT_SCORING_STAT_MAP = {
+ # work. It is recorded here so it is not resurrected from the old note.
+ SCHEME_MATCHUP_SCORING_POSITIONS = frozenset({'TE'})
+ 
+-SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT = {}
+-
+ # One past the last real week of a completed prior season, so every one of
+ # its weeks passes discover_weekly_alignment_exports' strict
+ # `week < as_of_week` eligibility check when this app cold-starts a new
+@@ -1398,15 +1378,6 @@ MODEL_FEATURES = (
+                              # backtested) and this file's own note below.
+                              # Not yet in DEFAULT_FEATURES - first backtest
+                              # pending.
+-    'v2_scheme_alignment_blend',  # evidence-weighted blend of alignment and
+-                             # scheme instead of either replacing the broad
+-                             # matchup alone or one outright replacing the
+-                             # other - see the note above
+-                             # 'v2_scheme_alignment_blend' in this file's
+-                             # per-stat loop for the full reasoning. Mutually
+-                             # exclusive with 'v2_scheme_matchup' in practice
+-                             # (both test different combination strategies);
+-                             # if both are set, the blend wins.
+     'v2_game_total_elasticity',  # implied game-total scaling ALONE, unbundled
+                              # from 'game_env' (rejected as a bundle, +0.012
+                              # MAE) - see _game_env_multiplier's own note.
+@@ -1421,18 +1392,6 @@ MODEL_FEATURES = (
+                              # WEATHER_WIND_SLOPE table. Recorded schedule wind
+                              # for a past week; Open-Meteo forecast
+                              # (data/weather.py) for a live one.
+-    'v2_defense_prior_games_override',  # sweep hook for DEFENSE_PRIOR_GAMES
+-                             # (currently 12.0) - see that constant's own note
+-                             # and scripts/sweep_defense_prior_games.py. A no-op
+-                             # unless DEFENSE_PRIOR_GAMES_OVERRIDE is also set.
+-    'v2_coaching_aware_defense_prior',  # scale DEFENSE_PRIOR_GAMES per team by
+-                             # its off-season coaching-change cohort: HC+DC (or
+-                             # lone new HC) reset -> shorter prior leash (~8);
+-                             # coordinator-only promotion under a retained HC ->
+-                             # longer leash (~18); no signal -> unchanged. See
+-                             # data/coaching_changes.py + scripts/analyze_
+-                             # coaching_defense_prior.py. Backtest-only; live
+-                             # use needs current-season coordinator data.
+     'v2_historical_ourlads',  # let a HISTORICAL cold-start target (weeks 1-3 of
+                              # a past season) read the frozen pre-Week-1 Ourlads
+                              # archive (external_data/ourlads_depth_charts_history.csv,
+@@ -4997,15 +4956,6 @@ def build_qb_quality_adjusted_matchup(hist_qbs, name_col, team_col, stats, as_of
+ # (2025 wk4-17, n=14) overfitting risk. Calibration was re-fit for this
+ # value on 2026-08-29. Full tables: docs/overnight_backtest_log_2026-08-27.md.
+ DEFENSE_PRIOR_GAMES = 12.0
+-# Sweep hook, built 2026-08-27 - never set outside a sweep script. This
+-# constant has driven every position's defense matchup number since it was
+-# set, never itself backtested against alternate values. None (default)
+-# means "use DEFENSE_PRIOR_GAMES as always"; a float means "use this instead,
+-# but ONLY when 'v2_defense_prior_games_override' is in feats" - gated so a
+-# plain DEFAULT_FEATURES build is never affected by this constant being
+-# nonzero, only a deliberate sweep variant is. See
+-# scripts/sweep_defense_prior_games.py.
+-DEFENSE_PRIOR_GAMES_OVERRIDE = None
+ 
+ # --- v2_offense_prior_blend --------------------------------------------------
+ # Built 2026-09-16 at the user's request, after the blowout-discount work
+@@ -5183,7 +5133,7 @@ def blend_defense_prior(current, prior, evidence, prior_games=DEFENSE_PRIOR_GAME
+     a season-total source existed before the historical target week.
+ 
+     ``prior_games`` is normally a scalar, but may also be a per-team Series
+-    (index = defense team) so v2_coaching_aware_defense_prior can give a team
++    (index = defense team), which is how the retired v2_coaching_aware_defense_prior gave a team
+     that reset its defensive staff a shorter prior leash than one that kept it.
+     Any team not covered by such a Series falls back to the scalar default.
+     """
+@@ -11370,29 +11320,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                 ) if prior_anchor is not None else pd.DataFrame()
+             )
+             if 'v2_defense_prior' in feats:
+-                prior_games_ = (DEFENSE_PRIOR_GAMES_OVERRIDE
+-                                if ('v2_defense_prior_games_override' in feats
+-                                    and DEFENSE_PRIOR_GAMES_OVERRIDE is not None)
+-                                else DEFENSE_PRIOR_GAMES)
+-                if 'v2_coaching_aware_defense_prior' in feats:
+-                    # Give a defense that reset its staff (HC+DC, or a lone new
+-                    # HC) a shorter prior leash, and one that only promoted a
+-                    # new coordinator under a retained HC a LONGER one - both
+-                    # directions are what the year-over-year persistence and
+-                    # the out-of-sample blend-weight sweep want (see
+-                    # data/coaching_changes.py + scripts/analyze_coaching_
+-                    # defense_prior.py). Teams with no cohort signal keep
+-                    # prior_games_ unchanged, so this is safe to apply always.
+-                    try:
+-                        from data.coaching_changes import defense_prior_games_by_team
+-                        prior_games_ = defense_prior_games_by_team(
+-                            int(year), float(prior_games_), pos=pos)
+-                    except Exception:
+-                        pass
+                 matchup_matrix = blend_defense_prior(
+                     matchup_matrix, prior_matrix, _defense_game_evidence(
+                         pos_rows, game_universe=hist, team_col=team_col),
+-                    prior_games=prior_games_)
++                    prior_games=DEFENSE_PRIOR_GAMES)
+ 
+             # Deep Dive per-game/per-week detail for BOTH seasons, threaded
+             # through to the decomposition dialog via explanations[...]
+@@ -12589,8 +12520,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+             scheme_player_factor = np.ones(len(cur))
+             scheme_residual_available = np.zeros(len(cur), dtype=bool)
+             scheme_scoring_stat = ALIGNMENT_SCORING_STAT_MAP.get(stat)
+-            scheme_wanted = ('v2_scheme_matchup' in feats or 'v2_scheme_alignment_blend' in feats)
+-            if (scheme_wanted and pos in SCHEME_DEFENSE_SUPPORTED_POSITIONS
++            if ('v2_scheme_matchup' in feats and pos in SCHEME_DEFENSE_SUPPORTED_POSITIONS
+                     and scheme_scoring_stat is not None and scheme_defense_previews):
+                 scheme_previews_row = [scheme_defense_previews.get(idx, {}).get(scheme_scoring_stat, {})
+                                        for idx in cur.index]
+@@ -12599,53 +12529,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                 scheme_residual_available = np.array(
+                     [bool(p.get('candidate_available', False)) for p in scheme_previews_row], dtype=bool)
+ 
+-            # Evidence-weighted blend of alignment and scheme - CANDIDATE,
+-            # built 2026-08-27 to test combining both rather than either
+-            # replacing the broad matchup alone or one outright replacing the
+-            # other, given the two are correlated at r~0.72
+-            # (scripts/check_alignment_scheme_overlap.py). Deliberately a
+-            # NAIVE weighted average - it does NOT discount for that shared
+-            # variance - built as the cheap baseline to check empirically
+-            # whether the correlation caution actually costs anything in
+-            # practice, before building anything more elaborate (e.g. a
+-            # joint alignment x scheme interaction profile, which corrects
+-            # for the overlap by construction instead of by adjustment).
+-            # Weight per side is that side's own effect_weight (the weaker of
+-            # its two per-bucket confidences, already in each preview dict) -
+-            # zero for a side with no evidence, so this reduces to
+-            # "whichever one has evidence" when only one does (~1% of rows;
+-            # see the overlap script's "both or neither" finding for why this
+-            # is rarely exercised in practice).
+-            if 'v2_scheme_alignment_blend' in feats:
+-                fixed_w = SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.get(pos)
+-                if fixed_w is not None:
+-                    # DELIBERATE FIXED RATIO, not evidence-weighted - a
+-                    # per-position override for the component backtest
+-                    # program's weight sweep (see
+-                    # scripts/sweep_scheme_blend_weight.py). fixed_w is
+-                    # scheme's own share; alignment gets (1 - fixed_w). Still
+-                    # collapses to "whichever one has evidence" when only one
+-                    # side is available, same as the evidence-weighted path.
+-                    align_w = np.where(alignment_residual_available, 1.0 - fixed_w, 0.0)
+-                    scheme_w = np.where(scheme_residual_available, fixed_w, 0.0)
+-                else:
+-                    align_conf = np.array([
+-                        (alignment_defense_previews.get(idx, {}).get(alignment_scoring_stat, {}).get('effect_weight', 0.0)
+-                         if alignment_scoring_stat is not None else 0.0)
+-                        for idx in cur.index], dtype=float)
+-                    scheme_conf = np.array([
+-                        (scheme_defense_previews.get(idx, {}).get(scheme_scoring_stat, {}).get('effect_weight', 0.0)
+-                         if scheme_scoring_stat is not None else 0.0)
+-                        for idx in cur.index], dtype=float)
+-                    align_w = np.where(alignment_residual_available, np.maximum(align_conf, 0.0), 0.0)
+-                    scheme_w = np.where(scheme_residual_available, np.maximum(scheme_conf, 0.0), 0.0)
+-                total_w = align_w + scheme_w
+-                blend_available = total_w > 0
+-                blended_factor = np.divide(
+-                    align_w * alignment_player_factor + scheme_w * scheme_player_factor,
+-                    total_w, out=np.ones(len(cur)), where=blend_available)
+-                matchup_mult = np.where(blend_available, blended_factor, matchup_mult)
+-            elif 'v2_scheme_matchup' in feats and pos in SCHEME_MATCHUP_SCORING_POSITIONS:
++            if 'v2_scheme_matchup' in feats and pos in SCHEME_MATCHUP_SCORING_POSITIONS:
+                 matchup_mult = np.where(scheme_residual_available, scheme_player_factor, matchup_mult)
+ 
+             role_change_reduction = (
+diff --git a/scripts/coaching_final_verdict.py b/scripts/coaching_final_verdict.py
+deleted file mode 100644
+index 1112ffb..0000000
+--- a/scripts/coaching_final_verdict.py
++++ /dev/null
+@@ -1,477 +0,0 @@
+-"""FINAL VERDICT on defensive-coaching-aware defense priors.
+-
+-Five prior tests found no shippable signal, but all of them answered the
+-question "did THIS config beat baseline on whole-pool MAE?". That is the
+-wrong question twice over:
+-
+-  1. Whole-pool MAE is not the objective. Start/sit, DFS and props are
+-     decided on the STARTABLE subset and on the ORDERING within it. A
+-     change can be a whole-pool wash and still be worth shipping if it
+-     makes the top-20 TEs measurably better ranked.
+-  2. A null result on one config does not rule out a mechanism. "We tried
+-     seven tables and none was significant" is not the same statement as
+-     "no table could ever be worth more than X".
+-
+-This script is built to close the question rather than add a sixth null.
+-Four legs, each answering something the earlier runs could not:
+-
+-  LEG A - CHANNEL BUDGET (the bound that makes this decisive).
+-      Ablate v2_defense_prior entirely: how much is the WHOLE prior-season
+-      defense channel worth on startables? The coaching cohort idea does
+-      not add information - it only re-weights how fast that one channel
+-      decays, and only for the ~40% of team-seasons that changed staff. So
+-      whatever the full channel is worth is a hard ceiling on the coaching
+-      refinement of it, and realistically it can capture only a fraction.
+-      If the whole channel is worth 0.05 startable MAE, no cohort table can
+-      be worth 0.10, and the question is closed by arithmetic.
+-
+-  LEG B - MECHANISM ORACLE (cheating ceiling).
+-      Score every cohort table in the grid, then pick the winner PER
+-      POSITION using the very data we scored on. That is deliberate
+-      overfitting with perfect hindsight - it cannot be beaten by any
+-      honest fitting procedure. It is the best this mechanism could EVER
+-      do. A small oracle number is a permanent answer; only a large one
+-      would justify further work.
+-
+-  LEG C - HONEST HOLDOUT.
+-      Pick the table on FIT_YEARS, freeze it, score on TEST_YEARS which
+-      were never looked at. The gap between Leg B and Leg C is the
+-      overfitting tax, and quantifies how much of every earlier "promising"
+-      result was selection.
+-
+-  LEG D - POWER, and DECISION metrics.
+-      MDE: the smallest startable dMAE this design could reliably detect at
+-      80% power. Converts "not significant" into "we can rule out anything
+-      bigger than X", which is the actually useful statement going forward.
+-      Decision metrics, because MAE is not what a lineup or a prop cares
+-      about:
+-        - Spearman rank correlation within the startable pool (ordering).
+-        - Start/sit flip accuracy: of the player pairs whose ORDER this
+-          change flips, how often does the new order match reality? 50% is
+-          a coin flip and worth nothing regardless of MAE.
+-        - Prop-direction accuracy: treating the base projection as the
+-          line, when the variant moves a player up/down, does the actual
+-          land on that side?
+-
+-Scored on weeks 2-10 by design: that is where the prior-season defense
+-carries real weight (by week ~12 it is blended down to noise), so it is
+-the only window where this mechanism has leverage at all. If it is dead
+-here it is dead everywhere.
+-
+-    python scripts/coaching_final_verdict.py --years 2016-2025 --weeks 2-10
+-"""
+-import argparse
+-import math
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-
+-import numpy as np  # noqa: E402
+-import pandas as pd  # noqa: E402
+-
+-from data.weekly_projections import build_weekly_projections, DEFAULT_FEATURES  # noqa: E402
+-from data.transforms import load_and_merge_data  # noqa: E402
+-from scripts.eval_weekly_model import _metrics, _weighted, STARTABLE_N, _actual_points  # noqa: E402
+-
+-POSITIONS = ('QB', 'RB', 'WR', 'TE')
+-COACH_FLAG = 'v2_coaching_aware_defense_prior'
+-
+-# Split for Leg C. FIT years choose the table; TEST years are never consulted
+-# until the table is frozen.
+-FIT_YEARS = (2016, 2017, 2018, 2019, 2020, 2021)
+-TEST_YEARS = (2022, 2023, 2024, 2025)
+-
+-# The cohort-table grid. Each entry is the POS_COHORT_PRIOR_GAMES env string
+-# consumed by data.coaching_changes._pos_cohort_prior_games(). Positions are
+-# scored independently, so ONE build per config covers all four at once.
+-#
+-# Directions come from the year-over-year persistence work: a defense that
+-# reset its staff should get a SHORTER prior leash (trust last season less),
+-# one that only promoted a coordinator under a retained HC arguably a LONGER
+-# one. The grid spans "barely any taper" to "prior nearly discarded on
+-# reset", so a real effect of any plausible size has a config that would
+-# catch it.
+-def _tbl(none, dc_only, hc_only, both):
+-    return ','.join(
+-        f'{p}:{k}={v}'
+-        for p in POSITIONS
+-        for k, v in (('none', none), ('dc_only', dc_only),
+-                     ('hc_only', hc_only), ('both', both)))
+-
+-
+-GRID = {
+-    'flat (control)':       _tbl(12, 12, 12, 12),
+-    'reset-mild':           _tbl(12, 12, 8, 8),
+-    'reset-strong':         _tbl(12, 12, 4, 4),
+-    'reset-extreme':        _tbl(12, 12, 2, 2),
+-    'stable-long':          _tbl(16, 24, 12, 12),
+-    'both-directions':      _tbl(16, 24, 4, 6),
+-}
+-
+-
+-def _scope_startable(df, pos):
+-    d = df[df['Pos'] == pos]
+-    return d.nlargest(STARTABLE_N.get(pos, 30), 'Model Proj Pts')
+-
+-
+-def _bootstrap_ci(deltas, weights, n_boot=4000, seed=0):
+-    if len(deltas) < 4:
+-        return float('nan'), float('nan')
+-    rng = np.random.default_rng(seed)
+-    d, w = np.asarray(deltas, float), np.asarray(weights, float)
+-    idx = np.arange(len(d))
+-    means = np.array([np.average(d[s], weights=w[s])
+-                      for s in (rng.choice(idx, len(idx), replace=True)
+-                                for _ in range(n_boot))])
+-    lo, hi = np.percentile(means, [2.5, 97.5])
+-    return float(lo), float(hi)
+-
+-
+-def _sign_test_p(wins, losses):
+-    n = wins + losses
+-    if n == 0:
+-        return float('nan')
+-    k = min(wins, losses)
+-    tail = sum(math.comb(n, i) for i in range(k + 1))
+-    return min(1.0, 2.0 * tail / (2 ** n))
+-
+-
+-def _mde(deltas, power=0.80, alpha=0.05):
+-    """Minimum detectable effect: the smallest true weekly-mean dMAE this
+-    design would catch at `power`, given the observed week-to-week spread.
+-
+-    Two-sided z approximation - the week count here (~90) is comfortably
+-    into the regime where that is fine, and the point of this number is its
+-    order of magnitude, not its third decimal.
+-    """
+-    d = np.asarray(deltas, float)
+-    d = d[np.isfinite(d)]
+-    if len(d) < 4:
+-        return float('nan')
+-    return float((1.959964 + 0.8416212) * d.std(ddof=1) / math.sqrt(len(d)))
+-
+-
+-def _rank_corr(pred, actual):
+-    """Spearman between a projection and reality over the same players."""
+-    common = [p for p in pred.index if p in actual.index]
+-    if len(common) < 5:
+-        return float('nan')
+-    a = pd.Series(pred).loc[common].rank()
+-    b = pd.Series(actual).loc[common].rank()
+-    if a.std() == 0 or b.std() == 0:
+-        return float('nan')
+-    return float(np.corrcoef(a, b)[0, 1])
+-
+-
+-def _flip_accuracy(base_pred, var_pred, actual):
+-    """Of the player PAIRS whose relative order this change flips, how often
+-    is the new order the one reality agreed with?
+-
+-    This is the start/sit question stated exactly: a change only matters if
+-    it reorders somebody, and it only helps if the reordering is right more
+-    often than wrong. 50% means the change is churn, whatever it does to MAE.
+-    """
+-    common = [p for p in base_pred.index if p in var_pred.index and p in actual.index]
+-    if len(common) < 3:
+-        return 0, 0
+-    b = pd.Series(base_pred).loc[common].to_numpy()
+-    v = pd.Series(var_pred).loc[common].to_numpy()
+-    a = pd.Series(actual).loc[common].to_numpy()
+-    right = wrong = 0
+-    n = len(common)
+-    for i in range(n):
+-        for j in range(i + 1, n):
+-            b_order = b[i] - b[j]
+-            v_order = v[i] - v[j]
+-            if b_order == 0 or v_order == 0:
+-                continue
+-            if (b_order > 0) == (v_order > 0):
+-                continue                      # order unchanged - not a flip
+-            a_order = a[i] - a[j]
+-            if a_order == 0:
+-                continue
+-            if (v_order > 0) == (a_order > 0):
+-                right += 1
+-            else:
+-                wrong += 1
+-    return right, wrong
+-
+-
+-def _prop_direction(base_pred, var_pred, actual, min_move=0.05):
+-    """Treat the BASE projection as the posted line. When the variant moves a
+-    player off it, does the actual land on the side it moved toward?
+-
+-    This is the prop-betting read of the same change, and it is scored only
+-    on players the change actually moved by more than `min_move` points -
+-    a move too small to act on should not be counted as a call.
+-    """
+-    common = [p for p in base_pred.index if p in var_pred.index and p in actual.index]
+-    right = wrong = 0
+-    for p in common:
+-        line = float(base_pred[p])
+-        move = float(var_pred[p]) - line
+-        if abs(move) < min_move:
+-            continue
+-        act = float(actual[p])
+-        if act == line:
+-            continue
+-        if (move > 0) == (act > line):
+-            right += 1
+-        else:
+-            wrong += 1
+-    return right, wrong
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--years', default='2016-2025')
+-    ap.add_argument('--weeks', default='2-10')
+-    ap.add_argument('--scoring', default='Full PPR')
+-    ap.add_argument('--skip-ablation', action='store_true',
+-                    help='skip Leg A (the v2_defense_prior channel-budget ablation)')
+-    args = ap.parse_args()
+-
+-    y0, y1 = (int(x) for x in args.years.split('-'))
+-    years = list(range(y0, y1 + 1))
+-    w0, w1 = (int(x) for x in args.weeks.split('-'))
+-    weeks = list(range(w0, w1 + 1))
+-    scoring_col = 'fantasy_points_ppr' if args.scoring != 'Standard' else 'fantasy_points'
+-
+-    # Every config that needs a build. Base is DEFAULT_FEATURES as shipped.
+-    configs = {}
+-    if not args.skip_ablation:
+-        configs['ABLATE defense_prior'] = (
+-            frozenset(DEFAULT_FEATURES - {'v2_defense_prior'}), None)
+-    for label, table in GRID.items():
+-        configs[label] = (frozenset(DEFAULT_FEATURES | {COACH_FLAG}), table)
+-
+-    print(f"years={years[0]}-{years[-1]} weeks={weeks[0]}-{weeks[-1]} "
+-          f"scoring={args.scoring}")
+-    print(f"configs={len(configs)} (+1 base) -> {(len(configs) + 1) * len(years) * len(weeks)} builds")
+-    print(f"FIT={FIT_YEARS}  TEST={TEST_YEARS}\n", flush=True)
+-
+-    # rows[(label, pos)] = list of per-week dicts
+-    rows = {}
+-
+-    for year in years:
+-        stats_df, _tc, name_col, _ = load_and_merge_data(year, args.scoring)
+-        if 'week' not in stats_df.columns:
+-            continue
+-        for week in weeks:
+-            actual = _actual_points(stats_df, name_col, week, scoring_col)
+-            if actual.empty:
+-                continue
+-
+-            os.environ.pop('POS_COHORT_PRIOR_GAMES', None)
+-            build_weekly_projections.clear()
+-            base, bmeta = build_weekly_projections(
+-                year, week, args.scoring, as_of_week=week,
+-                apply_injury=False, features=DEFAULT_FEATURES)
+-            if base.empty:
+-                print(f"{year} w{week}: base empty ({bmeta.get('reason')})", flush=True)
+-                continue
+-
+-            built = {}
+-            for label, (feats, table) in configs.items():
+-                if table is None:
+-                    os.environ.pop('POS_COHORT_PRIOR_GAMES', None)
+-                else:
+-                    os.environ['POS_COHORT_PRIOR_GAMES'] = table
+-                build_weekly_projections.clear()
+-                var, _vm = build_weekly_projections(
+-                    year, week, args.scoring, as_of_week=week,
+-                    apply_injury=False, features=feats)
+-                if not var.empty:
+-                    built[label] = var
+-            os.environ.pop('POS_COHORT_PRIOR_GAMES', None)
+-            build_weekly_projections.clear()
+-
+-            for label, var in built.items():
+-                # Paired pool: score both sides on the same players, so a
+-                # variant that merely drops hard players earns nothing.
+-                pool = sorted(set(base['Player']) & set(var['Player']))
+-                if len(pool) < 20:
+-                    continue
+-                b_all = base[base['Player'].isin(pool)]
+-                v_all = var[var['Player'].isin(pool)]
+-                for pos in POSITIONS:
+-                    # Startable set is defined by the BASE model's own top-N,
+-                    # held fixed across both sides. Letting each side pick its
+-                    # own top-N would compare two different player sets and
+-                    # call the difference an improvement.
+-                    b_pos = _scope_startable(b_all, pos)
+-                    names = [p for p in b_pos['Player'] if p in actual.index]
+-                    if len(names) < 5:
+-                        continue
+-                    bp = pd.Series(b_pos.set_index('Player')['Model Proj Pts']).reindex(names)
+-                    vp = pd.Series(v_all.set_index('Player')['Model Proj Pts']).reindex(names)
+-                    vp = vp.fillna(bp)
+-                    act = actual.reindex(names)
+-
+-                    mb = _metrics(bp, act)
+-                    mv = _metrics(vp, act)
+-                    if not (mb and mv):
+-                        continue
+-                    fr, fw = _flip_accuracy(bp, vp, act)
+-                    pr, pw = _prop_direction(bp, vp, act)
+-                    rows.setdefault((label, pos), []).append({
+-                        'year': year, 'week': week, 'n': mb['n'],
+-                        'mae_b': mb['mae'], 'mae_v': mv['mae'],
+-                        'd': mv['mae'] - mb['mae'],
+-                        'rho_b': _rank_corr(bp, act), 'rho_v': _rank_corr(vp, act),
+-                        'flip_right': fr, 'flip_wrong': fw,
+-                        'prop_right': pr, 'prop_wrong': pw,
+-                    })
+-            print(f"{year} w{week} done ({len(built)} configs)", flush=True)
+-
+-    _report(rows, configs)
+-
+-
+-def _agg(recs):
+-    """One config x position, over a set of weeks."""
+-    if not recs:
+-        return None
+-    n = sum(r['n'] for r in recs)
+-    w = [r['n'] for r in recs]
+-    d = [r['d'] for r in recs]
+-    mae_b = np.average([r['mae_b'] for r in recs], weights=w)
+-    mae_v = np.average([r['mae_v'] for r in recs], weights=w)
+-    lo, hi = _bootstrap_ci(d, w)
+-    wins = sum(1 for r in recs if r['d'] < 0)
+-    losses = sum(1 for r in recs if r['d'] > 0)
+-    rb = [r['rho_b'] for r in recs if np.isfinite(r['rho_b'])]
+-    rv = [r['rho_v'] for r in recs if np.isfinite(r['rho_v'])]
+-    fr = sum(r['flip_right'] for r in recs)
+-    fw = sum(r['flip_wrong'] for r in recs)
+-    pr = sum(r['prop_right'] for r in recs)
+-    pw = sum(r['prop_wrong'] for r in recs)
+-    return {
+-        'n': n, 'weeks': len(recs), 'mae_b': mae_b, 'mae_v': mae_v,
+-        'd': mae_v - mae_b, 'lo': lo, 'hi': hi,
+-        'sig': np.isfinite(lo) and (lo > 0 or hi < 0),
+-        'wins': wins, 'losses': losses, 'p': _sign_test_p(wins, losses),
+-        'drho': (np.mean(rv) - np.mean(rb)) if (rb and rv) else float('nan'),
+-        'flip_right': fr, 'flip_wrong': fw,
+-        'flip_acc': fr / (fr + fw) if (fr + fw) else float('nan'),
+-        'prop_acc': pr / (pr + pw) if (pr + pw) else float('nan'),
+-        'prop_n': pr + pw,
+-        'mde': _mde(d),
+-    }
+-
+-
+-def _report(rows, configs):
+-    labels = list(configs)
+-    line = '=' * 108
+-
+-    print(f"\n\n{line}\nLEG A - CHANNEL BUDGET: what is the WHOLE prior-season "
+-          f"defense channel worth on startables?\n{line}")
+-    print("Removing v2_defense_prior deletes the entire channel the coaching idea "
+-          "re-weights.\nWhatever that costs is a hard ceiling on any refinement of it.\n")
+-    print(f"{'pos':<6}{'n':>7}{'MAE base':>10}{'MAE no-prior':>14}{'dMAE':>9}"
+-          f"{'  95% CI':>20}")
+-    for pos in POSITIONS:
+-        a = _agg(rows.get(('ABLATE defense_prior', pos), []))
+-        if not a:
+-            continue
+-        print(f"{pos:<6}{a['n']:>7}{a['mae_b']:>10.3f}{a['mae_v']:>14.3f}"
+-              f"{a['d']:>+9.3f}{f'  [{a['lo']:+.3f},{a['hi']:+.3f}]':>20}"
+-              f"{' *' if a['sig'] else ''}")
+-    print("\n(positive dMAE = removing the prior-season channel HURTS, i.e. that is "
+-          "the channel's\n value. The coaching adjustment competes for a slice of "
+-          "this number, never more.)")
+-
+-    grid_labels = [l for l in labels if l != 'ABLATE defense_prior']
+-
+-    print(f"\n\n{line}\nFULL GRID - every cohort table, startable subsets only "
+-          f"(the objective that matters)\n{line}")
+-    for pos in POSITIONS:
+-        print(f"\n--- START-{pos} ---")
+-        print(f"{'config':<20}{'n':>7}{'dMAE':>9}{'  95% CI':>20}{'  w-l':>9}"
+-              f"{'  dRho':>9}{'  flip-acc':>11}{'  prop-acc':>11}")
+-        for label in grid_labels:
+-            a = _agg(rows.get((label, pos), []))
+-            if not a:
+-                continue
+-            fa = f"{a['flip_acc']:.3f}" if np.isfinite(a['flip_acc']) else '   -  '
+-            pa = f"{a['prop_acc']:.3f}" if np.isfinite(a['prop_acc']) else '   -  '
+-            print(f"{label:<20}{a['n']:>7}{a['d']:>+9.3f}"
+-                  f"{f'  [{a['lo']:+.3f},{a['hi']:+.3f}]':>20}"
+-                  f"{f'  {a['wins']}-{a['losses']}':>9}{a['drho']:>+9.4f}"
+-                  f"{fa:>11}{pa:>11}{' *' if a['sig'] else ''}")
+-
+-    print(f"\n\n{line}\nLEG B - MECHANISM ORACLE: best config per position, chosen "
+-          f"WITH HINDSIGHT on this same data\n{line}")
+-    print("Deliberate overfitting. No honest procedure can beat it, so it is the "
+-          "ceiling of\nthis mechanism. A small number here closes the question "
+-          "permanently.\n")
+-    print(f"{'pos':<6}{'oracle config':<20}{'dMAE':>9}{'  95% CI':>20}"
+-          f"{'  flip-acc':>11}")
+-    for pos in POSITIONS:
+-        best, best_a = None, None
+-        for label in grid_labels:
+-            a = _agg(rows.get((label, pos), []))
+-            if a and (best_a is None or a['d'] < best_a['d']):
+-                best, best_a = label, a
+-        if best_a is None:
+-            continue
+-        fa = f"{best_a['flip_acc']:.3f}" if np.isfinite(best_a['flip_acc']) else '   -  '
+-        print(f"{pos:<6}{best:<20}{best_a['d']:>+9.3f}"
+-              f"{f'  [{best_a['lo']:+.3f},{best_a['hi']:+.3f}]':>20}{fa:>11}")
+-
+-    print(f"\n\n{line}\nLEG C - HONEST HOLDOUT: table chosen on {FIT_YEARS[0]}-"
+-          f"{FIT_YEARS[-1]}, frozen, scored on {TEST_YEARS[0]}-{TEST_YEARS[-1]}\n{line}")
+-    print(f"{'pos':<6}{'picked on FIT':<20}{'FIT dMAE':>10}{'TEST dMAE':>11}"
+-          f"{'  TEST 95% CI':>22}{'  flip-acc':>11}")
+-    for pos in POSITIONS:
+-        best, best_fit = None, None
+-        for label in grid_labels:
+-            recs = [r for r in rows.get((label, pos), []) if r['year'] in FIT_YEARS]
+-            a = _agg(recs)
+-            if a and (best_fit is None or a['d'] < best_fit['d']):
+-                best, best_fit = label, a
+-        if best is None:
+-            continue
+-        test = _agg([r for r in rows.get((best, pos), []) if r['year'] in TEST_YEARS])
+-        if not test:
+-            continue
+-        fa = f"{test['flip_acc']:.3f}" if np.isfinite(test['flip_acc']) else '   -  '
+-        print(f"{pos:<6}{best:<20}{best_fit['d']:>+10.3f}{test['d']:>+11.3f}"
+-              f"{f'  [{test['lo']:+.3f},{test['hi']:+.3f}]':>22}{fa:>11}"
+-              f"{' *' if test['sig'] else ''}")
+-    print("\n(FIT minus TEST is the overfitting tax - how much of a 'promising' "
+-          "result was selection.)")
+-
+-    print(f"\n\n{line}\nLEG D - POWER: what could this design have detected?\n{line}")
+-    print("MDE = smallest true startable dMAE detectable at 80% power, 5% two-sided.\n"
+-          "Any effect smaller than this is beyond what more runs of this design can "
+-          "resolve.\n")
+-    print(f"{'pos':<6}{'weeks':>7}{'MDE (pts)':>12}{'  as % of startable MAE':>26}")
+-    # MUST NOT be grid_labels[0] - that is 'flat (control)', a table of all
+-    # 12s, which collapses to the shipped scalar and so produces a delta of
+-    # EXACTLY zero every week by construction. Taking the std of that
+-    # all-zeros vector reported MDE = 0.0000 for every position, i.e. "this
+-    # design can detect an infinitely small effect", which is the opposite of
+-    # the truth (bug hit on the first real run, 2026-09-01). Use the widest
+-    # real config instead, and say which one the number came from.
+-    mde_label = next((l for l in grid_labels if l != 'flat (control)'), None)
+-    if mde_label is None:
+-        return
+-    print(f"(spread measured on '{mde_label}' - the control config is a no-op "
+-          f"by construction and has zero variance)\n")
+-    print(f"{'pos':<6}{'weeks':>7}{'MDE (pts)':>12}{'  as % of startable MAE':>26}")
+-    for pos in POSITIONS:
+-        a = _agg(rows.get((mde_label, pos), []))
+-        if not a or not np.isfinite(a['mde']) or a['mde'] <= 0:
+-            continue
+-        pct = 100.0 * a['mde'] / a['mae_b'] if a['mae_b'] else float('nan')
+-        print(f"{pos:<6}{a['weeks']:>7}{a['mde']:>12.4f}{pct:>25.2f}%")
+-
+-    print("\n\nREAD: ship only if a config is negative AND CI-excludes-0 in LEG C "
+-          "(honest holdout),\nwith flip-acc > 0.50. LEG B being small means no "
+-          "future tuning can rescue it.\nLEG A being small means the whole channel "
+-          "was never worth much to begin with.")
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/scripts/reconfirm_alignment_scheme.py b/scripts/reconfirm_alignment_scheme.py
+deleted file mode 100644
+index 377dade..0000000
+--- a/scripts/reconfirm_alignment_scheme.py
++++ /dev/null
+@@ -1,98 +0,0 @@
+-"""Phase C of the alignment/scheme study (2026-09-04).
+-
+-Now that 2022 and 2023 have weekly PFF archives (reorg_pff_weekly_archive.py,
+-2026-09-04), the alignment/scheme mechanisms can be re-checked on FOUR
+-seasons instead of the two they were last judged on. Four questions:
+-
+-  1. ABLATE v2_pff_alignment_matchup  - does the WR/TE slot/wide residual
+-     still earn its place in DEFAULT_FEATURES on 4x the data?
+-  2. ABLATE v2_scheme_matchup         - does the TE man/zone residual?
+-  3. WR SCHEME SCORING - add WR to SCHEME_MATCHUP_SCORING_POSITIONS (today
+-     TE-only). Two seasons couldn't show a WR scheme win; can four?
+-  4. BLEND WEIGHT - v2_scheme_alignment_blend with a fixed scheme share
+-     swept 0 / .25 / .5 / .75 / 1, WR and TE separately (the "lost result"
+-     from docs/weekly_rankings_backlog.md).
+-
+-    python scripts/reconfirm_alignment_scheme.py --mode ablate --years 2022,2023,2024,2025 --weeks 3-18
+-    python scripts/reconfirm_alignment_scheme.py --mode wr_scheme --years 2022,2023,2024,2025 --weeks 3-18
+-    python scripts/reconfirm_alignment_scheme.py --mode blend --years 2022,2023,2024,2025 --weeks 3-18
+-"""
+-import argparse
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-for _s in (sys.stdout, sys.stderr):
+-    try:
+-        _s.reconfigure(encoding="utf-8")
+-    except (AttributeError, ValueError):
+-        pass
+-
+-from data.weekly_projections import DEFAULT_FEATURES  # noqa: E402
+-from scripts._align_scheme_eval import evaluate  # noqa: E402
+-
+-
+-def _wr_scheme_mutator():
+-    orig = None
+-
+-    def m(wp, reset=False):
+-        nonlocal orig
+-        if reset:
+-            if orig is not None:
+-                wp.SCHEME_MATCHUP_SCORING_POSITIONS = orig
+-        else:
+-            orig = wp.SCHEME_MATCHUP_SCORING_POSITIONS
+-            wp.SCHEME_MATCHUP_SCORING_POSITIONS = frozenset({'TE', 'WR'})
+-    return m
+-
+-
+-def _blend_mutator(pos, w):
+-    def m(wp, reset=False):
+-        wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.clear()
+-        if not reset:
+-            wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT[pos] = w
+-    return m
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--mode', required=True, choices=['ablate', 'wr_scheme', 'blend'])
+-    ap.add_argument('--years', default='2022,2023,2024,2025')
+-    ap.add_argument('--weeks', default='3-18')
+-    a = ap.parse_args()
+-    years = [int(x) for x in a.years.replace(' ', '').split(',')]
+-    w0, w1 = (int(x) for x in a.weeks.split('-'))
+-    weeks = list(range(w0, w1 + 1))
+-
+-    if a.mode == 'ablate':
+-        variants = [
+-            ('ablate v2_pff_alignment_matchup', frozenset(DEFAULT_FEATURES - {'v2_pff_alignment_matchup'}), None),
+-            ('ablate v2_scheme_matchup', frozenset(DEFAULT_FEATURES - {'v2_scheme_matchup'}), None),
+-        ]
+-        evaluate(variants, years, weeks, outliers_csv='.sweeps/alignment_scheme_ablate_outliers.csv')
+-    elif a.mode == 'wr_scheme':
+-        variants = [('WR added to scheme scoring', DEFAULT_FEATURES, _wr_scheme_mutator())]
+-        evaluate(variants, years, weeks, outliers_csv='.sweeps/wr_scheme_scoring_outliers.csv')
+-    else:
+-        feats = frozenset(DEFAULT_FEATURES | {'v2_scheme_alignment_blend'})
+-        variants = []
+-        for pos in ('WR', 'TE'):
+-            for w in (0.0, 0.25, 0.5, 0.75, 1.0):
+-                variants.append((f"blend {pos} scheme-share={w:.2f}", feats, _blend_mutator(pos, w)))
+-        # Rides along at low marginal cost (one more build/week, same years/
+-        # weeks already being built here): does the ACTUALLY-SHIPPED
+-        # v2_scheme_matchup replace-mechanism itself hold up on
+-        # receiving_yards per season, not just pooled? The old fixed-weight
+-        # blend sweep (.sweeps/scheme_blend_TE_v2.txt) found weight=1.0
+-        # (closest analogue to "replace") sign-flips on START-TE
+-        # receiving_yards between 2024 (-0.510) and 2025 (+0.097) - but that
+-        # blend formula drops to neutral (not alignment) when scheme lacks
+-        # evidence, unlike the real replace mechanism's alignment fallback,
+-        # so it was never a direct test of what's shipped. This is.
+-        variants.append(('ablate v2_scheme_matchup (shipped, TE)',
+-                         frozenset(DEFAULT_FEATURES - {'v2_scheme_matchup'}), None))
+-        evaluate(variants, years, weeks)
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/scripts/sweep_coaching_prior_games.py b/scripts/sweep_coaching_prior_games.py
+deleted file mode 100644
+index 12a6660..0000000
+--- a/scripts/sweep_coaching_prior_games.py
++++ /dev/null
+@@ -1,89 +0,0 @@
+-"""Sweep the per-cohort DEFENSE_PRIOR_GAMES for v2_coaching_aware_defense_prior.
+-
+-Each config is one scripts/backtest_component.py run with COHORT_PRIOR_GAMES
+-set in the env (read by data/coaching_changes._cohort_prior_games), a paired
+-A/B of DEFAULT_FEATURES vs DEFAULT_FEATURES + v2_coaching_aware_defense_prior.
+-Sequential - the box OOMs on concurrent heavy builds.
+-
+-The v1 flat-cohort config (dc_only=18, both=8) backtested NEUTRAL on 2023-25
+-(START-RB +0.029). This re-tests on the wider window the Wikipedia coordinator
+-backfill now supports (2019+), with a few cohort configs so the per-cohort
+-prior_games can actually be honed rather than guessed from the proxy.
+-
+-    python scripts/sweep_coaching_prior_games.py --years 2020,2021,2022,2023,2024,2025 --weeks 4-14
+-"""
+-import argparse
+-import os
+-import re
+-import subprocess
+-import sys
+-
+-HERE = os.path.dirname(os.path.abspath(__file__))
+-ROOT = os.path.dirname(HERE)
+-
+-# (label, COHORT_PRIOR_GAMES spec). "off" = every cohort at the scalar default
+-# => the flag is inert, a control that must read exactly 0.000 everywhere.
+-GRID = [
+-    ("off",            "dc_only=default,both=default,dc_to_hc=default,hc_only=default"),
+-    ("v1 18/8/8",      "dc_only=18,both=8,dc_to_hc=8,hc_only=8"),
+-    ("strong 26/6/4",  "dc_only=26,both=6,dc_to_hc=4,hc_only=6"),
+-    ("dc_only-only 20", "dc_only=20,both=default,dc_to_hc=default,hc_only=default"),
+-]
+-SCOPES = ("ALL", "QB", "RB", "WR", "TE", "START-QB", "START-RB", "START-WR", "START-TE")
+-
+-
+-def _run(spec, years, weeks):
+-    env = dict(os.environ, COHORT_PRIOR_GAMES=spec, PYTHONIOENCODING="utf-8")
+-    cmd = [sys.executable, os.path.join(HERE, "backtest_component.py"),
+-           "--add", "v2_coaching_aware_defense_prior", "--years", years, "--weeks", weeks]
+-    p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True,
+-                       encoding="utf-8", errors="replace")
+-    return (p.stdout or "") + "\n" + (p.stderr or "")
+-
+-
+-def _parse(out):
+-    res = {}
+-    for line in out.splitlines():
+-        m = re.match(r"\s*([A-Z-]+)\s+n=\d+\s+MAE base [\d.]+ vs variant [\d.]+\s+"
+-                     r"dMAE\(var-base\)\s+([+-][\d.]+).*?(excludes 0|includes 0|too few)", line)
+-        if m:
+-            res[m.group(1)] = (float(m.group(2)), m.group(3) == "excludes 0")
+-    return res
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument("--years", default="2020,2021,2022,2023,2024,2025")
+-    ap.add_argument("--weeks", default="4-14")
+-    ap.add_argument("--out", default=os.path.join(ROOT, ".sweeps", "sweep_coaching_prior_games.txt"))
+-    args = ap.parse_args()
+-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+-
+-    rows, full = [], []
+-    for i, (label, spec) in enumerate(GRID, 1):
+-        print(f"[{i}/{len(GRID)}] {label}  ({spec}) ...", flush=True)
+-        out = _run(spec, args.years, args.weeks)
+-        full.append(f"\n{'=' * 78}\n{label}   {spec}\n{'=' * 78}\n{out}")
+-        rows.append((label, _parse(out)))
+-
+-    hdr = f"{'config':>16}  " + "".join(f"{s:>13}" for s in SCOPES)
+-    tbl = [hdr, "-" * len(hdr)]
+-    for label, parsed in rows:
+-        cells = []
+-        for s in SCOPES:
+-            if s in parsed:
+-                d, sig = parsed[s]
+-                cells.append(f"{d:+.3f}{'*' if sig else ' '}")
+-            else:
+-                cells.append("   -   ")
+-        tbl.append(f"{label:>16}  " + "".join(f"{c:>13}" for c in cells))
+-    tbl += ["", "dMAE = variant-base (NEGATIVE = coaching-aware prior helps). * = CI excludes 0."]
+-    text = "\n".join(tbl)
+-    print("\n" + text)
+-    with open(args.out, "w", encoding="utf-8") as fh:
+-        fh.write(text + "\n\n" + "\n".join(full))
+-    print(f"\n-> {args.out}")
+-
+-
+-if __name__ == "__main__":
+-    main()
+diff --git a/scripts/sweep_defense_prior_games.py b/scripts/sweep_defense_prior_games.py
+deleted file mode 100644
+index d1b5ba9..0000000
+--- a/scripts/sweep_defense_prior_games.py
++++ /dev/null
+@@ -1,55 +0,0 @@
+-"""
+-Sweep DEFENSE_PRIOR_GAMES (currently 4.0, driving every position's defense
+-matchup shrinkage since it was set - never itself backtested against
+-alternate values). Base = DEFAULT_FEATURES exactly as shipped; variant =
+-DEFAULT_FEATURES + 'v2_defense_prior_games_override', which only takes
+-effect because DEFENSE_PRIOR_GAMES_OVERRIDE is set to a real value here -
+-see that constant's own note in data/weekly_projections.py.
+-
+-Same cache-clearing requirement as the other sweep scripts tonight.
+-
+-Usage:
+-    python scripts/sweep_defense_prior_games.py --values 2,3,4,6,8
+-"""
+-import argparse
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-
+-import data.weekly_projections as wp  # noqa: E402
+-from scripts.backtest_component import evaluate_components, print_flag_report  # noqa: E402
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--values', required=True, help="comma-separated DEFENSE_PRIOR_GAMES values to test")
+-    ap.add_argument('--years', default='2024,2025')
+-    ap.add_argument('--weeks', default='2-18')
+-    ap.add_argument('--scoring', default='Full PPR')
+-    args = ap.parse_args()
+-
+-    years = [int(y) for y in args.years.split(',')]
+-    if '-' in args.weeks:
+-        lo, hi = args.weeks.split('-')
+-        weeks = list(range(int(lo), int(hi) + 1))
+-    else:
+-        weeks = [int(w) for w in args.weeks.split(',')]
+-    values = [float(v) for v in args.values.split(',') if v.strip()]
+-
+-    print(f"years={years} weeks={weeks[0]}-{weeks[-1]} values={values} (shipped default: {wp.DEFENSE_PRIOR_GAMES})")
+-    variant = frozenset(wp.DEFAULT_FEATURES | {'v2_defense_prior_games_override'})
+-
+-    for v in values:
+-        wp.DEFENSE_PRIOR_GAMES_OVERRIDE = v
+-        wp.build_weekly_projections.clear()
+-        label = f'defense_prior_games_{v:.1f}'
+-        rows, _outliers = evaluate_components(years, weeks, {label: variant}, args.scoring)
+-        print_flag_report(label, rows[label], mode='add')
+-
+-    wp.DEFENSE_PRIOR_GAMES_OVERRIDE = None
+-    wp.build_weekly_projections.clear()
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/scripts/sweep_pos_cohort_prior.py b/scripts/sweep_pos_cohort_prior.py
+deleted file mode 100644
+index 486eeaf..0000000
+--- a/scripts/sweep_pos_cohort_prior.py
++++ /dev/null
+@@ -1,135 +0,0 @@
+-"""Model backtest sweep of the position x cohort DEFENSE_PRIOR_GAMES table for
+-v2_coaching_aware_defense_prior.
+-
+-Each config sets POS_COHORT_PRIOR_GAMES in the env (read fresh by
+-data.coaching_changes._pos_cohort_prior_games) and runs one paired A/B via
+-scripts/backtest_component.py: DEFAULT_FEATURES vs DEFAULT_FEATURES +
+-v2_coaching_aware_defense_prior. Sequential - the box OOMs on concurrent
+-heavy builds.
+-
+-The point is to bracket the "middle ground", not test one guess:
+-  * flat (control, every cell = 12) - must read ~0.000 everywhere.
+-  * a lambda spread (0.5 / 0.8 / 1.1) interpolating each cell between 12 and
+-    its fitted value (data/coaching_changes._POS_COHORT_DEFAULTS, capped 4-30),
+-    so the backtest can find where on that line the model MAE turns over.
+-  * shape splits: reset-only (move both / hc_only, hold none / dc_only at 12),
+-    stable-only (the reverse), and a reset-overshoot - to attribute any effect
+-    to the right side of the table.
+-
+-Early weeks only (2-9): week 1 is cold-start and skips the defense-prior blend
+-entirely, and by week ~10 the prior is a minority input regardless of pg - so
+-this is the window where the table can actually matter.
+-
+-    python scripts/sweep_pos_cohort_prior.py --years 2020,2021,2022,2023,2024,2025 --weeks 2-9
+-"""
+-import argparse
+-import os
+-import re
+-import subprocess
+-import sys
+-
+-import numpy as np
+-
+-HERE = os.path.dirname(os.path.abspath(__file__))
+-ROOT = os.path.dirname(HERE)
+-sys.path.insert(0, ROOT)
+-
+-from data.coaching_changes import _POS_COHORT_DEFAULTS  # noqa: E402
+-
+-FLAT = 12.0
+-CLAMP = (4.0, 30.0)
+-COHORTS = ("none", "dc_only", "both", "hc_only")
+-_RESET = {"both", "hc_only"}
+-SCOPES = ("ALL", "QB", "RB", "WR", "TE", "START-QB", "START-RB", "START-WR", "START-TE")
+-
+-
+-def _scaled(lam, shape="all", overrides=None):
+-    """Full 16-cell POS_COHORT_PRIOR_GAMES spec at spread strength ``lam``."""
+-    cells = []
+-    for pos, d in _POS_COHORT_DEFAULTS.items():
+-        for coh in COHORTS:
+-            fitted = d.get(coh)
+-            move = (shape == "all" or (shape == "reset" and coh in _RESET)
+-                    or (shape == "stable" and coh not in _RESET))
+-            if overrides and (pos, coh) in overrides:
+-                pg = overrides[(pos, coh)]
+-            elif fitted is None or not move:
+-                pg = FLAT
+-            else:
+-                pg = float(np.clip(FLAT + lam * (fitted - FLAT), *CLAMP))
+-            cells.append(f"{pos}:{coh}={pg:g}")
+-    return ",".join(cells)
+-
+-
+-# reset-overshoot: push both/hc_only below the fitted floor, mild none bump
+-_OVERSHOOT = {(p, c): v for p in ("QB", "RB", "WR") for c, v in
+-              (("none", 15.0), ("dc_only", 12.0), ("both", 5.0), ("hc_only", 5.0))}
+-_OVERSHOOT.update({("TE", "none"): 12.0, ("TE", "dc_only"): 18.0,
+-                   ("TE", "both"): 16.0, ("TE", "hc_only"): 12.0})
+-
+-GRID = [
+-    ("flat (control)",   _scaled(0.0)),
+-    ("lambda 0.5",       _scaled(0.5)),
+-    ("lambda 0.8",       _scaled(0.8)),
+-    ("lambda 1.1",       _scaled(1.1)),
+-    ("reset-only l1",    _scaled(1.0, "reset")),
+-    ("stable-only l1",   _scaled(1.0, "stable")),
+-    ("reset-overshoot",  _scaled(1.0, overrides=_OVERSHOOT)),
+-]
+-
+-
+-def _run(spec, years, weeks):
+-    env = dict(os.environ, POS_COHORT_PRIOR_GAMES=spec, PYTHONIOENCODING="utf-8")
+-    cmd = [sys.executable, os.path.join(HERE, "backtest_component.py"),
+-           "--add", "v2_coaching_aware_defense_prior", "--years", years, "--weeks", weeks]
+-    p = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True,
+-                       encoding="utf-8", errors="replace")
+-    return (p.stdout or "") + "\n" + (p.stderr or "")
+-
+-
+-def _parse(out):
+-    res = {}
+-    for line in out.splitlines():
+-        m = re.match(r"\s*([A-Z-]+)\s+n=\d+\s+MAE base [\d.]+ vs variant [\d.]+\s+"
+-                     r"dMAE\(var-base\)\s+([+-][\d.]+).*?(excludes 0|includes 0|too few)", line)
+-        if m:
+-            res[m.group(1)] = (float(m.group(2)), m.group(3) == "excludes 0")
+-    return res
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument("--years", default="2020,2021,2022,2023,2024,2025")
+-    ap.add_argument("--weeks", default="2-9")
+-    ap.add_argument("--out", default=os.path.join(ROOT, ".sweeps", "sweep_pos_cohort_prior.txt"))
+-    args = ap.parse_args()
+-    os.makedirs(os.path.dirname(args.out), exist_ok=True)
+-
+-    rows, full = [], []
+-    for i, (label, spec) in enumerate(GRID, 1):
+-        print(f"[{i}/{len(GRID)}] {label} ...", flush=True)
+-        out = _run(spec, args.years, args.weeks)
+-        full.append(f"\n{'=' * 88}\n{label}\nPOS_COHORT_PRIOR_GAMES={spec}\n{'=' * 88}\n{out}")
+-        rows.append((label, _parse(out)))
+-
+-    hdr = f"{'config':>18}  " + "".join(f"{s:>13}" for s in SCOPES)
+-    tbl = [hdr, "-" * len(hdr)]
+-    for label, parsed in rows:
+-        cells = []
+-        for s in SCOPES:
+-            if s in parsed:
+-                d, sig = parsed[s]
+-                cells.append(f"{d:+.3f}{'*' if sig else ' '}")
+-            else:
+-                cells.append("   -   ")
+-        tbl.append(f"{label:>18}  " + "".join(f"{c:>13}" for c in cells))
+-    tbl += ["", "dMAE = variant-base (NEGATIVE = coaching-aware table helps). * = 95% CI excludes 0."]
+-    text = "\n".join(tbl)
+-    print("\n" + text)
+-    with open(args.out, "w", encoding="utf-8") as fh:
+-        fh.write(text + "\n\n" + "\n".join(full))
+-    print(f"\n-> {args.out}")
+-
+-
+-if __name__ == "__main__":
+-    main()
+diff --git a/scripts/sweep_scheme_blend_weight.py b/scripts/sweep_scheme_blend_weight.py
+deleted file mode 100644
+index dc772ce..0000000
+--- a/scripts/sweep_scheme_blend_weight.py
++++ /dev/null
+@@ -1,75 +0,0 @@
+-"""
+-Sweep a FIXED alignment/scheme blend ratio per position, instead of the
+-default evidence-weighted blend - built 2026-08-27 per explicit request: TE's
+-evidence-weighted blend (scripts/backtest_stat_level.py --add
+-v2_scheme_alignment_blend) was real but weaker than scheme-alone's own
+-START-TE win, i.e. alignment was "diluting, not hurting" - the user wants TE
+-to keep alignment context regardless, just weighted less than the ~50/50 the
+-evidence-weighted default happened to land near. This finds where that
+-tradeoff actually lands rather than guessing at one ratio (e.g. "75/25").
+-
+-Mechanics: sets data.weekly_projections.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT[
+-position] to each weight in turn, clears build_weekly_projections' cache
+-(REQUIRED - the cache key is `features`, which does not change across weight
+-values, so skipping this would silently serve a stale result), and runs the
+-same per-stat paired A/B as backtest_stat_level.py for each weight against
+-the untouched base (DEFAULT_FEATURES, no blend at all).
+-
+-Usage:
+-    python scripts/sweep_scheme_blend_weight.py --position TE --weights 0.5,0.65,0.75,0.85,0.9,1.0
+-    python scripts/sweep_scheme_blend_weight.py --position WR --weights 0.3,0.5,0.7
+-"""
+-import argparse
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-
+-import data.weekly_projections as wp  # noqa: E402
+-from scripts.backtest_stat_level import evaluate_stat_level, print_report  # noqa: E402
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--position', required=True, choices=['WR', 'TE'])
+-    ap.add_argument('--weights', required=True,
+-                    help="comma-separated scheme-side weights in [0,1], e.g. 0.5,0.75,1.0")
+-    ap.add_argument('--stats', default='targets,receptions,receiving_yards')
+-    ap.add_argument('--years', default='2024,2025')
+-    ap.add_argument('--weeks', default='2-18')
+-    ap.add_argument('--scoring', default='Full PPR')
+-    args = ap.parse_args()
+-
+-    years = [int(y) for y in args.years.split(',')]
+-    if '-' in args.weeks:
+-        lo, hi = args.weeks.split('-')
+-        weeks = list(range(int(lo), int(hi) + 1))
+-    else:
+-        weeks = [int(w) for w in args.weeks.split(',')]
+-    raw_stats = [s.strip() for s in args.stats.split(',') if s.strip()]
+-    weights = [float(w) for w in args.weights.split(',') if w.strip()]
+-
+-    print(f"years={years} weeks={weeks[0]}-{weeks[-1]} position={args.position} weights={weights}")
+-    variant = frozenset(wp.DEFAULT_FEATURES | {'v2_scheme_alignment_blend'})
+-
+-    for w in weights:
+-        wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.clear()
+-        wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT[args.position] = w
+-        wp.build_weekly_projections.clear()
+-        label = f'{args.position}_scheme_w{w:.2f}'
+-        rows = evaluate_stat_level(years, weeks, {label: variant}, raw_stats, args.scoring)
+-        # Both positions print - the one NOT under test still uses the
+-        # default evidence-weighted blend (SCHEME_ALIGNMENT_BLEND_FIXED_
+-        # WEIGHT.get() returns None for it), so its numbers are redundant
+-        # with the earlier evidence-weighted backtest, not wrong - ignore
+-        # them when reading this, they'll be identical across every weight.
+-        print_report(label, rows[label], mode='add')
+-
+-    # Leave no global state behind for anything run after this script in the
+-    # same process/session.
+-    wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.clear()
+-    wp.build_weekly_projections.clear()
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/scripts/sweep_scheme_blend_weight2.py b/scripts/sweep_scheme_blend_weight2.py
+deleted file mode 100644
+index e46a800..0000000
+--- a/scripts/sweep_scheme_blend_weight2.py
++++ /dev/null
+@@ -1,273 +0,0 @@
+-"""Fixed-weight alignment/scheme blend sweep - REWRITE of
+-scripts/sweep_scheme_blend_weight.py, which never produced a usable result.
+-
+-WHY THE OLD ONE NEVER FINISHED (diagnosed 2026-09-01, it was not a hang):
+-
+-  1. It delegated to backtest_stat_level.evaluate_stat_level ONCE PER WEIGHT,
+-     and that function rebuilds the BASE projection for every week inside
+-     every call. Five weights x 3 years x 14 weeks x 2 builds = 420 model
+-     builds, ~7h, and print_report only fires after a whole weight finishes -
+-     so there is no output at all for the first ~85 minutes. It was killed at
+-     2h15m looking dead when it was merely silent and doing 2x the work.
+-
+-  2. Far worse: it was pointed at --years 2023,2024,2025, and the scheme
+-     feature is INERT for 2023 and 2024. The player-side man/zone route share
+-     comes from load_weekly_scheme_profiles, which reads the PFF WEEKLY
+-     archive (pff_imports/{year}/weekly/) - and at the time only 2025 had
+-     one. On 2024 wk6 every one of 747 WR/TE scheme lookups returned "Player
+-     man-coverage route share is unavailable", both scheme flags produce
+-     byte-identical output to base, and two thirds of the run was grinding
+-     full model builds that could not differ from baseline by construction.
+-     The season totals in pff_imports/{year}/*.csv are NOT a substitute:
+-     they are season aggregates, so using them mid-season leaks the future,
+-     and unlike the alignment side there is no season-prior rollover for the
+-     player scheme profile (weekly_projections.py says so at its
+-     pff_scheme_profiles construction).
+-
+-2024's weekly archive was backfilled 2026-09-01 and verified loading
+-time-valid (wk8 2024: 172 of 487 rows move, WR 114/200, TE 58/106), so a
+-real CROSS-SEASON test is now possible. 2023 remains un-backfilled.
+-
+-WHAT THIS ONE DOES DIFFERENTLY:
+-
+-  - Runs only seasons whose weekly archive exists, and REFUSES to quietly
+-    average in a season where the feature cannot act (see the INERT check).
+-  - Base built ONCE per week and reused across every weight: 1 + N builds per
+-    week instead of 2N.
+-  - Per-week progress, flushed, so a long run is visibly alive.
+-  - TE and WR swept SEPARATELY. They are NOT independent: measured on 2025
+-    wk8, changing only the WR weight moved 34 of 90 TE rows by up to 0.4 pts,
+-    because the pass-capacity allocator redistributes team target capacity
+-    across positions. Sweeping both in one build to save time would have
+-    quietly cross-contaminated every number.
+-  - With 2+ seasons: a PER-SEASON breakdown, not a pooled number. A weight
+-    that is real holds its sign in each season independently - which is
+-    exactly what the coaching cohort tables failed to do three times.
+-    Pooling can let one season carry an effect the other contradicts.
+-  - With 1 season: falls back to an odd/even WEEK split, clearly labelled
+-    as the weak substitute it is.
+-
+-    python scripts/sweep_scheme_blend_weight2.py --position TE --weights 0.6,0.7,0.8,0.9,1.0
+-    python scripts/sweep_scheme_blend_weight2.py --position WR --weights 0.3,0.4,0.5,0.7
+-"""
+-import argparse
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-
+-import numpy as np  # noqa: E402
+-import pandas as pd  # noqa: E402
+-
+-import data.weekly_projections as wp  # noqa: E402
+-from data.weekly_projections import build_weekly_projections, DEFAULT_FEATURES  # noqa: E402
+-from data.transforms import load_and_merge_data  # noqa: E402
+-from scripts.eval_weekly_model import _metrics, _weighted, STARTABLE_N  # noqa: E402
+-from scripts.backtest_component import _bootstrap_ci, _sign_test_p  # noqa: E402
+-from scripts.backtest_stat_level import _actual_stat  # noqa: E402
+-
+-BLEND_FLAG = 'v2_scheme_alignment_blend'
+-
+-
+-def _pos_frames(df, pos):
+-    d = df[df['Pos'] == pos]
+-    return d, d.nlargest(STARTABLE_N.get(pos, 30), 'Model Proj Pts')
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--position', required=True, choices=['WR', 'TE'])
+-    ap.add_argument('--weights', required=True,
+-                    help='comma-separated scheme-side weights in [0,1]')
+-    ap.add_argument('--stats', default='targets,receptions,receiving_yards')
+-    # 2025 only by default and on purpose - see the module docstring. Left as
+-    # a flag so a backfilled archive can be swept without editing the script.
+-    ap.add_argument('--years', default='2025')
+-    ap.add_argument('--weeks', default='2-18')
+-    ap.add_argument('--scoring', default='Full PPR')
+-    args = ap.parse_args()
+-
+-    years = [int(y) for y in args.years.split(',')]
+-    lo, hi = (args.weeks.split('-') + [None])[:2]
+-    weeks = list(range(int(lo), int(hi) + 1)) if hi else [int(w) for w in args.weeks.split(',')]
+-    stats = [s.strip() for s in args.stats.split(',') if s.strip()]
+-    weights = [float(w) for w in args.weights.split(',') if w.strip()]
+-    pos = args.position
+-
+-    print(f"position={pos} weights={weights}")
+-    print(f"years={years} weeks={weeks[0]}-{weeks[-1]} stats={stats}")
+-    _ARCHIVED = (2024, 2025)   # seasons with a PFF weekly archive on disk
+-    missing = [y for y in years if y not in _ARCHIVED]
+-    if missing:
+-        print(f"!! WARNING: no PFF weekly scheme archive for {missing} - "
+-              "those seasons contribute ZERO signal (feature inert).")
+-    print(f"builds ~= {len(years) * len(weeks) * (1 + len(weights))}\n", flush=True)
+-
+-    variant = frozenset(DEFAULT_FEATURES | {BLEND_FLAG})
+-    # rows[w][stat][scope] = list of (metrics_base, metrics_var, week)
+-    rows = {w: {s: {} for s in stats} for w in weights}
+-    active_weeks = 0
+-
+-    for year in years:
+-        stats_df, _tc, name_col, _ = load_and_merge_data(year, args.scoring)
+-        if 'week' not in stats_df.columns:
+-            print(f"{year}: no weekly data, skipped", flush=True)
+-            continue
+-        for week in weeks:
+-            actuals = {s: _actual_stat(stats_df, name_col, week, s) for s in stats}
+-            if all(a.empty for a in actuals.values()):
+-                continue
+-
+-            # Base ONCE per week, reused by every weight below.
+-            wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.clear()
+-            build_weekly_projections.clear()
+-            base, bmeta = build_weekly_projections(
+-                year, week, args.scoring, as_of_week=week,
+-                apply_injury=False, features=DEFAULT_FEATURES)
+-            if base.empty:
+-                print(f"{year} w{week}: base empty ({bmeta.get('reason')})", flush=True)
+-                continue
+-
+-            moved_any = False
+-            for w in weights:
+-                wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.clear()
+-                wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT[pos] = w
+-                build_weekly_projections.clear()
+-                var, _vm = build_weekly_projections(
+-                    year, week, args.scoring, as_of_week=week,
+-                    apply_injury=False, features=variant)
+-                if var.empty:
+-                    continue
+-                pool = sorted(set(base['Player']) & set(var['Player']))
+-                if len(pool) < 20:
+-                    continue
+-                b_all = base[base['Player'].isin(pool)]
+-                v_all = var[var['Player'].isin(pool)]
+-
+-                # Did this weight actually change anything? A silently inert
+-                # run is the exact failure that wasted the last attempt, so
+-                # it is detected and reported instead of averaging to zero.
+-                bp = b_all.set_index('Player')['Model Proj Pts']
+-                vp = v_all.set_index('Player')['Model Proj Pts'].reindex(bp.index)
+-                if (bp - vp).abs().max() > 1e-9:
+-                    moved_any = True
+-
+-                b_pos, b_top = _pos_frames(b_all, pos)
+-                v_pos, v_top = _pos_frames(v_all, pos)
+-                for stat in stats:
+-                    actual = actuals[stat]
+-                    if actual.empty or stat not in b_pos.columns:
+-                        continue
+-                    for scope, bdf, vdf in ((pos, b_pos, v_pos),
+-                                            (f'START-{pos}', b_top, v_top)):
+-                        pb = pd.Series(bdf[stat].to_numpy(dtype=float), index=bdf['Player'])
+-                        pv = pd.Series(vdf[stat].to_numpy(dtype=float), index=vdf['Player'])
+-                        mb, mv = _metrics(pb, actual), _metrics(pv, actual)
+-                        if mb and mv:
+-                            rows[w][stat].setdefault(scope, []).append((mb, mv, week, year))
+-
+-            wp.SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.clear()
+-            build_weekly_projections.clear()
+-            active_weeks += int(moved_any)
+-            print(f"{year} w{week} done{'' if moved_any else '  [INERT - no row moved]'}",
+-                  flush=True)
+-
+-    _report(pos, weights, stats, rows, active_weeks)
+-
+-
+-def _block(pairs):
+-    if not pairs:
+-        return None
+-    mb = [p[0] for p in pairs]
+-    mv = [p[1] for p in pairs]
+-    wts = [m['n'] for m in mb]
+-    d = [b['mae'] - a['mae'] for a, b in [(p[0], p[1]) for p in pairs]]
+-    lo, hi = _bootstrap_ci(d, wts)
+-    wins = sum(1 for p in pairs if p[1]['mae'] < p[0]['mae'])
+-    losses = sum(1 for p in pairs if p[0]['mae'] < p[1]['mae'])
+-    return {
+-        'n': sum(wts), 'mae_b': _weighted(mb, 'mae'), 'mae_v': _weighted(mv, 'mae'),
+-        'd': _weighted(mv, 'mae') - _weighted(mb, 'mae'),
+-        'lo': lo, 'hi': hi, 'sig': np.isfinite(lo) and (lo > 0 or hi < 0),
+-        'wins': wins, 'losses': losses, 'p': _sign_test_p(wins, losses),
+-    }
+-
+-
+-def _report(pos, weights, stats, rows, active_weeks):
+-    bar = '=' * 100
+-    print(f"\n\n{bar}\nFIXED SCHEME WEIGHT SWEEP - {pos}"
+-          f"   ({active_weeks} weeks where the feature actually moved a row)\n{bar}")
+-    if active_weeks == 0:
+-        print("\nEVERY WEEK WAS INERT. The scheme feature did nothing - almost "
+-              "certainly a missing\nPFF weekly archive for these years "
+-              "(pff_imports/{year}/weekly/). Nothing here is a result.\n")
+-        return
+-
+-    for stat in stats:
+-        print(f"\n--- {stat} ---")
+-        print(f"{'weight':<9}{'scope':<12}{'n':>7}{'MAE base':>10}{'MAE var':>10}"
+-              f"{'dMAE':>9}{'  w-l':>9}{'  95% CI':>20}")
+-        for w in weights:
+-            for scope in (pos, f'START-{pos}'):
+-                b = _block(rows[w][stat].get(scope, []))
+-                if not b:
+-                    continue
+-                print(f"{w:<9.2f}{scope:<12}{b['n']:>7}{b['mae_b']:>10.3f}"
+-                      f"{b['mae_v']:>10.3f}{b['d']:>+9.3f}"
+-                      f"{f'  {b['wins']}-{b['losses']}':>9}"
+-                      f"{f'  [{b['lo']:+.3f},{b['hi']:+.3f}]':>20}"
+-                      f"{' *' if b['sig'] else ''}")
+-
+-    seasons = sorted({p[3] for w in weights for s in stats
+-                      for sc in rows[w][s] for p in rows[w][s][sc]})
+-
+-    if len(seasons) >= 2:
+-        # THE test. A weight that is real should hold its sign in each season
+-        # independently - that is exactly what the coaching cohort tables
+-        # failed three times running. Per-season columns, not a pooled number,
+-        # because pooling can hide one season carrying the whole effect.
+-        print(f"\n\n{bar}\nCROSS-SEASON CHECK - each season scored "
+-              f"independently (the decisive test)\n{bar}")
+-        for stat in stats:
+-            print(f"\n--- {stat} ---")
+-            hdr = ''.join(f"{str(y) + ' dMAE':>13}" for y in seasons)
+-            print(f"{'weight':<9}{'scope':<12}{hdr}{'  agree?':>18}")
+-            for w in weights:
+-                for scope in (pos, f'START-{pos}'):
+-                    pairs = rows[w][stat].get(scope, [])
+-                    per = {y: _block([p for p in pairs if p[3] == y]) for y in seasons}
+-                    if any(v is None for v in per.values()):
+-                        continue
+-                    cells = ''.join(f"{per[y]['d']:>+13.3f}" for y in seasons)
+-                    signs = {(per[y]['d'] < 0) for y in seasons}
+-                    agree = 'yes' if len(signs) == 1 else 'NO - sign flips'
+-                    print(f"{w:<9.2f}{scope:<12}{cells}{agree:>18}")
+-        print("\n(A weight that flips sign between seasons is not a finding, "
+-              "whatever the pooled\n number says. Ship only what holds in both.)")
+-    else:
+-        # Only one season of archive - the weakest split available.
+-        print(f"\n\n{bar}\nODD/EVEN WEEK SPLIT (weak within-season check - "
+-              f"NOT a substitute for a second season)\n{bar}")
+-        for stat in stats:
+-            print(f"\n--- {stat} ---")
+-            print(f"{'weight':<9}{'scope':<12}{'odd dMAE':>11}{'even dMAE':>12}{'  agree?':>10}")
+-            for w in weights:
+-                for scope in (pos, f'START-{pos}'):
+-                    pairs = rows[w][stat].get(scope, [])
+-                    odd = _block([p for p in pairs if p[2] % 2 == 1])
+-                    even = _block([p for p in pairs if p[2] % 2 == 0])
+-                    if not (odd and even):
+-                        continue
+-                    agree = 'yes' if (odd['d'] < 0) == (even['d'] < 0) else 'NO - sign flips'
+-                    print(f"{w:<9.2f}{scope:<12}{odd['d']:>+11.3f}{even['d']:>+12.3f}"
+-                          f"{agree:>18}")
+-
+-    print("\n(dMAE negative = the fixed weight beats DEFAULT_FEATURES. "
+-          "* = 95% CI excludes 0.)")
+-    if len(seasons) < 2:
+-        print("ONE SEASON ONLY - exploratory until a second PFF weekly archive "
+-              "season is backfilled.")
+-
+-
+-if __name__ == '__main__':
+-    main()
+-- 
+2.55.0.windows.2
+

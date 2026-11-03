@@ -1,0 +1,791 @@
+From f4bab1fabc189e7b4a29dcfe6a0ba25b0043cfef Mon Sep 17 00:00:00 2001
+From: bradent27-sketch <304192343+bradent27-sketch@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 08:21:12 -0600
+Subject: [PATCH] Retire v2_td_volume_shrink and v2_td_career_regress (rejected
+ cold-start WR/TE TD-rate regressions)
+
+Both off since 2026-09-08, backtested and rejected on week 1 2022-2025:
+- v2_td_volume_shrink: ALL +0.024*, TE +0.099*, startable WR/TE receiving_tds MAE +0.030* (all CI excludes 0, worse); no
+  TD_VOLUME_SHRINK_STRENGTH from 0.10 to 1.0 helped.
+- v2_td_career_regress: START-WR +0.034..+0.036* gated and ungated; regressing startable TD rates upward loses on this window.
+Removes the branches, td_volume_shrunk_prior / career_regressed_td_prior, their constants, the TD-count columns of the
+credibility context, the two sweep scripts and the two helper tests. Default boards identical before and after
+(.sweeps/board_identity.py: 2022 w1, 2023 w3, 2024 w1, live 2026 w2). Restore with git revert of this commit.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ data/weekly_projections.py         | 244 +----------------------------
+ scripts/sweep_td_career_regress.py | 205 ------------------------
+ scripts/sweep_td_volume_shrink.py  | 183 ----------------------
+ tests/test_weekly_projections.py   |  48 ------
+ 4 files changed, 2 insertions(+), 678 deletions(-)
+ delete mode 100644 scripts/sweep_td_career_regress.py
+ delete mode 100644 scripts/sweep_td_volume_shrink.py
+
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index 8aec03f..d15b78a 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -1364,49 +1364,6 @@ MODEL_FEATURES = (
+     'v2_td_prior_credibility',  # shrink a thin one-season TD rate to the league
+                              # mean by opportunity volume; small 3rd/4th-year
+                              # longevity bump. See credibility_shrunk_td_prior.
+-    'v2_td_volume_shrink',   # WR/TE receiving_tds, cold start: REPLACE the
+-                             # above with a TD-COUNT credibility regressed
+-                             # toward a league TD-per-target rate on the
+-                             # player's own projected target volume - so a
+-                             # TD-unlucky WR1 (Jefferson 0.25 -> 0.32) pulls UP
+-                             # toward a league rate on his role. Eye-test does
+-                             # the right thing two-sided (Jefferson/Lamb/Burden
+-                             # up, St. Brown/Kittle down) but BUILT, BACKTESTED,
+-                             # REJECTED - stays OFF. scripts/sweep_td_volume_
+-                             # shrink.py, wk1 2022-2025: ALL +0.024* / TE
+-                             # +0.099* / startable-WR/TE receiving_tds MAE
+-                             # +0.030* - all bootstrap-CI-excludes-0 WORSE. It
+-                             # lifts nearly every TE toward a 0.058/target rate
+-                             # they don't hit in a single game; regressing an
+-                             # unlucky rate UP adds more error than it removes.
+-                             # TD_VOLUME_SHRINK_STRENGTH sweeps {0.25..1.0} and
+-                             # {0.10,0.175,0.25} confirm: recv_tds MAE
+-                             # +0.012*..+0.029* and its MEDIAN error never
+-                             # improves at ANY strength, and START-TE is
+-                             # +0.12*..+0.13* at every soft strength. See
+-                             # td_volume_shrunk_prior and
+-                             # docs/weekly_projections_methodology.md.
+-    'v2_td_career_regress',  # WR/TE receiving_tds, cold start: regress the
+-                             # recent rate toward the player's OWN opportunity-
+-                             # weighted CAREER TD-per-game rate instead of a
+-                             # league/position anchor, pull growing with career
+-                             # length (role_seasons) + career opportunity volume.
+-                             # Two-sided; fires only for role_seasons >= 2 +
+-                             # finite career rate. Alternative to
+-                             # v2_td_volume_shrink. TD_CAREER_REGRESS_STRENGTH is
+-                             # the 0..1 dial. BUILT, BACKTESTED (gated +
+-                             # ungated), REJECTED - stays OFF. scripts/sweep_td_
+-                             # career_regress.py wk1 2022-2025: START-WR
+-                             # +0.034..+0.036 (CI excludes 0 at 0.30) in BOTH
+-                             # versions; the comparability gate did not fix it
+-                             # and turned whole-pool WR into +0.009*..+0.011*.
+-                             # The cost is the UP arm (rescuing a TD-light
+-                             # startable star adds TDs that meet a Week-1 zero),
+-                             # same failure as v2_td_volume_shrink - regressing
+-                             # startable TD rates UPward always loses on this
+-                             # window regardless of the anchor. Kept for the
+-                             # machinery. See career_regressed_td_prior and the
+-                             # dated section in docs/weekly_projections_methodology.md.
+     'v2_xtd',              # SHIPPED 2026-09-29 (follow-up), built 2026-09-29 -
+                              # docs/model_improvement_plan_2026-09-23.md item
+                              # 6. Replaces the standard blend above for
+@@ -6467,124 +6424,6 @@ def credibility_shrunk_td_prior(prior_rate, opportunity_total, role_seasons, pos
+             np.where(passthrough, 1.0, longevity_mult))
+ 
+ 
+-# --- v2_td_volume_shrink ---------------------------------------------------
+-# credibility_shrunk_td_prior weights the player's own TD RATE by his
+-# OPPORTUNITY count (targets), so a ~550-target WR keeps ~91% of his own rate
+-# even though only ~15-20 actual TD *events* stand behind it - and it
+-# regresses toward a per-GAME position mean diluted by every low-snap WR,
+-# which for a projected WR1 barely moves and can even pull DOWN. A WR1 off a
+-# genuinely TD-unlucky season (Justin Jefferson, 2 TDs in 17 games on a
+-# bottom-tier 2025 offence) therefore stays anchored near that rate. This
+-# flag re-does the shrink for WR/TE receiving_tds at cold start:
+-#   - credibility from the actual 2-year TD COUNT (a rate needs successes
+-#     behind it, not trials): cred = n_td / (n_td + TD_VOLUME_SHRINK_COUNT_K);
+-#   - regressed toward a LEAGUE TD-per-target rate applied to the player's
+-#     OWN projected target volume - so "unlucky" pulls up toward "a league
+-#     rate on your role", "hot" (St. Brown) pulls gently down, and a genuine
+-#     low-volume reserve is regressed to a low number because his role is low.
+-# Cold start only; in season w_current takes the observed rate over.
+-TD_VOLUME_SHRINK_COUNT_K = 12.0            # TD events for 50% credibility on the rate
+-LEAGUE_TD_PER_TARGET = {'WR': 0.052, 'TE': 0.058}  # productive-tier rate (top-40, 2021-2025)
+-# 0..1 dial on how far the shrink is allowed to move the rate off the player's
+-# own two-year-blended number. 1.0 = full td_volume_shrunk_prior output; 0.0 =
+-# no-op. Swept by scripts/sweep_td_volume_shrink.py --strengths.
+-TD_VOLUME_SHRINK_STRENGTH = 1.0
+-
+-
+-def td_volume_shrunk_prior(player_td_rate, td_count, league_td_per_opp, player_opp_rate):
+-    """Regress a per-game TD rate toward ``league_td_per_opp * player_opp_rate``
+-    - a league TD efficiency applied to the player's own projected volume -
+-    with the credibility keyed off the prior TD COUNT. A non-finite player
+-    rate (or a non-finite volume target) passes straight through. Returns
+-    ``(shrunk_rate, credibility)``."""
+-    rate = np.asarray(player_td_rate, dtype=float)
+-    n = np.asarray(td_count, dtype=float)
+-    n = np.where(np.isfinite(n) & (n > 0.0), n, 0.0)
+-    cred = n / (n + TD_VOLUME_SHRINK_COUNT_K)
+-    target = np.asarray(league_td_per_opp, dtype=float) * np.asarray(player_opp_rate, dtype=float)
+-    have_target = np.isfinite(target) & (target >= 0.0)
+-    shrunk = cred * rate + (1.0 - cred) * np.where(have_target, target, rate)
+-    passthrough = ~np.isfinite(rate) | ~have_target
+-    return np.where(passthrough, rate, shrunk), np.where(passthrough, np.nan, cred)
+-
+-
+-# --- v2_td_career_regress ------------------------------------------------------
+-# Both shrinks above regress a weak recent TD rate toward a POPULATION anchor
+-# (position per-game mean / league TD-per-target). Neither uses the player's own
+-# deeper history: a multi-year starter whose last season was TD-light (bad
+-# offence, bad luck) is treated the same as a one-year sample. This flag
+-# regresses the recent rate toward the player's OWN opportunity-weighted CAREER
+-# TD-per-opportunity rate (sum of TDs / sum of opportunities across every
+-# looked-back season, up to TD_PRIOR_CREDIBILITY_SEASONS), with a pull that
+-# GROWS with how much career he has:
+-#   season_factor = clip((role_seasons - 1) / (SEASONS_FULL - 1), 0, 1)
+-#   vol_factor    = career_opp / (career_opp + OPP_K)
+-#   pull          = STRENGTH * season_factor * vol_factor
+-#   out           = last_rate + pull * (career_rate - last_rate)
+-# Two-sided by construction (a fluky-HIGH last season is pulled down toward the
+-# career line too). Fires only for role_seasons >= MIN_ROLE_SEASONS and a
+-# finite career rate; everyone else is left on the credibility path. Cold start,
+-# WR/TE receiving_tds (mirrors v2_td_volume_shrink's scope); the two are
+-# ALTERNATIVES on that channel - career_regress wins if both are on.
+-#
+-# v2 (2026-09-08): a ROLE-COMPARABILITY gate, mirroring blend_comparable_td_
+-# priors. The v1 (ungated) sweep LOST on START-WR (+0.036*, CI excludes 0)
+-# because it dragged ASCENDING WRs - G.Wilson 0.53->0.36, D.London - toward a
+-# career average still weighted by their weaker early seasons. The gate only
+-# lets the regression fire where the player's MOST RECENT opportunity/game is
+-# within [LO, HI] of his CAREER opportunity/game - i.e. "same size role, the
+-# TD rate just moved", which is the Jefferson / Kelce case, not a role that
+-# levelled up or fell off. Same bounds blend_comparable_td_priors uses.
+-TD_CAREER_REGRESS_SEASONS_FULL = 4.0        # role-seasons at which season_factor hits 1.0
+-TD_CAREER_REGRESS_OPP_K = 200.0             # career targets for 50% vol_factor (targets)
+-TD_CAREER_REGRESS_MIN_ROLE_SEASONS = 2.0    # never fires on a one-season sample
+-TD_CAREER_REGRESS_STRENGTH = 1.0            # 0..1 master dial; swept by scripts/sweep_td_career_regress.py
+-TD_CAREER_REGRESS_COMPARABLE_LO = 0.60      # recent opp/g must be >= this x career opp/g
+-TD_CAREER_REGRESS_COMPARABLE_HI = 1.67      # ... and <= this x career opp/g, else no regression
+-
+-
+-def career_regressed_td_prior(last_rate, career_rate, role_seasons, career_opp,
+-                              recent_opp_pg=None, career_opp_pg=None, strength=1.0):
+-    """Regress ``last_rate`` toward the player's own ``career_rate``.
+-
+-    Pull strength scales with career length (``role_seasons``) and career
+-    opportunity volume (``career_opp``). Non-finite ``career_rate``, or fewer
+-    than ``TD_CAREER_REGRESS_MIN_ROLE_SEASONS`` role seasons, passes the last
+-    rate straight through. Returns ``(regressed_rate, pull)`` where ``pull`` is
+-    the 0..1 weight actually placed on the career rate (0 on a passthrough row).
+-
+-    When both ``recent_opp_pg`` and ``career_opp_pg`` are given, a ROLE-
+-    COMPARABILITY gate also applies: the regression only fires where
+-    ``recent_opp_pg / career_opp_pg`` is within
+-    ``[TD_CAREER_REGRESS_COMPARABLE_LO, TD_CAREER_REGRESS_COMPARABLE_HI]`` - a
+-    player whose latest role is much bigger (ascending) or much smaller
+-    (faded / hurt) than his career norm keeps his own recent rate untouched.
+-    """
+-    last = np.asarray(last_rate, dtype=float)
+-    career = np.asarray(career_rate, dtype=float)
+-    seasons = np.asarray(role_seasons, dtype=float)
+-    opp = np.asarray(career_opp, dtype=float)
+-    opp = np.where(np.isfinite(opp) & (opp > 0.0), opp, 0.0)
+-    denom = max(TD_CAREER_REGRESS_SEASONS_FULL - 1.0, 1e-9)
+-    season_factor = np.clip((seasons - 1.0) / denom, 0.0, 1.0)
+-    vol_factor = opp / (opp + TD_CAREER_REGRESS_OPP_K)
+-    pull = float(np.clip(strength, 0.0, 1.0)) * season_factor * vol_factor
+-    eligible = (np.isfinite(last) & np.isfinite(career)
+-                & (seasons >= TD_CAREER_REGRESS_MIN_ROLE_SEASONS))
+-    if recent_opp_pg is not None and career_opp_pg is not None:
+-        r = np.asarray(recent_opp_pg, dtype=float)
+-        c = np.asarray(career_opp_pg, dtype=float)
+-        with np.errstate(divide='ignore', invalid='ignore'):
+-            ratio = np.where(np.isfinite(c) & (c > 0.0), r / c, np.nan)
+-        comparable = (np.isfinite(ratio)
+-                      & (ratio >= TD_CAREER_REGRESS_COMPARABLE_LO)
+-                      & (ratio <= TD_CAREER_REGRESS_COMPARABLE_HI))
+-        eligible = eligible & comparable
+-    pull = np.where(eligible, pull, 0.0)
+-    out = last + pull * (career - last)
+-    return np.where(eligible, out, last), pull
+-
+-
+ def projection_channel(position, stat):
+     """Name the position-specific offense/defense channel for a stat.
+ 
+@@ -11669,13 +11508,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+         # mean (see credibility_shrunk_td_prior). Cold-start only; the flag is
+         # a no-op in season once a player's own games carry the rate.
+         td_credibility_ctx = pd.DataFrame()
+-        if ('v2_td_prior_credibility' in feats or 'v2_td_career_regress' in feats) and cold_start:
++        if 'v2_td_prior_credibility' in feats and cold_start:
+             _opp_cols = [c for c in ('rushing_attempts', 'targets', 'passing_attempts') if c in stats]
+-            # v2_td_career_regress also needs the per-season TD COUNTS, to build
+-            # an opportunity-weighted CAREER TD rate (sum tds / sum opp across
+-            # every looked-back season) as the regression anchor.
+-            _td_cols = [c for c in ('receiving_tds', 'rushing_tds', 'passing_tds') if c in stats]
+-            _ctx_cols = _opp_cols + _td_cols
++            _ctx_cols = _opp_cols
+             _season_frames = []
+             for _sf in (prior, older):
+                 if _sf is not None and not _sf.empty and '_identity_key' in _sf.columns:
+@@ -11704,8 +11539,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                 ).astype(float)
+                 td_credibility_ctx = _all_seasons.groupby('_identity_key').agg(
+                     **{f'_opp_total_{c}': (c, 'sum') for c in _opp_cols},
+-                    **{f'_td_total_{c}': (c, 'sum') for c in _td_cols},
+-                    _games_total=('Games', 'sum'),
+                     _role_seasons=('_role_season', 'sum'),
+                 ).reset_index()
+ 
+@@ -13097,11 +12930,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+             participation_mult = participation_mult * _te_act
+ 
+         proj_cols, stat_trace = {}, {}
+-        # v2_td_volume_shrink: the projected target rate from the 'targets'
+-        # iteration is reused as the volume the TD-per-target regression
+-        # target rides on. 'targets' is always projected before 'receiving_tds'
+-        # (see OFFENSE_PROJECTION_STATS), so this is populated in time.
+-        _projected_target_rate = None
+         for stat in stats:
+             if stat not in cur.columns:
+                 continue
+@@ -13190,7 +13018,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+             # with a small 3rd/4th-role-season longevity bump. TD stats only,
+             # cold start only (in season w_current takes the rate over).
+             td_prior_credibility = np.full(len(cur), np.nan)
+-            _prior_rate_pre_cred = prior_rate.copy()
+             if ('v2_td_prior_credibility' in feats and cold_start and opportunity_stat
+                     and not td_credibility_ctx.empty):
+                 _ctx = td_credibility_ctx.set_index('_identity_key')
+@@ -13201,67 +13028,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                 prior_rate, td_prior_credibility, _td_longevity = credibility_shrunk_td_prior(
+                     prior_rate, _opp_total, _role_seasons, pos_rate_arr, opportunity_stat)
+ 
+-            # v2_td_volume_shrink: for WR/TE receiving_tds only, REPLACE the
+-            # opportunity-count credibility shrink above with a TD-COUNT
+-            # credibility regressed toward a league TD-per-target rate on the
+-            # player's own projected target volume. Starts from the pre-shrink
+-            # (two-year-blended) rate so the two shrinks don't compound.
+-            if ('v2_td_volume_shrink' in feats and cold_start and pos in ('WR', 'TE')
+-                    and stat == 'receiving_tds' and _projected_target_rate is not None):
+-                _td2 = np.zeros(len(cur))
+-                for _tf in (prior, older):
+-                    if (_tf is not None and not _tf.empty and 'receiving_tds' in _tf.columns
+-                            and '_identity_key' in _tf.columns):
+-                        _tm = pd.Series(_tf['receiving_tds'].to_numpy(), index=_tf['_identity_key'])
+-                        _td2 = _td2 + identity_keys_rv.map(_tm).fillna(0.0).to_numpy(dtype=float)
+-                _tdvs_rate, _tdvs_cred = td_volume_shrunk_prior(
+-                    _prior_rate_pre_cred, _td2,
+-                    LEAGUE_TD_PER_TARGET.get(pos, 0.052), _projected_target_rate)
+-                # TD_VOLUME_SHRINK_STRENGTH scales how far off the player's own
+-                # two-year-blended rate the shrink is allowed to move.
+-                _s = float(np.clip(TD_VOLUME_SHRINK_STRENGTH, 0.0, 1.0))
+-                _tdvs_rate = np.where(
+-                    np.isfinite(_tdvs_rate),
+-                    _prior_rate_pre_cred + _s * (_tdvs_rate - _prior_rate_pre_cred),
+-                    _tdvs_rate)
+-                prior_rate = np.where(np.isfinite(_tdvs_rate), _tdvs_rate, prior_rate)
+-                td_prior_credibility = np.where(np.isfinite(_tdvs_cred), _tdvs_cred, td_prior_credibility)
+-
+-            # v2_td_career_regress: for WR/TE receiving_tds only, regress the
+-            # recent (two-year-blended) rate toward the player's OWN
+-            # opportunity-weighted CAREER TD-per-game rate, pull growing with
+-            # career length + volume, gated to players whose LATEST role is a
+-            # comparable size to their career norm. Alternative to
+-            # v2_td_volume_shrink; if both are on this runs last and wins.
+-            if ('v2_td_career_regress' in feats and cold_start and pos in ('WR', 'TE')
+-                    and stat == 'receiving_tds' and not td_credibility_ctx.empty):
+-                _ctxc = td_credibility_ctx.set_index('_identity_key')
+-                if '_td_total_receiving_tds' in _ctxc.columns and '_games_total' in _ctxc.columns:
+-                    _cr_td = identity_keys_rv.map(_ctxc['_td_total_receiving_tds']).to_numpy(dtype=float)
+-                    _cr_g = identity_keys_rv.map(_ctxc['_games_total']).to_numpy(dtype=float)
+-                    _cr_opp = (identity_keys_rv.map(_ctxc['_opp_total_targets']).to_numpy(dtype=float)
+-                               if '_opp_total_targets' in _ctxc.columns else np.zeros(len(cur)))
+-                    _cr_seasons = (identity_keys_rv.map(_ctxc['_role_seasons']).fillna(0.0).to_numpy(dtype=float)
+-                                   if '_role_seasons' in _ctxc.columns else np.zeros(len(cur)))
+-                    with np.errstate(divide='ignore', invalid='ignore'):
+-                        _career_rate = np.where(np.isfinite(_cr_g) & (_cr_g > 0.0),
+-                                                _cr_td / _cr_g, np.nan)
+-                        _career_opp_pg = np.where(np.isfinite(_cr_g) & (_cr_g > 0.0),
+-                                                  _cr_opp / _cr_g, np.nan)
+-                    # Most-recent-season targets/game for the comparability gate.
+-                    _recent_opp_pg = np.full(len(cur), np.nan)
+-                    if (prior is not None and not prior.empty and 'targets' in prior.columns
+-                            and 'Games' in prior.columns and '_identity_key' in prior.columns):
+-                        _rmap = pd.Series(
+-                            (prior['targets'] / prior['Games'].replace(0, np.nan)).to_numpy(),
+-                            index=prior['_identity_key'])
+-                        _recent_opp_pg = identity_keys_rv.map(_rmap).to_numpy(dtype=float)
+-                    _cr_out, _cr_pull = career_regressed_td_prior(
+-                        _prior_rate_pre_cred, _career_rate, _cr_seasons, _cr_opp,
+-                        recent_opp_pg=_recent_opp_pg, career_opp_pg=_career_opp_pg,
+-                        strength=TD_CAREER_REGRESS_STRENGTH)
+-                    prior_rate = np.where(_cr_pull > 0.0, _cr_out, prior_rate)
+-
+             prior_rate_before_role = prior_rate.copy()
+             prior_source_is_player = np.isfinite(prior_rate)
+             stat_role_scale = role_scale
+@@ -13357,12 +13123,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                     rush_outside_zone=('v2_xtd_rush_outside_zone' in feats),
+                     missing_prior_unknown=('v2_xtd_missing_prior_share' in feats),
+                     missing_prior_overall=('v2_xtd_missing_prior_overall' in feats))
+-            if stat == 'targets':
+-                # Kept for v2_td_volume_shrink's regression target (the TD-per-
+-                # target rate rides on this projected volume). Pre matchup/pace
+-                # on purpose - a tough Week-1 draw should not also suppress the
+-                # TD regression anchor.
+-                _projected_target_rate = np.clip(np.asarray(blended, dtype=float), 0.0, None)
+             # The allocator's carry/target capacity is the preseason role
+             # baseline.  For the two opportunity stats themselves, make that
+             # conservation exact before the normal defense/pace projection
+diff --git a/scripts/sweep_td_career_regress.py b/scripts/sweep_td_career_regress.py
+deleted file mode 100644
+index 0baf51e..0000000
+--- a/scripts/sweep_td_career_regress.py
++++ /dev/null
+@@ -1,205 +0,0 @@
+-"""Strength sweep for v2_td_career_regress (2026-09-08).
+-
+-v2_td_volume_shrink regressed a TD-light recent season toward a LEAGUE
+-TD-per-target anchor and lost the backtest at every strength (recv_tds MAE
+-worse throughout, START-TE +0.12*..+0.13*). This flag instead regresses toward
+-the player's OWN opportunity-weighted CAREER TD-per-game rate, with a pull that
+-GROWS with career length (role_seasons) and career opportunity volume - so a
+-one-year sample is untouched and a proven multi-year starter off a flukey-low
+-year is pulled hardest back to his own norm.
+-
+-v1 (ungated) LOST on START-WR (+0.036*, CI excludes 0) by dragging ASCENDING
+-WRs toward a career average weighted by their weaker early seasons. v2 adds a
+-ROLE-COMPARABILITY gate (recent opp/g within [0.60, 1.67] x career opp/g) so
+-the regression only fires on a same-size role. This sweep is v2.
+-
+-Sweeps TD_CAREER_REGRESS_STRENGTH (the 0..1 master dial) gentle -> full:
+-
+-    python scripts/sweep_td_career_regress.py --years 2022,2023,2024,2025 --weeks 1 \
+-        --strengths 0.3,0.6,1.0
+-"""
+-import argparse
+-import math
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-for _s in (sys.stdout, sys.stderr):
+-    try:
+-        _s.reconfigure(encoding="utf-8")
+-    except (AttributeError, ValueError):
+-        pass
+-
+-import numpy as np  # noqa: E402
+-import pandas as pd  # noqa: E402
+-
+-import data.weekly_projections as wp  # noqa: E402
+-from data.weekly_projections import build_weekly_projections, DEFAULT_FEATURES  # noqa: E402
+-from data.transforms import load_and_merge_data  # noqa: E402
+-from scripts.eval_weekly_model import _metrics, _weighted, STARTABLE_N, _actual_points  # noqa: E402
+-
+-BASE = frozenset(DEFAULT_FEATURES | {'v2_historical_ourlads'})
+-VAR = frozenset(BASE | {'v2_td_career_regress'})
+-SCOPES = [('ALL', None, False), ('WR', 'WR', False), ('TE', 'TE', False),
+-          ('START-WR', 'WR', True), ('START-TE', 'TE', True),
+-          ('START-QB', 'QB', True), ('START-RB', 'RB', True)]
+-
+-
+-def _scope_df(df, pos, startable):
+-    d = df if pos is None else df[df['Pos'] == pos]
+-    if startable:
+-        d = d.nlargest(STARTABLE_N.get(pos, 30), 'Model Proj Pts')
+-    return d
+-
+-
+-def _boot_ci(deltas, weights, n=3000, seed=0):
+-    if len(deltas) < 4:
+-        return float('nan'), float('nan')
+-    rng = np.random.default_rng(seed)
+-    d = np.asarray(deltas, float); w = np.asarray(weights, float)
+-    idx = np.arange(len(d)); out = np.empty(n)
+-    for b in range(n):
+-        s = rng.choice(idx, size=len(idx), replace=True)
+-        out[b] = np.average(d[s], weights=w[s])
+-    return float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5))
+-
+-
+-def run(years, weeks, scoring, strengths):
+-    scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
+-    by_strength = {s: {sc[0]: [] for sc in SCOPES} for s in strengths}
+-    td_by_strength = {s: [] for s in strengths}      # (mean base|err|, mean var|err|, n) on startable WR/TE recv_tds
+-    td_err = {s: [] for s in strengths}              # per-player (base|err|, var|err|) on recv_tds, for MEDIAN
+-    moved = {s: [] for s in strengths}               # (recv_td delta, actual recv_tds) for players the flag moved
+-
+-    for year in years:
+-        stats_df, _tc, name_col, _ = load_and_merge_data(year, scoring)
+-        if 'week' not in stats_df.columns:
+-            continue
+-        for week in weeks:
+-            actual = _actual_points(stats_df, name_col, week, scoring_col)
+-            if actual.empty:
+-                continue
+-            wk = stats_df[pd.to_numeric(stats_df['week'], errors='coerce') == week]
+-            td_actual = wk.groupby(name_col)['receiving_tds'].sum() if 'receiving_tds' in wk.columns else None
+-            build_weekly_projections.clear()
+-            b, _ = build_weekly_projections(year, week, scoring, as_of_week=week,
+-                                            apply_injury=False, features=BASE)
+-            if b.empty:
+-                continue
+-            for s in strengths:
+-                wp.TD_CAREER_REGRESS_STRENGTH = float(s)
+-                build_weekly_projections.clear()
+-                v, _ = build_weekly_projections(year, week, scoring, as_of_week=week,
+-                                                apply_injury=False, features=VAR)
+-                if v.empty:
+-                    continue
+-                common = sorted(set(b['Player']) & set(v['Player']))
+-                if len(common) < 20:
+-                    continue
+-                bi = b[b['Player'].isin(common)].set_index('Player')
+-                vi = v[v['Player'].isin(common)].set_index('Player')
+-                for scope, pos, startable in SCOPES:
+-                    bd = _scope_df(bi.reset_index(), pos, startable)
+-                    vd = _scope_df(vi.reset_index(), pos, startable)
+-                    mb = _metrics(pd.Series(bd['Model Proj Pts'].to_numpy(), index=bd['Player']), actual)
+-                    mv = _metrics(pd.Series(vd['Model Proj Pts'].to_numpy(), index=vd['Player']), actual)
+-                    if mb and mv:
+-                        by_strength[s][scope].append((mb, mv))
+-                if td_actual is not None:
+-                    pool = pd.concat([_scope_df(bi.reset_index(), p, True) for p in ('WR', 'TE')])['Player']
+-                    idx = [p for p in pool if p in td_actual.index]
+-                    if len(idx) >= 5:
+-                        a = pd.to_numeric(td_actual.reindex(idx), errors='coerce')
+-                        peb = (pd.to_numeric(bi.reindex(idx)['receiving_tds'], errors='coerce') - a).abs()
+-                        pev = (pd.to_numeric(vi.reindex(idx)['receiving_tds'], errors='coerce') - a).abs()
+-                        if np.isfinite(peb.mean()) and np.isfinite(pev.mean()):
+-                            td_by_strength[s].append((float(peb.mean()), float(pev.mean()), len(idx)))
+-                            for xb, xv in zip(peb.to_numpy(), pev.to_numpy()):
+-                                if np.isfinite(xb) and np.isfinite(xv):
+-                                    td_err[s].append((float(xb), float(xv)))
+-                for p in common:
+-                    if bi.loc[p, 'Pos'] not in ('WR', 'TE'):
+-                        continue
+-                    tb = float(bi.loc[p, 'receiving_tds']); tv = float(vi.loc[p, 'receiving_tds'])
+-                    if abs(tv - tb) > 0.02 and td_actual is not None and p in td_actual.index:
+-                        moved[s].append((tv - tb, float(td_actual.loc[p]), tb, tv))
+-            print(f"{year} w{week}: done", flush=True)
+-    wp.TD_CAREER_REGRESS_STRENGTH = 1.0
+-    _report(by_strength, td_by_strength, td_err, moved, years, weeks, strengths)
+-
+-
+-def _report(by_strength, td_by_strength, td_err, moved, years, weeks, strengths):
+-    bar = '=' * 104
+-    print(f"\n{bar}\nv2_td_career_regress STRENGTH SWEEP   years={years} weeks={weeks}\n{bar}")
+-    print("dMAE = var - base.  NEGATIVE = more accurate.  * = bootstrap 95% CI excludes 0.\n")
+-    keyscopes = ['ALL', 'WR', 'TE', 'START-WR', 'START-TE']
+-    hdr = f"{'strength':>9}"
+-    for sc in keyscopes:
+-        hdr += f"{sc:>12}"
+-    hdr += f"{'recv_tds':>12}{'recvTD-medn':>13}"
+-    print(hdr)
+-    for s in strengths:
+-        row = f"{s:>9.2f}"
+-        for sc in keyscopes:
+-            pr = by_strength[s].get(sc) or []
+-            if not pr:
+-                row += f"{'-':>12}"
+-                continue
+-            mb = [x[0] for x in pr]; mv = [x[1] for x in pr]
+-            d = _weighted(mv, 'mae') - _weighted(mb, 'mae')
+-            deltas = [x[1]['mae'] - x[0]['mae'] for x in pr]
+-            lo, hi = _boot_ci(deltas, [x[0]['n'] for x in pr])
+-            star = '*' if (np.isfinite(lo) and (lo > 0 or hi < 0)) else ''
+-            row += f"{f'{d:+.3f}{star}':>12}"
+-        tp = td_by_strength[s]
+-        if tp:
+-            eb = np.array([r[0] for r in tp]); ev = np.array([r[1] for r in tp])
+-            w = np.array([r[2] for r in tp], float)
+-            d = float(np.average(ev, weights=w) - np.average(eb, weights=w))
+-            lo, hi = _boot_ci(list(ev - eb), list(w))
+-            star = '*' if (np.isfinite(lo) and (lo > 0 or hi < 0)) else ''
+-            row += f"{f'{d:+.3f}{star}':>12}"
+-        te = td_err[s]
+-        if te:
+-            be = np.array([x[0] for x in te]); ve = np.array([x[1] for x in te])
+-            row += f"{np.median(ve) - np.median(be):>+13.3f}"
+-        print(row)
+-    print("\n(recv_tds = receiving_tds MEAN abs err on startable WR/TE; last col = MEDIAN abs err change)")
+-
+-    print(f"\n{bar}\nWHAT THE REGRESSION MOVES (WR/TE recv_td proj shifted > 0.02)\n{bar}")
+-    print(f"{'strength':>9}{'n':>6}{'n up':>7}{'n down':>8}{'mean |d|':>10}{'mean act':>10}"
+-          f"{'sum base|err|':>14}{'sum var|err|':>14}")
+-    for s in strengths:
+-        mm = moved[s]
+-        if not mm:
+-            print(f"{s:>9.2f}{0:>6}")
+-            continue
+-        dl = np.array([r[0] for r in mm]); act = np.array([r[1] for r in mm])
+-        beb = np.abs(np.array([r[2] for r in mm]) - act)   # |base recv_td proj - actual|
+-        bev = np.abs(np.array([r[3] for r in mm]) - act)   # |var  recv_td proj - actual|
+-        up = int((dl > 0).sum()); dn = int((dl < 0).sum())
+-        print(f"{s:>9.2f}{len(mm):>6}{up:>7}{dn:>8}{np.abs(dl).mean():>10.3f}{act.mean():>10.3f}"
+-              f"{beb.sum():>14.1f}{bev.sum():>14.1f}")
+-    print("\n(up = pulled toward a HIGHER career rate (rescued a TD-light year); down = toward a lower one."
+-          "\n sum var|err| < sum base|err| means the regression helped the players it actually touched)")
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--years', default='2022,2023,2024,2025')
+-    ap.add_argument('--weeks', default='1')
+-    ap.add_argument('--scoring', default='Full PPR')
+-    ap.add_argument('--strengths', default='0.3,0.6,1.0')
+-    a = ap.parse_args()
+-    years = [int(x) for x in a.years.replace(' ', '').split(',')]
+-    if '-' in a.weeks:
+-        w0, w1 = (int(x) for x in a.weeks.split('-'))
+-        weeks = list(range(w0, w1 + 1))
+-    else:
+-        weeks = [int(a.weeks)]
+-    strengths = [float(x) for x in a.strengths.replace(' ', '').split(',')]
+-    run(years, weeks, a.scoring, strengths)
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/scripts/sweep_td_volume_shrink.py b/scripts/sweep_td_volume_shrink.py
+deleted file mode 100644
+index 99da421..0000000
+--- a/scripts/sweep_td_volume_shrink.py
++++ /dev/null
+@@ -1,183 +0,0 @@
+-"""Strength sweep for v2_td_volume_shrink (2026-09-08).
+-
+-At full strength (1.0) the flag regressed cold-start WR/TE receiving_tds hard
+-toward a league TD-per-target rate on projected volume and LOST the backtest
+-(ALL +0.024*, TE +0.099*, startable receiving_tds MAE +0.030*). This sweeps
+-TD_VOLUME_SHRINK_STRENGTH - a 0..1 dial on how far the shrink moves the rate
+-off the player's own two-year-blended number - to see whether a lighter
+-"slight regression" version lands neutral.
+-
+-    python scripts/sweep_td_volume_shrink.py --years 2022,2023,2024,2025 --weeks 1 \
+-        --strengths 0.25,0.4,0.55,0.7,1.0
+-"""
+-import argparse
+-import math
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-for _s in (sys.stdout, sys.stderr):
+-    try:
+-        _s.reconfigure(encoding="utf-8")
+-    except (AttributeError, ValueError):
+-        pass
+-
+-import numpy as np  # noqa: E402
+-import pandas as pd  # noqa: E402
+-
+-import data.weekly_projections as wp  # noqa: E402
+-from data.weekly_projections import build_weekly_projections, DEFAULT_FEATURES  # noqa: E402
+-from data.transforms import load_and_merge_data  # noqa: E402
+-from scripts.eval_weekly_model import _metrics, _weighted, STARTABLE_N, _actual_points  # noqa: E402
+-
+-BASE = frozenset(DEFAULT_FEATURES | {'v2_historical_ourlads'})
+-VAR = frozenset(BASE | {'v2_td_volume_shrink'})
+-SCOPES = [('ALL', None, False), ('WR', 'WR', False), ('TE', 'TE', False),
+-          ('START-WR', 'WR', True), ('START-TE', 'TE', True),
+-          ('START-QB', 'QB', True), ('START-RB', 'RB', True)]
+-
+-
+-def _scope_df(df, pos, startable):
+-    d = df if pos is None else df[df['Pos'] == pos]
+-    if startable:
+-        d = d.nlargest(STARTABLE_N.get(pos, 30), 'Model Proj Pts')
+-    return d
+-
+-
+-def _boot_ci(deltas, weights, n=3000, seed=0):
+-    if len(deltas) < 4:
+-        return float('nan'), float('nan')
+-    rng = np.random.default_rng(seed)
+-    d = np.asarray(deltas, float); w = np.asarray(weights, float)
+-    idx = np.arange(len(d)); out = np.empty(n)
+-    for b in range(n):
+-        s = rng.choice(idx, size=len(idx), replace=True)
+-        out[b] = np.average(d[s], weights=w[s])
+-    return float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5))
+-
+-
+-def _sign_p(w, l):
+-    n = w + l
+-    if n == 0:
+-        return float('nan')
+-    k = max(w, l)
+-    return min(1.0, 2 * sum(math.comb(n, i) for i in range(k, n + 1)) / (2 ** n))
+-
+-
+-def run(years, weeks, scoring, strengths):
+-    scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
+-    # per strength: {scope: [(mb, mv), ...]}  and a receiving_tds MAE pair list
+-    by_strength = {s: {sc[0]: [] for sc in SCOPES} for s in strengths}
+-    td_by_strength = {s: [] for s in strengths}
+-    # per-player |err| pairs on receiving_tds, startable WR/TE - for a MEDIAN view
+-    td_err = {s: [] for s in strengths}
+-
+-    for year in years:
+-        stats_df, _tc, name_col, _ = load_and_merge_data(year, scoring)
+-        if 'week' not in stats_df.columns:
+-            continue
+-        for week in weeks:
+-            actual = _actual_points(stats_df, name_col, week, scoring_col)
+-            if actual.empty:
+-                continue
+-            wk = stats_df[pd.to_numeric(stats_df['week'], errors='coerce') == week]
+-            td_actual = wk.groupby(name_col)['receiving_tds'].sum() if 'receiving_tds' in wk.columns else None
+-            build_weekly_projections.clear()
+-            b, _ = build_weekly_projections(year, week, scoring, as_of_week=week,
+-                                            apply_injury=False, features=BASE)
+-            if b.empty:
+-                continue
+-            for s in strengths:
+-                wp.TD_VOLUME_SHRINK_STRENGTH = float(s)
+-                build_weekly_projections.clear()
+-                v, _ = build_weekly_projections(year, week, scoring, as_of_week=week,
+-                                                apply_injury=False, features=VAR)
+-                if v.empty:
+-                    continue
+-                common = sorted(set(b['Player']) & set(v['Player']))
+-                if len(common) < 20:
+-                    continue
+-                bi = b[b['Player'].isin(common)].set_index('Player')
+-                vi = v[v['Player'].isin(common)].set_index('Player')
+-                for scope, pos, startable in SCOPES:
+-                    bd = _scope_df(bi.reset_index(), pos, startable)
+-                    vd = _scope_df(vi.reset_index(), pos, startable)
+-                    mb = _metrics(pd.Series(bd['Model Proj Pts'].to_numpy(), index=bd['Player']), actual)
+-                    mv = _metrics(pd.Series(vd['Model Proj Pts'].to_numpy(), index=vd['Player']), actual)
+-                    if mb and mv:
+-                        by_strength[s][scope].append((mb, mv))
+-                if td_actual is not None:
+-                    pool = pd.concat([_scope_df(bi.reset_index(), p, True) for p in ('WR', 'TE')])['Player']
+-                    idx = [p for p in pool if p in td_actual.index]
+-                    if len(idx) >= 5:
+-                        a = pd.to_numeric(td_actual.reindex(idx), errors='coerce')
+-                        peb = (pd.to_numeric(bi.reindex(idx)['receiving_tds'], errors='coerce') - a).abs()
+-                        pev = (pd.to_numeric(vi.reindex(idx)['receiving_tds'], errors='coerce') - a).abs()
+-                        if np.isfinite(peb.mean()) and np.isfinite(pev.mean()):
+-                            td_by_strength[s].append((float(peb.mean()), float(pev.mean()), len(idx)))
+-                            for xb, xv in zip(peb.to_numpy(), pev.to_numpy()):
+-                                if np.isfinite(xb) and np.isfinite(xv):
+-                                    td_err[s].append((float(xb), float(xv)))
+-            print(f"{year} w{week}: done", flush=True)
+-    wp.TD_VOLUME_SHRINK_STRENGTH = 1.0
+-    _report(by_strength, td_by_strength, td_err, years, weeks, strengths)
+-
+-
+-def _report(by_strength, td_by_strength, td_err, years, weeks, strengths):
+-    bar = '=' * 100
+-    print(f"\n{bar}\nv2_td_volume_shrink STRENGTH SWEEP   years={years} weeks={weeks}\n{bar}")
+-    print("dMAE = var - base.  NEGATIVE = more accurate.  * = bootstrap 95% CI excludes 0.\n")
+-    keyscopes = ['ALL', 'WR', 'TE', 'START-WR', 'START-TE']
+-    hdr = f"{'strength':>9}"
+-    for sc in keyscopes:
+-        hdr += f"{sc:>13}"
+-    hdr += f"{'recv_tds':>13}{'recvTD-medn':>13}"
+-    print(hdr)
+-    for s in strengths:
+-        row = f"{s:>9.2f}"
+-        for sc in keyscopes:
+-            pr = by_strength[s].get(sc) or []
+-            if not pr:
+-                row += f"{'-':>13}"
+-                continue
+-            mb = [x[0] for x in pr]; mv = [x[1] for x in pr]
+-            d = _weighted(mv, 'mae') - _weighted(mb, 'mae')
+-            deltas = [x[1]['mae'] - x[0]['mae'] for x in pr]
+-            lo, hi = _boot_ci(deltas, [x[0]['n'] for x in pr])
+-            star = '*' if (np.isfinite(lo) and (lo > 0 or hi < 0)) else ''
+-            row += f"{f'{d:+.3f}{star}':>13}"
+-        tp = td_by_strength[s]
+-        if tp:
+-            eb = np.array([r[0] for r in tp]); ev = np.array([r[1] for r in tp])
+-            w = np.array([r[2] for r in tp], float)
+-            d = float(np.average(ev, weights=w) - np.average(eb, weights=w))
+-            lo, hi = _boot_ci(list(ev - eb), list(w))
+-            star = '*' if (np.isfinite(lo) and (lo > 0 or hi < 0)) else ''
+-            row += f"{f'{d:+.3f}{star}':>13}"
+-        te = td_err[s]
+-        if te:
+-            be = np.array([x[0] for x in te]); ve = np.array([x[1] for x in te])
+-            row += f"{np.median(ve) - np.median(be):>+13.3f}"
+-        print(row)
+-    print("\n(recv_tds = receiving_tds MEAN abs err on startable WR/TE; last col = MEDIAN abs err change)")
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--years', default='2022,2023,2024,2025')
+-    ap.add_argument('--weeks', default='1')
+-    ap.add_argument('--scoring', default='Full PPR')
+-    ap.add_argument('--strengths', default='0.25,0.4,0.55,0.7,1.0')
+-    a = ap.parse_args()
+-    years = [int(x) for x in a.years.replace(' ', '').split(',')]
+-    if '-' in a.weeks:
+-        w0, w1 = (int(x) for x in a.weeks.split('-'))
+-        weeks = list(range(w0, w1 + 1))
+-    else:
+-        weeks = [int(a.weeks)]
+-    strengths = [float(x) for x in a.strengths.replace(' ', '').split(',')]
+-    run(years, weeks, a.scoring, strengths)
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/tests/test_weekly_projections.py b/tests/test_weekly_projections.py
+index 55ed4c7..71a2792 100644
+--- a/tests/test_weekly_projections.py
++++ b/tests/test_weekly_projections.py
+@@ -2256,54 +2256,6 @@ def test_td_prior_credibility_regresses_a_thin_one_season_rate_but_spares_a_vete
+     assert np.isnan(nan_out[0]) and np.isnan(nan_cred[0])
+ 
+ 
+-def test_career_regressed_td_prior_pull_scales_with_career_and_is_two_sided():
+-    # last, career, role_seasons, career_opp
+-    last = np.array([0.10, 0.10, 0.10, 0.50, 0.10])
+-    career = np.array([0.30, 0.30, 0.30, 0.30, 0.30])
+-    seasons = np.array([1.0, 2.0, 4.0, 4.0, 4.0])
+-    opp = np.array([600.0, 600.0, 600.0, 600.0, 40.0])
+-    out, pull = wp.career_regressed_td_prior(last, career, seasons, opp, strength=1.0)
+-
+-    # One role season -> below TD_CAREER_REGRESS_MIN_ROLE_SEASONS -> untouched.
+-    assert pull[0] == 0.0 and out[0] == last[0]
+-    # Two seasons -> a real but partial pull; four seasons -> a stronger pull.
+-    assert 0.0 < pull[1] < pull[2]
+-    assert last[1] < out[1] < out[2] < career[2]
+-    # Two-sided: a flukey-HIGH last season is pulled DOWN toward the career line.
+-    assert career[3] < out[3] < last[3]
+-    assert abs(pull[3] - pull[2]) < 1e-9  # same career profile -> same pull, either direction
+-    # Thin career opportunity volume shrinks the pull even with the seasons.
+-    assert pull[4] < pull[2]
+-
+-    # The strength dial linearly scales the pull off the player's own rate.
+-    half, half_pull = wp.career_regressed_td_prior(last, career, seasons, opp, strength=0.5)
+-    assert abs(half_pull[2] - 0.5 * pull[2]) < 1e-9
+-    # NaN career rate passes straight through.
+-    nan_out, nan_pull = wp.career_regressed_td_prior(
+-        np.array([0.2]), np.array([np.nan]), np.array([4.0]), np.array([600.0]), strength=1.0)
+-    assert nan_pull[0] == 0.0 and nan_out[0] == 0.2
+-
+-
+-def test_career_regressed_td_prior_comparability_gate_spares_a_role_that_changed_size():
+-    last = np.array([0.10, 0.10, 0.10])
+-    career = np.array([0.30, 0.30, 0.30])
+-    seasons = np.array([4.0, 4.0, 4.0])
+-    opp = np.array([600.0, 600.0, 600.0])
+-    # recent vs career opportunity/game: same size, doubled (ascended), halved (faded)
+-    recent_pg = np.array([6.0, 12.0, 2.5])
+-    career_pg = np.array([6.0, 6.0, 6.0])
+-    out, pull = wp.career_regressed_td_prior(
+-        last, career, seasons, opp, recent_opp_pg=recent_pg, career_opp_pg=career_pg, strength=1.0)
+-    # Same-size role: regression fires.
+-    assert pull[0] > 0.0 and out[0] > last[0]
+-    # Role doubled (ascending WR) or halved (faded/hurt): left untouched.
+-    assert pull[1] == 0.0 and out[1] == last[1]
+-    assert pull[2] == 0.0 and out[2] == last[2]
+-    # Without the gate args the same ascending row WOULD have been regressed.
+-    out_nogate, pull_nogate = wp.career_regressed_td_prior(last, career, seasons, opp, strength=1.0)
+-    assert pull_nogate[1] > 0.0
+-
+-
+ def test_count_established_receivers_ahead_only_counts_proven_same_team_higher_rank():
+     team = np.array(['GB', 'GB', 'GB', 'GB', 'CHI', 'CHI'], dtype=object)
+     rank = np.array([1.0, 1.0, 1.0, 2.0, 1.0, 2.0])
+-- 
+2.55.0.windows.2
+

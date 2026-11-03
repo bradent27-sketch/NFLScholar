@@ -1,0 +1,618 @@
+From 15e49303f87e42f5c8944616395c03f3f291ebb8 Mon Sep 17 00:00:00 2001
+From: bradent27-sketch <304192343+bradent27-sketch@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 08:40:11 -0600
+Subject: [PATCH] Retire v2_new_team_starter_restoration and
+ v2_cold_start_regression
+
+- v2_new_team_starter_restoration (2026-09-04): let a team-changer charted rank 1 on the new team recover his role (capped at 0.80).
+  Off since its backtest queue (Waddle MIA->DEN, Evans TB->SF cases); the same-team recovery paths are unchanged.
+- v2_cold_start_regression (2026-08-27): pull every cold-start matchup / script / pace / environment / weather multiplier 25% of the
+  way back to 1.0. Built and gated, never shipped.
+Removes the allow_new_team_starter path of restore_cold_start_returning_role_share and its constants, the six regression sites and
+COLD_START_MULTIPLIER_REGRESSION, two sweep scripts and two tests (the default behavior test, a team-changer stays on his whole-season
+share, is kept). Default cold-start boards identical (.sweeps/board_identity.py: 2022 w1, 2024 w1, live 2026 w1, 2025 w1 with the
+Ourlads charts). Restore with git revert of this commit.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ data/weekly_projections.py                    | 115 +---------
+ scripts/sweep_cold_start_strength.py          |  61 -----
+ scripts/sweep_new_team_starter_restoration.py | 216 ------------------
+ tests/test_weekly_projections.py              |  50 +---
+ 4 files changed, 12 insertions(+), 430 deletions(-)
+ delete mode 100644 scripts/sweep_cold_start_strength.py
+ delete mode 100644 scripts/sweep_new_team_starter_restoration.py
+
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index 96fcff9..cdf4055 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -339,26 +339,6 @@ RECENCY_DECAY = 0.85
+ # games), which is its own knob elsewhere and was left exactly as it was.
+ PRIOR_SEASON_DEFENSE_RECENCY_FLOOR = 0.80
+ 
+-# CANDIDATE, built 2026-08-27 - see 'v2_cold_start_regression' in
+-# MODEL_FEATURES. At true cold start (Week 1, no current-season games yet -
+-# see `cold_start = hist.empty`), every matchup-side multiplier this model
+-# computes (the defense/role matchup, and the script/pace/availability/
+-# environment "context" group) is built entirely from LAST season's evidence,
+-# with no way yet to tell whether a defense - or a game environment read off
+-# a still-thin market - will actually repeat this year. Per explicit request:
+-# a defense that graded as elite or as terrible last season is not equally
+-# likely to repeat that exact grade, and treating the Week 1 read at full
+-# strength overvalues both tails. This pulls every such multiplier a fixed
+-# fraction of the way back toward neutral (1.0) ONLY at cold start - 0.25
+-# means 75% of the computed multiplier's own deviation from 1.0 survives, 25%
+-# regresses to "assume average until proven otherwise." Applied identically
+-# to the defense-side multiplier and each context factor (not the product of
+-# all of them at once) - in the near-1.0 range these multipliers normally
+-# live in, the two are nearly indistinguishable, and per-factor is far
+-# simpler to apply correctly across this file's several separate multiplier
+-# sites. NOT YET BACKTESTED - built and gated, first measurement pending.
+-COLD_START_MULTIPLIER_REGRESSION = 0.25
+-
+ # Preseason QB workload selection deliberately does not reuse the generated
+ # Depth Charts table.  That table is useful for browsing a roster, but it
+ # ranks candidates from inherited snap data and therefore cannot reliably know
+@@ -433,17 +413,6 @@ COLD_START_RETURNING_ROLE_MIN_GAMES = {'RB': 8, 'WR': 6, 'TE': 6}
+ COLD_START_RETURNING_ROLE_MIN_ACTIVE_SHARE = 0.60
+ COLD_START_RETURNING_ROLE_CAP = 0.95
+ 
+-# v2_new_team_starter_restoration (2026-09-04): the team-change exclusion
+-# above is deliberate in general (a new offense may not use a player the same
+-# way), but it has no carve-out for the case where the NEW team's own chart
+-# already answers that question - a proven veteran (Waddle MIA->DEN, Evans
+-# TB->SF) charted as the new team's rank-1 starter, still projected off his
+-# stale whole-season share (which an injury-interrupted year like Evans's
+-# depresses hard) because nothing lets a same-team-only mechanism see the new
+-# chart. See restore_cold_start_returning_role_share's allow_new_team_starter.
+-NEW_TEAM_STARTER_MIN_ROLE_SIGNAL = 0.65
+-NEW_TEAM_STARTER_CAP = 0.80
+-
+ # Two-season cold-start blend, added 2026-08-24 at explicit request: a down
+ # year, an abbreviated/injury-shortened season, or a genuinely thin sample
+ # should not fully override what a healthy prior-prior season showed. 8
+@@ -1438,11 +1407,6 @@ MODEL_FEATURES = (
+                              # exclusive with 'v2_scheme_matchup' in practice
+                              # (both test different combination strategies);
+                              # if both are set, the blend wins.
+-    'v2_cold_start_regression',  # pull every matchup/context multiplier 25%
+-                             # of the way back toward neutral 1.0, but ONLY
+-                             # at true cold start (Week 1) - see
+-                             # COLD_START_MULTIPLIER_REGRESSION's own note.
+-                             # Not yet backtested.
+     'v2_game_total_elasticity',  # implied game-total scaling ALONE, unbundled
+                              # from 'game_env' (rejected as a bundle, +0.012
+                              # MAE) - see _game_env_multiplier's own note.
+@@ -1521,14 +1485,6 @@ MODEL_FEATURES = (
+                              # with 'v2_game_total_elasticity' (this one wins
+                              # the implied-total channel if both set; venue
+                              # stays on its own flag).
+-    'v2_new_team_starter_restoration',  # let restore_cold_start_returning_role_
+-                             # share recover a TEAM-CHANGER's role, not just a
+-                             # same-team returner - only when the new team's own
+-                             # chart lists him rank 1 and his own active role was
+-                             # clearly starter-caliber. Capped lower
+-                             # (NEW_TEAM_STARTER_CAP) than a same-team recovery.
+-                             # OFF by default; backtest queued 2026-09-04
+-                             # (Waddle MIA->DEN, Evans TB->SF cases).
+     'v2_receiver_cold_start_vacancy',  # at cold start, redistribute a departed
+                              # same-team veteran receiver's prior role to the
+                              # remaining WR/TE corps (apply_cold_start_receiver_
+@@ -6647,7 +6603,6 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
+                                             terminal_gap_weeks=None,
+                                             prior2_games=None, prior2_active_share=None,
+                                             role_confidence=None,
+-                                            allow_new_team_starter=False,
+                                             full_recovery=None,
+                                             return_details=False):
+     """Continuously recover a proven returning skill player's active role.
+@@ -6673,15 +6628,6 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
+     restoration.  ``return_details`` preserves the legacy two-value API for
+     existing callers while exposing the audited recovery reason to V2.
+ 
+-    ``allow_new_team_starter`` (v2_new_team_starter_restoration) opts into a
+-    third, separately-capped path: a TEAM CHANGE is normally disqualifying
+-    (a new offense may not use him the same way), but when the player is
+-    charted rank 1 on the NEW team and his own active role was clearly
+-    starter-caliber, the chart itself is the evidence that the role
+-    transferred. Pulled less aggressively than a same-team recovery (capped
+-    at NEW_TEAM_STARTER_CAP, not COLD_START_RETURNING_ROLE_CAP) since some
+-    real uncertainty about a new offense remains.
+-
+     ``full_recovery`` ('v2_suspension_return_full_role', 2026-10-14): a boolean array; an ELIGIBLE row it marks gets his
+     full active/pre-absence role (``restored``) instead of the alpha pull toward it. A player back from a suspension
+     has no ramp-up to price in (Hopkins 2022, Kamara 2023, Addison 2025 each produced about 1.85x the partial-role
+@@ -6733,23 +6679,7 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
+         & (prior_team == current_team)
+         & (restored > whole + 0.05)
+     )
+-    # A team-changer the NEW chart independently confirms as its rank-1
+-    # starter: the same-team requirement above exists because a new offense
+-    # might not use him the same way, but a resolved starter chart is direct
+-    # evidence on exactly that question. Requires a real prior sample (not a
+-    # cameo) and a clearly starter-caliber active role - this is deliberately
+-    # not available to a marginal or committee player who merely changed teams.
+-    if allow_new_team_starter:
+-        charted_new_team_starter = (
+-            (ranks == 1)
+-            & (prior_team != current_team)
+-            & np.isfinite(games) & (games >= 3)
+-            & (role_signal >= NEW_TEAM_STARTER_MIN_ROLE_SIGNAL)
+-            & (restored > whole + 0.05)
+-        )
+-    else:
+-        charted_new_team_starter = np.zeros(len(whole), dtype=bool)
+-    eligible = standard_eligible | charted_short_sample | charted_new_team_starter
++    eligible = standard_eligible | charted_short_sample
+     # Multi-year corroboration: a proven, same-role season TWO years back means
+     # the short prior-year sample is injury attrition, not role uncertainty -
+     # an injury-shortened year should not leave a genuine every-down player
+@@ -6789,15 +6719,9 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
+     # evidence -> lower projection".
+     at_threshold = (ranks == 1) & np.isfinite(games) & (games <= minimum_games + 1)
+     standard_alpha = np.where(at_threshold, np.maximum(standard_alpha, short_alpha), standard_alpha)
+-    # Same evidence-scaling as standard_alpha but a lower band throughout -
+-    # genuine new-offense uncertainty means even a fully-proven track record
+-    # should not pull as hard as an in-house recovery does.
+-    new_team_alpha = np.clip(0.25 + 0.35 * evidence, 0.25, 0.60)
+-    alpha = np.where(charted_short_sample, short_alpha,
+-                     np.where(charted_new_team_starter, new_team_alpha, standard_alpha))
++    alpha = np.where(charted_short_sample, short_alpha, standard_alpha)
+     recovered = whole + alpha * (restored - whole)
+     recovered = np.where(charted_short_sample, np.minimum(recovered, 0.75), recovered)
+-    recovered = np.where(charted_new_team_starter, np.minimum(recovered, NEW_TEAM_STARTER_CAP), recovered)
+     # A multi-year every-down role, rank 1, high role_confidence, a genuinely
+     # near-full observed active share, and a full offseason removed from the
+     # terminal gap: the missed calendar is injury noise. Pull at least 85% of
+@@ -6823,15 +6747,13 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
+         np.where(
+             charted_short_sample, 'charted short-sample returning-starter recovery',
+             np.where(
+-                charted_new_team_starter, 'charted new-team starter recovery',
++                standard_eligible & fully_proven,
++                'proven multi-year every-down role restored (injury-shortened prior year)',
+                 np.where(
+-                    standard_eligible & fully_proven,
+-                    'proven multi-year every-down role restored (injury-shortened prior year)',
+-                    np.where(
+-                        standard_eligible & prior2_qualifies,
+-                        'continuous returning role recovery (multi-year corroborated)',
+-                        np.where(standard_eligible,
+-                                 'continuous returning active/pre-absence role recovery', 'none'))))),
++                    standard_eligible & prior2_qualifies,
++                    'continuous returning role recovery (multi-year corroborated)',
++                    np.where(standard_eligible,
++                             'continuous returning active/pre-absence role recovery', 'none')))),
+     )
+     if return_details:
+         return values, eligible, reasons
+@@ -11840,7 +11762,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                     prior2_games=player_prior2_games,
+                     prior2_active_share=player_prior2_active_share,
+                     role_confidence=cur['role_confidence'].to_numpy(dtype=float),
+-                    allow_new_team_starter='v2_new_team_starter_restoration' in feats,
+                     return_details=True,
+                 )
+                 preseason_role_source = np.where(returning_role_restored, returning_role_reason,
+@@ -11882,8 +11803,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                         prior2_games=player_prior2_games,
+                         prior2_active_share=player_prior2_active_share,
+                         role_confidence=cur['role_confidence'].to_numpy(dtype=float),
+-                        allow_new_team_starter='v2_new_team_starter_restoration' in feats,
+-                        full_recovery=suspension_return,
++                            full_recovery=suspension_return,
+                         return_details=True,
+                     )
+                     apply_mask = zero_games_mask & restored_eligible
+@@ -12728,9 +12648,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+             elif 'v2_scheme_matchup' in feats and pos in SCHEME_MATCHUP_SCORING_POSITIONS:
+                 matchup_mult = np.where(scheme_residual_available, scheme_player_factor, matchup_mult)
+ 
+-            if cold_start and 'v2_cold_start_regression' in feats:
+-                matchup_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (matchup_mult - 1.0)
+-
+             role_change_reduction = (
+                 ROLE_CHANGE_K_REDUCTION_RB_CARRY
+                 if (pos == 'RB' and stat in ('rushing_attempts', 'targets')
+@@ -12870,8 +12787,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                 script_mult = np.ones(len(cur))
+                 if script_series is not None and not script_series.empty:
+                     script_mult = cur[name_col].map(script_series).fillna(1.0).to_numpy(dtype=float)
+-                if cold_start and 'v2_cold_start_regression' in feats:
+-                    script_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (script_mult - 1.0)
+                 _stat_script_eligible = stat in SCRIPT_ELIGIBLE_STATS or (
+                     'v2_offense_script_pool_blend' in feats and stat in SCRIPT_POOL_BLEND_EXTRA_STATS)
+             stat_trace[stat]['script_multiplier'] = script_mult
+@@ -12959,9 +12874,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                                          boost=(QB_IMPLIED_ELASTICITY_BOOST
+                                                 if pos == 'QB' and 'v2_qb_implied_td_boost' in feats else None))
+             if perstat_env and env else {})
+-        if env_stat_mult and cold_start and 'v2_cold_start_regression' in feats:
+-            r = 1.0 - COLD_START_MULTIPLIER_REGRESSION
+-            env_stat_mult = {s: 1.0 + r * (m - 1.0) for s, m in env_stat_mult.items()}
+         if pos == 'RB' and env and not cold_start:
+             # v2_rb_game_script(_rush): RB stats scale with the game's margin (RB_GAME_SCRIPT comment)
+             _rb_table = (RB_GAME_SCRIPT_RUSH if 'v2_rb_game_script_rush' in feats
+@@ -12987,21 +12899,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+             weather_stat_mult = weather_stat_multipliers_for_week(
+                 schedule_df, week, cur['Team'].astype(str).to_numpy(), pos,
+                 allow_forecast=not historical_target)
+-            if cold_start and 'v2_cold_start_regression' in feats:
+-                r = 1.0 - COLD_START_MULTIPLIER_REGRESSION
+-                weather_stat_mult = [{k: 1.0 + r * (v - 1.0) for k, v in d.items()}
+-                                     for d in weather_stat_mult]
+ 
+         def _wx(stat):
+             if not weather_stat_mult:
+                 return 1.0
+             return np.array([d.get(stat, 1.0) for d in weather_stat_mult], dtype=float)
+ 
+-        if cold_start and 'v2_cold_start_regression' in feats:
+-            pace_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (pace_mult - 1.0)
+-            inj_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (inj_mult - 1.0)
+-            env_mult = 1.0 + (1.0 - COLD_START_MULTIPLIER_REGRESSION) * (env_mult - 1.0)
+-
+         # The PRE-INJURY volume, kept before the discount below multiplies it
+         # away. A player ruled Out has an injury multiplier of exactly 0.0,
+         # so his projected volume is 0 and there is nothing left to divide
+diff --git a/scripts/sweep_cold_start_strength.py b/scripts/sweep_cold_start_strength.py
+deleted file mode 100644
+index 4a959ee..0000000
+--- a/scripts/sweep_cold_start_strength.py
++++ /dev/null
+@@ -1,61 +0,0 @@
+-"""
+-Sweep COLD_START_MULTIPLIER_REGRESSION's strength (how far each cold-start
+-multiplier pulls back toward neutral 1.0) across Week 1 of every available
+-season, to check whether the 0.25 default's real START-QB win (dMAE -0.227,
+-CI excludes 0, 2021-2025 Week 1 - see docs/overnight_backtest_log_*.md) is a
+-genuine dose-response or a thin-sample (n=5 weeks) fluke. If stronger
+-regression keeps helping and weaker regression helps less, that is a real
+-signal; if it is non-monotonic, treat the whole result skeptically regardless
+-of any one value's own p-value.
+-
+-Same cache-clearing requirement as scripts/sweep_scheme_blend_weight.py - the
+-`features` cache key does not change across strength values, so clearing
+-data.weekly_projections.build_weekly_projections between them is REQUIRED,
+-not optional.
+-
+-Usage:
+-    python scripts/sweep_cold_start_strength.py --strengths 0.10,0.25,0.40,0.60
+-"""
+-import argparse
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-
+-import data.weekly_projections as wp  # noqa: E402
+-from scripts.backtest_component import evaluate_components, print_flag_report  # noqa: E402
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--strengths', required=True, help="comma-separated regression strengths in [0,1]")
+-    ap.add_argument('--years', default='2021,2022,2023,2024,2025')
+-    ap.add_argument('--weeks', default='1-1')
+-    ap.add_argument('--scoring', default='Full PPR')
+-    args = ap.parse_args()
+-
+-    years = [int(y) for y in args.years.split(',')]
+-    if '-' in args.weeks:
+-        lo, hi = args.weeks.split('-')
+-        weeks = list(range(int(lo), int(hi) + 1))
+-    else:
+-        weeks = [int(w) for w in args.weeks.split(',')]
+-    strengths = [float(s) for s in args.strengths.split(',') if s.strip()]
+-
+-    print(f"years={years} weeks={weeks[0]}-{weeks[-1]} strengths={strengths}")
+-    variant = frozenset(wp.DEFAULT_FEATURES | {'v2_cold_start_regression'})
+-    original = wp.COLD_START_MULTIPLIER_REGRESSION
+-
+-    for s in strengths:
+-        wp.COLD_START_MULTIPLIER_REGRESSION = s
+-        wp.build_weekly_projections.clear()
+-        label = f'cold_start_strength_{s:.2f}'
+-        rows, _outliers = evaluate_components(years, weeks, {label: variant}, args.scoring)
+-        print_flag_report(label, rows[label], mode='add')
+-
+-    wp.COLD_START_MULTIPLIER_REGRESSION = original
+-    wp.build_weekly_projections.clear()
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/scripts/sweep_new_team_starter_restoration.py b/scripts/sweep_new_team_starter_restoration.py
+deleted file mode 100644
+index f5213ef..0000000
+--- a/scripts/sweep_new_team_starter_restoration.py
++++ /dev/null
+@@ -1,216 +0,0 @@
+-"""v2_new_team_starter_restoration backtest (2026-09-04).
+-
+-Live-board cases that surfaced this: Jaylen Waddle (MIA->DEN) and Mike Evans
+-(TB->SF), both charted rank-1 starters on their new team, both projected well
+-BELOW their own recent active-role evidence (Waddle 71.4% vs 77.7% recent
+-snap / 93.9% route; Evans 45% vs 72% recent snap / 90.1% route, worse because
+-his prior season was also injury-interrupted). Root cause: every eligibility
+-path in restore_cold_start_returning_role_share requires prior_team ==
+-current_team, so a team-changer never recovers off his own active-role
+-evidence, however strong, and however clearly the NEW chart confirms him a
+-starter - he is stuck on a plain whole-season share instead.
+-
+-v2_new_team_starter_restoration adds a parallel, more conservative path
+-(new_team_alpha, capped at NEW_TEAM_STARTER_CAP=0.80, both below the
+-same-team path) requiring the new team's chart to independently confirm rank
+-1 - see restore_cold_start_returning_role_share's allow_new_team_starter.
+-
+-Both base and variant carry v2_historical_ourlads so the frozen pre-Week-1
+-archive is actually read for a historical year (plain DEFAULT_FEATURES does
+-not consult it). Week 1 only, where the mechanism is strongest and where the
+-cases that motivated it live.
+-
+-    python scripts/sweep_new_team_starter_restoration.py --years 2022,2023,2024,2025 --weeks 1
+-"""
+-import argparse
+-import math
+-import os
+-import sys
+-
+-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+-for _s in (sys.stdout, sys.stderr):
+-    try:
+-        _s.reconfigure(encoding="utf-8")
+-    except (AttributeError, ValueError):
+-        pass
+-
+-import numpy as np  # noqa: E402
+-import pandas as pd  # noqa: E402
+-
+-from data.weekly_projections import build_weekly_projections, DEFAULT_FEATURES  # noqa: E402
+-from data.transforms import load_and_merge_data  # noqa: E402
+-from scripts.eval_weekly_model import _metrics, _weighted, STARTABLE_N, _actual_points  # noqa: E402
+-
+-BASE_FEATS = frozenset(DEFAULT_FEATURES | {'v2_historical_ourlads'})
+-VAR_FEATS = frozenset(BASE_FEATS | {'v2_new_team_starter_restoration'})
+-SCOPES = [('ALL', None, False), ('WR', 'WR', False), ('TE', 'TE', False),
+-          ('START-WR', 'WR', True), ('START-TE', 'TE', True),
+-          ('START-QB', 'QB', True), ('START-RB', 'RB', True)]
+-PER_STAT = ('targets', 'receptions', 'receiving_yards')
+-
+-
+-def _scope_df(df, pos, startable):
+-    d = df if pos is None else df[df['Pos'] == pos]
+-    if startable:
+-        d = d.nlargest(STARTABLE_N.get(pos, 30), 'Model Proj Pts')
+-    return d
+-
+-
+-def _boot_ci(deltas, weights, n=3000, seed=0):
+-    if len(deltas) < 4:
+-        return float('nan'), float('nan')
+-    rng = np.random.default_rng(seed)
+-    d = np.asarray(deltas, float); w = np.asarray(weights, float)
+-    idx = np.arange(len(d)); out = np.empty(n)
+-    for b in range(n):
+-        s = rng.choice(idx, size=len(idx), replace=True)
+-        out[b] = np.average(d[s], weights=w[s])
+-    return float(np.percentile(out, 2.5)), float(np.percentile(out, 97.5))
+-
+-
+-def _sign_p(wins, losses):
+-    n = wins + losses
+-    if n == 0:
+-        return float('nan')
+-    k = max(wins, losses)
+-    return min(1.0, 2 * sum(math.comb(n, i) for i in range(k, n + 1)) / (2 ** n))
+-
+-
+-def _stat_actuals(stats_df, name_col, week):
+-    rows = stats_df[pd.to_numeric(stats_df['week'], errors='coerce') == week]
+-    present = [s for s in PER_STAT if s in rows.columns]
+-    return rows.groupby(name_col, observed=True)[present].sum()
+-
+-
+-def run(years, weeks, scoring):
+-    scoring_col = 'fantasy_points_ppr' if scoring != 'Standard' else 'fantasy_points'
+-    scope_pairs = {s[0]: [] for s in SCOPES}
+-    stat_pairs = {s: [] for s in PER_STAT}
+-    ledger = []
+-
+-    for year in years:
+-        stats_df, _tc, name_col, _ = load_and_merge_data(year, scoring)
+-        if 'week' not in stats_df.columns:
+-            print(f"{year}: no weekly data, skipped", flush=True)
+-            continue
+-        for week in weeks:
+-            actual = _actual_points(stats_df, name_col, week, scoring_col)
+-            if actual.empty:
+-                continue
+-            build_weekly_projections.clear()
+-            base, bmeta = build_weekly_projections(
+-                year, week, scoring, as_of_week=week, apply_injury=False, features=BASE_FEATS)
+-            build_weekly_projections.clear()
+-            var, vmeta = build_weekly_projections(
+-                year, week, scoring, as_of_week=week, apply_injury=False, features=VAR_FEATS)
+-            if base.empty or var.empty:
+-                print(f"{year} w{week}: empty ({bmeta.get('reason') or vmeta.get('reason')})")
+-                continue
+-            pool = sorted(set(base['Player']) & set(var['Player']))
+-            if len(pool) < 20:
+-                continue
+-            b = base[base['Player'].isin(pool)].set_index('Player')
+-            v = var[var['Player'].isin(pool)].set_index('Player')
+-
+-            for scope, pos, startable in SCOPES:
+-                bd = _scope_df(b.reset_index(), pos, startable)
+-                vd = _scope_df(v.reset_index(), pos, startable)
+-                mb = _metrics(pd.Series(bd['Model Proj Pts'].to_numpy(), index=bd['Player']), actual)
+-                mv = _metrics(pd.Series(vd['Model Proj Pts'].to_numpy(), index=vd['Player']), actual)
+-                if mb and mv:
+-                    scope_pairs[scope].append((mb, mv))
+-
+-            sa = _stat_actuals(stats_df, name_col, week)
+-            for stat in PER_STAT:
+-                if stat not in b.columns or stat not in sa.columns:
+-                    continue
+-                bd = pd.concat([_scope_df(b.reset_index(), p, True) for p in ('WR', 'TE')]).set_index('Player')
+-                common = bd.index.intersection(v.index).intersection(sa.index)
+-                if len(common) < 5:
+-                    continue
+-                act = pd.to_numeric(sa.loc[common, stat], errors='coerce')
+-                eb = (pd.to_numeric(bd.loc[common, stat], errors='coerce') - act).abs().mean()
+-                ev = (pd.to_numeric(v.loc[common, stat], errors='coerce') - act).abs().mean()
+-                if np.isfinite(eb) and np.isfinite(ev):
+-                    stat_pairs[stat].append((float(eb), float(ev), len(common)))
+-
+-            touched = b.index[(b['Pos'].isin(['WR', 'TE']))].intersection(v.index)
+-            for player in touched:
+-                bp = float(b.loc[player, 'Model Proj Pts'])
+-                vp = float(v.loc[player, 'Model Proj Pts'])
+-                if abs(vp - bp) < 1e-6:
+-                    continue
+-                av = float(actual.get(player, np.nan))
+-                ledger.append(dict(
+-                    year=year, week=week, player=player, pos=str(b.loc[player, 'Pos']),
+-                    base_proj=round(bp, 2), var_proj=round(vp, 2), shift=round(vp - bp, 3),
+-                    actual=round(av, 2) if np.isfinite(av) else None,
+-                    base_error=round(abs(bp - av), 2) if np.isfinite(av) else None,
+-                    var_error=round(abs(vp - av), 2) if np.isfinite(av) else None,
+-                ))
+-            print(f"{year} w{week}: pool {len(pool)}  touched {sum(1 for r in ledger if r['year'] == year and r['week'] == week)}",
+-                  flush=True)
+-
+-    _report(scope_pairs, stat_pairs, ledger, years, weeks)
+-
+-
+-def _report(scope_pairs, stat_pairs, ledger, years, weeks):
+-    bar = '=' * 92
+-    print(f"\n{bar}\nv2_new_team_starter_restoration   years={years} weeks={weeks}\n{bar}")
+-    print("dMAE = variant - base.  NEGATIVE = the new-team-starter recovery is MORE accurate.\n")
+-    print(f"{'scope':<12}{'n':>8}{'MAE base':>11}{'MAE var':>11}{'dMAE':>10}{'95% CI':>22}"
+-          f"{'wk W-L':>10}{'sign p':>9}")
+-    for scope, _p, _s in SCOPES:
+-        pairs = scope_pairs.get(scope) or []
+-        if not pairs:
+-            continue
+-        mb = [p[0] for p in pairs]; mv = [p[1] for p in pairs]
+-        nt = sum(m['n'] for m in mb)
+-        base_mae, var_mae = _weighted(mb, 'mae'), _weighted(mv, 'mae')
+-        deltas = [mv_i['mae'] - mb_i['mae'] for mb_i, mv_i in zip(mb, mv)]
+-        wts = [mb_i['n'] for mb_i in mb]
+-        lo, hi = _boot_ci(deltas, wts)
+-        wins = sum(1 for d in deltas if d < 0); losses = sum(1 for d in deltas if d > 0)
+-        star = ' *' if (np.isfinite(lo) and np.isfinite(hi) and (lo > 0 or hi < 0)) else '  '
+-        print(f"{scope:<12}{nt:>8}{base_mae:>11.3f}{var_mae:>11.3f}{var_mae - base_mae:>+10.3f}"
+-              f"  [{lo:+.3f},{hi:+.3f}]{star}{f'{wins}-{losses}':>10}{_sign_p(wins, losses):>9.3f}")
+-
+-    print(f"\n{'stat (startable WR/TE)':<24}{'wk n':>7}{'obs':>9}{'MAE base':>11}{'MAE var':>11}{'dMAE':>10}{'95% CI':>22}{'W-L':>9}")
+-    for stat in PER_STAT:
+-        rows = stat_pairs.get(stat) or []
+-        if not rows:
+-            continue
+-        eb = np.array([r[0] for r in rows]); ev = np.array([r[1] for r in rows])
+-        w = np.array([r[2] for r in rows], float)
+-        base_mae = float(np.average(eb, weights=w)); var_mae = float(np.average(ev, weights=w))
+-        deltas = list(ev - eb)
+-        lo, hi = _boot_ci(deltas, list(w))
+-        wins = int((ev < eb).sum()); losses = int((ev > eb).sum())
+-        star = ' *' if (np.isfinite(lo) and np.isfinite(hi) and (lo > 0 or hi < 0)) else '  '
+-        print(f"{stat:<24}{len(rows):>7}{int(w.sum()):>9}{base_mae:>11.3f}{var_mae:>11.3f}"
+-              f"{var_mae - base_mae:>+10.3f}  [{lo:+.3f},{hi:+.3f}]{star}{f'{wins}-{losses}':>9}")
+-
+-    print(f"\n{bar}\nEVERY PLAYER-WEEK TOUCHED BY THE FLAG ({len(ledger)} total)\n{bar}")
+-    if not ledger:
+-        print("none - the new-team-starter gate never fired (no rank-1 team-changer with >=3 games and >=0.65 role signal).")
+-    else:
+-        for r in sorted(ledger, key=lambda r: (r['year'], r['week'])):
+-            print(f"  {r['year']} w{r['week']:<3} {r['pos']:<3} {r['player']:<24} base={r['base_proj']:>6.2f} "
+-                  f"var={r['var_proj']:>6.2f} shift={r['shift']:>+6.2f}  actual={r['actual']}"
+-                  f"  base_err={r['base_error']}  var_err={r['var_error']}")
+-    print("\n* = bootstrap 95% CI on the pooled weekly dMAE excludes zero.")
+-
+-
+-def main():
+-    ap = argparse.ArgumentParser()
+-    ap.add_argument('--years', default='2022,2023,2024,2025')
+-    ap.add_argument('--weeks', default='1-1')
+-    ap.add_argument('--scoring', default='Full PPR')
+-    a = ap.parse_args()
+-    years = [int(x) for x in a.years.replace(' ', '').split(',')]
+-    w0, w1 = (int(x) for x in a.weeks.split('-'))
+-    run(years, list(range(w0, w1 + 1)), a.scoring)
+-
+-
+-if __name__ == '__main__':
+-    main()
+diff --git a/tests/test_weekly_projections.py b/tests/test_weekly_projections.py
+index c9104bc..a92be4b 100644
+--- a/tests/test_weekly_projections.py
++++ b/tests/test_weekly_projections.py
+@@ -1105,10 +1105,9 @@ def test_injury_shortened_prior_year_does_not_suppress_a_proven_multi_year_role(
+     assert reasons[1] == 'continuous returning active/pre-absence role recovery'
+ 
+ 
+-def test_new_team_starter_stays_on_whole_season_share_when_flag_is_off():
+-    # Waddle-shaped case: strong recent form, new team, chart rank 1 - but
+-    # the flag defaults off, so behavior is byte-identical to before it
+-    # existed (this is what actually happened on the live board).
++def test_new_team_starter_stays_on_whole_season_share():
++    # Waddle-shaped case: strong recent form, new team, chart rank 1 - a team change is disqualifying for the returning-role
++    # recovery (the carve-out, v2_new_team_starter_restoration, was retired 2026-11-03: docs/retired_flags.md).
+     off, used_off = wp.restore_cold_start_returning_role_share(
+         np.array([0.45]), np.array([0.78]), np.array([10.0]),
+         np.array(['MIA']), np.array(['DEN']), 'WR',
+@@ -1118,49 +1117,6 @@ def test_new_team_starter_stays_on_whole_season_share_when_flag_is_off():
+     assert off[0] == 0.45
+ 
+ 
+-def test_new_team_starter_recovers_when_flag_enabled_and_chart_confirms_rank1():
+-    on, used_on, reasons = wp.restore_cold_start_returning_role_share(
+-        np.array([0.45]), np.array([0.78]), np.array([10.0]),
+-        np.array(['MIA']), np.array(['DEN']), 'WR',
+-        depth_rank=np.array([1.0]),
+-        allow_new_team_starter=True,
+-        return_details=True,
+-    )
+-    assert used_on[0]
+-    assert reasons[0] == 'charted new-team starter recovery'
+-    # Real credit, but less aggressive than a same-team recovery would give -
+-    # never past the new-team cap regardless of how strong the evidence is.
+-    assert 0.45 < on[0] < 0.78
+-    assert on[0] <= wp.NEW_TEAM_STARTER_CAP + 1e-9
+-
+-
+-def test_new_team_starter_requires_rank1_chart_and_a_real_sample():
+-    # Not charted rank 1 on the NEW team - no restoration even with the flag.
+-    unranked, used = wp.restore_cold_start_returning_role_share(
+-        np.array([0.45]), np.array([0.78]), np.array([10.0]),
+-        np.array(['MIA']), np.array(['DEN']), 'WR',
+-        depth_rank=np.array([2.0]), allow_new_team_starter=True,
+-    )
+-    assert not used[0]
+-    assert unranked[0] == 0.45
+-    # A one-game cameo must not qualify even at rank 1.
+-    cameo, used_cameo = wp.restore_cold_start_returning_role_share(
+-        np.array([0.45]), np.array([0.78]), np.array([1.0]),
+-        np.array(['MIA']), np.array(['DEN']), 'WR',
+-        depth_rank=np.array([1.0]), allow_new_team_starter=True,
+-    )
+-    assert not used_cameo[0]
+-    # A same-team player is unaffected by this flag - he already goes
+-    # through the standard (same-team) recovery path.
+-    same_team, used_same, reasons_same = wp.restore_cold_start_returning_role_share(
+-        np.array([0.45]), np.array([0.78]), np.array([10.0]),
+-        np.array(['DEN']), np.array(['DEN']), 'WR',
+-        depth_rank=np.array([1.0]), allow_new_team_starter=True, return_details=True,
+-    )
+-    assert used_same[0]
+-    assert reasons_same[0] != 'charted new-team starter recovery'
+-
+-
+ def test_cold_start_receiver_vacancy_redistributes_departed_teammates_share():
+     # GB-shaped case: Watson/Golden/Reed/Melton remain; Doubs+Wicks departed.
+     share = np.array([0.535, 0.504, 0.314, 0.16])
+-- 
+2.55.0.windows.2
+

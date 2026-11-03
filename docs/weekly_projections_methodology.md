@@ -8162,3 +8162,28 @@ screen above (backs 0.4-0.8, tight ends 0.5-0.9; pick rule in `.sweeps/capacity_
 - **Housekeeping:** the seven temporary screening flags (`v2_rb_capacity_relief_e40/50/70/80`, `v2_te_capacity_relief_e60/75/90`,
   `CAPACITY_RELIEF_SCREEN`, `_screen_elasticity`) are removed; they live in commit 7aedc76 if a screen needs re-running. Tests:
   `test_rb_capacity_relief.py` and `test_te_capacity_relief.py` now assert the flags ship and the constants. Not pushed.
+
+### 2026-11-03 - Retired 34 off flags (code removal; no projection changes)
+
+User: "work down the 34 flags... don't totally get rid of them... it's good to know what we've done before so we don't waste time and
+energy on trying things that have already failed." The rejected / superseded / hook groups of `docs/mechanism_audit_2026-11-02.md`
+section 2 were removed from `data/weekly_projections.py`, `data/pass_capacity_allocator.py`, `data/rb_role_allocator.py`,
+`data/rb_carry_budget.py`, `data/qb_volume_blend.py` and `data/loaders.py`: `MODEL_FEATURES` 139 -> 105, `DEFAULT_FEATURES` stays 84.
+
+- **The record:** `docs/retired_flags.md` - one row per flag with an evidence class (23 failed, 7 inconclusive, 2 hook, 1 superseded, 1
+  untested), what it did, the numbers behind the verdict and the removing commit; the original registry comments verbatim. Eleven
+  commits (f4bab1f .. 011dbe0), each revertable; the same eleven as patch files in `archive/retired_flags/patches/`; tag
+  `retire-flags-base` is the last commit with all 34 live. Their sweep scripts and tests went with them (they are in the patches).
+- **Retired is not ruled out.** `v2_new_team_starter_restoration` was never backtested (queued 2026-09-07, no result written down) and needs
+  a real test before the 2027 opener. `v2_qb_style_blend_k80` looked good offline and failed the full harness. The page says which is which.
+- **Kept on purpose:** `data/coaching_changes.py` (cohort labels, per-team prior-games function), `blend_defense_prior`'s per-team Series
+  support, `QB_PASSING_TD_K` (the shipped `v2_qb_td_blend` uses it), the backup-TE bands and `backup_te_activity_multiplier` (the shipped
+  `v2_backup_te_discount` reads them), `RB_GAME_SCRIPT_RUSH`, `game_env` (the legacy bundle flag) and the `chart_deprioritized` rule.
+- **Verification:** the original code (`retire-flags-base`, rebuilt as reference modules) against the final code on 15 default-feature
+  scenarios built back to back - historical 2022-2025 weeks 1, 2, 3, 5, 6, 9, 12 and 15, a 2025 week 1 with the Ourlads charts, and live
+  2026 weeks 1, 2, 5 and 9 - every board column and every explanation payload identical (`.sweeps/board_identity.py`). Each commit was
+  also checked alone (tests, pyflakes against the pre-retirement baseline, identity on the scenarios its code can reach). A live scenario
+  differed once by 2-3 rows between a morning baseline and later builds: the live odds moved - the original code differed from itself
+  ten minutes later, and built back to back with the final code it was identical. Compare live scenarios only as back-to-back pairs.
+- **Not done:** the 5 flags retired by `v2_points_from_stat_line` (season anchor, its refit, expected-points luck, its TE refit, QB luck),
+  the 5 ablation arms and the 7 legacy names still have branches; they need their own pass and the user's say-so.

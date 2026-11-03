@@ -190,6 +190,8 @@ and every-game rows differ. The TE capacity relief targets exactly that gap.
    the backup TEs' (beta 0.32, 2026 ~0); the TE1 cut mostly holds (0.67; 2022 and 2026 about 1). A backup-only relief is
    worth ~0 points. Stays off; revisit with more 2026 weeks.
 5. **Dead code**: remove the rejected and superseded flags' branches (section 2), verified by identical default boards.
+   DONE 2026-11-03 for the 34 flags of the rejected / superseded / hook groups (`docs/retired_flags.md`: what each tried, the
+   evidence, and how to restore it). The 5 retired-by-pfs flags, the 5 ablation arms and the 7 legacy names remain.
 6. **Leads for the backlog:** rookie RB early-season rushing (M18); WR1 concentration; the stat recal's 3.0-point gate is a
    cliff (M19: targets jump 35-50% across it, below START only). Each needs its own study.
 7. **`v2_wr1_capacity_relief`** passed its bar (START-WR -0.010); in the pfs world START-WR -0.011, 4 of 4 seasons. The

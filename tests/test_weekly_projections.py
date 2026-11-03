@@ -1984,15 +1984,6 @@ def test_game_environment_sign_convention_favours_the_home_team():
     assert env['KC']['indoor'] is False
 
 
-def test_game_environment_multiplier_is_neutral_without_a_posted_line():
-    sched = pd.DataFrame({'week': [1], 'home_team': ['KC'], 'away_team': ['DEN'],
-                          'total_line': [np.nan], 'spread_line': [np.nan], 'roof': ['dome']})
-    env = wp.game_environment(sched, 1)
-    out = wp._game_env_multiplier(env, np.array(['KC']), 'QB', league_implied=22.0)
-    # Venue still applies; the total does not, because there isn't one.
-    assert abs(out[0] - wp.VENUE_MULT['QB']['indoor']) < 1e-9
-
-
 def test_historical_target_margins_matches_live_sign_convention():
     # A historical target reads the SAME closing-line archive as
     # game_environment (see _historical_target_margins' own comment for why

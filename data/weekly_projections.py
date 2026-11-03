@@ -1131,7 +1131,6 @@ MODEL_FEATURES = (
     'redzone_tds',        # touchdowns from red-zone opportunity, not a raw TD rate
     'role_trend',         # a step change in snap share, not a decayed average of it
     'volume_faced',       # opponent pass/rush volume faced, split (pace is one number)
-    'game_env',           # market total, roof/venue, wind, rest
     'teammate_vacancy',   # an OUT teammate's usage redistributed (live only) -
                            # superseded by 'v2_vacancy' in DEFAULT_FEATURES (same
                            # gate; v2_vacancy adds the ledger tracking on top)
@@ -8378,9 +8377,8 @@ def _game_total_stat_multipliers(env, teams, pos, league_implied, stats, boost=N
     """{stat: np.array(len(teams))} - the per-stat implied-total factor for
     'v2_game_total_elasticity_perstat'. 1.0 for any team with no posted line
     (the normal case more than a few weeks out) and for any stat with no
-    fitted elasticity, same degrade-gracefully convention as
-    _game_env_multiplier, which this replaces on the implied-total channel
-    when the per-stat flag is on (venue stays on _game_env_multiplier).
+    fitted elasticity, same degrade-gracefully convention as the flat _game_env_multiplier it replaced (retired 2026-11-03 with
+    the 'game_env' bundle; docs/retired_flags.md).
     ``boost`` ({stat: delta}) is added to those stats' exponents ('v2_qb_implied_td_boost')."""
     betas = dict(_load_game_total_perstat().get(pos, ()))
     for stat, delta in (boost or {}).items():
@@ -8407,14 +8405,6 @@ def _game_total_stat_multipliers(env, teams, pos, league_implied, stats, boost=N
 
 
 INDOOR_ROOFS = ('dome', 'closed')
-# league-frequency-weighted to 1.0 at the ~28% of games played indoors
-VENUE_MULT = {
-    'QB': {'indoor': 1.049, 'outdoor': 0.981},
-    'TE': {'indoor': 1.037, 'outdoor': 0.986},
-    'WR': {'indoor': 1.028, 'outdoor': 0.989},
-    'RB': {'indoor': 1.000, 'outdoor': 1.000},
-}
-
 # --- v2_weather_adjustment --------------------------------------------------
 # PER-STAT outdoor WIND effect. Two earlier passes failed: the v1 flat
 # fantasy-points penalty (wind redistributes, it does not just scale points),
@@ -8602,40 +8592,6 @@ def game_environment(schedule_df, week):
         out[str(team)] = {'implied': float(imp) if pd.notna(imp) else None, 'indoor': bool(ind)}
     for team, imp, ind in zip(wk['away_team'], total / 2 - spread / 2, indoor):
         out[str(team)] = {'implied': float(imp) if pd.notna(imp) else None, 'indoor': bool(ind)}
-    return out
-
-
-def _game_env_multiplier(env, teams, pos, league_implied, use_total=True, use_venue=True):
-    """Per-player game-environment multiplier: implied-total elasticity x
-    venue. 1.0 for any team without a posted line (the normal case more than
-    a few weeks out), same degrade-gracefully convention as every other
-    best-effort signal here.
-
-    ``use_total``/``use_venue`` let a caller apply just ONE of the two
-    factors - added 2026-08-27 for the component backtest program: the
-    BUNDLED 'game_env' feature was built, measured, and rejected (+0.012 MAE,
-    see DEFAULT_FEATURES's own comment), but a bundle that fails as a whole
-    can still be hiding one real, useful piece diluted by a non-working one -
-    exactly what happened with the original alignment mechanism before its
-    redesign. 'v2_game_total_elasticity' and 'v2_venue_mult' isolate each
-    piece for its own backtest rather than re-testing the same bundle again.
-    """
-    elasticity = GAME_TOTAL_ELASTICITY.get(pos, 0.0)
-    venue = VENUE_MULT.get(pos, {'indoor': 1.0, 'outdoor': 1.0})
-    out = np.ones(len(teams))
-    if not env:
-        return out
-    for i, team in enumerate(teams):
-        entry = env.get(str(team))
-        if not entry:
-            continue
-        mult = 1.0
-        implied = entry.get('implied')
-        if use_total and implied and league_implied and league_implied > 0 and implied > 0 and elasticity:
-            mult *= float(np.clip((implied / league_implied) ** elasticity, *GAME_TOTAL_CLIP))
-        if use_venue:
-            mult *= venue['indoor'] if entry.get('indoor') else venue['outdoor']
-        out[i] = mult
     return out
 
 
@@ -9324,10 +9280,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # schedule_df already loaded above for the historical_target check.
     opponents = _week_opponents(schedule_df, week)
     env = game_environment(schedule_df, week) if (
-        'game_env' in feats or 'v2_game_total_elasticity' in feats
-        or 'v2_game_total_elasticity_perstat' in feats or 'v2_venue_mult' in feats
+        'v2_game_total_elasticity_perstat' in feats
         or 'v2_xtd' in feats or 'v2_stat_recal_game_script' in feats
-        or 'v2_rb_game_script' in feats or 'v2_rb_game_script_rush' in feats
+        or 'v2_rb_game_script_rush' in feats
     ) else {}
     league_implied = None
     if env:
@@ -12169,14 +12124,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
 
         inj_mult = cur[name_col].map(injury_mult).fillna(1.0)
         perstat_env = 'v2_game_total_elasticity_perstat' in feats
-        # The per-stat implied-total flag OWNS the implied-total channel when
-        # it's on - the flat _game_env_multiplier then does venue only, so the
-        # two never both scale the total.
-        use_total = 'game_env' in feats and not perstat_env
-        use_venue = 'game_env' in feats
-        env_mult = (_game_env_multiplier(env, cur['Team'].astype(str).to_numpy(), pos, league_implied,
-                                         use_total=use_total, use_venue=use_venue)
-                    if env else np.ones(len(cur)))
+        # The implied-total channel belongs to the per-stat flag (env_stat_mult below). The flat game-total + venue multiplier
+        # (the 'game_env' bundle, and its two halves 'v2_game_total_elasticity' / 'v2_venue_mult') was retired 2026-11-03, so the
+        # flat environment multiplier is neutral.
+        env_mult = np.ones(len(cur))
         # {stat: per-player array} - the implied-total factor fitted separately
         # per stat (data._game_total_stat_multipliers). Empty/all-ones unless
         # the flag is on and a line is posted.
@@ -12280,10 +12231,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     _env_stat, dtype=float)
                 if weather_stat_mult is not None:
                     trace['weather_stat_multiplier'] = np.asarray(_wx_stat, dtype=float)
-                trace['environment_status'] = np.full(
-                    len(cur), 'modeled' if 'game_env' in feats and env else
-                    ('feature enabled; no usable line' if 'game_env' in feats else 'feature disabled'),
-                )
+                trace['environment_status'] = np.full(len(cur), 'feature disabled')
 
 
 

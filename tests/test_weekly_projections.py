@@ -1105,10 +1105,9 @@ def test_injury_shortened_prior_year_does_not_suppress_a_proven_multi_year_role(
     assert reasons[1] == 'continuous returning active/pre-absence role recovery'
 
 
-def test_new_team_starter_stays_on_whole_season_share_when_flag_is_off():
-    # Waddle-shaped case: strong recent form, new team, chart rank 1 - but
-    # the flag defaults off, so behavior is byte-identical to before it
-    # existed (this is what actually happened on the live board).
+def test_new_team_starter_stays_on_whole_season_share():
+    # Waddle-shaped case: strong recent form, new team, chart rank 1 - a team change is disqualifying for the returning-role
+    # recovery (the carve-out, v2_new_team_starter_restoration, was retired 2026-11-03: docs/retired_flags.md).
     off, used_off = wp.restore_cold_start_returning_role_share(
         np.array([0.45]), np.array([0.78]), np.array([10.0]),
         np.array(['MIA']), np.array(['DEN']), 'WR',
@@ -1116,49 +1115,6 @@ def test_new_team_starter_stays_on_whole_season_share_when_flag_is_off():
     )
     assert not used_off[0]
     assert off[0] == 0.45
-
-
-def test_new_team_starter_recovers_when_flag_enabled_and_chart_confirms_rank1():
-    on, used_on, reasons = wp.restore_cold_start_returning_role_share(
-        np.array([0.45]), np.array([0.78]), np.array([10.0]),
-        np.array(['MIA']), np.array(['DEN']), 'WR',
-        depth_rank=np.array([1.0]),
-        allow_new_team_starter=True,
-        return_details=True,
-    )
-    assert used_on[0]
-    assert reasons[0] == 'charted new-team starter recovery'
-    # Real credit, but less aggressive than a same-team recovery would give -
-    # never past the new-team cap regardless of how strong the evidence is.
-    assert 0.45 < on[0] < 0.78
-    assert on[0] <= wp.NEW_TEAM_STARTER_CAP + 1e-9
-
-
-def test_new_team_starter_requires_rank1_chart_and_a_real_sample():
-    # Not charted rank 1 on the NEW team - no restoration even with the flag.
-    unranked, used = wp.restore_cold_start_returning_role_share(
-        np.array([0.45]), np.array([0.78]), np.array([10.0]),
-        np.array(['MIA']), np.array(['DEN']), 'WR',
-        depth_rank=np.array([2.0]), allow_new_team_starter=True,
-    )
-    assert not used[0]
-    assert unranked[0] == 0.45
-    # A one-game cameo must not qualify even at rank 1.
-    cameo, used_cameo = wp.restore_cold_start_returning_role_share(
-        np.array([0.45]), np.array([0.78]), np.array([1.0]),
-        np.array(['MIA']), np.array(['DEN']), 'WR',
-        depth_rank=np.array([1.0]), allow_new_team_starter=True,
-    )
-    assert not used_cameo[0]
-    # A same-team player is unaffected by this flag - he already goes
-    # through the standard (same-team) recovery path.
-    same_team, used_same, reasons_same = wp.restore_cold_start_returning_role_share(
-        np.array([0.45]), np.array([0.78]), np.array([10.0]),
-        np.array(['DEN']), np.array(['DEN']), 'WR',
-        depth_rank=np.array([1.0]), allow_new_team_starter=True, return_details=True,
-    )
-    assert used_same[0]
-    assert reasons_same[0] != 'charted new-team starter recovery'
 
 
 def test_cold_start_receiver_vacancy_redistributes_departed_teammates_share():

@@ -1868,8 +1868,6 @@ MODEL_FEATURES = (
                              # (QB splits, abrupt established-role exits, paired partial
                              # replacements, severe blowout rest) is switched off.
     'v2_no_td_matchup',  # CANDIDATE (2026-10-23, strength audit): no matchup multiplier on TD stats.
-    'v2_td_matchup_audit',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, half strength on rushing TDs.
-    'v2_td_matchup_pass_rec_off',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, rushing TDs unchanged.
     'v2_td_matchup_half',  # SHIPPED 2026-10-24: TD matchup at half strength on every TD stat.
     'v2_no_qb_rush_script',  # SHIPPED 2026-10-24 (strength audit): no game-script multiplier on QB rushing.
     'v2_no_pace',  # CANDIDATE (2026-10-23, strength audit): no opponent-pace multiplier.
@@ -3155,8 +3153,6 @@ STRENGTH_AUDIT_TD_STATS = ('passing_tds', 'rushing_tds', 'receiving_tds')
 # passing and receiving TDs at every position and 0.5 for rushing TDs (RB 5 of 5 seasons, QB). The first flag present wins.
 TD_MATCHUP_STRENGTH = {
     'v2_no_td_matchup': {'passing_tds': 0.0, 'rushing_tds': 0.0, 'receiving_tds': 0.0},
-    'v2_td_matchup_audit': {'passing_tds': 0.0, 'rushing_tds': 0.5, 'receiving_tds': 0.0},
-    'v2_td_matchup_pass_rec_off': {'passing_tds': 0.0, 'rushing_tds': 1.0, 'receiving_tds': 0.0},
     'v2_td_matchup_half': {'passing_tds': 0.5, 'rushing_tds': 0.5, 'receiving_tds': 0.5},
 }
 

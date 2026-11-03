@@ -2490,30 +2490,6 @@ MODEL_FEATURES = (
                              # behind is pushed up: +b x mean(actual - expected points
                              # per earlier game), b = -0.18 WR, -0.16 TE. See
                              # EXPECTED_POINTS_LUCK and apply_expected_points_luck.
-    'v2_share_prior_shrink',  # CANDIDATE (2026-10-26, model sense-check audit). In season, a RB/WR/TE's
-                             # expected snap share is the plain mean of his last <=4
-                             # appearances, so one odd game (a kick-return-only week,
-                             # a blowout) is his whole role. Pull it toward his prior
-                             # season's share as if that were SHARE_PRIOR_SHRINK_K[pos]
-                             # more games: (n x observed + k x prior) / (n + k). Offline
-                             # 2022-2025 (next-week share, n 1-4): RMSE WR -4.4%,
-                             # TE -2.8%, RB -1.3%; held out by season 4/4, 4/4, 3/4.
-    'v2_partial_game_role_carry',  # CANDIDATE (2026-10-26, model sense-check audit). An established
-                             # player's sudden low-snap game ("abrupt partial role") is
-                             # left out of his history, so the next week he is projected
-                             # at his old role. It is half real: he plays the next week at
-                             # 0.47 of snaps from a 0.77 role (0.57 back from a missed
-                             # game). Count it in the share - his volume is scaled by the
-                             # share with that game over the share without it
-                             # (partial_game_role_multiplier). Harness boards 2022-2025:
-                             # those rows run +1.49 pts over (+0.91 after a missed game),
-                             # the rest -0.25; share 0.68 projected vs 0.48 played.
-    'v2_share_recency',  # CANDIDATE (2026-10-26, model sense-check audit; backlog L6). The in-season
-                             # expected snap share weights his latest appearance
-                             # SHARE_RECENCY_LAST_WEIGHT (2) times the other three.
-                             # Offline 2022-2025 (next-week share, every player-week):
-                             # RMSE WR -2.9%, TE -2.4%, RB -1.9%, every season; stacks
-                             # with v2_share_prior_shrink.
 )
 # What the app actually runs - the single standard model. Until 2026-08-26
 # this file offered two configurations: this set (then called "V1, released
@@ -6604,7 +6580,7 @@ def confirmed_role_change_signal(hist_pos, name_col, team_col, pos, as_of_week):
     return pd.Series(out, dtype=float, name='role_change_confidence')
 
 
-def expected_snap_share(stats_df, name_col, team_col, as_of_week, lookback=4, last_weight=1.0):
+def expected_snap_share(stats_df, name_col, team_col, as_of_week, lookback=4):
     """
     Per player: the share of his TEAM'S snaps he should be expected to play
     in the upcoming game - averaged over his team's last `lookback` played
@@ -6656,34 +6632,7 @@ def expected_snap_share(stats_df, name_col, team_col, as_of_week, lookback=4, la
     if hist.empty:
         return pd.Series(dtype=float)
     recent = hist.sort_values('week').groupby(name_col, observed=True).tail(lookback)
-    if last_weight != 1.0:
-        # v2_share_recency: the latest appearance counts last_weight times the others
-        latest = recent.groupby(name_col, observed=True)['week'].transform('max').eq(recent['week'])
-        recent = recent.assign(_w=np.where(latest, float(last_weight), 1.0))
-        recent = recent.assign(_ws=recent['_w'] * recent['_snap'])
-        grouped = recent.groupby(name_col, observed=True)
-        return (grouped['_ws'].sum() / grouped['_w'].sum()).rename('expected_snap_share')
     return recent.groupby(name_col, observed=True)['_snap'].mean().rename('expected_snap_share')
-
-
-# v2_share_recency (2026-10-26, model sense-check audit; backlog L6, "a jump over the 3-game average is under-read"): the
-# latest of the <=4 appearances in expected_snap_share counts this many times the others. Offline (snap counts 2022-2025
-# weeks 3-17, RB/WR/TE active that week, every player-week with 1+ appearance; next week's share): RMSE equal weights -> 2x
-# the latest: WR 0.1815 -> 0.1763, TE 0.1510 -> 0.1474, RB 0.1442 -> 0.1415, better in all four seasons at each position
-# (3x a little better again, 2x kept as the round step); with v2_share_prior_shrink on top WR 0.1737, TE 0.1454, RB 0.1404.
-SHARE_RECENCY_LAST_WEIGHT = 2.0
-
-
-# v2_share_prior_shrink (2026-10-26, model sense-check audit): expected_snap_share takes the last <=4 appearances at face
-# value, so a player's whole in-season role can rest on one game - Dylan Sampson (CLE 2026 wk7) had one appearance, a
-# kick-return week with 0 offensive snaps, and projected 0.0 off it against a 27% share the season before (he scored 10.7).
-# Offline (scratchpad share_shrink_study.py; 2022-2025 weeks 3-17, RB/WR/TE active that week, 15,115 rows with a 4+ game
-# prior): next week's share from (n x observed + k x prior) / (n + k), n = appearances in the window, prior = last season's
-# share when active. Pooled best k and share RMSE against k = 0 (n 1-4): WR 0.75 (0.1853 -> 0.1771), TE 0.75 (0.1549 ->
-# 0.1505), RB 0.25 (0.1415 -> 0.1397); fit without each season and scored on it: WR 4/4, TE 4/4, RB 3/4 (2022 a tie).
-# Symmetric on purpose: a first game far above the prior regresses too (obs 0.71 / prior 0.32 -> next week 0.61).
-# n = 0 is left to restore_cold_start_returning_role_share (no observed share to shrink).
-SHARE_PRIOR_SHRINK_K = {'RB': 0.25, 'WR': 0.75, 'TE': 0.75}
 
 
 def mask_unposted_snap_weeks(stats_df, year, team_col):
@@ -6749,69 +6698,6 @@ def drop_shared_name_defenders(stats_df, name_col):
         return stats_df, []
     names = sorted(set(stats_df.loc[drop, name_col].astype(str)))
     return stats_df[~drop].copy(), names
-
-
-def expected_snap_share_appearances(stats_df, name_col, as_of_week, lookback=4):
-    """Per player: how many appearances expected_snap_share averaged over (at most ``lookback``) - the n in
-    v2_share_prior_shrink."""
-    hist = _played_weeks_before(stats_df, as_of_week)
-    if hist.empty or 'weekly_snap_pct' not in hist.columns:
-        return pd.Series(dtype=float)
-    hist = hist[pd.to_numeric(hist['weekly_snap_pct'], errors='coerce').notna()]
-    if hist.empty:
-        return pd.Series(dtype=float)
-    counts = hist.groupby(name_col, observed=True)['weekly_snap_pct'].size()
-    return counts.clip(upper=lookback).astype(float).rename('expected_snap_share_appearances')
-
-
-def shrink_share_to_prior(share, prior_share, appearances, pos, k_by_pos=None):
-    """(share, applied): v2_share_prior_shrink. (n x share + k x prior) / (n + k) where the row has n >= 1 appearances,
-    a finite prior share and ``pos`` has a k; other rows unchanged."""
-    k_by_pos = SHARE_PRIOR_SHRINK_K if k_by_pos is None else k_by_pos
-    share = np.asarray(share, dtype=float)
-    k = k_by_pos.get(pos)
-    if k is None or k <= 0:
-        return share, np.zeros(len(share), dtype=bool)
-    prior = np.asarray(prior_share, dtype=float)
-    n = np.asarray(appearances, dtype=float)
-    applied = np.isfinite(share) & np.isfinite(prior) & np.isfinite(n) & (n >= 1)
-    shrunk = np.where(applied, (n * share + k * prior) / np.where(applied, n + k, 1.0), share)
-    return shrunk, applied
-
-
-# v2_partial_game_role_carry (2026-10-26, model sense-check audit): annotate_player_history_participation leaves an
-# established player's sudden low-snap game out of his history ('abrupt partial role after established workload': median of
-# his last 3 shares >= 0.65, this one <= 0.50 and <= 0.6 x that), on the reading that he was hurt and his old role stands. It
-# does not: snap counts 2019-2025 (scratchpad partial_exclusion_study.py, 625 such games with a next appearance), the next
-# share is 0.47 from a 0.77 role when he plays the next week (464) and 0.57 from 0.79 when he comes back from a missed game
-# (161); predicting that next share from the last 4 appearances WITH the game beats leaving it out in all 7 seasons, every
-# position, both groups (RMSE 0.332 -> 0.275 / 0.294 -> 0.233). In points, on the harness boards (scratchpad
-# partial_points_check.py; 68-flag base, 2022-2025 weeks 3-17): rows whose last appearance was such a game run +1.49 pts over
-# (243 played the next week) and +0.91 (92, after a missed game), against -0.25 for every other row; share 0.68 projected vs
-# 0.48 played; every season over (+0.44 to +2.25). The game stays out of the per-game rates (they would read a third of a
-# game as a whole one - why switching every exclusion off, C15, lowered every position); only the role reads it: the player's
-# counting stats are scaled by the share with the game over the share without it, floored at PARTIAL_ROLE_CARRY_MIN.
-PARTIAL_ROLE_CARRY_REASON = 'abrupt partial role after established workload'
-PARTIAL_ROLE_CARRY_MIN = 0.40
-PARTIAL_ROLE_CARRY_POSITIONS = ('RB', 'WR', 'TE')
-
-
-def partial_game_role_multiplier(hist_annotated, name_col, team_col, as_of_week):
-    """{player: multiplier <= 1} (v2_partial_game_role_carry): expected_snap_share over the eligible history plus the
-    abrupt-partial games, over expected_snap_share over the eligible history alone, floored at PARTIAL_ROLE_CARRY_MIN.
-    Only players with such a game in their last appearances (so a ratio below 1) are returned."""
-    if (hist_annotated is None or hist_annotated.empty or '_player_history_eligible' not in hist_annotated.columns
-            or '_player_history_reason' not in hist_annotated.columns):
-        return pd.Series(dtype=float)
-    eligible = hist_annotated['_player_history_eligible'].astype(bool)
-    partial = hist_annotated['_player_history_reason'].astype(str).eq(PARTIAL_ROLE_CARRY_REASON)
-    if not partial.any():
-        return pd.Series(dtype=float)
-    without = expected_snap_share(hist_annotated[eligible], name_col, team_col, as_of_week)
-    with_partial = expected_snap_share(hist_annotated[eligible | partial], name_col, team_col, as_of_week)
-    ratio = (with_partial / without.reindex(with_partial.index)).replace([np.inf, -np.inf], np.nan).dropna()
-    ratio = ratio[ratio < 0.999]
-    return ratio.clip(lower=PARTIAL_ROLE_CARRY_MIN, upper=1.0).rename('partial_game_role_multiplier')
 
 
 def season_snap_share(stats_df, name_col, team_col=None):
@@ -11031,8 +10917,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     elif 'v2_keep_fully_excluded_no_prior' in feats:
         hist_annotated = _keep_fully_excluded_players(hist_annotated, name_col, player_prior, prior_name_col)
     player_hist = hist_annotated[hist_annotated['_player_history_eligible']].copy()
-    partial_role_mult = (partial_game_role_multiplier(hist_annotated, name_col, team_col, as_of_week)
-                         if 'v2_partial_game_role_carry' in feats and not cold_start else pd.Series(dtype=float))
 
     def _blowout_weeks_for_matchup(schedule_frame, matchup_year):
         """Which (team, week) set (if any) to down-weight in a defense's own
@@ -11195,13 +11079,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     # share to scale a prior-season per-game rate against - see
     # expected_snap_share's docstring for the measured failure this fixes.
     exp_share = pd.Series(dtype=float)
-    exp_share_n = pd.Series(dtype=float)
     prior_share = pd.Series(dtype=float)
     if 'role_volume' in feats:
-        exp_share = expected_snap_share(player_hist, name_col, team_col, as_of_week,
-                                        last_weight=(SHARE_RECENCY_LAST_WEIGHT if 'v2_share_recency' in feats else 1.0))
-        if 'v2_share_prior_shrink' in feats and not exp_share.empty:
-            exp_share_n = expected_snap_share_appearances(player_hist, name_col, as_of_week)
+        exp_share = expected_snap_share(player_hist, name_col, team_col, as_of_week)
         prior_share = season_snap_share(player_prior, prior_name_col) if not player_prior.empty \
             else pd.Series(dtype=float)
         if exp_share.empty and not player_prior.empty:
@@ -11219,8 +11099,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     role_history = player_prior if cold_start else player_hist
     role_history_name = prior_name_col if cold_start else name_col
     exp_share_identity = identity_indexed_series(exp_share, role_history, role_history_name)
-    exp_share_n_identity = (identity_indexed_series(exp_share_n, player_hist, name_col)
-                            if not cold_start else pd.Series(dtype=float))
     prior_share_identity = identity_indexed_series(prior_share, player_prior, prior_name_col)
     # Pre-blend snapshot, kept for the RB allocator's SEASON-SCOPED
     # eligibility gate below (data.rb_role_allocator.allocate_preseason_
@@ -12169,13 +12047,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             player_share = np.where(qb1_workload_override, 1.0, player_share)
             player_prior_share = (identity_keys_rv.map(prior_share_identity).to_numpy(dtype=float)
                                   if not prior_share_identity.empty else np.full(len(cur), np.nan))
-            if (not cold_start and 'v2_share_prior_shrink' in feats and pos in SHARE_PRIOR_SHRINK_K
-                    and not exp_share_n_identity.empty):
-                # v2_share_prior_shrink: the observed share (never a percentile fallback) toward last season's
-                player_share, _shrunk = shrink_share_to_prior(
-                    player_share, player_prior_share,
-                    np.where(fell_back_to_default, np.nan, identity_keys_rv.map(exp_share_n_identity).to_numpy(dtype=float)),
-                    pos)
             # Unblended 2025-only active share + 2024 season evidence, for
             # the RB allocator's season-scoped eligibility gate below - see
             # prior_active_snap_share_2025_only's own comment for why this
@@ -13136,12 +13007,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 elif stat == 'targets':
                     blended = np.where(rb_core, rb_target_allocation, blended)
                     prior_source_is_player = rb_core
-            # v2_partial_game_role_carry: the role his last abrupt-partial game shows (PARTIAL_ROLE_CARRY_REASON)
-            partial_role_multiplier = np.ones(len(cur))
-            if not partial_role_mult.empty and pos in PARTIAL_ROLE_CARRY_POSITIONS:
-                partial_role_multiplier = cur[name_col].map(partial_role_mult).fillna(1.0).to_numpy(dtype=float)
-                blended = np.asarray(blended, dtype=float) * partial_role_multiplier
-
             # QB passing is intentionally direct overall-defense evidence.
             # One QB's passing line is a team passing line; role buckets do
             # not add an independent sample beyond the robust team-game
@@ -13320,7 +13185,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 'td_prior_regress': np.full(len(cur), td_prior_regress),
                 'prior_source': np.where(prior_source_is_player, 'player prior', 'position fallback'),
                 'role_scale': stat_role_scale,
-                'partial_role_multiplier': partial_role_multiplier,
                 'expected_snap_share': player_share,
                 'prior_snap_share': player_prior_share,
                 'pre_absence_snap_share': player_pre_absence_share,

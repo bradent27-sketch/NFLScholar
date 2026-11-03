@@ -8114,3 +8114,34 @@ Run 19:48-21:12, harness v2, 2022-2025 weeks 3-17, 82-flag default (`.sweeps/rb_
 - **TE relief at 0.5 overshoots:** TE targets +0.080 -> -0.104, receptions +0.066 -> -0.062, yards +1.13 -> -0.42 (MSE -0.2 to
   -0.3%); START-TE points bias -0.27 -> +0.01. By interpolation an elasticity near 0.75 lands on level (targets about -0.01).
 - Not shipped. For props the RB stat columns are better; for points it is a wash.
+
+### 2026-11-03 - Pass-capacity relief screen: backs 0.6 confirmed, tight ends 0.75 (off; user's call)
+Run 22:35-01:44, harness v2, 2022-2025 weeks 3-17, each arm alone vs the 82-flag default; base boards identical to the 0.6 run
+(max diff 0.0). Bar and pick rule: `.sweeps/capacity_relief_screen_bar.md` (set first). Stat bias = actual - projected on the START
+pool fixed by the base board's rank (RB 40, TE 20), played rows.
+
+| backs, e | targets bias | receptions bias | yards bias | stat MSE (t/r/y) | START-RB | EVERY-START-RB | START-ALL | sq. bias (base 3.0) | eligible |
+|---|---|---|---|---|---|---|---|---|---|
+| 1.0 (today) | +0.063 | +0.041 | +0.445 | | | | | 3.000 | |
+| 0.4 | -0.029 | -0.033 | -0.107 | -1.0 / -0.8 / -0.5% | +0.002 | **+0.007** | +0.000 | 0.922 | no (EVERY-START-RB > +0.005) |
+| 0.5 | -0.014 | -0.021 | -0.015 | -1.0 / -0.8 / -0.5% | +0.001 | +0.005 | +0.000 | 0.307 | yes |
+| **0.6** | +0.001 | -0.008 | +0.076 | -0.9 / -0.8 / -0.5% | +0.000 | +0.004 | +0.000 | **0.072** | yes - picked |
+| 0.7 | +0.017 | +0.004 | +0.168 | -0.8 / -0.7 / -0.4% | -0.001 | +0.002 | -0.000 | 0.222 | yes |
+| 0.8 | +0.032 | +0.016 | +0.261 | -0.6 / -0.5 / -0.3% | +0.000 | +0.002 | +0.000 | 0.760 | yes |
+
+| tight ends, e | targets bias | receptions bias | yards bias | stat MSE (t/r/y) | START-TE | EVERY-START-TE | START-ALL | sq. bias (base 3.0) | eligible |
+|---|---|---|---|---|---|---|---|---|---|
+| 1.0 (today) | +0.080 | +0.066 | +1.132 | | | | | 3.000 | |
+| 0.5 (old flag) | -0.104 | -0.062 | -0.422 | -0.2 / -0.2 / -0.3% | +0.006 | +0.014 | -0.000 | 2.708 | no |
+| 0.6 | -0.067 | -0.036 | -0.117 | -0.2 / -0.2 / -0.3% | +0.002 | +0.009 | -0.000 | 1.025 | no (overshoot, EVERY-START-TE) |
+| **0.75** | -0.013 | +0.002 | +0.342 | -0.3 / -0.2 / -0.3% | +0.000 | +0.005 | -0.001 | **0.118** | yes - picked |
+| 0.9 | +0.042 | +0.040 | +0.809 | -0.1 / -0.1 / -0.2% | +0.001 | +0.003 | -0.001 | 1.155 | yes |
+
+- Every arm's verdict is INCONCLUSIVE (no point-level effect; all CIs include 0). The choice rests on stat level, as the bar said.
+- **Backs at 0.6:** MSE of all three stats lower in 4 of 4 seasons (-0.2 to -1.4%); bias by season targets +0.07/+0.15/+0.01/+0.03
+  -> 0.00/+0.08/-0.04/-0.03. Targets and receptions cross zero near 0.6-0.67, yards near 0.5.
+- **Tight ends at 0.75:** MSE lower in 3 of 4 seasons; 2023-24 (TEs ran 2.5 yards under) gain 0.4-1.1%, 2022 (already 0.5 over) loses
+  0.6-1.1%, 2025 about even. START-TE points bias -0.285 -> -0.140. EVERY-START-TE +0.005 sits exactly on the bar's limit (CI
+  -0.010, +0.019), and START-TE pairwise accuracy -0.002 (CI -0.005, 0.000).
+- **Watch:** 2026 weeks 3-7 START TE receiving yards already run 8% OVER the board (-3.8, n=100); a TE lift pushes that further.
+  START backs 2026: receiving yards +0.45 under, consistent with the lift.

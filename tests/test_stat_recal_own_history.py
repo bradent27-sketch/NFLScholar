@@ -339,13 +339,11 @@ def test_the_main_stat_table_shows_the_own_history_step(monkeypatch):
 
 
 def test_rb_game_script_multipliers_and_flags():
-    """v2_rb_game_script(_rush) (backlog L5; _rush shipped): 1 + b clip(m, -14, 14) / 7 on the listed RB stats."""
+    """v2_rb_game_script_rush (backlog L5): 1 + b clip(m, -14, 14) / 7 on the listed RB stats."""
     assert 'v2_rb_game_script_rush' in wp.DEFAULT_FEATURES
-    assert 'v2_rb_game_script' in wp.MODEL_FEATURES and 'v2_rb_game_script' not in wp.DEFAULT_FEATURES
     script = {'AAA': (7.0, 3.0), 'BBB': (-21.0, -5.0)}
     out = wp.rb_game_script_multipliers(['AAA', 'BBB', 'CCC'], script, {'rushing_tds': 0.03, 'receiving_yards': -0.01})
     assert out['rushing_tds'] == pytest.approx([1.03, 1 - 0.03 * 2, 1.0])      # clipped at 14; no line reads 1
     assert out['receiving_yards'] == pytest.approx([0.99, 1.02, 1.0])
     assert set(wp.RB_GAME_SCRIPT_RUSH) == {'rushing_tds', 'rushing_yards'}
-    assert all(wp.RB_GAME_SCRIPT[s] == b for s, b in wp.RB_GAME_SCRIPT_RUSH.items())
-    assert wp.rb_game_script_multipliers(['AAA'], {}, wp.RB_GAME_SCRIPT)['rushing_yards'] == pytest.approx([1.0])
+    assert wp.rb_game_script_multipliers(['AAA'], {}, wp.RB_GAME_SCRIPT_RUSH)['rushing_yards'] == pytest.approx([1.0])

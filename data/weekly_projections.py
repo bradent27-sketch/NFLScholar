@@ -662,71 +662,6 @@ PACE_PRIOR_GAMES = 12.0
 # data supports, so the weight is capped. Reached at game 2, so effectively a constant ~0.15.
 PACE_ALPHA_CAP = 0.15
 
-# --- v2_own_tempo_regression ------------------------------------------------
-# A team's own plays per game barely persist (2016-2025: ~0.37 of a deviation from
-# the league mean carries into the next game), but every player's per-game volume
-# rate carries his team's tempo in full. 2021-2025 calibration dump, 2,558 team-
-# games: actual-minus-projected pass attempts / targets fall with the team's own
-# to-date tempo (slope t = -3.6 / -4.3), and the model hands back almost none of it
-# early (kappa, the share of a relative tempo deviation the projection should give
-# back, ~0.7 at cold start and games 2-8, ~0 from game 9 on). The fast quintile is
-# over-projected ~6% on pass attempts, the slow quintile under-projected ~3.6%.
-# multiplier = 1 - kappa(G) * (team plays per game / league - 1), kappa(G) =
-# TEMPO_KAPPA0 * max(0, 1 - G/TEMPO_G0), capped at +-TEMPO_MAX_ADJ, on the passing
-# and receiving stats only (rushing showed no tempo effect, t = -0.8). Fit on 2021-
-# 2023; on 2024-2025 it cuts squared team volume error 1.0-1.4%.
-TEMPO_KAPPA0 = 0.65
-TEMPO_G0 = 10.0
-TEMPO_MAX_ADJ = 0.10
-TEMPO_MIN_GAMES = 2
-TEMPO_STATS = frozenset({'passing_attempts', 'passing_completions', 'passing_yards', 'passing_tds',
-                         'passing_interceptions', 'targets', 'receptions', 'receiving_yards',
-                         'receiving_tds'})
-
-
-def own_tempo_multiplier(teams, pace, prior_pace=None, cold_start=False,
-                         kappa0=None, g0=None, max_adj=None, min_games=None):
-    """Per-row ndarray of 'v2_own_tempo_regression' multipliers for `teams`.
-
-    `pace` is the as-of team pace frame (index team; 'off_pace', 'off_games'). A team
-    with at least ``min_games`` games reads its to-date tempo at G = its games; with
-    fewer (week 2, a new team) it reads LAST season's tempo from `prior_pace` at G = 0.
-    At a cold start `pace` already IS last season's, so it is read at G = 0. A team
-    with no tempo evidence anywhere gets exactly 1.0."""
-    kappa0 = TEMPO_KAPPA0 if kappa0 is None else kappa0
-    g0 = TEMPO_G0 if g0 is None else g0
-    max_adj = TEMPO_MAX_ADJ if max_adj is None else max_adj
-    min_games = TEMPO_MIN_GAMES if min_games is None else min_games
-
-    def _table(frame):
-        if frame is None or getattr(frame, 'empty', True) or 'off_pace' not in frame.columns:
-            return {}, None
-        off = pd.to_numeric(frame['off_pace'], errors='coerce')
-        games = (pd.to_numeric(frame['off_games'], errors='coerce')
-                 if 'off_games' in frame.columns else pd.Series(np.nan, index=frame.index))
-        league = off.mean()
-        if not np.isfinite(league) or league <= 0:
-            return {}, None
-        return {str(t): (float(o) / league - 1.0, float(g) if np.isfinite(g) else 0.0)
-                for t, o, g in zip(frame.index, off, games) if np.isfinite(o)}, league
-
-    cur, _ = _table(pace)
-    old, _ = _table(prior_pace)
-    out = np.ones(len(teams))
-    for i, team in enumerate(pd.Series(teams).astype(str).to_numpy()):
-        if cold_start and team in cur:
-            dev, games = cur[team][0], 0.0
-        elif team in cur and cur[team][1] >= min_games:
-            dev, games = cur[team]
-        elif team in old:
-            dev, games = old[team][0], 0.0
-        else:
-            continue
-        kappa = kappa0 * max(0.0, 1.0 - games / g0)
-        out[i] = 1.0 - float(np.clip(kappa * dev, -max_adj, max_adj))
-    return out
-
-
 SCRIPT_CLIP = (0.85, 1.15)
 # Which raw stats the game-script read applies to - VOLUME only. Touchdowns
 # are excluded: too sparse per player-game to bucket reliably by margin
@@ -1366,13 +1301,6 @@ MODEL_FEATURES = (
                              # backtested) and this file's own note below.
                              # Not yet in DEFAULT_FEATURES - first backtest
                              # pending.
-    'v2_game_total_elasticity',  # implied game-total scaling ALONE, unbundled
-                             # from 'game_env' (rejected as a bundle, +0.012
-                             # MAE) - see _game_env_multiplier's own note.
-                             # Not yet backtested standalone.
-    'v2_venue_mult',        # indoor/outdoor venue scaling ALONE, same
-                             # unbundling as above. Not yet backtested
-                             # standalone.
     'v2_weather_adjustment',  # per-stat outdoor WIND effect for QB/WR/TE
                              # (no RB, no temperature), fitted out-of-sample
                              # with the windy-stadium confound removed - see
@@ -1726,14 +1654,6 @@ MODEL_FEATURES = (
     'v2_pace_alpha_cap',  # 2026-10-06, shipped on the user's go-ahead (see DEFAULT_FEATURES). The
                              # opponent-pace multiplier's shrink weight games/(games+12) (0.2 early,
                              # 0.56 late) is capped at PACE_ALPHA_CAP = 0.15, the weight the data supports.
-    'v2_own_tempo_regression',  # UNSHIPPED 2026-10-06 (harness INCONCLUSIVE, no effect: START-ALL RMSE +0.002). Passing and receiving volume
-                             # (not rushing) is scaled by 1 - kappa(G) * (the team's
-                             # own plays per game / league - 1), kappa = 0.65 * max(0,
-                             # 1 - G/10): a team's own tempo regresses to the mean
-                             # (~0.37 persistence) but the per-game rates carry it in
-                             # full, so fast teams were over-projected (~6% on pass
-                             # attempts, t = -3.6) and slow ones under. See
-                             # own_tempo_multiplier and TEMPO_*.
     'v2_pass_capacity_keep_tds',  # SHIPPED 2026-10-06. Modifier of v2_pass_capacity:
                              # the budget scales targets, receptions and
                              # receiving yards only, not receiving TDs - the
@@ -2051,10 +1971,6 @@ MODEL_FEATURES = (
                              # untouched. Held out by season: stat MSE -3.2% over the 13 stats.
     'v2_stat_recal_own_history_edges',  # SHIPPED 2026-11-01 (user: "do the same with edges"). Weeks 1 and 2
                              # (STAT_RECAL_OWN_HISTORY_EDGES); week 18 left alone.
-    'v2_rb_game_script',  # NOT SHIPPED (2026-11-01, backlog L5): v2_rb_game_script_rush plus RB receiving
-                             # yards scaled down with the margin (RB_GAME_SCRIPT). Passed the
-                             # harness, but the receiving term made RB receiving yards worse
-                             # (held out 5 of 5 seasons; harness 3 of 4), so it stays off.
     'v2_rb_game_script_rush',  # SHIPPED 2026-11-01 (backlog L5; user: big favorites "running more with
                              # running backs to chew clock"). RB rushing TDs and rushing yards
                              # scale with the game's margin (RB_GAME_SCRIPT_RUSH); the carry
@@ -3658,7 +3574,6 @@ STAT_RECAL_SCRIPT_KNEE = 7.0
 # position worse; the pre-set tie-break picks _rush (methodology 2026-11-01). The receiving term made RB receiving yards worse
 # (held out: START-RB MSE +0.02 to +1.34 in 5 of 5 seasons; harness final column +0.087 pooled, 3 of 4), so only _rush SHIPPED
 # (2026-11-01, user: "yes ship the running back favorites thing").
-RB_GAME_SCRIPT = {'rushing_tds': 0.0275, 'rushing_yards': 0.0215, 'receiving_yards': -0.0077}
 RB_GAME_SCRIPT_RUSH = {'rushing_tds': 0.0275, 'rushing_yards': 0.0215}
 RB_GAME_SCRIPT_CLIP = 14.0
 
@@ -3699,7 +3614,7 @@ def stat_recal_script_inputs(env, opponents):
 
 
 def rb_game_script_multipliers(teams, script, table):
-    """{stat: per-row multiplier} for v2_rb_game_script(_rush): 1 + b clip(m, -RB_GAME_SCRIPT_CLIP, RB_GAME_SCRIPT_CLIP) / 7
+    """{stat: per-row multiplier} for v2_rb_game_script_rush: 1 + b clip(m, -RB_GAME_SCRIPT_CLIP, RB_GAME_SCRIPT_CLIP) / 7
     per stat in ``table``, m from ``script`` ({team: (m, t)}, stat_recal_script_inputs); a team without a line reads m = 0."""
     m = np.array([(script or {}).get(str(t), (0.0, 0.0))[0] for t in teams], dtype=float)
     z = np.clip(m, -RB_GAME_SCRIPT_CLIP, RB_GAME_SCRIPT_CLIP) / 7.0
@@ -10037,14 +9952,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # below would be.
         pace = load_team_pace(year - 1)
     league_pace = pace['def_pace'].mean() if pace is not None and not pace.empty and 'def_pace' in pace.columns else None
-    # v2_own_tempo_regression: last season's team tempo, only read for a team with too few
-    # games this season to have a tempo of its own (week 2, a new club); at a cold start
-    # `pace` already is last season's.
-    tempo_prior_pace = None
-    if 'v2_own_tempo_regression' in feats and not cold_start:
-        tempo_prior_pace = (as_of_team_pace(prior_stats, prior_team_col, 100)
-                            if use_v2_guard and historical_target else load_team_pace(year - 1))
-
     # Per-game play counts for the defense-matchup ratio's own pace
     # normalization (see _team_game_quality_profile's ``plays`` docstring) -
     # same live-vs-cutoff-safe source split as ``pace`` immediately above,
@@ -12552,23 +12459,16 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # strength audit 2026-10-23: the opponent-pace multiplier moves a projection ~1% and is worth at most 0.05%
             pace_mult = pd.Series(1.0, index=cur.index)
 
-        tempo_mult = np.ones(len(cur))
-        if 'v2_own_tempo_regression' in feats and pace is not None and not pace.empty:
-            tempo_mult = own_tempo_multiplier(cur['Team'].astype(str).to_numpy(), pace,
-                                              tempo_prior_pace, cold_start=cold_start)
-
         def _pace_for(stat):
-            # opponent pace x own-tempo regression for the passing/receiving stats (see TEMPO_STATS)
-            base = pace_mult.to_numpy(dtype=float)
-            return base * tempo_mult if stat in TEMPO_STATS else base
+            return pace_mult.to_numpy(dtype=float)
 
         inj_mult = cur[name_col].map(injury_mult).fillna(1.0)
         perstat_env = 'v2_game_total_elasticity_perstat' in feats
         # The per-stat implied-total flag OWNS the implied-total channel when
         # it's on - the flat _game_env_multiplier then does venue only, so the
         # two never both scale the total.
-        use_total = ('game_env' in feats or 'v2_game_total_elasticity' in feats) and not perstat_env
-        use_venue = 'game_env' in feats or 'v2_venue_mult' in feats
+        use_total = 'game_env' in feats and not perstat_env
+        use_venue = 'game_env' in feats
         env_mult = (_game_env_multiplier(env, cur['Team'].astype(str).to_numpy(), pos, league_implied,
                                          use_total=use_total, use_venue=use_venue)
                     if env else np.ones(len(cur)))
@@ -12583,8 +12483,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             if perstat_env and env else {})
         if pos == 'RB' and env and not cold_start:
             # v2_rb_game_script(_rush): RB stats scale with the game's margin (RB_GAME_SCRIPT comment)
-            _rb_table = (RB_GAME_SCRIPT_RUSH if 'v2_rb_game_script_rush' in feats
-                         else RB_GAME_SCRIPT if 'v2_rb_game_script' in feats else None)
+            _rb_table = RB_GAME_SCRIPT_RUSH if 'v2_rb_game_script_rush' in feats else None
             if _rb_table:
                 env_stat_mult = dict(env_stat_mult or {})
                 for _stat, _mult in rb_game_script_multipliers(
@@ -12664,9 +12563,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 0.0, None)
             trace = stat_trace.get(stat)
             if trace is not None:
-                # opponent pace x own-tempo regression (the popup multiplies this one number in)
+                # opponent pace (the popup multiplies this one number in)
                 trace['pace_multiplier'] = _pace_for(stat)
-                trace['own_tempo_multiplier'] = tempo_mult if stat in TEMPO_STATS else np.ones(len(cur))
                 trace['opponent_defensive_pace'] = opp_pace.to_numpy(dtype=float)
                 trace['league_pace'] = np.full(len(cur), league_pace if league_pace else np.nan)
                 trace['availability_multiplier'] = inj_mult.to_numpy(dtype=float)

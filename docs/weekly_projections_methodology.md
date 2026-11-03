@@ -8097,3 +8097,20 @@ weeks 3-7), played rows, START-like pools (top 55 WR / 20 TE / 40 RB by that sta
 - **Built (off): `v2_rb_capacity_relief`** (each back takes 0.6 of the capacity factor's move, nothing reassigned), harness arms
   `rb6` and `rb6_te` queued (.sweeps/run_rb_capacity.bat, bar .sweeps/rb_capacity_relief_bar.md set first).
 - Left for week 8 final: the 2026 team pass volume (W1 / M2).
+
+### 2026-11-02 - `v2_rb_capacity_relief` harness result: levels fixed, points neutral, misses its bar by 0.004 (off; user's call)
+Run 19:48-21:12, harness v2, 2022-2025 weeks 3-17, 82-flag default (`.sweeps/rb_capacity_relief_bar.md`, set before the run).
+
+| arm | START-RB | EVERY-START-RB | START-ALL | START-TE | EVERY-START-TE | verdict |
+|---|---|---|---|---|---|---|
+| `rb6` (+rb relief 0.6) | +0.000 (CI -0.007, +0.008) | **+0.004** (-0.004, +0.011) | +0.000 | 0 | 0 | INCONCLUSIVE; fails the bar's EVERY-START-RB <= 0 by noise |
+| `rb6_te` (+ TE relief 0.5) | +0.000 | +0.004 | -0.000 | +0.006 (-0.020, +0.031) | +0.014 (-0.012, +0.040) | INCONCLUSIVE |
+
+- **Stat level, same START pool in every arm** (actual - projected, played): RB targets bias +0.063 -> +0.001 (MSE -0.9%),
+  receptions +0.041 -> -0.008 (-0.8%), receiving yards +0.445 -> +0.076 (-0.5%). The relief puts the backs on level.
+- **Points do not follow:** START-RB points bias +0.102 -> +0.179, because START backs' total is already slightly over (the
+  rushing part runs high) and more receiving adds to it. The capture-based estimate of -0.45% receiving-points MSE did not
+  reproduce on the harness (RMSE +0.000).
+- **TE relief at 0.5 overshoots:** TE targets +0.080 -> -0.104, receptions +0.066 -> -0.062, yards +1.13 -> -0.42 (MSE -0.2 to
+  -0.3%); START-TE points bias -0.27 -> +0.01. By interpolation an elasticity near 0.75 lands on level (targets about -0.01).
+- Not shipped. For props the RB stat columns are better; for points it is a wash.

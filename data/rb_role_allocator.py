@@ -14,7 +14,6 @@ are bounded tie-breakers.  Carries and targets are allocated independently.
 """
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import numpy as np
@@ -243,82 +242,6 @@ RB_TEAM_SNAP_SHARE_TARGET = 1.00
 # RB_TEAM_SNAP_SHARE_MAX]; carries/targets are unaffected (they reconcile
 # against their own real per-game capacities).
 RB_TEAM_SNAP_SHARE_MAX = 1.05
-
-# --- v2_rb_snap_anchored_volume --------------------------------------------
-# When on, the carry/target split starts from the depth-aware snap allocation
-# and applies only a BOUNDED per-snap usage tilt (how many carries / targets
-# this back earns per snap he plays, relative to his backfield's RB rate),
-# instead of the older `0.62*snap_fraction + 0.38*(prior_per_GAME_rate /
-# capacity)` blend. Per-game rate carries the player's OLD team's backfield
-# split; a lead back who changed teams (Etienne to NO) was landing near the
-# incumbent he is charted ahead of. The tilt is wider up-side for targets
-# because genuine third-down backs really do earn >1x their snap share there.
-RB_VOL_TILT_CARRY = (0.85, 1.20)
-RB_VOL_TILT_TARGET = (0.70, 1.60)
-# A cross-team player's stale per-snap rate is only partly trusted; a
-# same-team player's is trusted in full. Thin histories fade toward
-# snap-proportional too (games / (games + K)).
-RB_VOL_TILT_CROSS_TEAM_TRUST = 0.35
-RB_VOL_TILT_GAMES_K = 6.0
-# The carry/target split also gets the SAME depth-rank discount the snap
-# split already uses, so a charted RB2 with a big old per-game rate can no
-# longer out-earn the charted RB1 on volume.
-RB_VOL_RANK_DISCOUNT = {1: 1.0, 2: 0.92, 3: 0.80}
-RB_VOL_RANK_DISCOUNT_DEFAULT = 0.72
-
-# v2_rb_snap_anchored_volume also concentrates the SNAP allocation when a
-# charted top-3 RB is OUT. Effective-rank compression (dense-ranking over only
-# the still-eligible slots) is right for SCORING - it lets a chart RB2 read as
-# "the guy" once RB1 is out - but it also silently promotes a chart RB3 to
-# effective rank 2, which lets him skip the RB1<-RB3+ depth nudge entirely
-# (measured live: NO 2026 wk1, Kamara out -> Devin Neal, chart RB3, ~34% team
-# snaps while Etienne, the clear lead, sat at ~47%). Under the flag the depth
-# nudge's DONOR side keys off the LITERAL chart rank (a chart RB3 stays a
-# rank>=3 donor even when he is effective-rank 2 via the vacancy), and its
-# per-team transfer cap is widened so more of that excess actually reaches the
-# lead back. The rank-1 RECEIVER still uses effective rank, so an RB1-out /
-# RB2-healthy backfield still promotes RB2 correctly.
-RB_VOL_SNAP_NUDGE_CAP = 0.12
-# A chart RB4+ let into the pool only because a top-3 slot is OUT (a
-# "vacancy extension") gets a smaller phantom score floor than the plain
-# RB_VACANCY_EXTENSION_BASE_FLOOR: he is genuine 4th-string, not the
-# next-man-up the extension exists for. Keeps a Kendre-Miller-type RB4 near
-# zero instead of ~8% once Kamara is ruled out.
-RB_VOL_VACANCY_EXTENSION_FLOOR = 0.012
-
-# --- v2_rb_snap_anchored_volume strength knobs ----------------------------
-# Two independent 0..1 dials that let the flag's effect be tuned rather than
-# taken whole. Added 2026-08-30 after the user judged the binary on/off
-# ablation (START-RB dMAE -0.288 on 2023-25 wk1, n~3 correlated) too thin to
-# retire the mechanism they see helping team-changer lead backs on the 2025
-# wk1 board. Both default to 1.0, so `snap_anchored_volume=True` at the
-# defaults reproduces the pre-knob behaviour exactly. Both can be overridden
-# per process via the matching env var, so a strength sweep is just repeated
-# `eval_weekly_model.py` runs (see scripts/sweep_rb_snap_anchored.py) rather
-# than an edit-and-rerun of this file.
-#
-#   RB_VOL_TILT_STRENGTH - convex-blends the carry/target ALLOCATION between
-#       the legacy `0.62*snap + 0.38*per-game-rate` path (0.0) and the full
-#       per-snap usage tilt (1.0). This is the "portable volume" piece: a
-#       lead back who changed teams keeps his real per-snap workload instead
-#       of inheriting his old committee's split. Also scales the widened
-#       downstream rate-scale clip in weekly_projections proportionally.
-#   RB_VOL_VACANCY_STRENGTH - lerps the OUT-charted-top-3 snap-concentration
-#       levers between legacy and snap-anchored: the per-team nudge transfer
-#       cap (RB_DEPTH_RANK_SNAP_NUDGE_CAP <-> RB_VOL_SNAP_NUDGE_CAP) and the
-#       vacancy-extension RB4 phantom floor (RB_VACANCY_EXTENSION_BASE_FLOOR
-#       <-> RB_VOL_VACANCY_EXTENSION_FLOOR). The literal-chart-rank donor
-#       test engages only when this is > 0. Much of this now overlaps the
-#       standing RB chart hard-stop (RB_CHART_VACANCY_EXTENSION_MAX).
-def _env_strength(name: str, default: float = 1.0) -> float:
-    try:
-        return float(np.clip(float(os.environ[name]), 0.0, 1.0))
-    except (KeyError, TypeError, ValueError):
-        return default
-
-
-RB_VOL_TILT_STRENGTH = _env_strength("RB_VOL_TILT_STRENGTH")
-RB_VOL_VACANCY_STRENGTH = _env_strength("RB_VOL_VACANCY_STRENGTH")
 
 # How much of an incumbent's documented pre-injury role (``pre_gap``) is
 # credited back to him when ``interrupted_incumbent_role_credit`` is at its
@@ -570,9 +493,7 @@ def _bounded_allocation(scores: pd.Series, total: float, max_each: float | None 
     return result.clip(lower=0.0)
 
 
-def _apply_depth_rank_snap_nudge(snap_alloc: pd.Series, effective_rank: pd.Series,
-                                 donor_rank: pd.Series | None = None,
-                                 cap: float = RB_DEPTH_RANK_SNAP_NUDGE_CAP) -> pd.Series:
+def _apply_depth_rank_snap_nudge(snap_alloc: pd.Series, effective_rank: pd.Series) -> pd.Series:
     """Bounded, conserved RB1-up / RB3-down snap-share transfer for one team.
 
     See RB_DEPTH_RANK_SNAP_* module constants for the rationale. ``snap_alloc``
@@ -581,14 +502,9 @@ def _apply_depth_rank_snap_nudge(snap_alloc: pd.Series, effective_rank: pd.Serie
     score-derived rank (same convention) when it does not - the caller decides
     which. Only rank 1 (receiver) and rank>=3 (donor) participate; a two-man
     backfield (no rank>=3) or a team with no clear rank-1 is left untouched.
-    ``donor_rank`` optionally supplies a SEPARATE rank series for the rank>=3
-    donor test (v2_rb_snap_anchored_volume passes the literal chart rank here
-    so a vacancy-promoted chart RB3 still donates); the rank-1 receiver always
-    comes from ``effective_rank``. ``cap`` overrides the per-team transfer cap.
     """
-    donor_rank = effective_rank if donor_rank is None else donor_rank
     rank1_idx = effective_rank.index[effective_rank.eq(1)]
-    donor_idx = donor_rank.index[donor_rank.ge(3)]
+    donor_idx = effective_rank.index[effective_rank.ge(3)]
     if not len(rank1_idx) or not len(donor_idx):
         return snap_alloc
     donor_share = snap_alloc.loc[donor_idx]
@@ -596,7 +512,7 @@ def _apply_depth_rank_snap_nudge(snap_alloc: pd.Series, effective_rank: pd.Serie
     total_excess = float(excess.sum())
     if total_excess <= 1e-9:
         return snap_alloc
-    transfer = min(RB_DEPTH_RANK_SNAP_PULL * total_excess, cap)
+    transfer = min(RB_DEPTH_RANK_SNAP_PULL * total_excess, RB_DEPTH_RANK_SNAP_NUDGE_CAP)
     nudged = snap_alloc.copy()
     nudged.loc[donor_idx] -= (excess / total_excess) * transfer
     nudged.loc[rank1_idx] += transfer / len(rank1_idx)
@@ -641,7 +557,7 @@ def _role_base(group: pd.DataFrame) -> pd.Series:
     # late missed stretch as permanent loss of role.  This is bounded by the
     # already-computed continuous base rather than replacing it outright.
     # A player the current chart lists only as a continuation / second-unit
-    # row (``chart_deprioritized``, v2_rb_snap_anchored_volume) gets NO
+    # row (``chart_deprioritized``) gets NO
     # pre-injury-role credit: the chart's live "deep reserve" placement
     # outranks a stale pre-gap role for a Week-1 projection.
     interrupted = _text(group, "interrupted_season", default="").str.lower().isin({"1", "true", "yes"})
@@ -668,7 +584,6 @@ def _role_base(group: pd.DataFrame) -> pd.Series:
 
 
 def allocate_preseason_rb_roles(candidates: pd.DataFrame,
-                                snap_anchored_volume: bool = False,
                                 week: int | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Reconcile core-RB Week-1 roles to independent team capacities.
 
@@ -683,23 +598,9 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
     omitted evidence falls back to a neutral/explicit residual rather than a
     fabricated 15.7% reserve share.
 
-    ``snap_anchored_volume`` ('v2_rb_snap_anchored_volume'):
-    - derive the carry/target split from the depth-aware SNAP allocation plus
-      a bounded per-snap usage tilt, instead of blending snap fraction with a
-      raw prior-season per-GAME rate (the per-game rate bakes in the player's
-      OLD team's backfield split, so an every-down back who changed teams -
-      Travis Etienne to NO - was landing near the aging incumbent he is
-      charted ahead of); and
-    - concentrate the SNAP allocation when a charted top-3 RB is OUT: the
-      RB1<-RB3+ depth nudge's donor test keys off the LITERAL chart rank
-      (so a chart RB3 promoted to effective-rank 2 by the vacancy still
-      donates his excess to the lead) with a wider transfer cap, and a chart
-      RB4+ let in only as a vacancy extension gets a smaller phantom floor; and
-    - drop the interrupted-season / incumbent pre-injury-role credit in
-      ``_role_base`` for a player the caller flags ``chart_deprioritized``
-      (charted only as a continuation / second-unit row) - the chart's live
-      "deep reserve" placement outranks a stale pre-gap role at Week 1.
-    See RB_VOL_* constants.
+    A player the caller flags ``chart_deprioritized`` (charted only as a continuation / second-unit row) gets no
+    interrupted-season / incumbent pre-injury-role credit in ``_role_base``: the chart's live "deep reserve" placement
+    outranks a stale pre-gap role at Week 1.
     """
     ledger_columns = ["team", "resource", "capacity", "allocated", "unallocated",
                       "candidate_count", "other_fraction", "reason"]
@@ -934,13 +835,8 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
         base_for_score = base.loc[indexes].copy()
         vacancy_extension_idx = indexes[source_rank.gt(3).fillna(False)] if has_chart else indexes[0:0]
         if len(vacancy_extension_idx):
-            # RB_VOL_VACANCY_STRENGTH lerps the phantom floor between the plain
-            # next-man-up value and the lower snap-anchored one.
-            _sv = float(np.clip(RB_VOL_VACANCY_STRENGTH, 0.0, 1.0)) if snap_anchored_volume else 0.0
-            _ext_floor = (RB_VACANCY_EXTENSION_BASE_FLOOR
-                          + _sv * (RB_VOL_VACANCY_EXTENSION_FLOOR - RB_VACANCY_EXTENSION_BASE_FLOOR))
             base_for_score.loc[vacancy_extension_idx] = base_for_score.loc[vacancy_extension_idx].clip(
-                lower=_ext_floor)
+                lower=RB_VACANCY_EXTENSION_BASE_FLOOR)
         # Preserve an established active-game role much more strongly than a
         # plain linear split.  A 78% lead-back role should not be averaged
         # down to 34% merely because a chart also lists two reserves; the
@@ -994,19 +890,7 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
         player_snap_total = snap_capacity * (1.0 - other_fraction)
         snap_alloc = _bounded_allocation(score, player_snap_total, MAX_INDIVIDUAL_CORE_RB_SNAP_SHARE)
         nudge_rank = effective_rank if has_chart else base.loc[indexes].rank(ascending=False, method='first')
-        # v2_rb_snap_anchored_volume: donor test on the LITERAL chart rank (so a
-        # vacancy-promoted chart RB3 still donates) with a wider transfer cap;
-        # the rank-1 receiver stays on effective rank so an RB1-out backfield
-        # still promotes its RB2. Plain path is unchanged.
-        # RB_VOL_VACANCY_STRENGTH: the literal-chart-rank donor test engages
-        # only when > 0; the per-team transfer cap lerps from the plain value
-        # to the wider snap-anchored one.
-        _sv = float(np.clip(RB_VOL_VACANCY_STRENGTH, 0.0, 1.0)) if snap_anchored_volume else 0.0
-        _donor_rank = source_rank if (_sv > 0.0 and has_chart) else None
-        _nudge_cap = (RB_DEPTH_RANK_SNAP_NUDGE_CAP
-                      + _sv * (RB_VOL_SNAP_NUDGE_CAP - RB_DEPTH_RANK_SNAP_NUDGE_CAP))
-        snap_alloc = _apply_depth_rank_snap_nudge(snap_alloc, nudge_rank,
-                                                 donor_rank=_donor_rank, cap=_nudge_cap)
+        snap_alloc = _apply_depth_rank_snap_nudge(snap_alloc, nudge_rank)
         snap_alloc = _apply_depth_rank2_order_nudge(snap_alloc, nudge_rank)
         # Redistribute any unclaimed team-snap remainder back to the
         # already-projected core RBs, proportional to their current share -
@@ -1027,9 +911,7 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
         prior_carry_rate = _numeric(candidates_team, "prior_carries_per_game", "prior_carry_rate", "prior_carries")
         prior_target_rate = _numeric(candidates_team, "prior_targets_per_game", "prior_target_rate", "prior_targets")
         snap_fraction = (snap_alloc / max(snap_capacity, 0.01)).clip(0.0, 1.0)
-        # Legacy carry/target evidence blend - the v2_rb_snap_anchored_volume
-        # OFF path, and also the anchor the tilt is blended toward when
-        # RB_VOL_TILT_STRENGTH < 1.
+        # Carry/target evidence blend (snap fraction + the prior per-game rate against capacity).
         carry_evidence = (prior_carry_rate / max(carry_capacity, 0.01)).clip(lower=0.0).fillna(snap_fraction)
         target_evidence = (prior_target_rate / max(target_capacity, 0.01)).clip(lower=0.0).fillna(snap_fraction)
         _no_backstop_new_team = pd.Series(False, index=indexes)
@@ -1043,13 +925,12 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
         # both axes moving together, not the real carry/receiving trade-off
         # an established committee (Aaron Jones/Jordan Mason-shaped) shows,
         # because the SAME contaminated evidence term drags both down at
-        # once. This is the identical cross-team distrust
-        # v2_rb_snap_anchored_volume's tilt path already applies via `trust`
-        # above - deliberately NOT that flag: turning it on rescores every
-        # player's concentration/rank-discount too and measured negative on
+        # once. This is the cross-team distrust the retired v2_rb_snap_anchored_volume
+        # applied through a per-snap tilt - deliberately NOT that flag, which rescored
+        # every player's concentration/rank-discount too and measured negative on
         # START-RB broadly (.sweeps/ablate_rb_snap_anchored_wk1.txt,
         # "the etienne case is a true outlier" - the user's own verdict on
-        # that broad version). This instead neutralizes ONLY the
+        # that broad version; docs/retired_flags.md). This instead neutralizes ONLY the
         # cross-team-contaminated evidence term, ONLY for the narrow subset
         # with no offsetting evidence, so both scores fall back to pure
         # snap_fraction (carry share = target share = snap share) rather
@@ -1064,48 +945,10 @@ def allocate_preseason_rb_roles(candidates: pd.DataFrame,
         target_score_legacy = (0.50 * snap_fraction + 0.50 * target_evidence).clip(lower=0.005) * availability.loc[indexes]
         _carry_cap = carry_capacity * (1.0 - other_fraction)
         _target_cap = target_capacity * (1.0 - other_fraction)
-        _st = float(np.clip(RB_VOL_TILT_STRENGTH, 0.0, 1.0)) if snap_anchored_volume else 0.0
-        if _st > 0.0:
-            # Per-SNAP usage tilt (portable across a team change), relative to
-            # this backfield's own RB carry/target-per-snap rate.
-            prior_snap = _numeric(candidates_team, "prior_whole_snap_share", "prior_active_snap_share")
-            prior_gm = _numeric(candidates_team, "prior_games").fillna(0.0)
-            team_carry_per_snap = carry_capacity / max(snap_capacity, 0.01)
-            team_target_per_snap = target_capacity / max(snap_capacity, 0.01)
-            valid_snap = prior_snap > 0.05
-            player_carry_ps = (prior_carry_rate / prior_snap.where(valid_snap))
-            player_target_ps = (prior_target_rate / prior_snap.where(valid_snap))
-            carry_tilt = (player_carry_ps / max(team_carry_per_snap, 0.01)).clip(*RB_VOL_TILT_CARRY)
-            target_tilt = (player_target_ps / max(team_target_per_snap, 0.01)).clip(*RB_VOL_TILT_TARGET)
-            carry_tilt = carry_tilt.where(np.isfinite(carry_tilt), 1.0)
-            target_tilt = target_tilt.where(np.isfinite(target_tilt), 1.0)
-            # Cross-team + thin-history players fade toward snap-proportional.
-            trust = np.where(same_team, 1.0, RB_VOL_TILT_CROSS_TEAM_TRUST) * (
-                (prior_gm / (prior_gm + RB_VOL_TILT_GAMES_K)).clip(0.0, 1.0).to_numpy())
-            carry_tilt = 1.0 + trust * (carry_tilt.to_numpy() - 1.0)
-            target_tilt = 1.0 + trust * (target_tilt.to_numpy() - 1.0)
-            rank_for_disc = (effective_rank if has_chart
-                             else base.loc[indexes].rank(ascending=False, method="first"))
-            rank_disc = rank_for_disc.map(RB_VOL_RANK_DISCOUNT).fillna(RB_VOL_RANK_DISCOUNT_DEFAULT).to_numpy()
-            carry_score_tilt = pd.Series(
-                np.clip(snap_alloc.to_numpy() * carry_tilt * rank_disc, 0.005, None)
-                * availability.loc[indexes].to_numpy(), index=indexes)
-            target_score_tilt = pd.Series(
-                np.clip(snap_alloc.to_numpy() * target_tilt * rank_disc, 0.005, None)
-                * availability.loc[indexes].to_numpy(), index=indexes)
-            # Blend the reconciled ALLOCATIONS (each already conserved to the
-            # same capacity) so RB_VOL_TILT_STRENGTH is a clean interpolation
-            # between the two carry/target splits - at 1.0 this is byte-for-byte
-            # the pre-knob tilt path.
-            carry_alloc = ((1.0 - _st) * _bounded_allocation(carry_score_legacy, _carry_cap)
-                           + _st * _bounded_allocation(carry_score_tilt, _carry_cap))
-            target_alloc = ((1.0 - _st) * _bounded_allocation(target_score_legacy, _target_cap)
-                            + _st * _bounded_allocation(target_score_tilt, _target_cap))
-        else:
-            # Receiving specialists can retain target evidence without inheriting
-            # early-down carries; the two vectors intentionally remain separate.
-            carry_alloc = _bounded_allocation(carry_score_legacy, _carry_cap)
-            target_alloc = _bounded_allocation(target_score_legacy, _target_cap)
+        # Receiving specialists can retain target evidence without inheriting
+        # early-down carries; the two vectors intentionally remain separate.
+        carry_alloc = _bounded_allocation(carry_score_legacy, _carry_cap)
+        target_alloc = _bounded_allocation(target_score_legacy, _target_cap)
 
         if _no_backstop_new_team.any():
             # Neutralizing the evidence term above (carry_evidence/target_

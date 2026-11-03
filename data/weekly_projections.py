@@ -1342,18 +1342,6 @@ MODEL_FEATURES = (
                              # one (Gibbs/Montgomery DET, Bijan Robinson ATL
                              # confirmed in a 2023 diff) - see this flag's
                              # DEFAULT_FEATURES entry for the harness numbers.
-    'v2_rb_snap_anchored_volume',  # cold-start RB: (1) carry/target split =
-                             # snap allocation + bounded per-snap tilt, not a
-                             # raw prior per-GAME rate; (2) when a charted
-                             # top-3 RB is OUT, concentrate the snap allocation
-                             # toward the lead (vacancy-promoted chart RB3 no
-                             # longer skips the depth nudge; chart RB4+ gets a
-                             # smaller phantom floor). See RB_VOL_* in
-                             # data/rb_role_allocator.py. NOT in
-                             # DEFAULT_FEATURES (see below). Strength of each
-                             # half is a separate 0..1 dial - RB_VOL_TILT_STRENGTH
-                             # / RB_VOL_VACANCY_STRENGTH, env-overridable - swept
-                             # by scripts/sweep_rb_snap_anchored.py.
     'v2_pass_capacity',    # team-constrained WR/TE/RB target conservation
     'v2_qb_volume_blend',  # QB1 volume: team dropbacks x evidence-weighted player style
     'v2_fantasypros_availability',  # FantasyPros-sourced injury signal, healthy by default
@@ -2284,10 +2272,9 @@ DEFAULT_FEATURES = frozenset({
     #     showed it hurt RB (START-RB -0.288 dMAE, 3-0 weeks): at full strength
     #     it acts as a broad "concentrate toward the RB1" tilt on every
     #     backfield, not the targeted team-changer fix it was built for. It
-    #     stays a switchable MODEL_FEATURES flag with two 0..1 strength dials
-    #     (RB_VOL_TILT_STRENGTH / RB_VOL_VACANCY_STRENGTH) so a lower-strength
-    #     setting can be re-backtested (scripts/sweep_rb_snap_anchored.py) -
-    #     see overnight_backtest_log_2026-08-30.md section 7d.
+    #     stayed a switchable flag with two 0..1 strength dials until it was
+    #     retired 2026-11-03 (docs/retired_flags.md); see
+    #     overnight_backtest_log_2026-08-30.md section 7d.
     #   - v2_td_prior_credibility: KEPT despite a small measured RB cost
     #     (-0.08 whole / -0.14 START-RB from removing it). It is a principled
     #     small-sample regularizer - it shrinks a thin one-season hot TD rate
@@ -12030,10 +12017,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     historic.where(historic.notna(), pre_gap).fillna(0.0) * (1.0 - blend)
                     + pre_gap.fillna(historic).fillna(0.0) * blend
                 )
-            allocation, allocation_ledger = allocate_preseason_rb_roles(
-                allocator_input,
-                snap_anchored_volume='v2_rb_snap_anchored_volume' in feats,
-                week=week)
+            allocation, allocation_ledger = allocate_preseason_rb_roles(allocator_input, week=week)
             allocation = allocation.reindex(cur.index)
             if not allocation.empty:
                 player_share = allocation['expected_snap_share'].to_numpy(dtype=float)
@@ -12105,19 +12089,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     np.clip(np.divide(player_share, player_prior_share,
                                       out=np.ones_like(player_share), where=player_prior_share > 0.02),
                             *ROLE_VOLUME_CLIP), 1.0)
-                # A snap-anchored allocation can legitimately land well above
-                # 2x a player's depressed prior-team per-game rate (an
-                # every-down back who changed teams off a committee year), so
-                # widen the ratio clip when that path is on - scaled by the
-                # same RB_VOL_TILT_STRENGTH knob that blends the allocation, so
-                # a half-strength tilt gets a half-widened clip.
-                if 'v2_rb_snap_anchored_volume' in feats:
-                    from data.rb_role_allocator import RB_VOL_TILT_STRENGTH as _rb_vol_ts
-                    _ts = float(np.clip(_rb_vol_ts, 0.0, 1.0))
-                else:
-                    _ts = 0.0
-                _rate_scale_hi = 2.00 + _ts * 0.75
-                _rate_scale_lo = 0.20 - _ts * 0.05
+                _rate_scale_hi = 2.00
+                _rate_scale_lo = 0.20
                 rb_carry_rate_scale = np.where(
                     np.isfinite(prior_carry_rate) & (prior_carry_rate > 0.05),
                     np.clip(np.divide(rb_carry_allocation, prior_carry_rate,

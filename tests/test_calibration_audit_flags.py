@@ -81,12 +81,6 @@ def test_anchor_s_refit_factors():
     assert wp.season_anchor_factors({'v2_season_anchor', 'v2_anchor_s_refit'}) == wp.SEASON_ANCHOR_S_REFIT
     assert all(wp.SEASON_ANCHOR_S_REFIT[p] > wp.SEASON_ANCHOR_S[p] for p in wp.SEASON_ANCHOR_S)   # a weaker pull
     assert all(0.0 < s <= 1.0 for s in wp.SEASON_ANCHOR_S_REFIT.values())
-    original = wp.POINTS_SCALE_V6
-    try:
-        wp.POINTS_SCALE_V6 = {'lines': wp.WEEKLY_CALIBRATION, 'by_bucket': {}, 'anchor_s': {'WR': 0.5}}
-        assert wp.season_anchor_factors({'v2_points_scale_v6', 'v2_anchor_s_refit'}) == {'WR': 0.5}   # a fit v6 wins
-    finally:
-        wp.POINTS_SCALE_V6 = original
 
 
 def test_qb_luck_is_centered_on_the_average_qb():

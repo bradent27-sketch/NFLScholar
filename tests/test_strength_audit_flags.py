@@ -16,7 +16,7 @@ def test_flags_are_registered_and_not_default():
 
 def test_shipped_on_2026_10_24():
     assert 'v2_no_qb_rush_script' in wp.DEFAULT_FEATURES
-    assert 'v2_channel_matchups' not in wp.DEFAULT_FEATURES
+    assert 'v2_channel_matchups' not in wp.MODEL_FEATURES                # never built; removed 2026-11-03
     assert wp.STRENGTH_AUDIT_TD_STATS == ('passing_tds', 'rushing_tds', 'receiving_tds')
 
 

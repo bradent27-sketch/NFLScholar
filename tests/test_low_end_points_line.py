@@ -38,19 +38,12 @@ def test_continuous_at_the_knot():
         assert abs(just_below - at) < 1e-6
 
 
-def test_a_refit_scale_replaces_every_table_only_behind_its_flag():
-    # v2_points_scale_v6 (2026-10-25): the lines, the buckets, the low end and the anchor's s come from one re-fit dict
+def test_a_refit_scale_replaces_every_table():
+    # a re-fit dict (the retired v2_points_scale_v6, 2026-10-25): the lines, the buckets, the low end and the anchor's s
     scale = {'lines': {'QB': (0.9, 1.0), 'RB': (0.95, 0.5), 'WR': (0.97, 0.4), 'TE': (0.98, 0.3)},
              'by_bucket': {'cold': {'WR': (0.9, 0.8)}, 'rest': {'WR': (0.99, 0.2)}},
              'low_end': {'WR': (5.0, 1.3)}, 'anchor_s': {'WR': 0.7}}
     assert wp._weekly_calibration_for('RB', 10, scale) == (0.95, 0.5)
     assert wp._weekly_calibration_for('WR', 2, scale) == (0.9, 0.8) and wp._weekly_calibration_for('WR', 10, scale) == (0.99, 0.2)
     assert np.isclose(float(wp.points_line('WR', 10, 2.0, low_end=True, scale=scale)), 0.2 + 0.99 * 5.0 + 1.3 * (2.0 - 5.0))
-    original = wp.POINTS_SCALE_V6
-    try:
-        wp.POINTS_SCALE_V6 = scale
-        assert wp.points_scale({'v2_points_scale_v6'}) is scale and wp.points_scale(set()) is None
-        wp.POINTS_SCALE_V6 = None
-        assert wp.points_scale({'v2_points_scale_v6'}) is None          # not fit yet: the shipped tables
-    finally:
-        wp.POINTS_SCALE_V6 = original
+    assert wp.points_scale(set()) is None

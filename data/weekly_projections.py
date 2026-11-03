@@ -139,7 +139,7 @@ from data.availability_overrides import (
 from data.pass_capacity_allocator import (apply_pass_capacity_conservation, SIDELINED_AVAILABILITY, TE_CAPACITY_ELASTICITY,
                                          WR1_CAPACITY_ELASTICITY, RB_CAPACITY_ELASTICITY)
 from data.rb_carry_budget import team_rb_carry_budgets, apply_rb_carry_budget
-from data.qb_volume_blend import blend_qb1_volume, QB_STYLE_BLEND_K, QB_STYLE_BLEND_K_CANDIDATE
+from data.qb_volume_blend import blend_qb1_volume, QB_STYLE_BLEND_K
 from data.fantasypros_availability import load_fantasypros_availability
 from data.expected_points import expected_points_luck_table
 from data.historical_availability import (
@@ -1110,7 +1110,7 @@ INJURY_MULTIPLIER = {'out': 0.0, 'ir': 0.0, 'doubtful': 0.4, 'questionable': 0.8
 # written down next to it in docs/weekly_projections_methodology.md.
 #
 # Some names here have ZERO gating code (never built - e.g. redzone_tds,
-# role_trend, volume_faced, v2_channel_matchups). They and any new
+# role_trend, volume_faced; v2_channel_matchups was removed). They and any new
 # model-parameter ideas live in docs/weekly_rankings_backlog.md section 4
 # (the parameter parking lot). Add ideas there, not as scattered TODOs.
 # ---------------------------------------------------------------------------
@@ -1222,7 +1222,6 @@ MODEL_FEATURES = (
                              # run before shipping.
     'v2_defense_prior',    # defense rating prior/shrinkage revision
     'v2_continuous_roles', # continuous (not tiered) role-share read; see role_matchup above
-    'v2_channel_matchups', # per-route-channel matchup read - never built (no gating code); out of DEFAULT_FEATURES 2026-10-24
     'v2_alignment_contract',  # PFF alignment data contract/validation
     'v2_pff_alignment_matchup',  # WR/TE slot/non-slot defense residual - built and
                                   # measured on 2025 weeks 2-18: lost on the startable
@@ -1622,11 +1621,6 @@ MODEL_FEATURES = (
                              # shortfall the old carry inflation had been
                              # offsetting. Clean-room carries 1.076x ->
                              # 1.037x. See data/rb_carry_budget.py.
-    'v2_rb_carry_budget_lead',  # CANDIDATE modifier of v2_rb_carry_budget:
-                             # split the room's change in proportion to
-                             # carries^2 so the lead back absorbs most of it
-                             # (the leftover room excess is ~all RB1). No
-                             # effect without v2_rb_carry_budget.
     'v2_qb1_returning_starter',  # SHIPPED 2026-10-05. In-season QB1: a team's
                              # regular starter who missed recent games listed
                              # Out/Doubtful/IR and is no longer listed out is the
@@ -1639,9 +1633,6 @@ MODEL_FEATURES = (
                              # _returning_qb_starters.
     'v2_qb_td_blend',  # SHIPPED 2026-10-06 (DEFAULT_FEATURES). v2_qb_passing_td_k's K=15 PLUS the QB's prior-season TD rate regressed
                              # 25% toward the league per-game rate. Offline sweep best region; see QB_PASSING_TD_PRIOR_REGRESS.
-    'v2_qb_passing_td_k',  # TESTED 2026-10-06, INCONCLUSIVE, left UNSHIPPED (harness v2: START-QB -0.010 CI spans 0,
-                             # START-ALL -0.002, better in 25 of 60 weeks). K=15 (shared 5) for QB passing_tds: a
-                             # slower blend of the QB's own current-season TD rate. See QB_PASSING_TD_K.
     'v2_season_anchor',  # RETIRED 2026-11-02 (off; superseded by v2_points_from_stat_line, which replaces the weeks 3-17
                              # total, so the anchor only nudged rows across the stat recal's gate).
                              # SHIPPED 2026-10-06 (DEFAULT_FEATURES). Final points total shrunk toward the player's own to-date
@@ -1886,10 +1877,6 @@ MODEL_FEATURES = (
                              # leans more on last season, an uncertain one trusts this
                              # season sooner (K_EFFECTIVE_RANGE mirrored). See
                              # ROLE_CONFIDENCE_REVERSED_POSITIONS.
-    'v2_qb_style_blend_k80',  # CANDIDATE (2026-10-21, calibration audit C13 follow-up). A QB1's
-                             # own pass/rush split shrinks toward the league mean with
-                             # K = 80 dropbacks instead of 10 (see
-                             # data/qb_volume_blend.QB_STYLE_BLEND_K_CANDIDATE).
     'v2_no_history_exclusions',  # CANDIDATE (2026-10-21, calibration audit C15), an ON/OFF check of a shipped
                              # mechanism: every recorded game counts in a player's
                              # history (current, last and two seasons back), i.e. the
@@ -1913,13 +1900,6 @@ MODEL_FEATURES = (
                              # put him on the field for with no box-score row joins his
                              # history (this season, last, two back) as a game with
                              # every stat 0 at its real snap share (data/silent_games.py).
-    'v2_keep_fully_excluded_history',  # CANDIDATE (2026-10-25, user: Ja'Kobi Lane missing from the week 7
-                             # board). A RB/WR/TE whose every game this season the
-                             # partial-game filter excluded keeps those games as his
-                             # history instead of dropping out of the in-season pool
-                             # (_keep_fully_excluded_players). HARNESS 2026-10-25: misses
-                             # its bar (START-ALL +0.002 vs +0.001; veterans whose only
-                             # game was cut short lose their prior-season line).
     'v2_keep_fully_excluded_no_prior',  # SHIPPED 2026-10-25 (user: "all three on"; was a candidate) (2026-10-25, the revision): the same, only for
                              # a player with no eligible prior-season game at his
                              # position - the one who would otherwise be off the board. HARNESS
@@ -1945,9 +1925,6 @@ MODEL_FEATURES = (
                              # exists (props archive), never its number. No archived
                              # lines before 2026 week 3: the 2022-2025 harness cannot
                              # test it.
-    'v2_points_scale_v6',  # CANDIDATE (2026-10-25, user: "Refit the points scale"). The points lines, the low
-                             # end and (if re-fit) the season anchor's s from one re-fit
-                             # on the current model (POINTS_SCALE_V6 / points_scale).
     'v2_recency_calibration_wrte',  # SHIPPED 2026-10-27 (user, from the CFB app). The WR/TE points lines weighted
                              # toward recent seasons (RECENCY_CALIBRATION_DELTA on the
                              # shipped lines); QB/RB unchanged. See points_scale.
@@ -2482,8 +2459,7 @@ DEFAULT_FEATURES = frozenset({
     # -0.71, all-start bias growth +0.158 under the 0.3 cap): carries are now
     # right, yards/carry (4.30 vs 4.57) is not, and the calibration re-fit and
     # a yards/carry audit are the follow-ups. Not a calibration no-op.
-    # v2_rb_carry_budget_lead (lead-weighted split) stays an unshipped
-    # modifier.
+    # (the lead-weighted split, v2_rb_carry_budget_lead, was an unshipped modifier; retired 2026-11-03.)
     'v2_rb_carry_budget',
     # SHIPPED 2026-09-30 at the user's direction. RB rushing yards follow the
     # carries' de-scripted curve (v2_script_neutral_volume's rushing_attempts
@@ -3128,15 +3104,6 @@ def points_line(pos, week, raw, low_end=False, scale=None):
     return line
 
 
-# 'v2_points_scale_v6' (CANDIDATE 2026-10-25, user: "Refit the points scale"): the whole points scale re-fit at once on the model
-# as it now stands - the v4 lines (QB/RB one line, WR/TE weeks 1-4 / 5-18) on PLAYED games (a box score or a silent game, 0
-# points), LOW_END_POINTS_LINE's knots and slopes below them, and the season anchor's s when re-fit - by
-# scripts/fit_points_scale.py from a scripts/calibration_lab.py dump (methodology 2026-10-25, points-scale re-fit). None until
-# that fit is done: the flag then reads the shipped tables. Keys: 'lines' {pos: (slope, intercept)}, 'by_bucket'
-# {'cold'|'rest': {pos: (slope, intercept)}}, 'low_end' {pos: (knot, slope)}, optional 'anchor_s' {pos: s}.
-POINTS_SCALE_V6 = None
-
-
 # 'v2_recency_calibration_wrte' (SHIPPED 2026-10-27, user, from the CFB app: weight the calibration toward recent seasons; backlog
 # M11). The v4 lines count every season 2021-2025 the same. The QB and RB lines bounce season to season, but the WR/TE in-season
 # lines drift (each season's own slope: WR 0.950 in 2021 -> ~1.0 in 2024-25, TE 0.990 -> 1.03-1.06; recent seasons want less
@@ -3218,11 +3185,9 @@ SEASON_ANCHOR_S_REFIT = {'RB': 0.88, 'WR': 0.82, 'TE': 1.0}
 
 
 def points_scale(feats):
-    """The points scale in place of the shipped tables: the re-fit when 'v2_points_scale_v6' is on and fit (it wins), else the
-    shipped tables moved by the recency-weighted WR/TE lines ('v2_recency_calibration_wrte') and the start-row fit
-    ('v2_points_lines_start_rows'); None when nothing moves them (the shipped tables)."""
-    if 'v2_points_scale_v6' in feats and POINTS_SCALE_V6:
-        return POINTS_SCALE_V6
+    """The points scale in place of the shipped tables: the shipped tables moved by the recency-weighted WR/TE lines
+    ('v2_recency_calibration_wrte') and the start-row fit ('v2_points_lines_start_rows'); None when nothing moves them (the
+    shipped tables)."""
     deltas = [d for flag, d in (('v2_recency_calibration_wrte', RECENCY_CALIBRATION_DELTA),
                                 ('v2_points_lines_start_rows', START_ROW_LINE_DELTA)) if flag in feats]
     if not deltas:
@@ -8033,8 +7998,9 @@ FULLY_EXCLUDED_KEEP_POSITIONS = ('RB', 'WR', 'TE')
 
 
 def _keep_fully_excluded_players(annotated, name_col, player_prior=None, prior_name_col=None):
-    """'v2_keep_fully_excluded_history' (candidate 2026-10-25, user: Ja'Kobi Lane missing from the week 7 board): a RB/WR/TE whose
-    EVERY game this season the partial-game filter excluded keeps those games, rather than having no history at all. With none, he
+    """A RB/WR/TE whose EVERY game this season the partial-game filter excluded keeps those games, rather than having no history at
+    all (the retired v2_keep_fully_excluded_history, 2026-10-25, user: Ja'Kobi Lane missing from the week 7 board; it missed its
+    harness bar - docs/retired_flags.md). With none, he
     is not in the in-season pool; one with a prior-season role is added back from it (_add_missing_returning_player_rows), a rookie
     is left off the board. QBs are left to the QB1 rules (a relief appearance is a partial game, not a role).
 
@@ -10166,8 +10132,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         prior_reference=_player_snap_seed(player_prior, prior_name_col))
     if 'v2_no_history_exclusions' in feats:
         hist_annotated = _keep_every_history_game(hist_annotated)
-    elif 'v2_keep_fully_excluded_history' in feats:
-        hist_annotated = _keep_fully_excluded_players(hist_annotated, name_col)
     elif 'v2_keep_fully_excluded_no_prior' in feats:
         hist_annotated = _keep_fully_excluded_players(hist_annotated, name_col, player_prior, prior_name_col)
     player_hist = hist_annotated[hist_annotated['_player_history_eligible']].copy()
@@ -11926,7 +11890,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 identity_keys_rv.to_numpy(dtype=object), team_keys_rv.to_numpy(dtype=object),
                 qb1_workload_override, player_prior, prior2_history=player_prior2,
                 prior_history_team=prior_stats,
-                k=(QB_STYLE_BLEND_K_CANDIDATE if 'v2_qb_style_blend_k80' in feats else QB_STYLE_BLEND_K))
+                k=QB_STYLE_BLEND_K)
 
         # Display-only "Previous Adj Avg" ingredient - see
         # _defense_adjusted_prior_average's own docstring. player_game_log_
@@ -12137,7 +12101,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                     role_change_reduction,
                                     pos=(pos if 'v2_stat_k_by_pos' in feats else None),
                                     k_override=(QB_PASSING_TD_K if (
-                                        ('v2_qb_passing_td_k' in feats or 'v2_qb_td_blend' in feats)
+                                        'v2_qb_td_blend' in feats
                                         and pos == 'QB' and stat == 'passing_tds') else None),
                                     reverse_confidence=_reverse_role_confidence, k_scale=_fallback_k_scale)
             if 'v2_xtd' in feats and stat in XTD_ZONE_STATS:
@@ -12273,7 +12237,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                  if 'v2_adaptive_volume' in feats else None),
                 role_change_reduction, pos=(pos if 'v2_stat_k_by_pos' in feats else None),
                 k_override=(QB_PASSING_TD_K if (
-                    ('v2_qb_passing_td_k' in feats or 'v2_qb_td_blend' in feats)
+                    'v2_qb_td_blend' in feats
                     and pos == 'QB' and stat == 'passing_tds') else None),
                 reverse_confidence=_reverse_role_confidence, k_scale=_fallback_k_scale)
             stat_trace[stat] = {
@@ -13423,8 +13387,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                          team_col=team_col, prior_team_col=prior_team_col)
         _pre_carries = pd.to_numeric(result['rushing_attempts'], errors='coerce').fillna(0.0)
         result, _cb_ledger = apply_rb_carry_budget(
-            result, _budgets, lead_weighted=('v2_rb_carry_budget_lead' in feats),
-            keep_tds=('v2_rb_carry_budget_keep_tds' in feats))
+            result, _budgets, keep_tds=('v2_rb_carry_budget_keep_tds' in feats))
         carry_budget_ledger = _cb_ledger.to_dict('records')
         _moved = (pd.to_numeric(result['rushing_attempts'], errors='coerce').fillna(0.0) - _pre_carries).abs() > 1e-6
         carry_budget_adjusted = bool(_moved.any())

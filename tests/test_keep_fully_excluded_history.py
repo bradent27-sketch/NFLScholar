@@ -1,4 +1,5 @@
-"""v2_keep_fully_excluded_history (candidate 2026-10-25): a RB/WR/TE whose every game this season was excluded keeps them."""
+"""A RB/WR/TE whose every game this season was excluded keeps them (v2_keep_fully_excluded_no_prior ships; the plain
+v2_keep_fully_excluded_history was retired 2026-11-03)."""
 import os
 import sys
 
@@ -19,11 +20,6 @@ def _annotated():
                                   + ['', 'abrupt partial role after established workload',
                                      'partial replacement after teammate exit', 'partial replacement after teammate exit'],
     })
-
-
-def test_flag_is_registered_and_not_default():
-    assert 'v2_keep_fully_excluded_history' in wp.MODEL_FEATURES
-    assert 'v2_keep_fully_excluded_history' not in wp.DEFAULT_FEATURES
 
 
 def test_only_players_with_every_game_excluded_keep_them():

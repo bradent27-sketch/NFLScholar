@@ -42,10 +42,8 @@ room 1.1 carries over moves 0.1, not 1.1 - there is no jump at the band edge.
 Symmetric: an under-budget room is scaled up the same way (a down-only cap was
 measurably worse, RMSE 6.64 vs 6.15, because the board under-claims too).
 
-Distribution: uniform factor (every back the same %, the pass-capacity rule), or
-with ``lead_weighted`` ('v2_rb_carry_budget_lead') the change is split in
-proportion to carries^2, so the lead back absorbs most of it - the remaining
-room excess sits almost entirely on RB1 (+1.29 of +1.64 carries per room).
+Distribution: uniform factor (every back the same %, the pass-capacity rule). A carries^2 split that put most of the
+change on the lead back (the retired v2_rb_carry_budget_lead, docs/retired_flags.md) was tried and left unshipped.
 
 Rushing yards and TDs move with carries (each back keeps his own yards/carry
 and TD/carry). A sidelined back's stashed ``_full_rushing_*`` volume is scaled
@@ -213,7 +211,7 @@ def team_rb_carry_budgets(hist: pd.DataFrame, prior_stats: pd.DataFrame, schedul
 
 
 def apply_rb_carry_budget(result: pd.DataFrame, budgets: pd.DataFrame, deadband: float | None = None,
-                          lead_weighted: bool = False, keep_tds: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+                          keep_tds: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit each team's RB carries to its budget band. Returns (board, ledger).
 
     ``keep_tds`` ('v2_rb_carry_budget_keep_tds'): scale carries and rushing yards by the
@@ -261,12 +259,7 @@ def apply_rb_carry_budget(result: pd.DataFrame, budgets: pd.DataFrame, deadband:
                            'reason': f'Claim within {deadband:.1f} carries of the budget; left unadjusted.'})
             continue
         target = budget + np.sign(gap) * deadband
-        if lead_weighted:
-            w = full.loc[idx].clip(lower=0.0) ** 2
-            new = (full.loc[idx] - (claim - target) * w / w.sum()).clip(lower=0.0)
-            factor = (new / full.loc[idx].replace(0.0, np.nan)).fillna(1.0)
-        else:
-            factor = pd.Series(target / claim, index=idx)
+        factor = pd.Series(target / claim, index=idx)
         live = idx[~sidelined.loc[idx].to_numpy()]
         side = idx[sidelined.loc[idx].to_numpy()]
         dependents = ('rushing_yards',) if keep_tds else RUSH_DEPENDENTS
@@ -281,5 +274,5 @@ def apply_rb_carry_budget(result: pd.DataFrame, budgets: pd.DataFrame, deadband:
         ledger.append({**row, 'target': round(float(target), 2),
                        'factor': round(float((full.loc[idx] * factor).sum() / claim), 4),
                        'reason': (f"Claim {claim:.1f} vs budget {budget:.1f}; room {'trimmed' if gap > 0 else 'raised'} "
-                                  f"to {target:.1f} ({'lead-weighted' if lead_weighted else 'uniform'}).")})
+                                  f"to {target:.1f} (uniform).")})
     return out, pd.DataFrame(ledger, columns=LEDGER_COLUMNS)

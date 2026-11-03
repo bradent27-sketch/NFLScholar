@@ -33,7 +33,7 @@ flag), so testing N flags together costs 1 + N build calls per week, not 2*N.
 
 Usage:
     python scripts/backtest_component.py --flags v2_continuous_roles
-    python scripts/backtest_component.py --flags v2_continuous_roles,v2_defense_prior,v2_channel_matchups
+    python scripts/backtest_component.py --flags v2_continuous_roles,v2_defense_prior
     python scripts/backtest_component.py --flags v2_qb_volume_blend --years 2025 --weeks 2-18 --outliers-csv out.csv
 """
 import argparse

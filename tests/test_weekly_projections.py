@@ -3731,8 +3731,6 @@ def test_qb_passing_td_k_override_slows_the_current_season_blend_and_is_off_by_d
     assert (slow < shared).all() and (slow > 0).all()
     # w = g / (g + K * (1.3 - 0.6 * confidence)); confidence 0.5 -> K * 1.0
     assert slow == pytest.approx(games / (games + wp.QB_PASSING_TD_K))
-    # the flag is a named candidate, not a default
-    assert 'v2_qb_passing_td_k' in wp.MODEL_FEATURES and 'v2_qb_passing_td_k' not in wp.DEFAULT_FEATURES
 
 
 def test_blended_rate_forwards_k_override_to_the_blend_weight():
@@ -3796,4 +3794,3 @@ def test_v2_qb_td_blend_slows_the_current_season_weight_and_regresses_the_prior(
     assert (metas['blend']['explanations'][wr]['stats']['receiving_tds']['projection']
             == metas['base']['explanations'][wr]['stats']['receiving_tds']['projection'])
     assert 'v2_qb_td_blend' in wp.MODEL_FEATURES and 'v2_qb_td_blend' in wp.DEFAULT_FEATURES   # shipped 2026-10-06
-    assert 'v2_qb_passing_td_k' not in wp.DEFAULT_FEATURES                                     # K alone stays unshipped

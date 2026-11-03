@@ -83,17 +83,6 @@ def test_under_budget_room_is_raised_symmetrically():
     assert 'raised' in ledger.iloc[0]['reason']
 
 
-def test_lead_weighted_trim_lands_mostly_on_the_lead_back():
-    board = _board([['A', 'KC', 'RB', 1.0, 18.0, 80.0, 0.6], ['B', 'KC', 'RB', 1.0, 6.0, 25.0, 0.1]])
-    uni, _ = cb.apply_rb_carry_budget(board, _budgets(KC=20.0), deadband=1.0)
-    lead, _ = cb.apply_rb_carry_budget(board, _budgets(KC=20.0), deadband=1.0, lead_weighted=True)
-    assert lead['rushing_attempts'].sum() == pytest.approx(21.0, abs=1e-2)
-    cut_lead = board['rushing_attempts'] - lead['rushing_attempts']
-    cut_uni = board['rushing_attempts'] - uni['rushing_attempts']
-    assert cut_lead.iloc[0] == pytest.approx(3.0 * 324 / 360, abs=1e-2)      # carries^2 weights
-    assert cut_lead.iloc[1] < cut_uni.iloc[1]
-
-
 def test_sidelined_back_counts_at_full_claim_and_his_stash_is_scaled():
     board = _board([['A', 'KC', 'RB', 0.0, 0.0, 0.0, 0.0], ['B', 'KC', 'RB', 1.0, 8.0, 32.0, 0.2]])
     board['_full_rushing_attempts'] = [16.0, 8.0]

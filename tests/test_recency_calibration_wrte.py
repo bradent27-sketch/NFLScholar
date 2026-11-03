@@ -49,12 +49,3 @@ def test_top_wr_te_rest_of_season_rise_a_little():
         shipped = float(wp.points_line(pos, 10, 22.0))
         on = float(wp.points_line(pos, 10, 22.0, scale=scale))
         assert 0.0 < on - shipped < 0.5
-
-
-def test_a_fit_v6_scale_wins():
-    original = wp.POINTS_SCALE_V6
-    try:
-        wp.POINTS_SCALE_V6 = {'lines': {'WR': (0.9, 1.0)}, 'by_bucket': {}}
-        assert wp.points_scale({'v2_points_scale_v6', FLAG}) is wp.POINTS_SCALE_V6
-    finally:
-        wp.POINTS_SCALE_V6 = original

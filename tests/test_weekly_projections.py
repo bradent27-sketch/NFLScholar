@@ -667,17 +667,6 @@ def test_historical_game_team_beats_latest_roster_team_and_game_id_fallback():
     assert wp._historical_game_team(fallback, 'team').iloc[0] == 'CLE'
 
 
-def test_qb_passing_efficiency_bypasses_role_tables_when_enabled():
-    overall = pd.DataFrame({'passing_yards': [0.90], 'passing_attempts': [1.00]}, index=['HOU'])
-    role_tables = {'QB_DOWNFIELD': pd.DataFrame(
-        {'passing_yards': [1.30], 'passing_attempts': [0.75]}, index=['HOU'])}
-    out = wp._efficiency_matchup(
-        overall, role_tables, {('HOU', 'QB_DOWNFIELD'): 100.0},
-        np.array(['HOU']), np.array(['QB_DOWNFIELD']),
-        'passing_yards', 'passing_attempts', position='QB')
-    assert abs(out[0] - 0.90) < 1e-9
-
-
 def test_prior_season_defense_recency_keeps_a_broad_full_season_baseline():
     weeks = pd.Series([1, 18])
     ordinary = wp.defense_recency_weights(weeks, as_of_week=19)

@@ -1123,7 +1123,6 @@ INJURY_MULTIPLIER = {'out': 0.0, 'ir': 0.0, 'doubtful': 0.4, 'questionable': 0.8
 # (the parameter parking lot). Add ideas there, not as scattered TODOs.
 # ---------------------------------------------------------------------------
 MODEL_FEATURES = (
-    'volume_efficiency',  # opportunities x per-opportunity rate, not a flat per-game rate
     'role_volume',        # baselines scaled by expected SNAP SHARE, not per game played
     'role_matchup',       # defense ratings conditioned on the player's own ROLE -
                            # superseded by 'v2_continuous_roles' in DEFAULT_FEATURES
@@ -5260,125 +5259,6 @@ def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix
     totals = grouped[num_cols].copy()
     totals.columns = [c[len('_num_'):] for c in totals.columns]
     return rates, totals
-
-
-# ---------------------------------------------------------------------------
-# VOLUME x EFFICIENCY
-#
-# WHY THIS EXISTS. Measured, not assumed: on 8,107 paired player-weeks across
-# 2024-2025 (scripts/eval_weekly_model.py + the calibration decomposition in
-# docs/weekly_projections_methodology.md), the flat per-game-rate model
-# over-projected the top 15% of every position on EVERY counting stat at
-# once - WR targets +11%, receptions +16%, receiving yards +18%; RB carries
-# +8%, rushing yards +9%, receiving yards +18%; QB attempts, yards and TDs
-# all ~+11-14%. A uniform over-projection of both volume AND the yardage
-# built on it is the signature of one thing: a player's own observed rate
-# being trusted too far, with the error compounding because yardage was
-# being projected as its own independent per-game rate rather than as
-# (opportunities x efficiency).
-#
-# The fix is structural, and it is what every published projection pipeline
-# does: project OPPORTUNITY first (attempts, carries, targets), then apply a
-# per-opportunity efficiency to it. Two things fall out of that which the
-# flat version could not express:
-#
-#   1. Efficiency evidence is counted in OPPORTUNITIES, not games. A
-#      receiver with 90 targets has a far better-measured yards-per-target
-#      than one with 12, and both have the same number of games. The flat
-#      model shrank both by the same games-based K.
-#   2. Efficiency and volume regress at genuinely different speeds. Usage is
-#      a decision a coaching staff makes and repeats; yards per target is
-#      mostly the outcome of a handful of contested balls. Splitting them
-#      lets the second be shrunk hard without also flattening the first.
-#
-# The K values below are OPPORTUNITY COUNTS at which a player's own rate
-# carries half the weight, set from the published stabilization ranges for
-# each rate (catch rate and yards per target stabilize fastest; touchdown
-# rates and interception rates slowest, since both are rare events). They
-# are NOT fitted to the backtest this change is measured on.
-# ---------------------------------------------------------------------------
-
-# (numerator, denominator, opportunities for a 50/50 blend).
-EFFICIENCY_RATIOS = {
-    'QB': [('passing_completions', 'passing_attempts', 120),
-           ('passing_yards', 'passing_attempts', 150),
-           ('passing_tds', 'passing_attempts', 250),
-           ('passing_interceptions', 'passing_attempts', 250),
-           ('rushing_yards', 'rushing_attempts', 90),
-           ('rushing_tds', 'rushing_attempts', 150)],
-    'RB': [('rushing_yards', 'rushing_attempts', 90),
-           ('rushing_tds', 'rushing_attempts', 150),
-           ('receptions', 'targets', 50),
-           ('receiving_yards', 'targets', 70),
-           ('receiving_tds', 'targets', 120)],
-    'WR': [('receptions', 'targets', 50),
-           ('receiving_yards', 'targets', 70),
-           ('receiving_tds', 'targets', 120)],
-}
-EFFICIENCY_RATIOS['TE'] = EFFICIENCY_RATIOS['WR']
-
-# The defense's effect on a ratio is its rating for the NUMERATOR divided by
-# its rating for the DENOMINATOR - "does this defense give up more yards per
-# target, over and above giving up more targets". Narrower than MATCHUP_CLIP
-# because it is a ratio OF two clipped ratings and would otherwise be able to
-# reach 1.3/0.75 = 1.73x on its own.
-EFFICIENCY_MATCHUP_CLIP = (0.88, 1.14)
-
-
-def _shrunk_ratio(own_num, own_den, prior_num, prior_den, pos_num, pos_den, evidence, k):
-    """
-    One efficiency ratio per player: his own (recency- and matchup-weighted)
-    rate, shrunk toward a baseline by how many real OPPORTUNITIES stand
-    behind it.
-
-        w    = evidence / (evidence + k)
-        rate = w * own + (1 - w) * baseline
-
-    Baseline is his own PRIOR-SEASON ratio when he has one, else the
-    position's current pooled ratio - the same "own history first, position
-    baseline as the floor" ladder _blended_rate already uses for volume, so
-    a rookie lands on the position and a veteran lands on himself.
-
-    `evidence` is the RAW opportunity count, not the recency-weighted one:
-    the weighted sum is the right estimate of the rate and the wrong measure
-    of how much was observed (the decay shrinks it by ~40% for a full
-    season). Same split _blended_rate already makes between `cur_rate`
-    (weighted) and `cur_games` (raw), for the same reason.
-    """
-    with np.errstate(divide='ignore', invalid='ignore'):
-        own = np.divide(own_num, own_den, out=np.full_like(own_num, np.nan, dtype=float),
-                        where=own_den > 0)
-        prior = np.divide(prior_num, prior_den, out=np.full_like(prior_num, np.nan, dtype=float),
-                          where=prior_den > 0)
-    pos_ratio = float(pos_num / pos_den) if pos_den > 0 else 0.0
-    baseline = np.where(np.isfinite(prior), prior, pos_ratio)
-    own = np.where(np.isfinite(own), own, baseline)
-    w = evidence / (evidence + k)
-    return w * own + (1 - w) * baseline
-
-
-def _efficiency_matchup(overall, role_tables, role_sizes, opponents, player_roles, num_stat, den_stat,
-                        position=None):
-    """clip(rating[numerator] / rating[denominator]) - the part of a
-    defense's effect that is NOT already carried by the volume it allows."""
-    # QB passing's forward multiplier bypasses role buckets. One QB's
-    # passing line is the offense's team passing line, so a role table adds
-    # no independent signal and previously re-opened the small-player-row
-    # sensitivity fixed by the team-game profile.
-    is_qb_passing = (str(position).upper() == 'QB' and
-                     num_stat in QB_PASSING_MATCHUP_STATS and
-                     den_stat in QB_PASSING_MATCHUP_STATS)
-    if is_qb_passing:
-        num_mult = _overall_matchup_multiplier(overall, opponents, num_stat)
-        den_mult = _overall_matchup_multiplier(overall, opponents, den_stat)
-    else:
-        num_mult = _role_adjusted_multiplier(overall, role_tables, role_sizes,
-                                             opponents, player_roles, num_stat)
-        den_mult = _role_adjusted_multiplier(overall, role_tables, role_sizes,
-                                             opponents, player_roles, den_stat)
-    with np.errstate(divide='ignore', invalid='ignore'):
-        ratio = np.divide(num_mult, den_mult, out=np.ones_like(num_mult), where=den_mult > 0)
-    return np.clip(ratio, *EFFICIENCY_MATCHUP_CLIP)
 
 
 ROLE_CHANGE_K_REDUCTION = 0.50
@@ -10950,7 +10830,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior2_pos_rows, prior2_team_col, stats, prior2_played, as_of_week)
             opponent_defense_log_prior2 = cur['Opponent'].astype(str).map(defense_log_by_team_prior2).to_numpy()
 
-            weighted_rates, weighted_totals = _weighted_player_rates(
+            weighted_rates, _weighted_totals = _weighted_player_rates(
                 player_pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map)
             if 'role_matchup' in feats or 'v2_continuous_roles' in feats:
                 player_roles = build_player_roles(player_pos_rows, name_col, pos)
@@ -10965,7 +10845,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # fallback (0/0=0 for a cold-start cur), which is fine: cur_games
             # is 0 for everyone here too, so _blended_rate ignores it anyway
             # and lands entirely on prior_rate.
-            weighted_rates, weighted_totals = pd.DataFrame(), pd.DataFrame()
+            weighted_rates = pd.DataFrame()
             # player_game_log_current/opponent_defense_log_current were
             # already set to the honest "no games this season" NaN stub
             # above, alongside the real prior-season pair - same fail-to-
@@ -12405,69 +12285,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     ('feature enabled; no usable line' if 'game_env' in feats else 'feature disabled'),
                 )
 
-        # VOLUME x EFFICIENCY. Every dependent stat is REBUILT here off the
-        # opportunity count already projected above rather than kept as its
-        # own independent per-game rate - see the EFFICIENCY_RATIOS block's
-        # header for the measurement that motivated this. Deliberately after
-        # the pace/game-script/injury scaling, not before: those all act on
-        # OPPORTUNITY (a faster game is more snaps, a blowout is more passes,
-        # a hobbled player plays less), so a stat derived from an already-
-        # scaled opportunity count inherits them exactly once. Applying them
-        # again here would square them.
-        if 'volume_efficiency' in feats:
-            opponents_arr = cur['Opponent'].to_numpy()
-            roles_arr = cur[name_col].map(player_roles).fillna('').to_numpy()
-            keys = identity_keys_rv
-            for num_stat, den_stat, k_opp in EFFICIENCY_RATIOS.get(pos, []):
-                if num_stat not in proj_cols or den_stat not in proj_cols:
-                    continue
-                if weighted_totals is not None and not weighted_totals.empty \
-                        and num_stat in weighted_totals.columns and den_stat in weighted_totals.columns:
-                    own_num = cur[name_col].map(weighted_totals[num_stat]).to_numpy(dtype=float)
-                    own_den = cur[name_col].map(weighted_totals[den_stat]).to_numpy(dtype=float)
-                else:
-                    own_num = cur[num_stat].to_numpy(dtype=float) if num_stat in cur.columns else np.zeros(len(cur))
-                    own_den = cur[den_stat].to_numpy(dtype=float) if den_stat in cur.columns else np.zeros(len(cur))
-                if not prior.empty and num_stat in prior.columns and den_stat in prior.columns:
-                    prior_keyed = prior.drop_duplicates('_identity_key', keep='last').set_index('_identity_key')
-                    prior_num = keys.map(prior_keyed[num_stat]).to_numpy(dtype=float)
-                    prior_den = keys.map(prior_keyed[den_stat]).to_numpy(dtype=float)
-                else:
-                    prior_num = np.full(len(cur), np.nan)
-                    prior_den = np.full(len(cur), np.nan)
-                # Position baseline from whichever season actually has rows -
-                # a cold start has zeros for everyone in `cur` by
-                # construction, same reasoning as the volume side above.
-                if cold_start and not prior.empty and num_stat in prior.columns and den_stat in prior.columns:
-                    pos_num, pos_den = float(prior[num_stat].sum()), float(prior[den_stat].sum())
-                elif num_stat in cur.columns and den_stat in cur.columns:
-                    pos_num, pos_den = _league_value(
-                        ('pool_ratio', pos, num_stat, den_stat),
-                        lambda: (float(cur[num_stat].sum()), float(cur[den_stat].sum())))
-                else:
-                    continue
-                evidence = (cur[den_stat].to_numpy(dtype=float) if den_stat in cur.columns
-                            else np.zeros(len(cur)))
-                ratio = _shrunk_ratio(own_num, own_den, prior_num, prior_den,
-                                      pos_num, pos_den, evidence, k_opp)
-                eff_mult = _efficiency_matchup(matchup_matrix, role_tables, role_sizes,
-                                               opponents_arr, roles_arr, num_stat, den_stat,
-                                               position=pos)
-                proj_cols[num_stat] = np.clip(proj_cols[den_stat] * ratio * eff_mult, 0.0, None)
-                trace = stat_trace.get(num_stat)
-                if trace is not None:
-                    trace['build_path'] = np.full(len(cur), f'derived from {den_stat}')
-                    trace['efficiency_denominator'] = np.full(len(cur), den_stat)
-                    trace['efficiency_rate'] = ratio
-                    trace['efficiency_evidence'] = evidence
-                    trace['efficiency_matchup_multiplier'] = eff_mult
-                    trace['efficiency_defense_estimator'] = np.full(
-                        len(cur),
-                        ('offense-team game normalized QB passing'
-                         if pos == 'QB' and num_stat in QB_PASSING_MATCHUP_STATS
-                         and den_stat in QB_PASSING_MATCHUP_STATS
-                         else 'position-team game normalized role blend'),
-                    )
+
 
         # A QB who is not the expected starter has no normal offensive
         # workload to project.  Snap share alone is insufficient because a
@@ -12869,13 +12687,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     'environment_multiplier': _trace_number(trace, 'environment_multiplier', i, 1.0),
                     'environment_status': _trace_value(trace, 'environment_status', i, 'feature disabled'),
                     'weather_stat_multiplier': _trace_number(trace, 'weather_stat_multiplier', i, 1.0),
-                    'efficiency_denominator': _trace_value(trace, 'efficiency_denominator', i),
-                    'efficiency_rate': _trace_number(trace, 'efficiency_rate', i),
-                    'efficiency_evidence': _trace_number(trace, 'efficiency_evidence', i),
-                    'efficiency_matchup_multiplier': _trace_number(
-                        trace, 'efficiency_matchup_multiplier', i),
-                    'efficiency_defense_estimator': _trace_value(
-                        trace, 'efficiency_defense_estimator', i),
                     'two_year_td_prior': bool(_trace_value(trace, 'two_year_td_prior', i, False)),
                     'td_prior_credibility': _trace_number(trace, 'td_prior_credibility', i),
                     'pre_vacancy_projection': _trace_number(trace, 'pre_vacancy_projection', i, 0.0),

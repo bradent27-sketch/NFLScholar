@@ -119,7 +119,7 @@ import streamlit as st
 from data.transforms import (load_and_merge_data, OFFENSE_PROJECTION_STATS,
                              score_projected_stats)
 from data.loaders import (load_team_pace, load_team_weekly_plays, load_schedule, CACHE_TTL_SECONDS,
-                          _progressive_blowout_team_weeks, realized_script_by_team_week)
+                          realized_script_by_team_week)
 from data.utils import clean_name_exact
 from data.ourlads_depth_charts import (
     load_ourlads_snapshot, build_ourlads_projection_signal,
@@ -1518,48 +1518,6 @@ MODEL_FEATURES = (
                              # (see 'v2_defense_blowout_discount_progressive'
                              # below - it didn't), the fix shipped is a
                              # position gate.
-    'v2_defense_blowout_discount_progressive',  # same discount mechanism and
-                             # magnitude (DEFENSE_BLOWOUT_WEIGHT_DISCOUNT) as
-                             # the flag above, but a richer "was this game
-                             # decided" test: ANY of PROGRESSIVE_BLOWOUT_
-                             # CHECKPOINTS' quarter-end/margin thresholds
-                             # (built 2026-09-15 at the user's suggestion,
-                             # from play-by-play score progression - see
-                             # data.loaders._progressive_blowout_team_weeks),
-                             # not just a single FINAL-margin cutoff. Built to
-                             # test whether a final-margin-only definition was
-                             # missing/mislabeling the specific games driving
-                             # WR's regression above (e.g. a game decided by
-                             # half whose final margin closed under 28 from
-                             # garbage-time scoring). REJECTED 2026-09-16: the
-                             # full 26-week confirm showed EVERY scope's CI
-                             # spanning 0, including START-RB - it washed out
-                             # the real RB win along with the WR loss instead
-                             # of separating them. Mutually exclusive with
-                             # 'v2_defense_blowout_discount' (this one wins if
-                             # both are set - see _blowout_weeks_for_matchup).
-                             # NOT in DEFAULT_FEATURES; stays OFF.
-    'v2_offense_blowout_discount',  # CANDIDATE - the same DEFENSE_BLOWOUT_
-                             # MARGIN/WEIGHT_DISCOUNT test as the flags above,
-                             # applied to a player's OWN team's blowout games
-                             # instead of his opponent's, inside
-                             # _weighted_player_rates - see
-                             # OFFENSE_BLOWOUT_DISCOUNT_POSITIONS' own comment
-                             # for the full rationale. CHECKED LIVE 2026-09-28
-                             # against the CJ Stroud case it was built for -
-                             # measured EXACTLY INERT: his week-2 game (6-20
-                             # loss to CIN) was only a 14-point margin, under
-                             # DEFENSE_BLOWOUT_MARGIN's 28-point bar (tuned
-                             # for a different, more extreme purpose on the
-                             # defense side), so nothing fired. Kept - not
-                             # wrong, just insufficient on its own for the
-                             # graded, sub-28-point script effect that
-                             # actually drives everyday pass-volume swings;
-                             # see 'v2_offense_script_pool_blend' below for
-                             # the mechanism that actually reaches this case.
-                             # NOT in DEFAULT_FEATURES - backtest before
-                             # shipping, if ever (a real 28+ point game is
-                             # still worth discounting on its own merits).
     'v2_offense_script_pool_blend',  # SHIPPED - see SCRIPT_POOL_BLEND_K's
                              # own comment for the full rationale: extends
                              # the ALREADY-SHIPPED, forward-looking game-
@@ -5009,47 +4967,6 @@ DEFENSE_BLOWOUT_DISCOUNT_POSITIONS = frozenset({'RB', 'QB', 'TE'})
 # scripts/sweep_defense_blowout_wr_stats.py.
 DEFENSE_BLOWOUT_DISCOUNT_STATS = {}
 
-# --- v2_offense_blowout_discount ---------------------------------------------
-# CANDIDATE, built 2026-09-28. The defense side above already discounts a
-# blowout's OWN opponent-allowed evidence; nothing discounts a player's OWN
-# past game the same way when his OWN team's game was the blowout, even
-# though that is exactly the game-script distortion volume stats are most
-# exposed to - a huge pass-attempt game in a blowout LOSS (garbage-time
-# catch-up passing) or a suppressed one in a blowout WIN (clock-killing
-# rushing) is a real event, but not a normal, repeatable rate.
-#
-# This is a DIFFERENT mechanism from _vectorized_game_script_multiplier /
-# SCRIPT_BUCKETS (the market-implied-margin read-off applied AFTER the
-# blended rate, forward-looking to the upcoming week): that one requires
-# >= 4 of the player's OWN games (`eligible = counts >= 4` in
-# _vectorized_game_script_multiplier) and is a no-op for exactly the weeks
-# this was found on - weeks 2-3, before any player has 4 games this
-# season. This instead discounts the CONTRIBUTION of an extreme-script past
-# game to _weighted_player_rates' own recency-weighted season-to-date
-# average, which needs no personal sample-size floor because it reuses the
-# SAME plain final-margin blowout test already shipped for defenses
-# (DEFENSE_BLOWOUT_MARGIN / _defense_blowout_team_weeks) - just applied to
-# the player's OWN team's game that week instead of his opponent's.
-#
-# Found live 2026-09-27/28 on C.J. Stroud: 38 attempts (wk1, a competitive
-# 31-36 loss) then 55 attempts (wk2, a 6-20 blowout loss to CIN, trailing
-# most of the game) - recency weighting already favors the more recent,
-# heavier game, and nothing discounted it for being a score-state artifact
-# rather than a role signal. The model projected 41.61 attempts for week 3;
-# the real week-3 game (a competitive 17-19 loss) came in at 27. Same root
-# cause flagged for team-total PLAYS (HOU projected ~68 offensive plays
-# that week, matching the user's own estimate) - a team's total pass+rush
-# volume is the sum of exactly these same per-player volume stats.
-#
-# Reuses DEFENSE_BLOWOUT_MARGIN's 28-point threshold and
-# DEFENSE_BLOWOUT_WEIGHT_DISCOUNT's 0.5x discount as a starting point (both
-# already validated on the defense side) rather than inventing new
-# constants to tune blind; a sweep can split these once a backtest shows
-# whether the offense side wants a different number. NOT YET IN
-# DEFAULT_FEATURES - backtest before shipping.
-OFFENSE_BLOWOUT_DISCOUNT_POSITIONS = frozenset({'QB', 'RB', 'TE'})
-
-
 def _defense_game_evidence(hist_pos, game_universe=None, team_col=None):
     """Effective defense-game count indexed by opponent team.
 
@@ -5532,9 +5449,7 @@ def _continuous_role_adjusted_multiplier(overall, role_tables, role_sizes, oppon
     return np.clip(np.where(used > 0, result, base), *MATCHUP_CLIP)
 
 
-def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent,
-                           team_col=None, blowout_team_weeks=None,
-                           blowout_discount=DEFENSE_BLOWOUT_WEIGHT_DISCOUNT):
+def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent):
     """
     Per player, per stat: a recency-weighted, opponent-quality-adjusted rate
     - the WITHIN-season half of the cross-season blend (see _blended_rate),
@@ -5548,17 +5463,6 @@ def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix
     retroactively to the player's own past games instead of only forward.
     `upcoming_opponent` is {player: this week's opponent}, for the rematch
     weight bump.
-
-    `blowout_team_weeks` (optional, 'v2_offense_blowout_discount' - see that
-    flag's own comment) is a {(team, week)} set of the PLAYER'S OWN team's
-    blowout games (either direction) - same shape _defense_blowout_team_weeks
-    / data.loaders._progressive_blowout_team_weeks already build for the
-    defense side, just read here off `team_col` (the row's own offense)
-    instead of the opponent. A matching row's weight is multiplied by
-    `blowout_discount` alongside recency/rematch, so an extreme-script game
-    still counts, just less - the same down-weight-don't-drop treatment the
-    defense side uses. `team_col` is required for this to do anything; both
-    default to inert (no discount) so every existing caller is unaffected.
 
     Returns a DataFrame indexed by name_col: one '{stat}' rate column per
     stat, plus 'weight_sum' - NOT plugged into _blended_rate's games-played
@@ -5583,12 +5487,6 @@ def _weighted_player_rates(hist_pos, name_col, stats, as_of_week, matchup_matrix
                else pd.Series('', index=df.index))
     is_rematch = opponent.eq(df[name_col].map(upcoming_opponent))
     w = w * np.where(is_rematch, REMATCH_WEIGHT_MULT, 1.0)
-
-    if blowout_team_weeks and team_col and team_col in df.columns:
-        own_team = _historical_game_team(df, team_col).astype(str).str.strip().str.upper()
-        own_key = pd.Series(list(zip(own_team, weeks.to_numpy(dtype=float))), index=df.index)
-        is_own_blowout = own_key.isin(blowout_team_weeks)
-        w = w * np.where(is_own_blowout, blowout_discount, 1.0)
 
     df['_w'] = w
 
@@ -10393,8 +10291,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         """
         if pos not in DEFENSE_BLOWOUT_DISCOUNT_POSITIONS:
             return None
-        if 'v2_defense_blowout_discount_progressive' in feats:
-            return _progressive_blowout_team_weeks(matchup_year)
         if 'v2_defense_blowout_discount' in feats:
             return _defense_blowout_team_weeks(schedule_frame)
         return None
@@ -11322,13 +11218,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 prior2_pos_rows, prior2_team_col, stats, prior2_played, as_of_week)
             opponent_defense_log_prior2 = cur['Opponent'].astype(str).map(defense_log_by_team_prior2).to_numpy()
 
-            _offense_blowout_weeks = (
-                _defense_blowout_team_weeks(schedule_df)
-                if ('v2_offense_blowout_discount' in feats and pos in OFFENSE_BLOWOUT_DISCOUNT_POSITIONS)
-                else None)
             weighted_rates, weighted_totals = _weighted_player_rates(
-                player_pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map,
-                team_col=team_col, blowout_team_weeks=_offense_blowout_weeks)
+                player_pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map)
             if 'role_matchup' in feats or 'v2_continuous_roles' in feats:
                 player_roles = build_player_roles(player_pos_rows, name_col, pos)
                 role_tables, role_sizes = build_role_matchup(

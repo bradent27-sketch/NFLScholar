@@ -8145,3 +8145,20 @@ pool fixed by the base board's rank (RB 40, TE 20), played rows.
   -0.010, +0.019), and START-TE pairwise accuracy -0.002 (CI -0.005, 0.000).
 - **Watch:** 2026 weeks 3-7 START TE receiving yards already run 8% OVER the board (-3.8, n=100); a TE lift pushes that further.
   START backs 2026: receiving yards +0.45 under, consistent with the lift.
+
+### 2026-11-03 - SHIPPED: `v2_rb_capacity_relief` (0.6) and `v2_te_capacity_relief` (0.75) (DEFAULT_FEATURES = 84)
+
+User: "yep 0.6 for backs and 0.75 for TE." Weeks 3+, the pass-capacity pass takes only part of its move from backs (`RB_CAPACITY_ELASTICITY`
+0.6) and tight ends (`TE_CAPACITY_ELASTICITY` 0.75, was 0.5 as a candidate); the difference is not reassigned. The values come from the
+screen above (backs 0.4-0.8, tight ends 0.5-0.9; pick rule in `.sweeps/capacity_relief_screen_bar.md`).
+
+- **What changes:** START backs' targets / receptions / receiving yards bias +0.063 / +0.041 / +0.445 -> +0.001 / -0.008 / +0.076; START tight
+  ends +0.080 / +0.066 / +1.132 -> -0.013 / +0.002 / +0.342. The stat recal and the points-from-stat-line total read these, so backs'
+  and tight ends' points rise a little with them.
+- **Points:** neutral and INCONCLUSIVE at every value tested (START-ALL +0.000 backs, -0.001 tight ends; EVERY-START-RB +0.004 and
+  EVERY-START-TE +0.005, both inside the bar). The ship rests on stat level and prop accuracy, not on a points gain.
+- **Weaker call, tight ends:** better MSE in 3 of 4 seasons (2022 worse), EVERY-START-TE on the bar's limit, and 2026 weeks 3-7 START TE
+  receiving yards already run 8% over the board. Watch it; the undo is removing the flag.
+- **Housekeeping:** the seven temporary screening flags (`v2_rb_capacity_relief_e40/50/70/80`, `v2_te_capacity_relief_e60/75/90`,
+  `CAPACITY_RELIEF_SCREEN`, `_screen_elasticity`) are removed; they live in commit 7aedc76 if a screen needs re-running. Tests:
+  `test_rb_capacity_relief.py` and `test_te_capacity_relief.py` now assert the flags ship and the constants. Not pushed.

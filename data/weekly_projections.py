@@ -1342,19 +1342,7 @@ INJURY_MULTIPLIER = {'out': 0.0, 'ir': 0.0, 'doubtful': 0.4, 'questionable': 0.8
 # model-parameter ideas live in docs/weekly_rankings_backlog.md section 4
 # (the parameter parking lot). Add ideas there, not as scattered TODOs.
 # ---------------------------------------------------------------------------
-# Screening flags (2026-11-02, user: "test similar values surrounding 0.6 ... same for TE ... screen around 0.75 before
-# deciding"): the pass-capacity relief at neighbouring elasticities, one harness arm each. TEMPORARY: once a value is chosen
-# the constants in data/pass_capacity_allocator.py take it and these flags are removed.
-CAPACITY_RELIEF_SCREEN = {
-    'v2_rb_capacity_relief_e40': ('rb', 0.4), 'v2_rb_capacity_relief_e50': ('rb', 0.5),
-    'v2_rb_capacity_relief_e70': ('rb', 0.7), 'v2_rb_capacity_relief_e80': ('rb', 0.8),
-    'v2_te_capacity_relief_e60': ('te', 0.6), 'v2_te_capacity_relief_e75': ('te', 0.75),
-    'v2_te_capacity_relief_e90': ('te', 0.9),
-}
-
-
 MODEL_FEATURES = (
-    *CAPACITY_RELIEF_SCREEN,
     'volume_efficiency',  # opportunities x per-opportunity rate, not a flat per-game rate
     'role_volume',        # baselines scaled by expected SNAP SHARE, not per game played
     'role_matchup',       # defense ratings conditioned on the player's own ROLE -
@@ -2495,13 +2483,14 @@ MODEL_FEATURES = (
                              # (POINTS_FROM_STAT_LINE_EDGE_POSITIONS); QBs and TEs keep the points line.
                              # Harness weeks 1-2: START-RB -0.091, START-WR -0.112 (TE was better only in
                              # 2022, so it was left out).
-    'v2_te_capacity_relief',  # CANDIDATE (2026-11-02 audit): weeks 3+, a tight end takes TE_CAPACITY_ELASTICITY
-                             # (0.5) of the pass-capacity factor's move (data/pass_capacity_allocator.py);
-                             # the uniform cut took too much from TEs (stage beta 0.58-0.63).
-    'v2_rb_capacity_relief',  # CANDIDATE (2026-11-02, user: "get targets and yards a little higher closer to accuracy"): weeks 3+,
-                             # each back takes RB_CAPACITY_ELASTICITY (0.6) of the pass-capacity factor's move; only
-                             # beta 0.65-0.71 of the cut to a START back's targets / receptions / yards came true,
-                             # 6 of 6 seasons (data/pass_capacity_allocator.py). Nothing is reassigned.
+    'v2_te_capacity_relief',  # SHIPPED 2026-11-03 (DEFAULT_FEATURES = 84): weeks 3+, a tight end takes
+                             # TE_CAPACITY_ELASTICITY (0.75) of the pass-capacity factor's move (data/pass_capacity_allocator.py);
+                             # the uniform cut took too much from TEs (stage beta 0.58-0.63). The old 0.5 overshot; 0.75 was
+                             # picked from a 0.5-0.9 harness screen.
+    'v2_rb_capacity_relief',  # SHIPPED 2026-11-03 (DEFAULT_FEATURES = 84; user: "get targets and yards a little higher closer to
+                             # accuracy"): weeks 3+, each back takes RB_CAPACITY_ELASTICITY (0.6) of the pass-capacity factor's
+                             # move; only beta 0.65-0.71 of the cut to a START back's targets / receptions / yards came true,
+                             # 6 of 6 seasons (data/pass_capacity_allocator.py). Nothing is reassigned. Picked from a 0.4-0.8 screen.
     'v2_wr1_capacity_relief',  # SHIPPED 2026-11-02 (DEFAULT_FEATURES = 81): weeks 3+, each room's lead WR takes
                              # WR1_CAPACITY_ELASTICITY (0.6) of the pass-capacity factor's move; the
                              # uniform cut took too much from WR1s (stage beta 0.72 targets / 0.80 yards,
@@ -3279,6 +3268,15 @@ DEFAULT_FEATURES = frozenset({
     # gain: on the 278 Questionable-tagged START rows (2021-2025, factors fit on the other seasons) P(over) ran 8-10 points too
     # high at every yardage line, now 1-2, and the anytime-TD Brier falls 0.1803 -> 0.1694 (4 of 5 seasons). Undo: remove the flag.
     'v2_questionable_stat_cut',
+    # SHIPPED 2026-11-03 (user: "yep 0.6 for backs and 0.75 for TE"): DEFAULT_FEATURES = 84. Weeks 3+, the pass-capacity pass takes
+    # only part of its move from backs (RB_CAPACITY_ELASTICITY 0.6) and tight ends (TE_CAPACITY_ELASTICITY 0.75); nothing is
+    # reassigned. Harness v2 2022-2025 weeks 3-17, screened at backs 0.4-0.8 and tight ends 0.5-0.9: points INCONCLUSIVE at
+    # every value (START-ALL +0.000 backs / -0.001 tight ends; EVERY-START-RB +0.004, EVERY-START-TE +0.005, both inside the
+    # bar). Levels: backs' targets / receptions / yards bias +0.063 / +0.041 / +0.445 -> +0.001 / -0.008 / +0.076, MSE better in
+    # 4 of 4 seasons; tight ends +0.080 / +0.066 / +1.132 -> -0.013 / +0.002 / +0.342, MSE better in 3 of 4 (2022 worse). Undo:
+    # remove the flag(s).
+    'v2_rb_capacity_relief',
+    'v2_te_capacity_relief',
 })
 
 
@@ -3902,15 +3900,6 @@ def apply_questionable_workload(result, injury_profiles, factors=None):
 # for a uniform factor fit out of sample), and each stat's bias goes to zero: yards -7.6 -> +0.6, receptions -0.49 -> +0.04, TDs
 # -0.15 -> +0.02, with 1-3% less stat RMSE. Applied after the stat recal, to the rows the points cut touched.
 QUESTIONABLE_STAT_FACTORS = {'WR': {'targets': 0.926, 'receptions': 0.888, 'receiving_yards': 0.862, 'receiving_tds': 0.564}}
-
-
-def _screen_elasticity(feats, kind, default):
-    """The pass-capacity relief elasticity for ``kind`` ('rb' / 'te'): a CAPACITY_RELIEF_SCREEN flag's value when one is on,
-    else ``default`` (None = no relief)."""
-    for name, (k, value) in CAPACITY_RELIEF_SCREEN.items():
-        if k == kind and name in feats:
-            return value
-    return default
 
 
 def apply_questionable_stat_cut(result, questionable_info, factors=None):
@@ -14640,12 +14629,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 matchup_flex=('v2_pass_capacity_matchup_flex' in feats),
                 injury_neutral_claim=('v2_pass_capacity_injury_neutral_claim' in feats),
                 keep_tds=('v2_pass_capacity_keep_tds' in feats),
-                te_elasticity=(_screen_elasticity(feats, 'te', TE_CAPACITY_ELASTICITY if 'v2_te_capacity_relief' in feats else None)
-                               if not (cold_start or int(as_of_week) <= 2) else None),
+                te_elasticity=(TE_CAPACITY_ELASTICITY if 'v2_te_capacity_relief' in feats
+                               and not (cold_start or int(as_of_week) <= 2) else None),
                 wr1_elasticity=(WR1_CAPACITY_ELASTICITY if 'v2_wr1_capacity_relief' in feats
                                 and not (cold_start or int(as_of_week) <= 2) else None),
-                rb_elasticity=(_screen_elasticity(feats, 'rb', RB_CAPACITY_ELASTICITY if 'v2_rb_capacity_relief' in feats else None)
-                               if not (cold_start or int(as_of_week) <= 2) else None))
+                rb_elasticity=(RB_CAPACITY_ELASTICITY if 'v2_rb_capacity_relief' in feats
+                               and not (cold_start or int(as_of_week) <= 2) else None))
             ledger = ledger_df.to_dict('records')
             adjusted = bool(not ledger_df.empty
                             and (ledger_df['capacity_source'] != 'no capacity signal').any())

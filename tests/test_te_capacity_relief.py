@@ -14,8 +14,9 @@ BOARD = pd.DataFrame([_row('QB1', 'QB', 0.0, attempts=24.0), _row('WR1', 'WR', 9
                       _row('TE1', 'TE', 6.0), _row('WR3', 'WR', 4.0)])
 
 
-def test_flag_is_a_candidate():
-    assert 'v2_te_capacity_relief' in wp.MODEL_FEATURES and 'v2_te_capacity_relief' not in wp.DEFAULT_FEATURES
+def test_flag_ships():
+    assert 'v2_te_capacity_relief' in wp.MODEL_FEATURES and 'v2_te_capacity_relief' in wp.DEFAULT_FEATURES
+    assert pca.TE_CAPACITY_ELASTICITY == 0.75
 
 
 def test_tight_end_takes_half_the_move_and_nothing_is_reassigned():

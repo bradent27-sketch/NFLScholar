@@ -212,7 +212,10 @@ PASS_CAPACITY_FACTOR_DEADBAND = _env_float("PASS_CAPACITY_FACTOR_DEADBAND", 0.0,
 # 31.6 actual targets per team-week); the uniform factor takes too much from the TEs. The stat recal keeps ~0.56-0.67 of
 # the board's TE number, so matching beta on the final line needs about half the cut at this stage: simulated through the
 # recal, elasticity 0.4-0.6 takes START-TE 6.797 -> 6.781 (4 of 5 seasons) and the START-TE bias +0.40 -> ~+0.12.
-TE_CAPACITY_ELASTICITY = 0.5
+# SHIPPED at 0.75 (2026-11-03), not 0.5: run through the real chain (harness v2 2022-2025 weeks 3-17, screened at 0.5 / 0.6 /
+# 0.75 / 0.9) 0.5 and 0.6 overshoot (targets -0.104 / -0.067 a game over; EVERY-START-TE +0.014 / +0.009, over the bar), while 0.75
+# lands the START-TE targets and receptions bias at -0.013 / +0.002 (yards still +0.34 under, from +1.13).
+TE_CAPACITY_ELASTICITY = 0.75
 
 # --- v2_wr1_capacity_relief (2026-11-02 mechanism audit) -----------------------
 # Same stage attribution, WRs split by the team's projected-target rank (played games): of this pass's cut to the WR1's
@@ -229,6 +232,8 @@ WR1_CAPACITY_ELASTICITY = 0.6
 # shows up in the result, in 6 of 6 seasons (2026 included); taking the rest back lowers the MSE of all three 0.5-0.7% in 6 of 6
 # seasons and the START-RB bias in receiving yards goes +0.55 -> -0.02. WR2+ is NOT over-cut (beta 1.06 / 1.15 / 1.18), so only
 # backs (and the TE and WR1 flags above) are relieved. As with the TE and WR1 flags the difference is not reassigned.
+# SHIPPED at 0.6 (2026-11-03) after a harness screen at 0.4 / 0.5 / 0.6 / 0.7 / 0.8 (0.4 failed EVERY-START-RB +0.007): 0.6 puts
+# the START-RB targets / receptions / yards bias at +0.001 / -0.008 / +0.076 (was +0.063 / +0.041 / +0.445), MSE better in 4 of 4 seasons.
 RB_CAPACITY_ELASTICITY = 0.6
 
 CAPACITY_LEDGER_COLUMNS = [

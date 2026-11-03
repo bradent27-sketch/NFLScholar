@@ -167,6 +167,7 @@ play-probability haircut; `v2_own_tempo_regression`; `v2_pace_alpha_cap` ablatio
 
 2026-10-19 data fixes (not model flags): injury-report cache refresh (D1), retractable-roof default (D7), injury freshness note (D2).
 
+`v2_rb_capacity_relief` (0.6), `v2_te_capacity_relief` (0.75) (2026-11-03, `DEFAULT_FEATURES` = 84; user: "get targets and yards a little higher"; screened at backs 0.4-0.8 / tight ends 0.5-0.9, points neutral, START back/TE target and yard bias to about zero; watch 2026 TE yards, already 8% over); `v2_wr1_capacity_relief`, `v2_xtd_missing_prior_overall`, `v2_questionable_stat_cut` (2026-11-02, 82);
 `v2_keep_fully_excluded_no_prior`, `v2_rb_lone_lead_vacancy`, `v2_ps_line_routing` (2026-10-25, `DEFAULT_FEATURES` = 71);
 `v2_silent_games`, `v2_silent_participation` (2026-10-25, 68); `v2_no_qb_rush_script`, `v2_td_matchup_half` (2026-10-24, 66);
 `v2_role_confidence_reversed_wrte` (2026-10-20, `DEFAULT_FEATURES` = 60); `v2_expected_points_luck` (2026-10-20, `DEFAULT_FEATURES` = 59); `v2_qb1_probable_starter_fallback` (2026-10-20, 58);

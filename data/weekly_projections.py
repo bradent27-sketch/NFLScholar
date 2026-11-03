@@ -169,24 +169,6 @@ ALIGNMENT_SCORING_STAT_MAP = {
     'targets': 'targets', 'receptions': 'receptions', 'receiving_yards': 'yards',
 }
 
-# Optional FIXED mixing weight (scheme's own share) per position, overriding
-# 'v2_scheme_alignment_blend''s default evidence-weighted blend - empty by
-# default, meaning every position uses that default. Built 2026-08-27 per
-# explicit request: the component backtest program's evidence-weighted blend
-# showed a real, positive pattern for BOTH positions but with opposite
-# implications - WR's blend beat scheme-alone outright (best of every variant
-# tested), while TE's blend was real but weaker than scheme-alone's own
-# START-TE win, i.e. alignment context was "diluting, not hurting" TE's
-# result. The user wants to KEEP alignment context for TE regardless (not
-# drop it for a pure scheme-wins-outright design) while weighting it less
-# than the ~50/50 the evidence-weighted default happened to land near - this
-# lets scripts/sweep_scheme_blend_weight.py test specific fixed ratios (e.g.
-# {'TE': 0.75}) to find where that tradeoff actually lands, rather than
-# guessing at one number. Set by a sweep script via monkeypatch + explicit
-# build_weekly_projections.clear() between runs (the cache key is `features`,
-# which does not change across weight values - mutating this dict alone
-# would silently serve a stale cached result otherwise); never set here by
-# default.
 # Positions where man/zone scheme evidence REPLACES the broad matchup when
 # 'v2_scheme_matchup' is on. Deliberately narrower than
 # SCHEME_DEFENSE_SUPPORTED_POSITIONS ({TE, WR}), which governs where the
@@ -218,8 +200,6 @@ ALIGNMENT_SCORING_STAT_MAP = {
 # +0.203] - noise from one season, the same failure mode as the coaching
 # work. It is recorded here so it is not resurrected from the old note.
 SCHEME_MATCHUP_SCORING_POSITIONS = frozenset({'TE'})
-
-SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT = {}
 
 # One past the last real week of a completed prior season, so every one of
 # its weeks passes discover_weekly_alignment_exports' strict
@@ -1398,15 +1378,6 @@ MODEL_FEATURES = (
                              # backtested) and this file's own note below.
                              # Not yet in DEFAULT_FEATURES - first backtest
                              # pending.
-    'v2_scheme_alignment_blend',  # evidence-weighted blend of alignment and
-                             # scheme instead of either replacing the broad
-                             # matchup alone or one outright replacing the
-                             # other - see the note above
-                             # 'v2_scheme_alignment_blend' in this file's
-                             # per-stat loop for the full reasoning. Mutually
-                             # exclusive with 'v2_scheme_matchup' in practice
-                             # (both test different combination strategies);
-                             # if both are set, the blend wins.
     'v2_game_total_elasticity',  # implied game-total scaling ALONE, unbundled
                              # from 'game_env' (rejected as a bundle, +0.012
                              # MAE) - see _game_env_multiplier's own note.
@@ -1421,18 +1392,6 @@ MODEL_FEATURES = (
                              # WEATHER_WIND_SLOPE table. Recorded schedule wind
                              # for a past week; Open-Meteo forecast
                              # (data/weather.py) for a live one.
-    'v2_defense_prior_games_override',  # sweep hook for DEFENSE_PRIOR_GAMES
-                             # (currently 12.0) - see that constant's own note
-                             # and scripts/sweep_defense_prior_games.py. A no-op
-                             # unless DEFENSE_PRIOR_GAMES_OVERRIDE is also set.
-    'v2_coaching_aware_defense_prior',  # scale DEFENSE_PRIOR_GAMES per team by
-                             # its off-season coaching-change cohort: HC+DC (or
-                             # lone new HC) reset -> shorter prior leash (~8);
-                             # coordinator-only promotion under a retained HC ->
-                             # longer leash (~18); no signal -> unchanged. See
-                             # data/coaching_changes.py + scripts/analyze_
-                             # coaching_defense_prior.py. Backtest-only; live
-                             # use needs current-season coordinator data.
     'v2_historical_ourlads',  # let a HISTORICAL cold-start target (weeks 1-3 of
                              # a past season) read the frozen pre-Week-1 Ourlads
                              # archive (external_data/ourlads_depth_charts_history.csv,
@@ -4997,15 +4956,6 @@ def build_qb_quality_adjusted_matchup(hist_qbs, name_col, team_col, stats, as_of
 # (2025 wk4-17, n=14) overfitting risk. Calibration was re-fit for this
 # value on 2026-08-29. Full tables: docs/overnight_backtest_log_2026-08-27.md.
 DEFENSE_PRIOR_GAMES = 12.0
-# Sweep hook, built 2026-08-27 - never set outside a sweep script. This
-# constant has driven every position's defense matchup number since it was
-# set, never itself backtested against alternate values. None (default)
-# means "use DEFENSE_PRIOR_GAMES as always"; a float means "use this instead,
-# but ONLY when 'v2_defense_prior_games_override' is in feats" - gated so a
-# plain DEFAULT_FEATURES build is never affected by this constant being
-# nonzero, only a deliberate sweep variant is. See
-# scripts/sweep_defense_prior_games.py.
-DEFENSE_PRIOR_GAMES_OVERRIDE = None
 
 # --- v2_offense_prior_blend --------------------------------------------------
 # Built 2026-09-16 at the user's request, after the blowout-discount work
@@ -5183,7 +5133,7 @@ def blend_defense_prior(current, prior, evidence, prior_games=DEFENSE_PRIOR_GAME
     a season-total source existed before the historical target week.
 
     ``prior_games`` is normally a scalar, but may also be a per-team Series
-    (index = defense team) so v2_coaching_aware_defense_prior can give a team
+    (index = defense team), which is how the retired v2_coaching_aware_defense_prior gave a team
     that reset its defensive staff a shorter prior leash than one that kept it.
     Any team not covered by such a Series falls back to the scalar default.
     """
@@ -11370,29 +11320,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 ) if prior_anchor is not None else pd.DataFrame()
             )
             if 'v2_defense_prior' in feats:
-                prior_games_ = (DEFENSE_PRIOR_GAMES_OVERRIDE
-                                if ('v2_defense_prior_games_override' in feats
-                                    and DEFENSE_PRIOR_GAMES_OVERRIDE is not None)
-                                else DEFENSE_PRIOR_GAMES)
-                if 'v2_coaching_aware_defense_prior' in feats:
-                    # Give a defense that reset its staff (HC+DC, or a lone new
-                    # HC) a shorter prior leash, and one that only promoted a
-                    # new coordinator under a retained HC a LONGER one - both
-                    # directions are what the year-over-year persistence and
-                    # the out-of-sample blend-weight sweep want (see
-                    # data/coaching_changes.py + scripts/analyze_coaching_
-                    # defense_prior.py). Teams with no cohort signal keep
-                    # prior_games_ unchanged, so this is safe to apply always.
-                    try:
-                        from data.coaching_changes import defense_prior_games_by_team
-                        prior_games_ = defense_prior_games_by_team(
-                            int(year), float(prior_games_), pos=pos)
-                    except Exception:
-                        pass
                 matchup_matrix = blend_defense_prior(
                     matchup_matrix, prior_matrix, _defense_game_evidence(
                         pos_rows, game_universe=hist, team_col=team_col),
-                    prior_games=prior_games_)
+                    prior_games=DEFENSE_PRIOR_GAMES)
 
             # Deep Dive per-game/per-week detail for BOTH seasons, threaded
             # through to the decomposition dialog via explanations[...]
@@ -12589,8 +12520,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             scheme_player_factor = np.ones(len(cur))
             scheme_residual_available = np.zeros(len(cur), dtype=bool)
             scheme_scoring_stat = ALIGNMENT_SCORING_STAT_MAP.get(stat)
-            scheme_wanted = ('v2_scheme_matchup' in feats or 'v2_scheme_alignment_blend' in feats)
-            if (scheme_wanted and pos in SCHEME_DEFENSE_SUPPORTED_POSITIONS
+            if ('v2_scheme_matchup' in feats and pos in SCHEME_DEFENSE_SUPPORTED_POSITIONS
                     and scheme_scoring_stat is not None and scheme_defense_previews):
                 scheme_previews_row = [scheme_defense_previews.get(idx, {}).get(scheme_scoring_stat, {})
                                        for idx in cur.index]
@@ -12599,53 +12529,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 scheme_residual_available = np.array(
                     [bool(p.get('candidate_available', False)) for p in scheme_previews_row], dtype=bool)
 
-            # Evidence-weighted blend of alignment and scheme - CANDIDATE,
-            # built 2026-08-27 to test combining both rather than either
-            # replacing the broad matchup alone or one outright replacing the
-            # other, given the two are correlated at r~0.72
-            # (scripts/check_alignment_scheme_overlap.py). Deliberately a
-            # NAIVE weighted average - it does NOT discount for that shared
-            # variance - built as the cheap baseline to check empirically
-            # whether the correlation caution actually costs anything in
-            # practice, before building anything more elaborate (e.g. a
-            # joint alignment x scheme interaction profile, which corrects
-            # for the overlap by construction instead of by adjustment).
-            # Weight per side is that side's own effect_weight (the weaker of
-            # its two per-bucket confidences, already in each preview dict) -
-            # zero for a side with no evidence, so this reduces to
-            # "whichever one has evidence" when only one does (~1% of rows;
-            # see the overlap script's "both or neither" finding for why this
-            # is rarely exercised in practice).
-            if 'v2_scheme_alignment_blend' in feats:
-                fixed_w = SCHEME_ALIGNMENT_BLEND_FIXED_WEIGHT.get(pos)
-                if fixed_w is not None:
-                    # DELIBERATE FIXED RATIO, not evidence-weighted - a
-                    # per-position override for the component backtest
-                    # program's weight sweep (see
-                    # scripts/sweep_scheme_blend_weight.py). fixed_w is
-                    # scheme's own share; alignment gets (1 - fixed_w). Still
-                    # collapses to "whichever one has evidence" when only one
-                    # side is available, same as the evidence-weighted path.
-                    align_w = np.where(alignment_residual_available, 1.0 - fixed_w, 0.0)
-                    scheme_w = np.where(scheme_residual_available, fixed_w, 0.0)
-                else:
-                    align_conf = np.array([
-                        (alignment_defense_previews.get(idx, {}).get(alignment_scoring_stat, {}).get('effect_weight', 0.0)
-                         if alignment_scoring_stat is not None else 0.0)
-                        for idx in cur.index], dtype=float)
-                    scheme_conf = np.array([
-                        (scheme_defense_previews.get(idx, {}).get(scheme_scoring_stat, {}).get('effect_weight', 0.0)
-                         if scheme_scoring_stat is not None else 0.0)
-                        for idx in cur.index], dtype=float)
-                    align_w = np.where(alignment_residual_available, np.maximum(align_conf, 0.0), 0.0)
-                    scheme_w = np.where(scheme_residual_available, np.maximum(scheme_conf, 0.0), 0.0)
-                total_w = align_w + scheme_w
-                blend_available = total_w > 0
-                blended_factor = np.divide(
-                    align_w * alignment_player_factor + scheme_w * scheme_player_factor,
-                    total_w, out=np.ones(len(cur)), where=blend_available)
-                matchup_mult = np.where(blend_available, blended_factor, matchup_mult)
-            elif 'v2_scheme_matchup' in feats and pos in SCHEME_MATCHUP_SCORING_POSITIONS:
+            if 'v2_scheme_matchup' in feats and pos in SCHEME_MATCHUP_SCORING_POSITIONS:
                 matchup_mult = np.where(scheme_residual_available, scheme_player_factor, matchup_mult)
 
             role_change_reduction = (

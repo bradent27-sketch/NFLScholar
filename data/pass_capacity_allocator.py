@@ -223,6 +223,14 @@ TE_CAPACITY_ELASTICITY = 0.5
 # the tail (the difference is not reassigned).
 WR1_CAPACITY_ELASTICITY = 0.6
 
+# --- v2_rb_capacity_relief (2026-11-02, user: "get targets and yards a little higher closer to accuracy") ----------------------
+# Stage attribution, START-pool backs, played games, 2021-2025 weeks 3-17 + 2026 weeks 3-7 (.sweeps/stage_capture*.parquet; beta
+# fit without each season): of this pass's cut to a back's targets / receptions / receiving yards only beta 0.71 / 0.69 / 0.65
+# shows up in the result, in 6 of 6 seasons (2026 included); taking the rest back lowers the MSE of all three 0.5-0.7% in 6 of 6
+# seasons and the START-RB bias in receiving yards goes +0.55 -> -0.02. WR2+ is NOT over-cut (beta 1.06 / 1.15 / 1.18), so only
+# backs (and the TE and WR1 flags above) are relieved. As with the TE and WR1 flags the difference is not reassigned.
+RB_CAPACITY_ELASTICITY = 0.6
+
 CAPACITY_LEDGER_COLUMNS = [
     'team', 'position_group', 'capacity', 'capacity_source', 'trusted_claim', 'tail_claim',
     'allocated', 'unallocated', 'trusted_count', 'tail_count', 'reason',
@@ -331,6 +339,7 @@ def apply_pass_capacity_conservation(
         keep_tds: bool = False,
         te_elasticity: float | None = None,
         wr1_elasticity: float | None = None,
+        rb_elasticity: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Fit one team's RB/WR/TE targets (and dependents) to a real pass budget.
 
@@ -340,6 +349,9 @@ def apply_pass_capacity_conservation(
 
     ``wr1_elasticity`` (default None = off; 'v2_wr1_capacity_relief', weeks 3+): the same for the group's WR with the most
     targets before the fit (one per team; name breaks a tie). See WR1_CAPACITY_ELASTICITY.
+
+    ``rb_elasticity`` (default None = off; 'v2_rb_capacity_relief', weeks 3+): the same for every running back in the group the
+    factor moves. See RB_CAPACITY_ELASTICITY.
 
     ``keep_tds`` (default off; 'v2_pass_capacity_keep_tds'): scale receptions and
     receiving yards with targets but leave ``receiving_tds`` at its pre-budget
@@ -522,6 +534,14 @@ def apply_pass_capacity_conservation(
                     te_factor = 1.0 + float(te_elasticity) * (factor - 1.0)
                     allocated.loc[idx[te_rows]] = current.loc[idx[te_rows]] * te_factor
                     reason += f" Tight ends x{te_factor:.3f} (elasticity {float(te_elasticity):.2f})."
+            if rb_elasticity is not None:
+                # v2_rb_capacity_relief: a back takes only rb_elasticity of the group's move; the rest is not handed to
+                # anyone (see RB_CAPACITY_ELASTICITY).
+                rb_rows = out.loc[idx, 'Pos'].astype(str).eq('RB').to_numpy()
+                if rb_rows.any():
+                    rb_factor = 1.0 + float(rb_elasticity) * (factor - 1.0)
+                    allocated.loc[idx[rb_rows]] = current.loc[idx[rb_rows]] * rb_factor
+                    reason += f" Backs x{rb_factor:.3f} (elasticity {float(rb_elasticity):.2f})."
             if wr1_elasticity is not None:
                 # v2_wr1_capacity_relief: the room's lead WR takes only wr1_elasticity of the move; the rest is not
                 # handed to anyone (see WR1_CAPACITY_ELASTICITY).

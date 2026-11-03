@@ -1342,7 +1342,19 @@ INJURY_MULTIPLIER = {'out': 0.0, 'ir': 0.0, 'doubtful': 0.4, 'questionable': 0.8
 # model-parameter ideas live in docs/weekly_rankings_backlog.md section 4
 # (the parameter parking lot). Add ideas there, not as scattered TODOs.
 # ---------------------------------------------------------------------------
+# Screening flags (2026-11-02, user: "test similar values surrounding 0.6 ... same for TE ... screen around 0.75 before
+# deciding"): the pass-capacity relief at neighbouring elasticities, one harness arm each. TEMPORARY: once a value is chosen
+# the constants in data/pass_capacity_allocator.py take it and these flags are removed.
+CAPACITY_RELIEF_SCREEN = {
+    'v2_rb_capacity_relief_e40': ('rb', 0.4), 'v2_rb_capacity_relief_e50': ('rb', 0.5),
+    'v2_rb_capacity_relief_e70': ('rb', 0.7), 'v2_rb_capacity_relief_e80': ('rb', 0.8),
+    'v2_te_capacity_relief_e60': ('te', 0.6), 'v2_te_capacity_relief_e75': ('te', 0.75),
+    'v2_te_capacity_relief_e90': ('te', 0.9),
+}
+
+
 MODEL_FEATURES = (
+    *CAPACITY_RELIEF_SCREEN,
     'volume_efficiency',  # opportunities x per-opportunity rate, not a flat per-game rate
     'role_volume',        # baselines scaled by expected SNAP SHARE, not per game played
     'role_matchup',       # defense ratings conditioned on the player's own ROLE -
@@ -3890,6 +3902,15 @@ def apply_questionable_workload(result, injury_profiles, factors=None):
 # for a uniform factor fit out of sample), and each stat's bias goes to zero: yards -7.6 -> +0.6, receptions -0.49 -> +0.04, TDs
 # -0.15 -> +0.02, with 1-3% less stat RMSE. Applied after the stat recal, to the rows the points cut touched.
 QUESTIONABLE_STAT_FACTORS = {'WR': {'targets': 0.926, 'receptions': 0.888, 'receiving_yards': 0.862, 'receiving_tds': 0.564}}
+
+
+def _screen_elasticity(feats, kind, default):
+    """The pass-capacity relief elasticity for ``kind`` ('rb' / 'te'): a CAPACITY_RELIEF_SCREEN flag's value when one is on,
+    else ``default`` (None = no relief)."""
+    for name, (k, value) in CAPACITY_RELIEF_SCREEN.items():
+        if k == kind and name in feats:
+            return value
+    return default
 
 
 def apply_questionable_stat_cut(result, questionable_info, factors=None):
@@ -14619,12 +14640,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 matchup_flex=('v2_pass_capacity_matchup_flex' in feats),
                 injury_neutral_claim=('v2_pass_capacity_injury_neutral_claim' in feats),
                 keep_tds=('v2_pass_capacity_keep_tds' in feats),
-                te_elasticity=(TE_CAPACITY_ELASTICITY if 'v2_te_capacity_relief' in feats
-                               and not (cold_start or int(as_of_week) <= 2) else None),
+                te_elasticity=(_screen_elasticity(feats, 'te', TE_CAPACITY_ELASTICITY if 'v2_te_capacity_relief' in feats else None)
+                               if not (cold_start or int(as_of_week) <= 2) else None),
                 wr1_elasticity=(WR1_CAPACITY_ELASTICITY if 'v2_wr1_capacity_relief' in feats
                                 and not (cold_start or int(as_of_week) <= 2) else None),
-                rb_elasticity=(RB_CAPACITY_ELASTICITY if 'v2_rb_capacity_relief' in feats
-                               and not (cold_start or int(as_of_week) <= 2) else None))
+                rb_elasticity=(_screen_elasticity(feats, 'rb', RB_CAPACITY_ELASTICITY if 'v2_rb_capacity_relief' in feats else None)
+                               if not (cold_start or int(as_of_week) <= 2) else None))
             ledger = ledger_df.to_dict('records')
             adjusted = bool(not ledger_df.empty
                             and (ledger_df['capacity_source'] != 'no capacity signal').any())

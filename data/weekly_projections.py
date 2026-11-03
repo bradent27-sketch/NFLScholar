@@ -549,7 +549,8 @@ RECEIVER_DEPTH_CUTOFF_SHARE_CAP = 0.01
 # in, rather than either a permanent hard floor or an immediate full
 # exemption off a single game.
 RECEIVER_DEPTH_RANK_CUTOFF_EVIDENCE_GAMES = 2
-# v2_rookie_backup_wr_dampen (2026-09-08): a NO-PRIOR-ROLE (rookie / practice-
+# Rookie backup WR dock (2026-09-08; shipped as v2_rookie_backup_wr_dampen_narrow - the broad v2_rookie_backup_wr_dampen was
+# retired 2026-11-03, docs/retired_flags.md): a NO-PRIOR-ROLE (rookie / practice-
 # squad callup) WR the Ourlads chart lists as a per-alignment BACKUP (slot
 # rank 2, i.e. behind LWR-1/RWR-1/SWR-1) currently keeps the ordinary rank-2
 # role floor (0.16) and then RECEIVES cold-start vacancy - J. Michael
@@ -559,9 +560,8 @@ RECEIVER_DEPTH_RANK_CUTOFF_EVIDENCE_GAMES = 2
 # WRs and the charted WR1, not a rookie 4th). Rank-1 no-prior WRs (a charted
 # rookie starter - Nabers, Odunze) are untouched.
 ROOKIE_BACKUP_WR_SHARE = 0.06            # ~0.5-0.7 targets, in line with a team's other reserves
-# 0..1 dial: at 1.0 the pull lands fully on ROOKIE_BACKUP_WR_SHARE and vacancy
-# weight is zeroed; at 0.5 the pull stops halfway from the 0.16 floor and half
-# the vacancy weight is kept. Swept by scripts/sweep_rookie_backup_wr_dampen.py.
+# 0..1 dial: at 1.0 the pull lands fully on ROOKIE_BACKUP_WR_SHARE; at 0.5 it
+# stops halfway from the 0.16 floor.
 ROOKIE_BACKUP_WR_DAMPEN_STRENGTH = 1.0
 # v2_rookie_backup_wr_dampen_narrow (2026-09-08): the broad flag above docked a
 # genuine boom/modest-role population (2023 Puka Nacua, charted a backup, was
@@ -1574,28 +1574,6 @@ MODEL_FEATURES = (
                              # dials env-overridable. See data/pass_capacity_
                              # allocator.py and scripts/sweep_pass_capacity_
                              # matchup_flex.py.
-    'v2_cold_start_room_budget',  # cold start only: clamp the SUM of a team's
-                             # WR / TE room snap shares to what that team
-                             # actually ran at the position last season
-                             # (prior_room_snap_budget) + a tolerance, water-
-                             # filling the excess out of the players the
-                             # Ourlads chart lists as deep reserves first
-                             # (apply_cold_start_room_snap_budget). Built to
-                             # bound the room sum the restoration / Ourlads-
-                             # floor / vacancy stack otherwise leaves unbounded
-                             # (LAC 2026 TE room summed past 2.0). BUILT,
-                             # BACKTESTED, REJECTED - stays OFF. scripts/
-                             # sweep_cold_start_room_budget.py, wk1-2 2022-2025
-                             # (.sweeps/cold_start_room_budget_2022-2025.txt):
-                             # ALL +0.019* / WR +0.047* / START-WR +0.077*
-                             # (all bootstrap-CI-excludes-0 WORSE), for a
-                             # non-significant START-TE -0.042. The clamp
-                             # reshapes ~115 rooms/week and the depth-chart
-                             # protection is not robust enough on the frozen
-                             # historical charts (it water-filled real WR1s
-                             # like 2025 NE Diggs to the floor). Kept
-                             # switchable per repo convention; see
-                             # docs/weekly_projections_methodology.md.
     # 2026-09-08 surgical vacancy-recipient guards (scripts/
     # sweep_vacancy_recipient_guards.py, wk1 2022-2025, vs the shipped stack;
     # all gated to recipients WITH a real prior role so a rookie inheriting a
@@ -1609,28 +1587,6 @@ MODEL_FEATURES = (
                              # 1-3 - noise, not a significant knock). Live
                              # board: LAC Gadsden 0.92 -> 0.75. SHIPPED in
                              # DEFAULT_FEATURES 2026-09-08 - see that set and
-                             # docs/weekly_projections_methodology.md.
-    'v2_rookie_backup_wr_dampen',  # cold start: a NO-PRIOR-ROLE WR the Ourlads
-                             # chart lists at slot rank 2 (a per-alignment
-                             # backup) is pulled to ROOKIE_BACKUP_WR_SHARE
-                             # (~0.06) instead of the 0.16 rank-2 role floor,
-                             # AND gets zero cold-start vacancy weight. Targets
-                             # J.Michael Sturdivant GB 2026 (0.32 snaps / ~1.9
-                             # targets) and ~12 other rookie deep-WRs projected
-                             # as 3-4 target rotation players. BUILT,
-                             # BACKTESTED, REJECTED - stays OFF. scripts/
-                             # sweep_rookie_backup_wr_dampen.py, wk1 2022-2025:
-                             # ALL +0.009 (n.s.), WR +0.013 (n.s.), TE +0.018*
-                             # (CI excludes 0 - allocator knock-on), nothing
-                             # better. ROOKIE_BACKUP_WR_DAMPEN_STRENGTH sweeps
-                             # {0.3..1.0} and {0.1,0.2,0.3}: WR is a flat -0.005
-                             # (never significant), TE turns significantly worse
-                             # by 0.30, startable-WR MEDIAN error is +0.000 at
-                             # every strength, and the docked pool's median
-                             # actual is ~2-5 pts (only 52-65% under 5) - NOT
-                             # the near-zero group the eye-test assumes. Charted
-                             # rank-2 rookie WRs are a real boom/modest-role
-                             # pool (2023 Puka Nacua was one). See
                              # docs/weekly_projections_methodology.md.
     'v2_rookie_backup_wr_dampen_narrow',  # SHIPPED in DEFAULT_FEATURES
                              # 2026-09-09 - the same rank-2 no-prior-WR share
@@ -1649,19 +1605,6 @@ MODEL_FEATURES = (
                              # sweep_rookie_backup_wr_dampen_narrow.py and the
                              # dated section in docs/weekly_projections_
                              # methodology.md.
-    'v2_vacancy_growth_cap',  # post-vacancy share <= pre-vacancy share x
-                             # RECEIVER_COLD_START_VACANCY_GROWTH_CAP (1.35),
-                             # MIN_ABS_GAIN floor - the cold-start analogue of
-                             # in-season VACANCY_MAX_GROWTH. Milder than
-                             # bump_cap (Gadsden -> 0.81); similar backtest
-                             # (ALL -0.007, TE -0.042*, startables CI spans 0).
-    'v2_vacancy_chart_split',  # split the vacancy pool by Ourlads chart rank
-                             # (RANK2/RANK3/UNRANKED weights) so a departed role
-                             # flows to the charted starter. Pool total
-                             # unchanged. Weak alone (Gadsden barely moves,
-                             # pushes the charted TE1 up instead); STACKED with
-                             # bump+growth it made START-TE +0.206* (a
-                             # significant knock) - do NOT combine. OFF.
     'v2_defense_blowout_discount',  # down-weight (not exclude) a defense's
                              # own team-game evidence in build_team_game_
                              # quality_adjusted_matchup when that game was a
@@ -7101,24 +7044,14 @@ RECEIVER_COLD_START_VACANCY_CROSS_POS_FRACTION = 0.0  # share of a departed WR's
 #   0.0 = the shipped hard same-position silo; swept by
 #   scripts/sweep_receiver_cold_start_vacancy_crosspos.py.
 #
-# 2026-09-08: three SURGICAL guards on the redistribution itself (each an
-# opt-in flag, each inert by default), aimed at the one bad shape - a
+# 2026-09-08: a SURGICAL guard on the redistribution itself (v2_vacancy_bump_cap; two siblings, a growth cap and a
+# chart-rank split, were rejected and retired 2026-11-03 - docs/retired_flags.md), aimed at the one bad shape - a
 # moderate-role returner rocketed to the 0.92 cap because several small
 # departures' shares were summed into one big pool and then handed mostly to
 # him. None touch the pool size or any non-recipient, so the blast radius is
 # far smaller than the rejected v2_cold_start_room_budget / pool-dampening.
 RECEIVER_COLD_START_VACANCY_MAX_BUMP = 0.15    # v2_vacancy_bump_cap: no ONE recipient
 #   gains more than this from vacancy in a single team; leftover pool is dropped.
-RECEIVER_COLD_START_VACANCY_GROWTH_CAP = 1.35  # v2_vacancy_growth_cap: post-vacancy
-#   share <= pre-vacancy share x this (mirrors the in-season VACANCY_MAX_GROWTH
-#   discipline, which the cold-start path never had) ...
-RECEIVER_COLD_START_VACANCY_MIN_ABS_GAIN = 0.12  # ... but always allow at least this
-#   absolute gain, so a genuine small-role recipient is not frozen out.
-RECEIVER_COLD_START_VACANCY_RANK2_WEIGHT = 0.55   # v2_vacancy_chart_split: reweight the
-RECEIVER_COLD_START_VACANCY_RANK3_WEIGHT = 0.25   #   pool split by Ourlads chart rank so a
-RECEIVER_COLD_START_VACANCY_UNRANKED_WEIGHT = 0.70  # departed role flows to the charted
-#   starter, not to a returning backup who is still charted behind him. Split only -
-#   the pool total and every recipient's floor are unchanged.
 #
 # 2026-09-07: a "dampened pool" guard was BUILT and BACKTESTED here (read each
 # departed player's UNBLENDED prior-season share so MIN_SHARE can drop a real
@@ -7134,9 +7067,7 @@ RECEIVER_COLD_START_VACANCY_UNRANKED_WEIGHT = 0.70  # departed role flows to the
 
 
 def apply_cold_start_receiver_vacancy(player_share, current_team, vacated_share_by_team,
-                                     chart_rank=None, max_bump=None, growth_cap=None,
-                                     has_prior=None, chart_split=False,
-                                     zero_no_role_backup=False, no_role_backup_weight=0.0):
+                                     max_bump=None, has_prior=None):
     """Redistribute a departed same-team receiver's prior role, at cold
     start, to the remaining same-position corps - weighted by each
     recipient's OWN current (post-restoration, post-buried-vet-dock) share,
@@ -7148,43 +7079,21 @@ def apply_cold_start_receiver_vacancy(player_share, current_team, vacated_share_
     team/position who are absent from this season's pool entirely - this
     function only does the allocation, not the roster-diff.
 
-    Three optional guards, each supplied by its own feature flag at the call
-    site and otherwise inert (2026-09-08). They all shape the ALLOCATION and
-    never the pool size or a non-recipient:
-
-    * ``chart_rank`` (v2_vacancy_chart_split): per-recipient Ourlads chart
-      rank; the pool split is multiplied by RANK2/RANK3/UNRANKED weights so a
-      vacated role flows to the charted starter rather than to a returning
-      backup the chart still lists behind him.
-    * ``max_bump`` (v2_vacancy_bump_cap): hard ceiling on any ONE recipient's
-      absolute gain from a single team's vacancy; leftover pool is dropped.
-    * ``growth_cap`` (v2_vacancy_growth_cap): post-vacancy share <= pre-vacancy
-      share x this, but always allowing a MIN_ABS_GAIN absolute floor - the
-      cold-start analogue of the in-season VACANCY_MAX_GROWTH.
-
-    ``max_bump`` and ``growth_cap`` bite ONLY on a recipient with a real
-    prior-season role (``has_prior`` True). A no-prior rookie or call-up who
-    is inheriting a departed starter's whole job - his current share is just
-    a position-median placeholder, the vacancy IS his role signal (Sam
-    LaPorta, DET 2023, the only rostered TE after Hockenson's trade) - must
-    keep the full inheritance. The guards exist for the opposite case: a
-    proven MODERATE-role returner rocketed to the cap.
-
-    ``chart_split`` turns the ``chart_rank`` reweighting on (it is passed for
-    ``zero_no_role_backup`` too, which needs the ranks but not the reweight).
-    ``zero_no_role_backup`` (v2_rookie_backup_wr_dampen): a recipient with NO
-    prior role who the chart lists at slot rank >= 2 gets ZERO vacancy weight -
-    a departed WR1's snaps go to the proven WRs and the charted WR1, not a
-    rookie 4th-stringer. A rank-1 no-prior recipient (a charted rookie
-    starter) still inherits.
+    ``max_bump`` (v2_vacancy_bump_cap) is a hard ceiling on any ONE
+    recipient's absolute gain from a single team's vacancy; leftover pool is
+    dropped. It bites ONLY on a recipient with a real prior-season role
+    (``has_prior`` True). A no-prior rookie or call-up who is inheriting a
+    departed starter's whole job - his current share is just a position-median
+    placeholder, the vacancy IS his role signal (Sam LaPorta, DET 2023, the
+    only rostered TE after Hockenson's trade) - must keep the full
+    inheritance. The guard exists for the opposite case: a proven MODERATE-role
+    returner rocketed to the cap.
 
     Raise-only (never reduces an existing share); a team with no qualifying
     departure is untouched. Returns ``(share, applied_mask)``.
     """
     share = np.asarray(player_share, dtype=float).copy()
     teams = pd.Series(current_team).astype(str).to_numpy()
-    ranks = (pd.to_numeric(pd.Series(chart_rank), errors='coerce').to_numpy(dtype=float)
-             if chart_rank is not None else None)
     prior_mask = (np.asarray(has_prior, dtype=bool) if has_prior is not None
                   else np.ones(len(share), dtype=bool))
     applied = np.zeros(len(share), dtype=bool)
@@ -7197,19 +7106,6 @@ def apply_cold_start_receiver_vacancy(player_share, current_team, vacated_share_
         if len(recipients) == 0:
             continue
         weights = np.clip(share[recipients], 0.0, None)
-        if ranks is not None and chart_split:
-            cr = ranks[recipients]
-            rank_w = np.where(
-                cr <= 1.0, 1.0,
-                np.where(cr <= 2.0, RECEIVER_COLD_START_VACANCY_RANK2_WEIGHT,
-                         np.where(np.isfinite(cr), RECEIVER_COLD_START_VACANCY_RANK3_WEIGHT,
-                                  RECEIVER_COLD_START_VACANCY_UNRANKED_WEIGHT)))
-            weights = weights * rank_w
-        if ranks is not None and zero_no_role_backup:
-            cr = ranks[recipients]
-            _keep = float(np.clip(no_role_backup_weight, 0.0, 1.0))
-            weights = np.where(~prior_mask[recipients] & np.isfinite(cr) & (cr >= 2.0),
-                               weights * _keep, weights)
         if weights.sum() <= 0:
             continue
         pool = vacated * RECEIVER_COLD_START_VACANCY_SURVIVAL
@@ -7219,144 +7115,8 @@ def apply_cold_start_receiver_vacancy(player_share, current_team, vacated_share_
             bump = np.where(guarded, np.minimum(bump, float(max_bump)), bump)
         pre = share[recipients]
         new_share = np.minimum(pre + bump, RECEIVER_COLD_START_VACANCY_MAX_SHARE)
-        if growth_cap is not None:
-            ceil = np.maximum(pre * float(growth_cap), pre + RECEIVER_COLD_START_VACANCY_MIN_ABS_GAIN)
-            new_share = np.where(guarded, np.minimum(new_share, ceil), new_share)
         applied[recipients] |= (new_share > pre + 1e-9)
         share[recipients] = new_share
-    return share, applied
-
-
-# v2_cold_start_room_budget (2026-09-07): snap share is NOT conserved to 100%
-# of team snaps - a team runs one, two, or three tight ends on a given play,
-# so one room's shares legitimately sum to ~1.2-1.5 for TE and ~2.1-2.4 for WR
-# - but it IS bounded, and by a real team signal (a 12-personnel team sits well
-# above a three-wide one). The shipped cold-start pipeline has no such bound:
-# restoration, the Ourlads floor, and especially v2_receiver_cold_start_vacancy
-# (which SUMS every departed rotational player's share, then redistributes 70%
-# of that sum, weighted to the biggest incumbent) can push a room far past its
-# own history. LAC 2026: three departed backup TEs (Fisk .35 + Dissly .32 +
-# Conklin .30, none of whom shared the field) drove Gadsden - a returning TE-2
-# whose own role barely changed - to the 0.92 vacancy cap, with the room
-# summing over 2.0. This pass clamps the SUM back to what the team actually ran
-# at that position last year, and lands the cut on the players the current
-# depth chart says are deep reserves.
-COLD_START_ROOM_BUDGET_TOLERANCE = 0.15   # roster turnover can raise a team's real
-                                          # positional usage, not double it
-COLD_START_ROOM_BUDGET_PROTECT_N = {'WR': 3, 'TE': 2}   # top-N by within-team share
-                                          # keep their number; the cut lands below
-COLD_START_ROOM_BUDGET_DEEP_CHART_SLOT = {'WR': 3, 'TE': 3}   # ...UNLESS the Ourlads
-                                          # chart lists them at this per-slot rank or
-                                          # deeper - a charted deep reserve is never
-                                          # protected however high his stale share
-COLD_START_ROOM_BUDGET_DEEP_FLOOR = 0.03   # a docked deep reserve is pulled toward
-                                          # this, not to zero
-COLD_START_ROOM_BUDGET_MIN = {'WR': 1.9, 'TE': 1.0}   # floor on the prior-year
-                                          # measurement: a season lost to injury
-                                          # dilutes the participation sum, and a team
-                                          # always runs ~1 TE / ~2 WR on most snaps
-
-
-def prior_room_snap_budget(stats_df, name_col, team_col, position):
-    """{team: sum over that position's players of each player's WHOLE-SEASON
-    snap-share participation} for the prior season - "how much <position>
-    personnel did this team run last year". ~1.2-1.5 for TE, ~2.1-2.4 for WR,
-    and a genuine team signal. Keyed on the immutable ``game_team`` so a
-    trade cannot misattribute an old game. Used as the cold-start ceiling on
-    the sum of a room's projected snap shares - see
-    ``apply_cold_start_room_snap_budget``."""
-    if (stats_df is None or stats_df.empty or 'weekly_snap_pct' not in stats_df.columns
-            or 'position' not in stats_df.columns or 'week' not in stats_df.columns):
-        return {}
-    frame = stats_df[stats_df['position'].astype(str).str.upper() == str(position).upper()].copy()
-    if frame.empty:
-        return {}
-    per_player = season_snap_share(frame, name_col, team_col)  # whole-season participation
-    if per_player.empty:
-        return {}
-    game_team = _historical_game_team(frame, team_col)
-    last_team = (pd.DataFrame({'_p': frame[name_col].astype(str), '_t': game_team,
-                               '_w': pd.to_numeric(frame['week'], errors='coerce')}, index=frame.index)
-                 .sort_values('_w', kind='stable').groupby('_p', observed=True)['_t'].last())
-    keyed = _clean_team_key(last_team.reindex([str(p) for p in per_player.index]))
-    out = {}
-    for team, share in zip(keyed.to_numpy(), per_player.to_numpy(dtype=float)):
-        if team and np.isfinite(share):
-            out[team] = out.get(team, 0.0) + float(share)
-    return out
-
-
-def apply_cold_start_room_snap_budget(player_share, team_keys, within_team_rank, chart_rank,
-                                      budget_by_team, position, league_fallback):
-    """Clamp the SUM of one position room's cold-start snap shares to the
-    team's own prior-season positional usage (+ tolerance).
-
-    Reduce-only, and structured so the depth chart does the work it exists
-    for. When a team's room is over budget the excess is water-filled out of
-    the players NOT in the protected tier first - deepest ``within_team_rank``
-    first, each pulled toward ``COLD_START_ROOM_BUDGET_DEEP_FLOOR`` - and only
-    if zeroing that whole tail is still not enough does the protected tier
-    scale down uniformly. A player is protected when he is top-N by
-    within-team share AND the Ourlads chart does not list him at
-    ``COLD_START_ROOM_BUDGET_DEEP_CHART_SLOT`` or deeper: a charted TE-3
-    carrying an inflated share is dropped regardless, a charted starter the
-    model happens to rank low is not.
-
-    ``budget_by_team`` is {team: prior Σ room share} from
-    ``prior_room_snap_budget``; ``league_fallback`` (its median) covers a
-    team with no usable prior. Returns ``(share, applied_mask)``.
-    """
-    share = np.asarray(player_share, dtype=float).copy()
-    teams = pd.Series(team_keys).astype(str).to_numpy()
-    wrank = pd.to_numeric(pd.Series(within_team_rank), errors='coerce').to_numpy(dtype=float)
-    crank = pd.to_numeric(pd.Series(chart_rank), errors='coerce').to_numpy(dtype=float)
-    applied = np.zeros(len(share), dtype=bool)
-    pos = str(position).upper()
-    protect_n = COLD_START_ROOM_BUDGET_PROTECT_N.get(pos, 3)
-    deep_slot = COLD_START_ROOM_BUDGET_DEEP_CHART_SLOT.get(pos, 3)
-    floor = float(COLD_START_ROOM_BUDGET_DEEP_FLOOR)
-    min_budget = COLD_START_ROOM_BUDGET_MIN.get(pos, 0.0)
-    tol = 1.0 + float(COLD_START_ROOM_BUDGET_TOLERANCE)
-    if not np.isfinite(league_fallback):
-        league_fallback = np.nan
-    for team in np.unique(teams):
-        idx = np.where(teams == team)[0]
-        if len(idx) == 0:
-            continue
-        claim = float(np.nansum(share[idx]))
-        raw = budget_by_team.get(str(team))
-        if raw is None or not np.isfinite(raw):
-            raw = league_fallback
-        if not np.isfinite(raw):
-            continue
-        budget = max(float(raw), min_budget) * tol
-        excess = claim - budget
-        if excess <= 1e-6:
-            continue
-        protected = {
-            j for j in idx
-            if np.isfinite(wrank[j]) and wrank[j] <= protect_n
-            and not (np.isfinite(crank[j]) and crank[j] >= deep_slot)
-        }
-        # deepest within-team rank first (unranked = deepest), smaller share first among ties
-        tail = sorted((j for j in idx if j not in protected),
-                      key=lambda j: (-(wrank[j] if np.isfinite(wrank[j]) else 99.0), share[j]))
-        for j in tail:
-            cut = min(max(share[j] - floor, 0.0), excess)
-            if cut <= 0:
-                continue
-            share[j] -= cut
-            excess -= cut
-            applied[j] = True
-            if excess <= 1e-6:
-                break
-        if excess > 1e-6 and protected:
-            prot = np.array(sorted(protected))
-            pc = float(np.nansum(share[prot]))
-            if pc > 0:
-                f = max(0.0, (pc - excess) / pc)
-                share[prot] = share[prot] * f
-                applied[prot] = True
     return share, applied
 
 
@@ -12009,22 +11769,20 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                         (np.isfinite(ourlads_role_rank) & (ourlads_role_rank >= 3))
                         | (~np.isfinite(ourlads_role_rank) & team_has_chart_arr)
                     )
-                    # v2_rookie_backup_wr_dampen[_narrow]: a no-prior WR the
+                    # v2_rookie_backup_wr_dampen_narrow: a no-prior WR the
                     # chart lists at slot rank 2 (a per-alignment BACKUP, not a
                     # starter) is a true reserve, not a 0.16-floor rotation
-                    # player. The _narrow flag additionally requires >= 3
-                    # ESTABLISHED WRs already charted ahead of him, so a team
-                    # that lost a starter (a rank-1 slot no longer proven) never
-                    # triggers the dock - the 2023 Puka Nacua exclusion.
-                    _rbwd = 'v2_rookie_backup_wr_dampen' in feats
-                    _rbwd_narrow = 'v2_rookie_backup_wr_dampen_narrow' in feats
+                    # player - but only when >= 3 ESTABLISHED WRs are already
+                    # charted ahead of him, so a team that lost a starter (a
+                    # rank-1 slot no longer proven) never triggers the dock -
+                    # the 2023 Puka Nacua exclusion.
                     rookie_charted_backup = (
-                        (pos == 'WR') and (_rbwd or _rbwd_narrow)
+                        (pos == 'WR') and ('v2_rookie_backup_wr_dampen_narrow' in feats)
                     ) and (fell_back_to_default & np.isfinite(ourlads_role_rank)
                            & (ourlads_role_rank == 2))
                     if np.ndim(rookie_charted_backup) == 0:
                         rookie_charted_backup = np.zeros(len(cur), dtype=bool)
-                    if _rbwd_narrow and not _rbwd and rookie_charted_backup.any():
+                    if rookie_charted_backup.any():
                         _estab_ahead = count_established_receivers_ahead(
                             team_keys_rv.to_numpy(dtype=object), ourlads_role_rank,
                             None, min_prior_share=ROOKIE_BACKUP_WR_NARROW_ESTAB_SHARE,
@@ -12223,21 +11981,11 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                             if _v > 0.0:
                                 _mixed[_t] = _v
                         _vacated_share_by_team = _mixed
-                    _rookie_bkp = ('v2_rookie_backup_wr_dampen' in feats
-                                   and 'v2_vacancy_chart_split' not in feats)
                     player_share, _vacancy_applied = apply_cold_start_receiver_vacancy(
                         player_share, team_keys_rv.to_numpy(dtype=object), _vacated_share_by_team,
-                        chart_rank=(_chart_rank if ('v2_vacancy_chart_split' in feats
-                                                   or _rookie_bkp) else None),
                         max_bump=(RECEIVER_COLD_START_VACANCY_MAX_BUMP
                                   if 'v2_vacancy_bump_cap' in feats else None),
-                        growth_cap=(RECEIVER_COLD_START_VACANCY_GROWTH_CAP
-                                    if 'v2_vacancy_growth_cap' in feats else None),
-                        has_prior=np.isfinite(player_prior_share),
-                        chart_split=('v2_vacancy_chart_split' in feats),
-                        zero_no_role_backup=('v2_rookie_backup_wr_dampen' in feats and pos == 'WR'),
-                        no_role_backup_weight=(
-                            1.0 - float(np.clip(ROOKIE_BACKUP_WR_DAMPEN_STRENGTH, 0.0, 1.0))))
+                        has_prior=np.isfinite(player_prior_share))
                     if _vacancy_applied.any():
                         preseason_role_source = np.where(
                             _vacancy_applied,
@@ -12268,26 +12016,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 _evidence_weight = np.clip(
                     _evidence_games / RECEIVER_DEPTH_RANK_CUTOFF_EVIDENCE_GAMES, 0.0, 1.0)
                 player_share = capped_share + _evidence_weight * (player_share - capped_share)
-                # Room-level ceiling: the sum of this team's WR (or TE) shares
-                # cannot exceed what the team actually ran at the position last
-                # year (+ tolerance). Nothing upstream bounds the room sum, so
-                # the restoration / Ourlads-floor / vacancy stack can push it
-                # well past 2.0; the cut water-fills out of the chart's deep
-                # reserves first. Cold start only - in season the observed
-                # shares already carry their own conservation.
-                if cold_start and 'v2_cold_start_room_budget' in feats:
-                    _room_budget = prior_room_snap_budget(
-                        player_prior, prior_name_col, prior_team_col, pos) if not player_prior.empty else {}
-                    _room_vals = [v for v in _room_budget.values() if np.isfinite(v) and v > 0]
-                    _room_fallback = float(np.median(_room_vals)) if _room_vals else np.nan
-                    player_share, _room_docked = apply_cold_start_room_snap_budget(
-                        player_share, team_keys_rv.to_numpy(dtype=object),
-                        depth_rank_within_team, _chart_rank, _room_budget, pos, _room_fallback)
-                    if _room_docked.any():
-                        preseason_role_source = np.where(
-                            _room_docked,
-                            'cold-start room snap-share budget (team ran less ' + pos + ' personnel)',
-                            preseason_role_source)
             if cold_start:
                 pos_rows_for_share = (player_prior[player_prior['position'].astype(str).str.upper() == pos]
                                       if not player_prior.empty else player_prior)

@@ -1457,23 +1457,6 @@ MODEL_FEATURES = (
                              # START-WR -0.275*, at a NON-significant START-TE
                              # +0.117 (2-6). It replaced v2_wr_te_capacity_split,
                              # which it strictly beat - see that name below.
-    'v2_wr_te_capacity_split',  # cold start / weeks 1-2 only: the pass-
-                             # capacity allocator fits the WR and TE sub-rooms
-                             # against separate budgets that split the signed
-                             # off-budget delta by TE_MARGINAL_TARGET_WEIGHT
-                             # (~0.20), instead of one uniform WR/TE factor -
-                             # so a departed/added wideout barely moves the
-                             # tight end (LAC Gadsden, GB Kraft, TB Otton, IND
-                             # Warren). Shipped ON 2026-09-07 by request, then
-                             # PULLED from DEFAULT_FEATURES 2026-09-07 once
-                             # backtested: the full TE_MARGINAL_TARGET_WEIGHT
-                             # sweep (.sweeps/wr_te_capacity_split_2022-2025.txt)
-                             # is a wash on ALL at every weight with a
-                             # significant WR / START-WR cost, and stacking it
-                             # ON TOP of v2_receiver_cold_start_vacancy (the
-                             # "combo" arm) was strictly worse than vacancy
-                             # alone - lost ALL significance and made START-TE
-                             # significantly worse. Kept as an opt-in flag.
     'v2_pass_capacity_matchup_flex',  # SHIPPED in DEFAULT_FEATURES 2026-09-09
                              # (see that set for the backtest). The pass-
                              # capacity allocator runs LAST on targets, after
@@ -1920,30 +1903,6 @@ MODEL_FEATURES = (
                              # 0.3); START-WR -0.052, START-RB -0.028. No
                              # fitted parameters. See
                              # docs/weekly_projections_methodology.md, 2026-09-29.
-    'v2_vacancy_before_capacity',  # run vacancy redistribution BEFORE pass-
-                             # capacity conservation instead of after (see
-                             # the ordering comment above _run_pass_capacity/
-                             # _run_vacancy in build_weekly_projections).
-                             # Built 2026-09-24 on a real reported case (Rico
-                             # Dowdle OUT, PIT, Jaylen Warren double-counted:
-                             # +2 targets from capacity conservation reading
-                             # the RB room as under-budget once Dowdle's own
-                             # row zeroed, ANOTHER +2.2 from vacancy
-                             # separately reassigning Dowdle's own vacated
-                             # targets). BACKTESTED 2026-09-25, NOT SHIPPED:
-                             # INCONCLUSIVE, bias growth +0.359 trips the 0.3
-                             # cap (START-ALL bias -0.337 -> -0.696) despite
-                             # real WR/START-WR RMSE gains (CI excludes 0
-                             # both). Capacity conservation's SYMMETRIC
-                             # budget top-up (pass_capacity_allocator.py) is
-                             # apparently doing real work correcting this
-                             # model's general under-projection tendency
-                             # whenever it runs LAST - running it after an
-                             # already-vacancy-adjusted board loses that. The
-                             # double-count this flag fixes is real and
-                             # confirmed, but this specific fix trades it for
-                             # a worse one. See the dated methodology-doc
-                             # entry.
     'v2_pass_capacity_injury_neutral_claim',  # the narrower fix attempted
                              # after v2_vacancy_before_capacity's bias
                              # regression above: instead of reordering the
@@ -13563,7 +13522,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     #   departing player's share of an already-realistic team total, not on
     #   top of one that still needs fitting to reality.
     #
-    #   vacancy-then-capacity ('v2_vacancy_before_capacity'): capacity
+    #   vacancy-then-capacity (the retired flag 'v2_vacancy_before_capacity', docs/retired_flags.md): capacity
     #   conservation's OWN "current team claim" input is computed AFTER an
     #   OUT player's individual injury discount has already zeroed his row -
     #   which reads as the WHOLE GROUP under-claiming its budget and scales
@@ -13582,35 +13541,19 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
     #   left the team total genuinely unrealistic, which is exactly the
     #   failure the shipped order was built to prevent (see above).
     #
-    # Neither order is a free lunch, which is why this is a backtestable
-    # flag (not a swap of the default) - see scripts/backtest_component.py.
+    # Neither order is a free lunch: v2_vacancy_before_capacity was tested as a flag (2026-09-25) and lost - bias growth +0.359
+    # tripped the 0.3 cap.
     # The double-count itself is fixed WITHOUT reordering, by
     # 'v2_pass_capacity_injury_neutral_claim' (shipped 2026-09-25): capacity
     # conservation sizes a room as if its sidelined player were still in it,
     # so vacancy is the only pass that hands his volume out.
-    # Both orders share the exact same two calls; only the ORDER (and which
-    # snapshot sits in the middle, for the popup's per-mechanism delta
-    # attribution just below) differs.
-    _vacancy_before_capacity = 'v2_vacancy_before_capacity' in feats
 
     def _run_pass_capacity():
         nonlocal result
         ledger, adjusted, room = [], False, []
         if 'v2_pass_capacity' in feats:
-            # WR/TE split (data.pass_capacity_allocator.TE_MARGINAL_TARGET_
-            # WEIGHT) only for a cold start / weeks 1-2: that is when a
-            # team's WR/TE claim is off its pass-attempt budget almost
-            # entirely because of an offseason WR-room change the model
-            # hasn't fully re-primed, and the tight end should not take a
-            # WR-driven swing at full proportion (LAC Gadsden / GB Kraft /
-            # TB Otton scaled up after a WR left; IND Warren docked after
-            # Keenan Allen arrived). In-season, real target data has
-            # re-separated the rooms and the uniform fit is fine.
-            _wr_te_split = ('v2_wr_te_capacity_split' in feats
-                            and (cold_start or int(as_of_week) <= 2))
             result, ledger_df = apply_pass_capacity_conservation(
                 result, prior_history=prior_stats, team_col=prior_team_col,
-                wr_te_split=_wr_te_split,
                 matchup_flex=('v2_pass_capacity_matchup_flex' in feats),
                 injury_neutral_claim=('v2_pass_capacity_injury_neutral_claim' in feats),
                 keep_tds=('v2_pass_capacity_keep_tds' in feats),
@@ -13728,20 +13671,11 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                 stat: float(_cb_row[stat]) for stat in ('rushing_attempts', 'rushing_yards', 'rushing_tds')
                 if stat in result.columns and pd.notna(_cb_row[stat])}
 
-    if _vacancy_before_capacity:
-        vacancy_adjusted, vacancy_ledger = _run_vacancy()
-        mid_snapshot = _snapshot()
-        pass_capacity_ledger, pass_capacity_adjusted, pass_capacity_room = _run_pass_capacity()
-    else:
-        pass_capacity_ledger, pass_capacity_adjusted, pass_capacity_room = _run_pass_capacity()
-        mid_snapshot = _snapshot()
-        vacancy_adjusted, vacancy_ledger = _run_vacancy()
-    # Whichever mechanism produced `mid_snapshot` is the one the popup's
-    # delta-attribution block below (post_capacity_snapshot lookup) should
-    # credit for the FIRST half of any change - see that block for the
-    # actual pre/post split, which reads _vacancy_before_capacity to know
-    # which delta ('pass_capacity_delta' or 'vacancy_delta') the snapshot
-    # boundary belongs to.
+    pass_capacity_ledger, pass_capacity_adjusted, pass_capacity_room = _run_pass_capacity()
+    mid_snapshot = _snapshot()
+    vacancy_adjusted, vacancy_ledger = _run_vacancy()
+    # `mid_snapshot` (between the two passes) is the boundary the popup's delta-attribution block below
+    # (post_capacity_snapshot lookup) closes pass_capacity_delta at.
     post_capacity_snapshot = mid_snapshot
     # Run once, on the truly FINAL board, regardless of which pass ran
     # last - it's an idempotent, no-op-when-already-consistent safety net
@@ -14041,19 +13975,14 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # Split at the mid-pass snapshot above so each mechanism's own
             # effect is reported separately instead of one number blaming
             # "vacancy" for both. Which delta the snapshot boundary belongs
-            # to depends on which mechanism ran FIRST (_vacancy_before_
-            # capacity) - see that flag's own comment above. Falls back to
+            # closes is pass_capacity_delta (capacity runs first). Falls back to
             # the old combined behavior (all of it attributed to
             # vacancy_delta) for a stat the snapshot didn't cover (passing
             # stats - conservation only touches RB/WR/TE receiving volume).
             if stat in row_capacity_snapshot:
                 mid_value = row_capacity_snapshot[stat]
-                if _vacancy_before_capacity:
-                    values['vacancy_delta'] = round(mid_value - pre_vacancy, 3)
-                    values['pass_capacity_delta'] = round(final_value - mid_value, 3)
-                else:
-                    values['pass_capacity_delta'] = round(mid_value - pre_vacancy, 3)
-                    values['vacancy_delta'] = round(final_value - mid_value, 3)
+                values['pass_capacity_delta'] = round(mid_value - pre_vacancy, 3)
+                values['vacancy_delta'] = round(final_value - mid_value, 3)
             elif stat in row_carry_budget_snapshot:
                 # v2_rb_carry_budget ran before vacancy on the rushing stats.
                 mid_value = row_carry_budget_snapshot[stat]

@@ -25,13 +25,11 @@ def _ff(rows):
                                        'receptions', 'receptions_exp'])
 
 
-def test_flag_is_a_post_calibration_step_retired_with_points_from_stat_line():
-    # a calibration dump must not record already-adjusted totals, so it is also a post-calibration feature; retired
-    # 2026-11-02 (v2_points_from_stat_line replaces the weeks 3-17 total)
-    assert 'v2_expected_points_luck' in wp.MODEL_FEATURES
-    assert 'v2_expected_points_luck' not in wp.DEFAULT_FEATURES
-    assert 'v2_expected_points_luck' in wp.POST_CALIBRATION_FEATURES
-    assert 'v2_expected_points_luck' not in wp.CALIBRATION_INPUT_FEATURES
+def test_the_step_is_retired_but_kept():
+    # retired 2026-11-02 (v2_points_from_stat_line replaces the weeks 3-17 total), removed from the model 2026-11-03; the step lives in
+    # data/retired_points_steps.py and wp re-exports it for the calibration scripts
+    assert 'v2_expected_points_luck' not in wp.MODEL_FEATURES
+    assert wp.apply_expected_points_luck.__module__ == 'data.retired_points_steps'
 
 
 def test_luck_uses_only_games_before_the_target_week():

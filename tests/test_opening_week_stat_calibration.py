@@ -51,16 +51,15 @@ def test_flag_is_registered_and_shipped():
 def test_post_calibration_steps_are_not_inputs_of_the_calibration_lines():
     # a calibration dump (CALIBRATION_INPUT_FEATURES) must record the totals BEFORE these acted
     from data.weekly_projections import CALIBRATION_INPUT_FEATURES, POST_CALIBRATION_FEATURES
-    assert POST_CALIBRATION_FEATURES == {'v2_season_anchor', 'v2_opening_week_stat_calibration',
-                                         'v2_questionable_workload', 'v2_expected_points_luck',
-                                         'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
+    assert POST_CALIBRATION_FEATURES == {'v2_opening_week_stat_calibration',
+                                         'v2_questionable_workload',
                                          'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
                                          'v2_stat_recal_game_script', 'v2_stat_recal_gate_ramp', 'v2_points_from_stat_line',
                                          'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut'}
-    # the anchor and luck flags were retired 2026-11-02 (v2_points_from_stat_line) but stay classified post-calibration
+    # the anchor and luck flags were retired 2026-11-02 (v2_points_from_stat_line) and left this set 2026-11-03
     retired = {'v2_season_anchor', 'v2_anchor_s_refit', 'v2_expected_points_luck', 'v2_luck_te_refit', 'v2_luck_qb'}
-    assert POST_CALIBRATION_FEATURES - retired <= DEFAULT_FEATURES
-    assert not (retired & DEFAULT_FEATURES)
+    assert POST_CALIBRATION_FEATURES <= DEFAULT_FEATURES
+    assert not (retired & (DEFAULT_FEATURES | set(MODEL_FEATURES) | POST_CALIBRATION_FEATURES))
     assert not (CALIBRATION_INPUT_FEATURES & POST_CALIBRATION_FEATURES)
     assert 'calibration' not in CALIBRATION_INPUT_FEATURES
     assert CALIBRATION_INPUT_FEATURES == DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES

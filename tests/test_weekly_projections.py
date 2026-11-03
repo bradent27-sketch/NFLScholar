@@ -3668,61 +3668,6 @@ def test_apply_season_anchor_pulls_eligible_rows_toward_their_own_average_and_le
     assert wp.apply_season_anchor(result, pd.DataFrame(), 'name')[1] == {}
 
 
-def test_v2_season_anchor_moves_the_built_board_toward_the_players_to_date_average():
-    rows = []
-    for week in range(1, 5):
-        for team, opp in (('KC', 'DEN'), ('DEN', 'KC')):
-            for label, snap, tgt in (('Alpha', 92.0, 9.0), ('Bravo', 85.0, 6.0)):
-                rows.append({'name': f'{team} {label}', 'team': team, 'opponent_team': opp, 'week': week,
-                             'position': 'WR', 'weekly_snap_pct': snap, 'targets': tgt, 'receptions': tgt * 0.65,
-                             'receiving_yards': tgt * 8.0, 'receiving_tds': tgt * 0.05, 'fantasy_points': 30.0})
-            rows.append({'name': f'{team} QB', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'QB',
-                         'weekly_snap_pct': 100.0, 'passing_attempts': 34.0, 'passing_completions': 22.0,
-                         'passing_yards': 250.0, 'passing_tds': 1.6, 'passing_interceptions': 0.6, 'fantasy_points': 30.0})
-    current = weekly(rows)
-    prior = current.copy()
-    prior['week'] = 18
-    schedule = pd.DataFrame([{'week': 5, 'home_team': 'KC', 'away_team': 'DEN'}])
-    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
-                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
-    boards, metas = {}, {}
-    try:
-        wp.load_and_merge_data = lambda year, scoring: (
-            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
-        wp.load_schedule = lambda year: schedule.copy()
-        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
-        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
-        wp._target_margins_by_team = lambda year, week: {}
-        wp.realized_script_by_team_week = lambda year: {}
-        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
-            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
-        # pfs replaces the weeks 3-17 total (and retired the anchor, 2026-11-02), so the anchor is tested without it
-        _base = wp.DEFAULT_FEATURES - {'v2_points_from_stat_line'}
-        for arm, feats in (('off', _base - {'v2_season_anchor'}), ('on', _base | {'v2_season_anchor'})):
-            wp.build_weekly_projections.clear()
-            boards[arm], metas[arm] = wp.build_weekly_projections(
-                2026, 5, 'Full PPR', as_of_week=5, apply_injury=False, features=feats)
-            boards[arm] = boards[arm].set_index('Player')
-    finally:
-        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
-         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
-        wp.build_weekly_projections.clear()
-    off, on = boards['off'].loc['KC Alpha', 'Model Proj Pts'], boards['on'].loc['KC Alpha', 'Model Proj Pts']
-    assert off < 30.0                                                   # his projection is below his 30.0 average...
-    s = (wp.season_anchor_factors(wp.DEFAULT_FEATURES) or wp.SEASON_ANCHOR_S)['WR']    # the shipped s (v2_anchor_s_refit)
-    assert on == pytest.approx(30.0 + s * (off - 30.0), abs=0.02) and on > off   # ...so it is pulled up
-    assert boards['on'].loc['KC QB', 'Model Proj Pts'] == boards['off'].loc['KC QB', 'Model Proj Pts']   # QB untouched
-    assert boards['on'].loc['KC Alpha', 'Raw Model Proj Pts'] == boards['off'].loc['KC Alpha', 'Raw Model Proj Pts']
-    anchor = metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['season_anchor']
-    assert anchor['games'] == 4 and anchor['mean'] == pytest.approx(30.0) and anchor['after'] == pytest.approx(on)
-    assert metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['calibrated_points'] == pytest.approx(on)
-    # the calibration caption reports the line's own result, so raw -> line -> anchor chains in the dialog
-    line = metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['calibration']
-    assert line['displayed_points'] == pytest.approx(anchor['before']) and line['delta'] == pytest.approx(anchor['before'] - line['raw_points'])
-    assert metas['off']['explanations'][('KC Alpha', 'WR', 'KC')]['calibration']['displayed_points'] == pytest.approx(off)
-    assert 'season_anchor' not in metas['off']['explanations'][('KC Alpha', 'WR', 'KC')]
-
-
 def test_qb_passing_td_k_override_slows_the_current_season_blend_and_is_off_by_default():
     games, conf = np.array([2.0, 4.0]), np.array([0.5, 0.5])
     shared = wp._current_blend_weight(games, 'passing_tds', conf)

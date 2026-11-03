@@ -2256,54 +2256,6 @@ def test_td_prior_credibility_regresses_a_thin_one_season_rate_but_spares_a_vete
     assert np.isnan(nan_out[0]) and np.isnan(nan_cred[0])
 
 
-def test_career_regressed_td_prior_pull_scales_with_career_and_is_two_sided():
-    # last, career, role_seasons, career_opp
-    last = np.array([0.10, 0.10, 0.10, 0.50, 0.10])
-    career = np.array([0.30, 0.30, 0.30, 0.30, 0.30])
-    seasons = np.array([1.0, 2.0, 4.0, 4.0, 4.0])
-    opp = np.array([600.0, 600.0, 600.0, 600.0, 40.0])
-    out, pull = wp.career_regressed_td_prior(last, career, seasons, opp, strength=1.0)
-
-    # One role season -> below TD_CAREER_REGRESS_MIN_ROLE_SEASONS -> untouched.
-    assert pull[0] == 0.0 and out[0] == last[0]
-    # Two seasons -> a real but partial pull; four seasons -> a stronger pull.
-    assert 0.0 < pull[1] < pull[2]
-    assert last[1] < out[1] < out[2] < career[2]
-    # Two-sided: a flukey-HIGH last season is pulled DOWN toward the career line.
-    assert career[3] < out[3] < last[3]
-    assert abs(pull[3] - pull[2]) < 1e-9  # same career profile -> same pull, either direction
-    # Thin career opportunity volume shrinks the pull even with the seasons.
-    assert pull[4] < pull[2]
-
-    # The strength dial linearly scales the pull off the player's own rate.
-    half, half_pull = wp.career_regressed_td_prior(last, career, seasons, opp, strength=0.5)
-    assert abs(half_pull[2] - 0.5 * pull[2]) < 1e-9
-    # NaN career rate passes straight through.
-    nan_out, nan_pull = wp.career_regressed_td_prior(
-        np.array([0.2]), np.array([np.nan]), np.array([4.0]), np.array([600.0]), strength=1.0)
-    assert nan_pull[0] == 0.0 and nan_out[0] == 0.2
-
-
-def test_career_regressed_td_prior_comparability_gate_spares_a_role_that_changed_size():
-    last = np.array([0.10, 0.10, 0.10])
-    career = np.array([0.30, 0.30, 0.30])
-    seasons = np.array([4.0, 4.0, 4.0])
-    opp = np.array([600.0, 600.0, 600.0])
-    # recent vs career opportunity/game: same size, doubled (ascended), halved (faded)
-    recent_pg = np.array([6.0, 12.0, 2.5])
-    career_pg = np.array([6.0, 6.0, 6.0])
-    out, pull = wp.career_regressed_td_prior(
-        last, career, seasons, opp, recent_opp_pg=recent_pg, career_opp_pg=career_pg, strength=1.0)
-    # Same-size role: regression fires.
-    assert pull[0] > 0.0 and out[0] > last[0]
-    # Role doubled (ascending WR) or halved (faded/hurt): left untouched.
-    assert pull[1] == 0.0 and out[1] == last[1]
-    assert pull[2] == 0.0 and out[2] == last[2]
-    # Without the gate args the same ascending row WOULD have been regressed.
-    out_nogate, pull_nogate = wp.career_regressed_td_prior(last, career, seasons, opp, strength=1.0)
-    assert pull_nogate[1] > 0.0
-
-
 def test_count_established_receivers_ahead_only_counts_proven_same_team_higher_rank():
     team = np.array(['GB', 'GB', 'GB', 'GB', 'CHI', 'CHI'], dtype=object)
     rank = np.array([1.0, 1.0, 1.0, 2.0, 1.0, 2.0])

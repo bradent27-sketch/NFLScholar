@@ -42,6 +42,49 @@ def test_flags_are_shipped_after_the_calibration_lines():
         assert flag in wp.DEFAULT_FEATURES and flag in wp.POST_CALIBRATION_FEATURES
 
 
+def test_gate_ramp_ships_after_the_calibration_lines():
+    assert 'v2_stat_recal_gate_ramp' in wp.MODEL_FEATURES
+    assert 'v2_stat_recal_gate_ramp' in wp.DEFAULT_FEATURES and 'v2_stat_recal_gate_ramp' in wp.POST_CALIBRATION_FEATURES
+    assert 0.0 < wp.STAT_RECAL_RAMP_START < wp.STAT_RECAL_MIN_POINTS
+
+
+def _ramp_fixture():
+    # one wideout three times, the gate points the only difference: at the floor, halfway up a 2.0 ramp, and at its start
+    rows = [['At Floor', 'WR', 'AAA', 10.0, 6.0, 0.0, 1.0, 3.0], ['Halfway', 'WR', 'AAA', 10.0, 6.0, 0.0, 1.0, 2.5],
+            ['At Start', 'WR', 'AAA', 10.0, 6.0, 0.0, 1.0, 2.0], ['Below', 'WR', 'AAA', 10.0, 6.0, 0.0, 1.0, 1.0]]
+    hist = _history([(r[0], 'WR', 4, 17, {'targets': (6.0, 7.0, 9.0)}) for r in rows])
+    blend = (4 * 6.0 + 6 * 9.0) / 10
+    full = 0.5 + 0.4 * 10 + 0.1 * 6 + 0.1 * 7 + 0.1 * 9 + 0.2 * blend
+    return _board(rows), hist, full
+
+
+def test_gate_ramp_moves_a_row_under_the_floor_part_of_the_way():
+    board, hist, full = _ramp_fixture()
+    out, info = wp.apply_stat_recal_own_history(board, hist, 'linear', LINEAR, ramp_start=2.0)
+    assert out.at[0, 'targets'] == pytest.approx(full)                          # at the floor: the whole recal
+    assert out.at[1, 'targets'] == pytest.approx(10.0 + 0.5 * (full - 10.0))    # halfway up the ramp: half the move
+    assert out.at[1, '_pre_recal_targets'] == 10.0
+    assert out.at[2, 'targets'] == 10.0 and np.isnan(out.at[2, '_pre_recal_targets'])    # the start of the ramp: no move
+    assert out.at[3, 'targets'] == 10.0                                           # under it: none
+    assert ('Halfway', 'WR', 'AAA') in info and ('At Start', 'WR', 'AAA') not in info
+    assert (out['Model Proj Pts'] == board['Model Proj Pts']).all()
+
+
+def test_without_the_ramp_the_floor_is_a_cliff():
+    board, hist, full = _ramp_fixture()
+    out, _ = wp.apply_stat_recal_own_history(board, hist, 'linear', LINEAR)
+    assert out.at[0, 'targets'] == pytest.approx(full)
+    assert (out.loc[1:, 'targets'] == 10.0).all()
+
+
+def test_the_ramp_is_a_weeks_3_to_17_thing():
+    table = {'WR': {'targets': (0.2, 0.3, 0.6)}}
+    board = _board([['Halfway', 'WR', 'AAA', 8.0, 5.0, 0.0, 1.0, 2.5]])
+    hist = _history([('Halfway', 'WR', 0, 16, {'targets': (np.nan, np.nan, 6.0)})])
+    out, _ = wp.apply_stat_recal_own_history(board, hist, 'week1', table, ramp_start=2.0)
+    assert out.at[0, 'targets'] == 8.0                                            # the week 1 form keeps its hard floor
+
+
 def test_table_by_week_and_flag():
     core, edges = {'v2_stat_recal_own_history'}, {'v2_stat_recal_own_history_edges'}
     both = core | edges

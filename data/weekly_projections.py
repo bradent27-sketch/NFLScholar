@@ -1986,6 +1986,9 @@ MODEL_FEATURES = (
                              # needs the player on that week's roster. Before it a traded player
                              # sat on his end-of-season club all year (553 projected player-weeks
                              # 2022-2025), and a player who first plays in week 9 had a week-3 row.
+    'v2_stat_recal_gate_ramp',  # SHIPPED 2026-11-03 (backlog M19; DEFAULT_FEATURES = 85). Weeks 3-17: a row with gate points from
+                             # STAT_RECAL_RAMP_START (2.0) up to the 3.0 floor takes a growing share of the stat recal instead of none,
+                             # removing the cliff at 3.0 (rows just under it jumped +0.76 points when they crossed).
     'v2_stat_recal_game_script',  # SHIPPED 2026-11-01 (backlog M15; user: "we are above the market for QB
                              # props on teams that are larger favorites"). Weeks 3-17, with
                              # v2_stat_recal_own_history: the QB entries read the game's
@@ -2735,6 +2738,11 @@ DEFAULT_FEATURES = frozenset({
     # remove the flag(s).
     'v2_rb_capacity_relief',
     'v2_te_capacity_relief',
+    # SHIPPED 2026-11-03 (user: "recalibration to smooth the ramp"): DEFAULT_FEATURES = 85. v2_stat_recal_gate_ramp (backlog M19): weeks 3-17,
+    # a row with gate points from 2.0 up to the recal's 3.0 floor takes (points - 2.0) / 1.0 of the recal's move. Deep-audit panel screen,
+    # rows in the band: played rows RMSE -0.86% (6 of 6 seasons), every-game rows +0.07% with the bias +0.30 -> -0.05; START pools are
+    # not touched (their rows sit far above the floor). Acts after every points step (POST_CALIBRATION_FEATURES). Undo: remove the flag.
+    'v2_stat_recal_gate_ramp',
 })
 
 
@@ -2770,7 +2778,7 @@ POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat
                                        'v2_questionable_workload', 'v2_expected_points_luck',
                                        'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
                                        'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
-                                       'v2_stat_recal_game_script', 'v2_points_from_stat_line',
+                                       'v2_stat_recal_game_script', 'v2_stat_recal_gate_ramp', 'v2_points_from_stat_line',
                                        'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
@@ -3489,6 +3497,15 @@ STAT_RECAL_OWN_HISTORY_EDGES = {
 STAT_RECAL_MIN_GAMES = 3
 STAT_RECAL_MIN_PRIOR_GAMES = 4
 STAT_RECAL_MIN_POINTS = 3.0
+# v2_stat_recal_gate_ramp (SHIPPED 2026-11-03, backlog M19; user: "recalibration to smooth the ramp"). The floor above is a cliff: a
+# row at 3.0 points takes the whole recal, one at 2.9 none, and the recal moves a bench row's stats a lot (2.5-3.0 band: board
+# points 2.40 -> 3.15 with the recal). From STAT_RECAL_RAMP_START up to the floor a row now takes the share
+# w = (points - start) / (floor - start) of the recal's move: stat = board + w x (recal - board). Weeks 3-17 only (the weeks 1-2 forms
+# keep their hard floor). Screen on the deep-audit panel, weeks 3-17 2021-2026, rows in the band, points = the stat line scored:
+# on rows that played RMSE -0.86% (6 of 6 seasons better; stat MSE -3.1% averaged over the 11 stats), on every-game rows (no box
+# score = 0) RMSE +0.07% with the bias +0.30 -> -0.05; 1.5 and 1.0 gain slightly more on played rows but push the every-game bias
+# negative, 2.5 fails 3 of 6 played seasons. START pools are untouched by construction (their rows sit far above the floor).
+STAT_RECAL_RAMP_START = 2.0
 
 # --- v2_stat_recal_game_script (SHIPPED 2026-11-01, backlog M15) ------------------------------------------------------------
 # User 2026-11-01: "we are above the market for QB props on teams that are larger favorites ... less close games where they are
@@ -3586,14 +3603,16 @@ def rb_game_script_multipliers(teams, script, table):
     return {stat: 1.0 + float(b) * z for stat, b in table.items()}
 
 
-def apply_stat_recal_own_history(result, history, form, table, script=None):
+def apply_stat_recal_own_history(result, history, form, table, script=None, ramp_start=None):
     """(result, info): re-predict each listed stat from the board's stat and the player's own history (module comment above).
     ``history`` is data.prop_probability.player_history (index (_key, pos): h_s2d_/h_l3_/h_ps_<stat>, h_games, h_ps_games);
     ``form`` and ``table`` from stat_recal_table. Skips rows under STAT_RECAL_MIN_POINTS, sidelined rows, non-starting QBs, rows
     without a baseline (or, from week 2, without a game this season) and a (name, position) that appears twice on the board
     (one history row cannot tell them apart). Points are untouched. ``info`` maps (Player, Pos, Team) -> {'stats': {stat:
     (before, after)}, 'games': games this season, 'form': form}. ``script`` ({team: (m, t)}, stat_recal_script_inputs) feeds
-    a ten-term linear entry (v2_stat_recal_game_script); a team missing from it reads 0, 0."""
+    a ten-term linear entry (v2_stat_recal_game_script); a team missing from it reads 0, 0. ``ramp_start``
+    (v2_stat_recal_gate_ramp, weeks 3-17 only): a row with gate points from ``ramp_start`` up to STAT_RECAL_MIN_POINTS takes the
+    share (points - ramp_start) / (STAT_RECAL_MIN_POINTS - ramp_start) of the recal's move."""
     if result is None or result.empty or not table or history is None or len(history) == 0:
         return result, {}
     out = result.copy()
@@ -3609,8 +3628,14 @@ def apply_stat_recal_own_history(result, history, form, table, script=None):
         if c in out.columns:
             avail = avail * pd.to_numeric(out[c], errors='coerce').fillna(1.0).to_numpy()
     ok = (avail > SIDELINED_AVAILABILITY) & ~pd.Series(list(zip(keys, out['Pos']))).duplicated(keep=False).to_numpy()
+    weight = np.ones(len(out))
     if 'Model Proj Pts' in out.columns:
-        ok &= pd.to_numeric(out['Model Proj Pts'], errors='coerce').fillna(0).to_numpy() >= STAT_RECAL_MIN_POINTS
+        gate_points = pd.to_numeric(out['Model Proj Pts'], errors='coerce').fillna(0).to_numpy()
+        if ramp_start is not None and form == 'linear' and ramp_start < STAT_RECAL_MIN_POINTS:
+            weight = np.clip((gate_points - ramp_start) / (STAT_RECAL_MIN_POINTS - ramp_start), 0.0, 1.0)
+            ok &= weight > 0.0
+        else:
+            ok &= gate_points >= STAT_RECAL_MIN_POINTS
     if 'QB Projected Starter' in out.columns:
         starter = out['QB Projected Starter'].astype(str).str.lower().isin(('true', '1', '1.0')).to_numpy()
         ok &= out['Pos'].ne('QB').to_numpy() | starter
@@ -3648,6 +3673,7 @@ def apply_stat_recal_own_history(result, history, form, table, script=None):
                 base = np.where(games >= STAT_RECAL_MIN_GAMES, s2d, ps)
                 new = base + float(coef) * (level - base)
             new = np.maximum(new, 0.0) * avail
+            new = np.where(weight < 1.0, cur + weight * (new - cur), new)       # v2_stat_recal_gate_ramp: part of the move
             sel = pos_rows & np.isfinite(cur) & np.isfinite(new)
             if not sel.any():
                 continue
@@ -13538,7 +13564,8 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                       prior_name_col)
         result, own_history_info = apply_stat_recal_own_history(
             result, _own_history, _recal_form, _recal_table,
-            script=stat_recal_script_inputs(env, opponents) if 'v2_stat_recal_game_script' in feats else None)
+            script=stat_recal_script_inputs(env, opponents) if 'v2_stat_recal_game_script' in feats else None,
+            ramp_start=STAT_RECAL_RAMP_START if 'v2_stat_recal_gate_ramp' in feats else None)
 
     # v2_points_from_stat_line (candidate, 2026-11-01 audit): weeks 3-17, the total is the displayed stat line scored, times the
     # Questionable cut where it ran; the points line, season anchor and luck results above are replaced.

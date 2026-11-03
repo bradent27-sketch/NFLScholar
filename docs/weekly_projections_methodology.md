@@ -8187,3 +8187,27 @@ section 2 were removed from `data/weekly_projections.py`, `data/pass_capacity_al
   ten minutes later, and built back to back with the final code it was identical. Compare live scenarios only as back-to-back pairs.
 - **Not done:** the 5 flags retired by `v2_points_from_stat_line` (season anchor, its refit, expected-points luck, its TE refit, QB luck),
   the 5 ablation arms and the 7 legacy names still have branches; they need their own pass and the user's say-so.
+
+### 2026-11-03 - SHIPPED: `v2_stat_recal_gate_ramp` (DEFAULT_FEATURES = 85; backlog M19)
+
+User: "recalibration to smooth the ramp". The own-history stat recal gave a row with gate points >= 3.0 (`STAT_RECAL_MIN_POINTS`, the chain's
+Model Proj Pts at the recal step) its whole move and a row under 3.0 none, and the move is large for a bench row: on the 2.5-3.0 band the
+board's points were 2.40 and the recal would give 3.15. Now, weeks 3-17, a row with gate points from `STAT_RECAL_RAMP_START` (2.0) up to
+the floor takes the share (points - 2.0) / (3.0 - 2.0) of the move: stat = board + w x (recal - board). Weeks 1-2 keep their hard floor.
+
+- **Screen** (offline, `.sweeps/ramp_screen.txt`, `.sweeps/ramp_points.txt`): deep-audit panel, weeks 3-17, 2021-2026, the recal run with its
+  floor at 0 so every otherwise-eligible row has its full value, blended at five start points (2.5 / 2.0 / 1.5 / 1.0 / 0.5), scored on
+  the rows inside each ramp. Points = the stat line scored (what pfs ships). On rows that played: stat MSE -2.3% to -3.6% averaged over
+  the 11 position-stats (every position, every season), points RMSE -0.7% to -1.1%. On every-game rows (no box score = 0): points RMSE
+  +0.06% to +0.26% (noise) with the bias +0.23 -> about 0 (2.0: -0.05; 1.5 and below overshoot to -0.11); at the stat level WR targets /
+  receptions are 2-4% worse there while yards and rushing are better, which nets out in points.
+- **The pick (2.0)** was made after seeing five start points: it is the smallest ramp that improves played rows in 6 of 6 seasons, leaves
+  the every-game points RMSE flat and the every-game bias closest to 0. 2.5 fails (2023, 2025, 2026 played rows get worse); 1.5, 1.0 and 0.5
+  gain a hair more on played rows (-0.95 / -0.97 / -1.12%) but extend into players who mostly do not play. The differences among 1.5-2.0 are
+  inside the noise; this is a continuity fix with a small, consistent accuracy gain, not a new edge.
+- **Not harnessed.** START pools cannot move: their rows sit far above the floor (real boards, 2023 w3, 2024 w12, 2025 w6: 3.6%-6.4% of
+  rows changed, all RB/WR/TE with points 1.3-3.0 before, none of the 186-233 rows at 4+ points; changed rows gain +0.3 to +0.4 points on
+  average, max +1.5). The only scope it can move is EVERY-* (below START), which the points screen above stands in for.
+- **Side effect to know:** a moved bench row now carries `_pre_recal_<stat>` and takes the recal-curve median (`MEDIAN_CURVES_RECAL`) even
+  when it moved only part of the way; the prop engine reads the same column. Both are small for rows this far down.
+- Registered in `POST_CALIBRATION_FEATURES`. Undo: remove the flag.

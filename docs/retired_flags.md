@@ -14,7 +14,7 @@ On 2026-11-03, with the user's go-ahead ("work down the 34 flags... don't totall
 ## How to get one back
 
 - Each family below is one commit. `git revert <sha>` restores every flag in it (conflicts are likely if the surrounding code has moved - the patch shows exactly what was removed).
-- `archive/retired_flags/patches/` holds the same eleven commits as patch files (`git apply` / read them; each includes the removed tests and sweep scripts).
+- `archive/retired_flags/patches/` holds the same eleven commits as patch files (read them, or `git apply --ignore-whitespace --reverse` on the matching commit; each includes the removed tests and sweep scripts).
 - Tag `retire-flags-base` is the last commit with all 34 live: `git show retire-flags-base:data/weekly_projections.py`, or check it out to re-run an old sweep exactly.
 - The harness validates `--variant` names against `MODEL_FEATURES`, so a retired name is rejected until restored. Old launchers in `.sweeps/` reference them and will fail the same way.
 - `data/coaching_changes.py` (cohort labels and the per-team prior-games function) and `blend_defense_prior`'s per-team Series support were kept: they are general machinery.

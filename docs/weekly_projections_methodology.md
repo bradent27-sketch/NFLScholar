@@ -8050,3 +8050,27 @@ Scans, all on the 2021-2025 START pool (error map, pfs world) unless noted; scri
 - **Process note:** the 2026-11-02 UI commit (d1b11d5) broke four test files whose fake `st` predates quiet_note
   (test_opening_week_stat_calibration, test_stat_recal_own_history, test_top_end_yardage, test_questionable_workload); fixed in
   the next commit. The whole suite passes.
+
+### 2026-11-02 - SHIPPED: `v2_questionable_stat_cut` (DEFAULT_FEATURES = 82)
+User: "if the questionable thing helps prop accuracy I think we should include it". It does. Q-tagged WR START rows (278, 2021-2025
+weeks 3-17, played); the per-stat factors for each season are fit on the OTHER four seasons; P(over) from the shipped prop engine
+(data/prop_probability.py) at fixed lines, scored against the result (`q_prop_accuracy.py` in the session scratchpad):
+
+| | uncut stat line | cut stat line |
+|---|---|---|
+| receiving yards, mean P(over) over 7 lines (25.5-85.5) vs actual over rate | 8-10 points too high at every line | 0.5-2 points off |
+| receiving yards, Brier pooled | 0.2146 | 0.2128 (3 of 5 seasons) |
+| receptions, Brier pooled | 0.1954 | 0.1946 (3 of 5) |
+| anytime receiving TD, Brier (Poisson on the mean) | 0.1803 | **0.1694** (4 of 5); mean P 0.31 vs 0.22 actual -> 0.19 |
+
+So the stat line a prop is priced on was biased high for these players, the probabilities were overconfident, and the cut fixes
+the level. Brier on yards and receptions moves little because Brier on a 278-row sample is noise-dominated; the calibration
+error and the TD Brier are the real gain. Points are unchanged in accuracy (pooled held-out RMSE 6.84 vs 6.81 / 6.85, see the
+audit-pass-2 entry). Registered in POST_CALIBRATION_FEATURES (acts after the recal, like pfs).
+- End to end on the 2024 week 8 backtest board with the injury replay: exactly the 8 Questionable WRs move (Hill 13.36 -> 12.90,
+  targets 7.74 -> 7.17, yards 72.6 -> 62.6, TDs 0.61 -> 0.34), every one's points equal his stat line scored. The live 2026 week 9
+  board has no Questionable WR yet (FantasyPros not pulled), so the live check is the backtest.
+- The points panel drops the uniform "Questionable tag" row for these players (it no longer sets the total) and says the cut is in
+  the stat line; the explanation carries `questionable_stat_cut` (stat -> before, after).
+- The uniform 0.83 cut still runs first (it sets the points the stat recal's 3.0-point gate reads, unchanged); only the final
+  scoring of the line differs. Undo: remove the flag.

@@ -2303,7 +2303,9 @@ MODEL_FEATURES = (
                              # tags that change availability. Held out by
                              # season: START-ALL RMSE -0.009; harness
                              # v2: START-ALL -0.011, START-WR -0.027.
-    'v2_questionable_stat_cut',  # CANDIDATE (2026-11-02 audit). With points from the stat line
+    'v2_questionable_stat_cut',  # SHIPPED 2026-11-02 (user: "if the questionable thing helps prop accuracy I think we should
+                             # include it"; it does: anytime-TD Brier -6.0%, 4 of 5 seasons; yards / receptions calibration
+                             # error 8-10 points -> 1-2, Brier -0.8% / -0.4%; DEFAULT_FEATURES = 82). With points from the stat line
                              # a Questionable WR's points carry the 0.83 cut but his
                              # displayed stat line is still the healthy one (yards -7.6,
                              # receptions -0.49, TDs -0.15 over-projected on the 278 Q-tagged
@@ -3255,6 +3257,12 @@ DEFAULT_FEATURES = frozenset({
     # 0.028). Both move stat volumes before the points line (not re-fit: inputs to pfs). Undo: remove the flag(s).
     'v2_wr1_capacity_relief',
     'v2_xtd_missing_prior_overall',
+    # SHIPPED 2026-11-02 (user: "if the questionable thing helps prop accuracy I think we should include it"): DEFAULT_FEATURES = 82.
+    # v2_questionable_stat_cut: a Questionable WR's stat columns are cut per stat (QUESTIONABLE_STAT_FACTORS) and the line is scored,
+    # so his points and his displayed stats agree. Points-neutral (held-out RMSE 6.84 vs 6.81 for the uniform 0.83 cut); the props
+    # gain: on the 278 Questionable-tagged START rows (2021-2025, factors fit on the other seasons) P(over) ran 8-10 points too
+    # high at every yardage line, now 1-2, and the anytime-TD Brier falls 0.1803 -> 0.1694 (4 of 5 seasons). Undo: remove the flag.
+    'v2_questionable_stat_cut',
 })
 
 
@@ -3291,7 +3299,7 @@ POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat
                                        'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
                                        'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
                                        'v2_stat_recal_game_script', 'v2_points_from_stat_line',
-                                       'v2_points_from_stat_line_edges'})
+                                       'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
@@ -15090,6 +15098,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # v2_questionable_workload is the last step on the total, after the anchor
             detail['questionable_workload'] = questionable_info[key]
             line_points = questionable_info[key]['before']
+        if key in questionable_stat_info:
+            # v2_questionable_stat_cut: the same cut, on the stat columns (stat -> (before, after)); the total scores that line
+            detail['questionable_stat_cut'] = questionable_stat_info[key]
         if key in season_anchor_info:
             detail['season_anchor'] = season_anchor_info[key]
             line_points = season_anchor_info[key]['before']

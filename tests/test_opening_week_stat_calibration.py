@@ -56,7 +56,7 @@ def test_post_calibration_steps_are_not_inputs_of_the_calibration_lines():
                                          'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
                                          'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
                                          'v2_stat_recal_game_script', 'v2_points_from_stat_line',
-                                         'v2_points_from_stat_line_edges'}
+                                         'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut'}
     # the anchor and luck flags were retired 2026-11-02 (v2_points_from_stat_line) but stay classified post-calibration
     retired = {'v2_season_anchor', 'v2_anchor_s_refit', 'v2_expected_points_luck', 'v2_luck_te_refit', 'v2_luck_qb'}
     assert POST_CALIBRATION_FEATURES - retired <= DEFAULT_FEATURES

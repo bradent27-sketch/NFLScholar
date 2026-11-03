@@ -2182,6 +2182,7 @@ def _render_points_path(detail):
     anchor = detail.get('season_anchor')
     opening = detail.get('opening_week_calibration')
     questionable = detail.get('questionable_workload')
+    stat_cut = detail.get('questionable_stat_cut')          # the same cut on the stat columns (v2_questionable_stat_cut)
     top_end = detail.get('top_end_yardage')
     luck = detail.get('expected_points_luck')
     from_line = detail.get('points_from_stat_line')
@@ -2215,7 +2216,7 @@ def _render_points_path(detail):
         rows.append({'Stage': 'Season anchor', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
                      'Basis': (f"Pulled ×{float(anchor['factor']):.2f} of the way toward his own average of "
                                f"{float(anchor['mean']):.1f} pts over {int(anchor['games'])} games this season.")})
-    if questionable:
+    if questionable and not stat_cut:
         before, after = float(questionable['before']), float(questionable['after'])
         rows.append({'Stage': 'Questionable tag', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
                      'Basis': (f"Listed Questionable: WRs who then play average "
@@ -2232,7 +2233,8 @@ def _render_points_path(detail):
     if from_line:
         before, after = float(from_line['before']), float(from_line['after'])
         rows.append({'Stage': 'Stat line scored', 'Points': f"{after:.2f}", 'Change': f"{after - before:+.2f}",
-                     'Basis': ("The stat line shown, scored" + (" (× Questionable cut)" if questionable else "")
+                     'Basis': ("The stat line shown, scored" + (" (× Questionable cut)" if questionable and not stat_cut else "")
+                               + (" (Questionable cut already in it)" if stat_cut else "")
                                + "; rows above only feed the recal's 3-pt gate.")})
     if not rows:
         return
@@ -2254,7 +2256,15 @@ def _render_points_path(detail):
                 "average run too large, most of all for WR and RB late in the season, so the total is pulled part of "
                 "the way back toward his own average. It applies to the point total only, not to the individual stat "
                 "lines.")
-        if questionable:
+        if stat_cut:
+            cuts = ', '.join(f"{name.replace('receiving_', 'rec ').replace('_', ' ')} ×{after / before:.2f}"
+                             for name, (before, after) in stat_cut.items() if before)
+            parts.append(
+                "**Questionable tag**: in 2021-2025 a receiver listed Questionable on the final injury report who then "
+                "played produced less than his healthy line, stat by stat. The stat lines above already carry the cut "
+                f"({cuts}) and the total is that line scored. This is not a chance of sitting out: he is still counted as "
+                "playing. Only Out and Doubtful change availability.")
+        elif questionable:
             parts.append(
                 "**Questionable tag**: in 2021-2025 a receiver listed Questionable on the final injury report who then "
                 "played scored about 17% below his projection (yards and touchdowns, not targets), where untagged "

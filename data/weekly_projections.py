@@ -1117,23 +1117,13 @@ INJURY_MULTIPLIER = {'out': 0.0, 'ir': 0.0, 'doubtful': 0.4, 'questionable': 0.8
 # DEFAULT_FEATURES was built, measured, and left off - with the measurement
 # written down next to it in docs/weekly_projections_methodology.md.
 #
-# Some names here have ZERO gating code (never built - e.g. redzone_tds,
-# role_trend, volume_faced; v2_channel_matchups was removed). They and any new
-# model-parameter ideas live in docs/weekly_rankings_backlog.md section 4
-# (the parameter parking lot). Add ideas there, not as scattered TODOs.
+# Names that were never built (redzone_tds, role_trend, volume_faced, v2_channel_matchups) and the legacy ones (volume_efficiency,
+# role_matchup, game_env, teammate_vacancy) were removed in 2026-11-03; docs/retired_flags.md keeps what each was and what happened.
+# New model-parameter ideas live in docs/weekly_rankings_backlog.md section 4 (the parameter parking lot). Add ideas there, not as
+# scattered TODOs.
 # ---------------------------------------------------------------------------
 MODEL_FEATURES = (
     'role_volume',        # baselines scaled by expected SNAP SHARE, not per game played
-    'role_matchup',       # defense ratings conditioned on the player's own ROLE -
-                           # superseded by 'v2_continuous_roles' in DEFAULT_FEATURES
-                           # (both gate the same branch; v2_continuous_roles adds a
-                           # continuous rather than tiered role read on top)
-    'redzone_tds',        # touchdowns from red-zone opportunity, not a raw TD rate
-    'role_trend',         # a step change in snap share, not a decayed average of it
-    'volume_faced',       # opponent pass/rush volume faced, split (pace is one number)
-    'teammate_vacancy',   # an OUT teammate's usage redistributed (live only) -
-                           # superseded by 'v2_vacancy' in DEFAULT_FEATURES (same
-                           # gate; v2_vacancy adds the ledger tracking on top)
     'qb1_override',        # expected-QB1 selection / backup-volume gate
     'v2_output_contract',  # V2's output-column contract
     'v2_as_of_guard',      # strict as-of-week cutoff guard
@@ -8750,9 +8740,9 @@ def _injury_profiles(year, week):
 # entirely, or goes to a body the model isn't projecting), and no single
 # healthy teammate absorbs an unbounded share of it.
 # ---------------------------------------------------------------------------
-VACANCY_ABSORB = 0.75      # share of a sidelined player's volume that is re-used at all
-VACANCY_MAX_GROWTH = 1.40  # no one teammate's own volume may grow by more than this
-VACANCY_OUT_THRESHOLD = 0.5  # injury multiplier at or below which a player counts as out
+# The V1 pass's constants went with it (redistribute_vacated_usage, retired 2026-11-03 with 'teammate_vacancy'; docs/retired_flags.md):
+# VACANCY_ABSORB 0.75 (share of a sidelined player's volume that is re-used at all), VACANCY_MAX_GROWTH 1.40 (no teammate's own volume
+# grows by more than this), VACANCY_OUT_THRESHOLD 0.5 (injury multiplier at or below which a player counts as out).
 
 # (dependent, opportunity) pairs that are physically impossible to invert -
 # a reception requires a target, a receiving/rushing TD requires a
@@ -8788,72 +8778,6 @@ def clamp_dependent_stats(result):
             dep_values.notna() & opp_values.notna() & (dep_values > opp_values),
             opp_values, out[dependent])
     return out
-
-
-def redistribute_vacated_usage(result, injury_mult):
-    """
-    Move a sidelined player's projected TARGETS and CARRIES onto his healthy
-    teammates, proportional to each one's own projected volume, then rescale
-    the stats that ride on that volume.
-
-    Proportional to EXISTING volume, not evenly: the second receiver on a
-    depth chart absorbs more of a missing first receiver than the fifth
-    does, and "who already gets the ball" is the only measured proxy for
-    that this function has. Yards, receptions and touchdowns are scaled by
-    the same factor as the opportunity they come from rather than
-    re-projected - a player getting 20% more targets is the model's claim
-    here, and his per-target efficiency is not asserted to change with it.
-
-    Returns (frame, n_players_adjusted). A team with nobody out, or nobody
-    healthy left to absorb, comes back untouched.
-    """
-    if result.empty or not injury_mult or 'Team' not in result.columns:
-        return result, 0
-    out = result.copy()
-    mult = out['Player'].map(injury_mult).fillna(1.0)
-    sidelined = mult <= VACANCY_OUT_THRESHOLD
-    if not sidelined.any():
-        return out, 0
-
-    groups = {'targets': ('receptions', 'receiving_yards', 'receiving_tds'),
-              'rushing_attempts': ('rushing_yards', 'rushing_tds')}
-    adjusted = set()
-    for volume_col, dependents in groups.items():
-        if volume_col not in out.columns:
-            continue
-        volume = pd.to_numeric(out[volume_col], errors='coerce').fillna(0.0)
-        # A sidelined player's own projection has already been multiplied
-        # down by the injury discount - to zero, for anyone actually ruled
-        # Out - so what he vacates has to come from the PRE-injury volume the
-        # position loop stashed for exactly this. Falls back to his post-
-        # discount volume if that column isn't there (a caller assembling a
-        # frame by hand, e.g. a unit test).
-        full_col = f'_full_{volume_col}'
-        pre_injury = (pd.to_numeric(out[full_col], errors='coerce').fillna(0.0)
-                      if full_col in out.columns else volume)
-        vacated = pd.Series(np.where(sidelined, np.maximum(pre_injury, volume), 0.0),
-                            index=out.index)
-        by_team = vacated.groupby(out['Team'].astype(str)).sum() * VACANCY_ABSORB
-        healthy = (~sidelined) & (volume > 0)
-        if not healthy.any():
-            continue
-        share_base = volume.where(healthy, 0.0)
-        team_base = share_base.groupby(out['Team'].astype(str)).transform('sum')
-        team_vacated = out['Team'].astype(str).map(by_team).fillna(0.0)
-        gain = np.where(team_base > 0, share_base / team_base.replace(0, np.nan) * team_vacated, 0.0)
-        gain = np.nan_to_num(gain)
-        new_volume = np.minimum(volume + gain, volume * VACANCY_MAX_GROWTH)
-        with np.errstate(divide='ignore', invalid='ignore'):
-            factor = np.divide(new_volume, volume, out=np.ones(len(out)), where=volume > 0)
-        factor = np.where(healthy, factor, 1.0)
-        if not (factor > 1.0001).any():
-            continue
-        adjusted.update(out.index[factor > 1.0001])
-        out[volume_col] = np.round(volume * factor, 2)
-        for dep in dependents:
-            if dep in out.columns:
-                out[dep] = np.round(pd.to_numeric(out[dep], errors='coerce').fillna(0.0) * factor, 2)
-    return out, len(adjusted)
 
 
 V2_VACANCY_SURVIVAL = {'passing_attempts': 0.85, 'rushing_attempts': 0.80, 'targets': 0.80}
@@ -10664,7 +10588,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             # lookup below re-keys through clean_name_exact rather than
             # assuming both seasons spell (or even name the column) the same
             # way (gotcha #35).
-            if ('role_matchup' in feats or 'v2_continuous_roles' in feats) and anchor_week is not None and not prior_pos_rows.empty:
+            if 'v2_continuous_roles' in feats and anchor_week is not None and not prior_pos_rows.empty:
                 player_prior_pos_rows = player_prior[
                     player_prior['position'].astype(str).str.upper() == pos]
                 prior_roles = build_player_roles(player_prior_pos_rows, prior_name_col, pos)
@@ -10787,7 +10711,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
 
             weighted_rates, _weighted_totals = _weighted_player_rates(
                 player_pos_rows, name_col, stats, as_of_week, matchup_matrix, upcoming_opponent_map)
-            if 'role_matchup' in feats or 'v2_continuous_roles' in feats:
+            if 'v2_continuous_roles' in feats:
                 player_roles = build_player_roles(player_pos_rows, name_col, pos)
                 role_tables, role_sizes = build_role_matchup(
                     pos_rows, name_col, team_col, stats, as_of_week, player_roles, plays=current_plays)
@@ -12177,7 +12101,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         # silently redistributed zero for every Out player, which is the one
         # case that matters.)
         vacancy_volume = {}
-        if 'teammate_vacancy' in feats or 'v2_vacancy' in feats:
+        if 'v2_vacancy' in feats:
             for stat in ('passing_attempts', 'targets', 'rushing_attempts'):
                 if stat in proj_cols:
                     # qb_nonstarter_volume_factor is included here too (it's a
@@ -12959,9 +12883,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                                     for entry in rb_vacancy_ledger)) + int(qb_vacancy_adjusted)
             else:
                 result, adjusted, ledger = redistribute_v2_vacated_usage(result, injury_profiles)
-        elif 'teammate_vacancy' in feats and injury_mult:
-            # V1 behavior remains available for its existing measured baseline.
-            result, adjusted = redistribute_vacated_usage(result, injury_mult)
         result = result.drop(columns=[c for c in result.columns if c.startswith('_full_')])
         return adjusted, ledger
 

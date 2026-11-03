@@ -2578,41 +2578,6 @@ def test_pace_multiplier_shrinks_toward_neutral_for_a_thin_current_season_sample
 
 # --- teammate vacancy ---------------------------------------------------------
 
-def test_vacated_targets_move_to_healthy_teammates_in_proportion():
-    frame = pd.DataFrame({
-        'Player': ['Out', 'Big', 'Small', 'OtherTeam'],
-        'Pos': ['WR', 'WR', 'WR', 'WR'],
-        'Team': ['KC', 'KC', 'KC', 'DEN'],
-        'targets': [0.0, 8.0, 4.0, 8.0],
-        'receiving_yards': [0.0, 80.0, 40.0, 80.0],
-    })
-    # `_full_targets` is what the position loop stashes before the injury
-    # discount zeroes an Out player's own line - without it there is nothing
-    # left to redistribute, which is the whole point of carrying it.
-    frame['_full_targets'] = [9.0, 8.0, 4.0, 8.0]
-    out, n = wp.redistribute_vacated_usage(frame, {'Out': 0.0})
-    assert n == 2
-    # 9 vacated targets, 75% of them re-used, split 2:1 by existing usage.
-    assert out.loc[1, 'targets'] > out.loc[2, 'targets']
-    assert out.loc[1, 'targets'] > 8.0 and out.loc[2, 'targets'] > 4.0
-    assert out.loc[3, 'targets'] == 8.0          # a different team is untouched
-    # Dependent stats ride the same factor, so yards per target is unchanged.
-    assert abs(out.loc[1, 'receiving_yards'] / out.loc[1, 'targets'] - 10.0) < 1e-6
-
-
-def test_vacancy_growth_is_capped():
-    frame = pd.DataFrame({
-        'Player': ['Out', 'Only'],
-        'Pos': ['RB', 'RB'],
-        'Team': ['KC', 'KC'],
-        'rushing_attempts': [20.0, 4.0],
-        'rushing_yards': [80.0, 16.0],
-    })
-    frame['_full_rushing_attempts'] = [50.0, 4.0]
-    out, _n = wp.redistribute_vacated_usage(frame, {'Out': 0.4})
-    assert out.loc[1, 'rushing_attempts'] <= 4.0 * wp.VACANCY_MAX_GROWTH + 1e-9
-
-
 def test_v2_vacancy_keeps_qb_passes_and_wr_targets_in_their_own_roles():
     frame = pd.DataFrame({
         'Player': ['Out QB', 'Backup QB', 'Out WR', 'WR Two', 'RB One'],
@@ -2682,12 +2647,6 @@ def test_scoring_a_cross_position_frame_survives_missing_stat_columns():
     assert np.isnan(score_projected_stats(row, 'Full PPR'))
     filled = {k: (0.0 if v != v else v) for k, v in row.items()}
     assert score_projected_stats(filled, 'Full PPR') > 10
-
-
-def test_vacancy_is_a_no_op_with_nobody_out():
-    frame = pd.DataFrame({'Player': ['A'], 'Pos': ['WR'], 'Team': ['KC'], 'targets': [6.0]})
-    out, n = wp.redistribute_vacated_usage(frame, {'A': 1.0})
-    assert n == 0 and out.loc[0, 'targets'] == 6.0
 
 
 def main():

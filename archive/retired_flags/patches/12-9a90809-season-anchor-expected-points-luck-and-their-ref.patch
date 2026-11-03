@@ -1,0 +1,780 @@
+From 9a908097c192a39d82293bd99ed3e032555762f4 Mon Sep 17 00:00:00 2001
+From: bradent27-sketch <304192343+bradent27-sketch@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 10:13:52 -0600
+Subject: [PATCH] Retire v2_season_anchor, v2_anchor_s_refit,
+ v2_expected_points_luck, v2_luck_te_refit, v2_luck_qb (code moves to
+ data/retired_points_steps.py)
+
+All five were SHIPPED, measured to help, and turned off 2026-11-02 because the stat recal plus v2_points_from_stat_line replace the
+weeks 3-17 total (the `lean` harness arm, pfs without them, tied pfs: START identical at every position and stat). They are superseded,
+not failed:
+- v2_season_anchor (2026-10-06): final total shrunk toward the player's own to-date mean (RB 0.75, WR 0.69, TE 0.84); held-out RMSE
+  better in all six year splits (-0.027 ALL). v2_anchor_s_refit (2026-10-28) weakened it (RB 0.88, WR 0.82, TE 1.0) and missed its bar on 2023.
+- v2_expected_points_luck (2026-10-20): a WR/TE total pulled against how far earlier games ran ahead of nflverse expected points
+  (-0.18 WR, -0.16 TE; START-ALL -0.0055, 4 of 4 seasons). v2_luck_te_refit (-0.33) and v2_luck_qb (-0.11, centered on the average QB's
+  luck) refit it on 2026-10-28.
+The functions, constants and factor selectors moved verbatim to data/retired_points_steps.py (re-exported from data.weekly_projections,
+because about a dozen calibration scripts import them); the model loses the five flags, the two build steps, their explanation hooks and
+the POST_CALIBRATION_FEATURES entries. Their unit tests moved to tests/test_retired_points_steps.py; the two build-level tests, which
+needed the flags, went with them. Restore with git revert of this commit.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ data/retired_points_steps.py                | 160 ++++++++++++++
+ data/weekly_projections.py                  | 218 ++------------------
+ tests/test_calibration_audit_flags.py       |  58 +-----
+ tests/test_expected_points_luck.py          |  12 +-
+ tests/test_opening_week_stat_calibration.py |  11 +-
+ tests/test_retired_points_steps.py          |  58 ++++++
+ tests/test_weekly_projections.py            |  55 -----
+ 7 files changed, 251 insertions(+), 321 deletions(-)
+ create mode 100644 data/retired_points_steps.py
+ create mode 100644 tests/test_retired_points_steps.py
+
+diff --git a/data/retired_points_steps.py b/data/retired_points_steps.py
+new file mode 100644
+index 0000000..0413c7b
+--- /dev/null
++++ b/data/retired_points_steps.py
+@@ -0,0 +1,160 @@
++"""Points-total steps retired from the projection (wave 2 of the flag retirement, 2026-11-03; docs/retired_flags.md).
++
++The season anchor (a calibrated total shrunk toward the player's own to-date mean), the expected-points luck step (a WR/TE total
++pulled against how far earlier games ran ahead of nflverse's expected points) and their refits were SHIPPED, measured to help, and
++retired 2026-11-02 because the stat recal plus v2_points_from_stat_line replace the weeks 3-17 total (the `lean` harness arm, pfs minus
++these steps, tied pfs). They are not failed ideas: if the points total ever goes back to a calibration line, these are the corrections
++that were worth having. Nothing in the model calls this module; it is kept because the calibration scripts (audit_calibration.py,
++eval_*.py, fit_points_scale.py ...) replay and re-fit them, and data.weekly_projections re-exports the names so those scripts need
++no change. The retired flag names (v2_season_anchor, v2_anchor_s_refit, v2_expected_points_luck, v2_luck_te_refit, v2_luck_qb) are no
++longer in MODEL_FEATURES; the selectors below still read them from a feature set so an old replay can be reproduced.
++"""
++import numpy as np
++import pandas as pd
++
++from data.pass_capacity_allocator import SIDELINED_AVAILABILITY
++from data.utils import clean_name_exact
++
++
++# --- v2_season_anchor ---------------------------------------------------------
++# The calibrated projection shrinks toward the POOL mean (WEEKLY_CALIBRATION), not toward the player's own
++# average, so a WR/RB/TE who has played a few games is still moved too far from his own usual level. 2022-2025
++# startable pool, played rows, the model's departure from the player's to-date mean (known before the game) against
++# what then happened: slope WR 0.72 (se 0.04), RB 0.76 (0.04), TE 0.83 (0.09), QB 0.95 (0.08); right-sized in weeks
++# 3-6 and 0.5-0.7 from week 7 (scripts/analyze_model_weak_spots.py). Shrinking toward the to-date mean,
++#     final = mean + s * (calibrated - mean),   s fit by least squares per position,
++# improved held-out RMSE in all six year splits (mean -0.027 ALL, WR -0.050 in every split, TE every split, RB 5/6)
++# - scripts/eval_season_anchor.py. QB (s ~ 0.98) is left alone. A phase-by-phase s was unstable across fits and
++# is not used. Points total only, like the calibration itself: the stat line is untouched.
++SEASON_ANCHOR_S = {'RB': 0.75, 'WR': 0.69, 'TE': 0.84}
++SEASON_ANCHOR_MIN_GAMES = 2
++
++
++def apply_season_anchor(result, hist, name_col, factors=None, min_games=None):
++    """(result, info): shrink each eligible row's calibrated 'Model Proj Pts' toward the player's mean fantasy
++    points over his games BEFORE the target week (``hist``, scoring-aware 'fantasy_points'). Eligible: a position in
++    ``factors``, at least ``min_games`` played games, not sidelined, and a non-zero projection. ``info`` maps
++    (Player, Pos, Team) -> {'mean', 'games', 'factor', 'before', 'after'} for the rows changed."""
++    factors = SEASON_ANCHOR_S if factors is None else factors
++    min_games = SEASON_ANCHOR_MIN_GAMES if min_games is None else min_games
++    if (result is None or result.empty or hist is None or hist.empty or name_col not in hist.columns
++            or 'fantasy_points' not in hist.columns or 'Model Proj Pts' not in result.columns):
++        return result, {}
++    pts = pd.to_numeric(hist['fantasy_points'], errors='coerce')
++    grouped = pts.groupby(hist[name_col]).agg(['mean', 'count'])
++    out = result.copy()
++    mean = out['Player'].map(grouped['mean'])
++    games = out['Player'].map(grouped['count']).fillna(0)
++    factor = out['Pos'].map(factors)
++    cal = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
++    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
++             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
++    eligible = (factor.notna() & mean.notna() & (games >= min_games) & (cal > 0.005) & (avail > SIDELINED_AVAILABILITY))
++    if not eligible.any():
++        return out, {}
++    new = np.round(np.clip(mean + factor * (cal - mean), 0.0, None), 2)
++    info = {}
++    for idx in out.index[eligible]:
++        info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
++            'mean': float(mean[idx]), 'games': int(games[idx]), 'factor': float(factor[idx]),
++            'before': float(cal[idx]), 'after': float(new[idx])}
++    for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
++        if col in out.columns:
++            out.loc[eligible, col] = new[eligible]
++    return out, info
++
++
++# --- v2_expected_points_luck ----------------------------------------------------------------------------------------
++# nflverse's ff_opportunity gives every player-game an EXPECTED point total from the context of his touches. A receiver
++# whose earlier games ran ahead of that ("luck" = actual - expected, per game) is over-projected the next week, one that ran
++# behind is under-projected. 2021-2025 weeks 3-17, shipped board, played rows: the miss (actual - projected) moves by -0.18
++# points per point of mean luck for WR (every season, CI [-0.26, -0.10]) and -0.16 for TE (4 of 5 seasons); RB shows nothing
++# (-0.06, CI spans 0) and a QB correction made START-QB worse in held-out runs, so only WR and TE are corrected. Held out by
++# season (scripts/eval_expected_points.py, b fit on the other four seasons, harness-style paired START pools): START-ALL
++# -0.0055 [-0.013, +0.001], START-WR -0.010, START-TE -0.010, ALL -0.0045 [-0.009, -0.000], better in 4 of 4 seasons. No
++# games-played shrink was best (a K of 4 or 8 only lost gain). Points total only, like the anchor and the Questionable cut: the
++# stat line is untouched. A player with no expected-points row yet this season (a rookie debut, a name the feed lacks) is left
++# alone. Caveat: the expectation model is trained on all seasons, so past-season luck is in-sample for it. 2026-10-28: on today's
++# model the QB correction helps (2024-2026) and ships centered on the average QB's luck ('v2_luck_qb', EXPECTED_POINTS_LUCK_QB).
++EXPECTED_POINTS_LUCK = {'WR': -0.18, 'TE': -0.16}
++
++
++def apply_expected_points_luck(result, table, factors=None, centers=None):
++    """(result, info): add ``factors[pos] * (luck_pg - centers[pos])`` (center 0 for a position not in ``centers``,
++    default EXPECTED_POINTS_LUCK_CENTER) to the point total of each eligible row. ``table`` is
++    data.expected_points.luck_per_game (index = clean player name, columns games / luck_pg). Eligible: a position in
++    ``factors``, at least one earlier game in the table, not sidelined (Availability above SIDELINED_AVAILABILITY) and a
++    non-zero total. ``info`` maps (Player, Pos, Team) -> {'luck_pg', 'games', 'factor', 'center', 'before', 'after'} for
++    the rows changed."""
++    factors = EXPECTED_POINTS_LUCK if factors is None else factors
++    centers = EXPECTED_POINTS_LUCK_CENTER if centers is None else centers
++    if result is None or result.empty or table is None or len(table) == 0 or 'Model Proj Pts' not in result.columns:
++        return result, {}
++    out = result.copy()
++    keys = clean_name_exact(out['Player'].astype(str))
++    luck = keys.map(table['luck_pg'])
++    games = keys.map(table['games']).fillna(0)
++    factor = out['Pos'].map(factors)
++    center = out['Pos'].map(centers).fillna(0.0)
++    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
++             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
++    pts = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
++    eligible = luck.notna() & factor.notna() & (games >= 1) & (avail > SIDELINED_AVAILABILITY) & (pts > 0.005)
++    if not eligible.any():
++        return out, {}
++    new = np.round(np.clip(pts + factor * (luck - center), 0.0, None), 2)
++    info = {}
++    for idx in out.index[eligible]:
++        info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
++            'luck_pg': float(luck[idx]), 'games': int(games[idx]), 'factor': float(factor[idx]),
++            'center': float(center[idx]), 'before': float(pts[idx]), 'after': float(new[idx])}
++    for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
++        if col in out.columns:
++            out.loc[eligible, col] = new[eligible]
++    return out, info
++
++
++# 'v2_luck_te_refit' (SHIPPED 2026-10-28, calibration audit): the TE luck factor re-fit on today's model. Re-fit in sample on
++# 2021-2025 it is -0.33, not -0.16 (WR -0.21, about as shipped); forward-chained with only TE re-fit: START-TE -0.0092, START-ALL
++# -0.0012 [-0.0033, +0.0006], better in 2023, 2024 and 2025; 2026 weeks 3-7: START-TE -0.076, START-ALL -0.011. Under the
++# weaker anchor ('v2_anchor_s_refit') the in-sample fit drops to -0.24 (2021-2025 START-TE -0.004 against -0.33) but 2026 weeks
++# 3-7 still want -0.33 (START-TE +0.018 at -0.24), and the fit has grown more negative season by season: kept at -0.33.
++EXPECTED_POINTS_LUCK_TE_REFIT = -0.33
++
++# 'v2_luck_qb' (SHIPPED 2026-10-28, user: "the QB luck correlation is really close and generally helps ... probably worthwhile";
++# MISSED its pre-set bar by 0.0001 on 2023). The luck step at QB on today's model: the miss of a played START-pool QB moves by
++# -0.11 per point of earlier-game luck (2021-2025 in sample; by season 2021 -0.18, 2022 +0.08, 2023 -0.02, 2024 -0.18, 2025
++# -0.50, 2026 -0.30). Unlike WR/TE, a QB's luck runs below 0 on average (the feed over-expects QBs: mean -0.50 on the fit rows,
++# 2022 -1.26, 2025 +0.08), so the plain step would nudge every QB up (START-QB bias +0.32 -> +0.38) and, at actual 0, every late
++# scratch; the step is centered on that mean, + b x (luck - center), which keeps the bias where it was. Forward-chained (fit on
++# earlier seasons, centered) against today's pipeline: START-QB -0.0072 [-0.0151, +0.0007], START-ALL -0.0012, by season 2023
++# +0.0002, 2024 -0.0006, 2025 -0.0033; EVERY-QB -0.0019; 2026 weeks 3-7 START-QB -0.027, START-ALL -0.0044. In sample at
++# -0.11 2022 and 2023 are worse at QB (+0.028, +0.006). Typical move +-0.3 points (QB luck sd 2.8 per game).
++EXPECTED_POINTS_LUCK_QB = -0.11
++EXPECTED_POINTS_LUCK_CENTER = {'QB': -0.50}
++
++# 'v2_anchor_s_refit' (SHIPPED 2026-10-28, user: "go ahead and weaken the season anchor"; MISSED its pre-set bar): the season
++# anchor's s re-fit on today's model (fit 2021-2025: RB 0.88, WR 0.82, TE 1.03, capped at 1 = no pull). Since the anchor shipped
++# (2026-10-06) the raw projection has taken in silent games, participation and share recency, and the newer seasons want a weaker
++# pull toward the player's own mean: forward-chained against today's pipeline 2023 +0.0119 (worse in every phase), 2024 -0.0079, 2025 -0.0102; 2026 weeks 3-7
++# -0.0356 [-0.0399, -0.0268] (RB -0.048, WR -0.030, TE -0.065). An s by games-in-the-mean failed (unstable). Half the move
++# (RB 0.815, WR 0.755, TE 0.92) costs 2021/2023 less (+0.0028/+0.0020 START-ALL against +0.0109/+0.0079) but gains less in
++# every season since (2024 -0.0062, 2025 -0.0069, 2026 -0.0188 against -0.0081/-0.0099/-0.0284), and a fit on 2024-2025 alone is
++# weaker still (RB 0.92, WR 0.88, TE 1.13): the full re-fit shipped.
++SEASON_ANCHOR_S_REFIT = {'RB': 0.88, 'WR': 0.82, 'TE': 1.0}
++
++
++def season_anchor_factors(feats):
++    """The anchor's s by position: SEASON_ANCHOR_S_REFIT when 'v2_anchor_s_refit' is in ``feats``, else None (SEASON_ANCHOR_S)."""
++    return dict(SEASON_ANCHOR_S_REFIT) if 'v2_anchor_s_refit' in feats else None
++
++
++def expected_points_luck_factors(feats):
++    """The luck step's factor by position: EXPECTED_POINTS_LUCK, with TE re-fit under 'v2_luck_te_refit' and QB added under
++    'v2_luck_qb'."""
++    factors = dict(EXPECTED_POINTS_LUCK)
++    if 'v2_luck_te_refit' in feats:
++        factors['TE'] = EXPECTED_POINTS_LUCK_TE_REFIT
++    if 'v2_luck_qb' in feats:
++        factors['QB'] = EXPECTED_POINTS_LUCK_QB
++    return factors
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index f3efb16..de2a9b2 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -141,7 +141,15 @@ from data.pass_capacity_allocator import (apply_pass_capacity_conservation, SIDE
+ from data.rb_carry_budget import team_rb_carry_budgets, apply_rb_carry_budget
+ from data.qb_volume_blend import blend_qb1_volume, QB_STYLE_BLEND_K
+ from data.fantasypros_availability import load_fantasypros_availability
+-from data.expected_points import expected_points_luck_table
++from data.retired_points_steps import (  # noqa: F401 - the calibration scripts import these names from here
++    SEASON_ANCHOR_S, SEASON_ANCHOR_S_REFIT, SEASON_ANCHOR_MIN_GAMES, apply_season_anchor, season_anchor_factors,
++    EXPECTED_POINTS_LUCK, EXPECTED_POINTS_LUCK_TE_REFIT, EXPECTED_POINTS_LUCK_QB, EXPECTED_POINTS_LUCK_CENTER,
++    apply_expected_points_luck, expected_points_luck_factors)
++# Listed so the names count as used: the calibration scripts do `from data.weekly_projections import SEASON_ANCHOR_S, ...`.
++RETIRED_POINTS_STEP_REEXPORTS = (
++    SEASON_ANCHOR_S, SEASON_ANCHOR_S_REFIT, SEASON_ANCHOR_MIN_GAMES, apply_season_anchor, season_anchor_factors,
++    EXPECTED_POINTS_LUCK, EXPECTED_POINTS_LUCK_TE_REFIT, EXPECTED_POINTS_LUCK_QB, EXPECTED_POINTS_LUCK_CENTER,
++    apply_expected_points_luck, expected_points_luck_factors)
+ from data.historical_availability import (
+     historical_injury_profiles, historical_reserve_profiles, load_weekly_rosters, merge_reserve_profiles, suspended_before)
+ from data.matchup_signals import (defense_stat_rank, blended_defense_stat_table,
+@@ -1633,12 +1641,6 @@ MODEL_FEATURES = (
+                              # _returning_qb_starters.
+     'v2_qb_td_blend',  # SHIPPED 2026-10-06 (DEFAULT_FEATURES). v2_qb_passing_td_k's K=15 PLUS the QB's prior-season TD rate regressed
+                              # 25% toward the league per-game rate. Offline sweep best region; see QB_PASSING_TD_PRIOR_REGRESS.
+-    'v2_season_anchor',  # RETIRED 2026-11-02 (off; superseded by v2_points_from_stat_line, which replaces the weeks 3-17
+-                             # total, so the anchor only nudged rows across the stat recal's gate).
+-                             # SHIPPED 2026-10-06 (DEFAULT_FEATURES). Final points total shrunk toward the player's own to-date
+-                             # mean (RB 0.75, WR 0.69, TE 0.84; QB left alone): the model's departures from a
+-                             # player's own average run ~30% too large for WR/RB from week 7. Held-out RMSE better in
+-                             # all six year splits (-0.027 ALL). See apply_season_anchor.
+     'v2_uncalibrate_zero_rows',  # 2026-10-06, shipped in DEFAULT_FEATURES. A healthy player the model projects
+                              # NO volume for (raw total 0) keeps 0, instead of the calibration intercept (4.15 pts
+                              # for a backup QB). Display/ledger only: a zero row is never in a startable pool.
+@@ -1931,17 +1933,6 @@ MODEL_FEATURES = (
+     'v2_points_lines_start_rows',  # SHIPPED 2026-10-28 (calibration audit). Every points line moved to its fit
+                              # on the startable rows (START_ROW_LINE_DELTA); passed its
+                              # pre-set bar. See points_scale.
+-    'v2_luck_te_refit',  # RETIRED 2026-11-02 (off, with v2_expected_points_luck). SHIPPED 2026-10-28
+-                             # (calibration audit). The TE luck factor re-fit on today's
+-                             # model, -0.16 -> EXPECTED_POINTS_LUCK_TE_REFIT (-0.33).
+-    'v2_anchor_s_refit',  # RETIRED 2026-11-02 (off, with v2_season_anchor). SHIPPED 2026-10-28 (user: "go
+-                             # ahead and weaken the season anchor"; missed its bar
+-                             # on 2023). The season anchor's s re-fit on today's model
+-                             # (SEASON_ANCHOR_S_REFIT): a weaker pull toward the mean.
+-    'v2_luck_qb',  # RETIRED 2026-11-02 (off, with v2_expected_points_luck). SHIPPED 2026-10-28 (user:
+-                             # "the QB luck ... is probably worthwhile"; missed its bar
+-                             # by 0.0001 on 2023). The luck step at QB, centered on the
+-                             # average QB's luck (EXPECTED_POINTS_LUCK_QB / _CENTER).
+     'v2_stat_recal_own_history',  # SHIPPED 2026-11-01 (backlog M13; user: "yes ship recal own history").
+                              # Weeks 3-17: the stat columns re-predicted from the board's stat
+                              # and the player's own history (STAT_RECAL_OWN_HISTORY); points
+@@ -2012,14 +2003,6 @@ MODEL_FEATURES = (
+                              # the per-stat game-total elasticity of passing TDs,
+                              # rushing TDs and rushing yards (QB only; the per-stat
+                              # clips still apply). Needs v2_game_total_elasticity_perstat.
+-    'v2_expected_points_luck',  # RETIRED 2026-11-02 (off; superseded by v2_points_from_stat_line, which replaces
+-                             # the weeks 3-17 total). SHIPPED 2026-10-20 (backlog N1). Last step on the points total:
+-                             # a WR/TE whose results ran ahead of what his usage was
+-                             # worth (nflverse ff_opportunity expected points) in his
+-                             # earlier games this season is pulled back, one who ran
+-                             # behind is pushed up: +b x mean(actual - expected points
+-                             # per earlier game), b = -0.18 WR, -0.16 TE. See
+-                             # EXPECTED_POINTS_LUCK and apply_expected_points_luck.
+ )
+ # What the app actually runs - the single standard model. Until 2026-08-26
+ # this file offered two configurations: this set (then called "V1, released
+@@ -2772,11 +2755,10 @@ def resolve_model_features(features=None):
+ # the anchor and the luck step. A dump built with them on would record already adjusted totals as the "raw" the lines are
+ # fitted to, so they are left out of the input set. So are 'v2_stat_recal_own_history' / '_edges' / '_game_script' (2026-11-01, measured on
+ # the finished board): the opening-week stat lines are fit on a dump's stat lines. And 'v2_points_from_stat_line' / '_edges'
+-# (2026-11-02), which replace the total after the recal. The anchor and luck flags stay listed after their 2026-11-02
+-# retirement, so a run that turns them back on keeps calibration dumps clean.
+-POST_CALIBRATION_FEATURES = frozenset({'v2_season_anchor', 'v2_opening_week_stat_calibration',
+-                                       'v2_questionable_workload', 'v2_expected_points_luck',
+-                                       'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
++# (2026-11-02), which replace the total after the recal. The season anchor, the luck step and their refits were listed here until
++# 2026-11-03, when they were removed from the code (data/retired_points_steps.py keeps them for the calibration scripts).
++POST_CALIBRATION_FEATURES = frozenset({'v2_opening_week_stat_calibration',
++                                       'v2_questionable_workload',
+                                        'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
+                                        'v2_stat_recal_game_script', 'v2_stat_recal_gate_ramp', 'v2_points_from_stat_line',
+                                        'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut'})
+@@ -3162,35 +3144,6 @@ START_ROW_LINE_DELTA = {
+     'rest': {'WR': (0.0391, -0.4660), 'TE': (-0.0296, 0.1926)},
+ }
+ 
+-# 'v2_luck_te_refit' (SHIPPED 2026-10-28, calibration audit): the TE luck factor re-fit on today's model. Re-fit in sample on
+-# 2021-2025 it is -0.33, not -0.16 (WR -0.21, about as shipped); forward-chained with only TE re-fit: START-TE -0.0092, START-ALL
+-# -0.0012 [-0.0033, +0.0006], better in 2023, 2024 and 2025; 2026 weeks 3-7: START-TE -0.076, START-ALL -0.011. Under the
+-# weaker anchor ('v2_anchor_s_refit') the in-sample fit drops to -0.24 (2021-2025 START-TE -0.004 against -0.33) but 2026 weeks
+-# 3-7 still want -0.33 (START-TE +0.018 at -0.24), and the fit has grown more negative season by season: kept at -0.33.
+-EXPECTED_POINTS_LUCK_TE_REFIT = -0.33
+-
+-# 'v2_luck_qb' (SHIPPED 2026-10-28, user: "the QB luck correlation is really close and generally helps ... probably worthwhile";
+-# MISSED its pre-set bar by 0.0001 on 2023). The luck step at QB on today's model: the miss of a played START-pool QB moves by
+-# -0.11 per point of earlier-game luck (2021-2025 in sample; by season 2021 -0.18, 2022 +0.08, 2023 -0.02, 2024 -0.18, 2025
+-# -0.50, 2026 -0.30). Unlike WR/TE, a QB's luck runs below 0 on average (the feed over-expects QBs: mean -0.50 on the fit rows,
+-# 2022 -1.26, 2025 +0.08), so the plain step would nudge every QB up (START-QB bias +0.32 -> +0.38) and, at actual 0, every late
+-# scratch; the step is centered on that mean, + b x (luck - center), which keeps the bias where it was. Forward-chained (fit on
+-# earlier seasons, centered) against today's pipeline: START-QB -0.0072 [-0.0151, +0.0007], START-ALL -0.0012, by season 2023
+-# +0.0002, 2024 -0.0006, 2025 -0.0033; EVERY-QB -0.0019; 2026 weeks 3-7 START-QB -0.027, START-ALL -0.0044. In sample at
+-# -0.11 2022 and 2023 are worse at QB (+0.028, +0.006). Typical move +-0.3 points (QB luck sd 2.8 per game).
+-EXPECTED_POINTS_LUCK_QB = -0.11
+-EXPECTED_POINTS_LUCK_CENTER = {'QB': -0.50}
+-
+-# 'v2_anchor_s_refit' (SHIPPED 2026-10-28, user: "go ahead and weaken the season anchor"; MISSED its pre-set bar): the season
+-# anchor's s re-fit on today's model (fit 2021-2025: RB 0.88, WR 0.82, TE 1.03, capped at 1 = no pull). Since the anchor shipped
+-# (2026-10-06) the raw projection has taken in silent games, participation and share recency, and the newer seasons want a weaker
+-# pull toward the player's own mean: forward-chained against today's pipeline 2023 +0.0119 (worse in every phase), 2024 -0.0079, 2025 -0.0102; 2026 weeks 3-7
+-# -0.0356 [-0.0399, -0.0268] (RB -0.048, WR -0.030, TE -0.065). An s by games-in-the-mean failed (unstable). Half the move
+-# (RB 0.815, WR 0.755, TE 0.92) costs 2021/2023 less (+0.0028/+0.0020 START-ALL against +0.0109/+0.0079) but gains less in
+-# every season since (2024 -0.0062, 2025 -0.0069, 2026 -0.0188 against -0.0081/-0.0099/-0.0284), and a fit on 2024-2025 alone is
+-# weaker still (RB 0.92, WR 0.88, TE 1.13): the full re-fit shipped.
+-SEASON_ANCHOR_S_REFIT = {'RB': 0.88, 'WR': 0.82, 'TE': 1.0}
+-
+ 
+ def points_scale(feats):
+     """The points scale in place of the shipped tables: the shipped tables moved by the recency-weighted WR/TE lines
+@@ -3206,26 +3159,6 @@ def points_scale(feats):
+     return scale
+ 
+ 
+-def season_anchor_factors(feats):
+-    """The anchor's s by position: a fit v6 scale's 'anchor_s', else SEASON_ANCHOR_S_REFIT with 'v2_anchor_s_refit', else None
+-    (SEASON_ANCHOR_S)."""
+-    fitted = (points_scale(feats) or {}).get('anchor_s')
+-    if fitted:
+-        return fitted
+-    return dict(SEASON_ANCHOR_S_REFIT) if 'v2_anchor_s_refit' in feats else None
+-
+-
+-def expected_points_luck_factors(feats):
+-    """The luck step's factor by position: EXPECTED_POINTS_LUCK, with TE re-fit under 'v2_luck_te_refit' and QB added under
+-    'v2_luck_qb'."""
+-    factors = dict(EXPECTED_POINTS_LUCK)
+-    if 'v2_luck_te_refit' in feats:
+-        factors['TE'] = EXPECTED_POINTS_LUCK_TE_REFIT
+-    if 'v2_luck_qb' in feats:
+-        factors['QB'] = EXPECTED_POINTS_LUCK_QB
+-    return factors
+-
+-
+ # Subtraction candidates (2026-10-23, from the CFB comparison's multiplier strength audit, scripts/audit_factor_gamma.py on the
+ # capture traces, every game the model expected the player to play, RMSE, 2021-2025; offline - downstream steps not re-run):
+ #   'v2_no_td_matchup'      the matchup multiplier on TD stats fits best at strength 0 at every position (receiving TDs WR/TE/RB,
+@@ -3254,54 +3187,6 @@ def td_matchup_strength(feats, stat):
+     return 1.0
+ 
+ 
+-# --- v2_season_anchor ---------------------------------------------------------
+-# The calibrated projection shrinks toward the POOL mean (WEEKLY_CALIBRATION), not toward the player's own
+-# average, so a WR/RB/TE who has played a few games is still moved too far from his own usual level. 2022-2025
+-# startable pool, played rows, the model's departure from the player's to-date mean (known before the game) against
+-# what then happened: slope WR 0.72 (se 0.04), RB 0.76 (0.04), TE 0.83 (0.09), QB 0.95 (0.08); right-sized in weeks
+-# 3-6 and 0.5-0.7 from week 7 (scripts/analyze_model_weak_spots.py). Shrinking toward the to-date mean,
+-#     final = mean + s * (calibrated - mean),   s fit by least squares per position,
+-# improved held-out RMSE in all six year splits (mean -0.027 ALL, WR -0.050 in every split, TE every split, RB 5/6)
+-# - scripts/eval_season_anchor.py. QB (s ~ 0.98) is left alone. A phase-by-phase s was unstable across fits and
+-# is not used. Points total only, like the calibration itself: the stat line is untouched.
+-SEASON_ANCHOR_S = {'RB': 0.75, 'WR': 0.69, 'TE': 0.84}
+-SEASON_ANCHOR_MIN_GAMES = 2
+-
+-
+-def apply_season_anchor(result, hist, name_col, factors=None, min_games=None):
+-    """(result, info): shrink each eligible row's calibrated 'Model Proj Pts' toward the player's mean fantasy
+-    points over his games BEFORE the target week (``hist``, scoring-aware 'fantasy_points'). Eligible: a position in
+-    ``factors``, at least ``min_games`` played games, not sidelined, and a non-zero projection. ``info`` maps
+-    (Player, Pos, Team) -> {'mean', 'games', 'factor', 'before', 'after'} for the rows changed."""
+-    factors = SEASON_ANCHOR_S if factors is None else factors
+-    min_games = SEASON_ANCHOR_MIN_GAMES if min_games is None else min_games
+-    if (result is None or result.empty or hist is None or hist.empty or name_col not in hist.columns
+-            or 'fantasy_points' not in hist.columns or 'Model Proj Pts' not in result.columns):
+-        return result, {}
+-    pts = pd.to_numeric(hist['fantasy_points'], errors='coerce')
+-    grouped = pts.groupby(hist[name_col]).agg(['mean', 'count'])
+-    out = result.copy()
+-    mean = out['Player'].map(grouped['mean'])
+-    games = out['Player'].map(grouped['count']).fillna(0)
+-    factor = out['Pos'].map(factors)
+-    cal = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
+-    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+-             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
+-    eligible = (factor.notna() & mean.notna() & (games >= min_games) & (cal > 0.005) & (avail > SIDELINED_AVAILABILITY))
+-    if not eligible.any():
+-        return out, {}
+-    new = np.round(np.clip(mean + factor * (cal - mean), 0.0, None), 2)
+-    info = {}
+-    for idx in out.index[eligible]:
+-        info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
+-            'mean': float(mean[idx]), 'games': int(games[idx]), 'factor': float(factor[idx]),
+-            'before': float(cal[idx]), 'after': float(new[idx])}
+-    for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
+-        if col in out.columns:
+-            out.loc[eligible, col] = new[eligible]
+-    return out, info
+-
+-
+ # --- v2_questionable_workload ---------------------------------------------------------------------------------------
+ # A "Questionable" tag changes nothing in the projection (the standing rule: only Out and Doubtful do), yet receivers
+ # who then PLAY produce less than a healthy one at the same projection. 2021-2025 weeks 3-17, the official report's
+@@ -3385,56 +3270,6 @@ def apply_questionable_stat_cut(result, questionable_info, factors=None):
+     return out, info
+ 
+ 
+-# --- v2_expected_points_luck ----------------------------------------------------------------------------------------
+-# nflverse's ff_opportunity gives every player-game an EXPECTED point total from the context of his touches. A receiver
+-# whose earlier games ran ahead of that ("luck" = actual - expected, per game) is over-projected the next week, one that ran
+-# behind is under-projected. 2021-2025 weeks 3-17, shipped board, played rows: the miss (actual - projected) moves by -0.18
+-# points per point of mean luck for WR (every season, CI [-0.26, -0.10]) and -0.16 for TE (4 of 5 seasons); RB shows nothing
+-# (-0.06, CI spans 0) and a QB correction made START-QB worse in held-out runs, so only WR and TE are corrected. Held out by
+-# season (scripts/eval_expected_points.py, b fit on the other four seasons, harness-style paired START pools): START-ALL
+-# -0.0055 [-0.013, +0.001], START-WR -0.010, START-TE -0.010, ALL -0.0045 [-0.009, -0.000], better in 4 of 4 seasons. No
+-# games-played shrink was best (a K of 4 or 8 only lost gain). Points total only, like the anchor and the Questionable cut: the
+-# stat line is untouched. A player with no expected-points row yet this season (a rookie debut, a name the feed lacks) is left
+-# alone. Caveat: the expectation model is trained on all seasons, so past-season luck is in-sample for it. 2026-10-28: on today's
+-# model the QB correction helps (2024-2026) and ships centered on the average QB's luck ('v2_luck_qb', EXPECTED_POINTS_LUCK_QB).
+-EXPECTED_POINTS_LUCK = {'WR': -0.18, 'TE': -0.16}
+-
+-
+-def apply_expected_points_luck(result, table, factors=None, centers=None):
+-    """(result, info): add ``factors[pos] * (luck_pg - centers[pos])`` (center 0 for a position not in ``centers``,
+-    default EXPECTED_POINTS_LUCK_CENTER) to the point total of each eligible row. ``table`` is
+-    data.expected_points.luck_per_game (index = clean player name, columns games / luck_pg). Eligible: a position in
+-    ``factors``, at least one earlier game in the table, not sidelined (Availability above SIDELINED_AVAILABILITY) and a
+-    non-zero total. ``info`` maps (Player, Pos, Team) -> {'luck_pg', 'games', 'factor', 'center', 'before', 'after'} for
+-    the rows changed."""
+-    factors = EXPECTED_POINTS_LUCK if factors is None else factors
+-    centers = EXPECTED_POINTS_LUCK_CENTER if centers is None else centers
+-    if result is None or result.empty or table is None or len(table) == 0 or 'Model Proj Pts' not in result.columns:
+-        return result, {}
+-    out = result.copy()
+-    keys = clean_name_exact(out['Player'].astype(str))
+-    luck = keys.map(table['luck_pg'])
+-    games = keys.map(table['games']).fillna(0)
+-    factor = out['Pos'].map(factors)
+-    center = out['Pos'].map(centers).fillna(0.0)
+-    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+-             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
+-    pts = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
+-    eligible = luck.notna() & factor.notna() & (games >= 1) & (avail > SIDELINED_AVAILABILITY) & (pts > 0.005)
+-    if not eligible.any():
+-        return out, {}
+-    new = np.round(np.clip(pts + factor * (luck - center), 0.0, None), 2)
+-    info = {}
+-    for idx in out.index[eligible]:
+-        info[(out.at[idx, 'Player'], out.at[idx, 'Pos'], out.at[idx, 'Team'])] = {
+-            'luck_pg': float(luck[idx]), 'games': int(games[idx]), 'factor': float(factor[idx]),
+-            'center': float(center[idx]), 'before': float(pts[idx]), 'after': float(new[idx])}
+-    for col in ('Model Proj Pts', 'Calibrated Model Proj Pts'):
+-        if col in out.columns:
+-            out.loc[eligible, col] = new[eligible]
+-    return out, info
+-
+-
+ # --- v2_stat_recal_own_history / v2_stat_recal_own_history_edges (backlog M13) --------------------------------------------
+ # The board's STAT columns overshoot whenever they leave the player's own level. Deep audit 2026-10-28 (scripts/deep_audit.py
+ # --stage overshoot) on today's board, 2021-2025 weeks 3-17, played rows projected 3+ points: of the gap between the projected
+@@ -13530,13 +13365,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+         if opening_calibration_info:
+             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+ 
+-    # v2_season_anchor: last step on the points total, after calibration and the sidelined/zero restore.
+-    season_anchor_info = {}
+-    if 'v2_season_anchor' in feats and not cold_start:
+-        result, season_anchor_info = apply_season_anchor(result, hist, name_col, factors=season_anchor_factors(feats))
+-        if season_anchor_info:
+-            result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+-
+     # v2_questionable_workload: the very last step on the points total (it was measured on the finished board), for
+     # players the injury feed lists as Questionable and who are projected to play.
+     questionable_info = {}
+@@ -13545,14 +13373,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+         if questionable_info:
+             result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+ 
+-    # v2_expected_points_luck: after the Questionable cut, the same place it was measured (on the finished board).
+-    luck_info = {}
+-    if 'v2_expected_points_luck' in feats and not cold_start:
+-        result, luck_info = apply_expected_points_luck(
+-            result, expected_points_luck_table(year, as_of_week, scoring_mode), factors=expected_points_luck_factors(feats))
+-        if luck_info:
+-            result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+-
+     # v2_stat_recal_own_history (weeks 3-17) / _edges (weeks 1, 2): the stat columns re-predicted from the player's own history,
+     # measured on the finished board. After every points step; the total is not changed.
+     own_history_info = {}
+@@ -13756,8 +13576,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+         if final_stat_line:
+             detail['stat_line'] = final_stat_line
+         calibration = detail.get('calibration', {})
+-        # The calibration line's own result: with v2_season_anchor the displayed total moves once more after it, and
+-        # that step is reported separately (detail['season_anchor']), so the two captions chain raw -> line -> anchor.
++        # The calibration line's own result (the Questionable cut, when it ran, moves the displayed total once more after it).
+         line_points = detail['calibrated_points']
+         if key in top_end_info:
+             # raw_points above is already the re-scored compressed line; this records the step from the uncompressed one
+@@ -13771,20 +13590,13 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+         if key in opening_calibration_info:
+             # the points line was replaced, not applied: the total is the re-scored calibrated stat line
+             detail['opening_week_calibration'] = opening_calibration_info[key]
+-        if key in luck_info:
+-            # v2_expected_points_luck is the very last step, after the Questionable cut
+-            detail['expected_points_luck'] = luck_info[key]
+-            line_points = luck_info[key]['before']
+         if key in questionable_info:
+-            # v2_questionable_workload is the last step on the total, after the anchor
++            # v2_questionable_workload is the last step on the total
+             detail['questionable_workload'] = questionable_info[key]
+             line_points = questionable_info[key]['before']
+         if key in questionable_stat_info:
+             # v2_questionable_stat_cut: the same cut, on the stat columns (stat -> (before, after)); the total scores that line
+             detail['questionable_stat_cut'] = questionable_stat_info[key]
+-        if key in season_anchor_info:
+-            detail['season_anchor'] = season_anchor_info[key]
+-            line_points = season_anchor_info[key]['before']
+         calibration['raw_points'] = detail['raw_points']
+         calibration['displayed_points'] = line_points
+         calibration['delta'] = line_points - detail['raw_points']
+diff --git a/tests/test_calibration_audit_flags.py b/tests/test_calibration_audit_flags.py
+index 30d5700..725ab7d 100644
+--- a/tests/test_calibration_audit_flags.py
++++ b/tests/test_calibration_audit_flags.py
+@@ -1,7 +1,6 @@
+-"""The 2026-10-28 calibration audit's flags, shipped that day (scripts/audit_calibration.py, methodology 2026-10-28):
+-v2_points_lines_start_rows (every points line moved to its start-row fit), v2_luck_te_refit (TE luck -0.16 -> -0.33),
+-v2_anchor_s_refit (the season anchor's s re-fit on today's model) and v2_luck_qb (the luck step at QB, centered on the
+-average QB's luck)."""
++"""The 2026-10-28 calibration audit's flag that still ships (scripts/audit_calibration.py, methodology 2026-10-28):
++v2_points_lines_start_rows (every points line moved to its start-row fit). Its siblings v2_luck_te_refit, v2_anchor_s_refit and
++v2_luck_qb were retired 2026-11-02 and removed from the model 2026-11-03: their tests live in test_retired_points_steps.py."""
+ import os
+ import sys
+ 
+@@ -13,20 +12,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+ import data.weekly_projections as wp  # noqa: E402
+ from data.utils import clean_name_exact  # noqa: E402
+ 
+-FLAGS = ('v2_points_lines_start_rows', 'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb')
+-LUCK_ON = frozenset({'v2_expected_points_luck', 'v2_luck_te_refit', 'v2_luck_qb'})
+ 
+ 
+-def test_flags_are_registered_and_the_anchor_and_luck_refits_retired():
+-    for flag in FLAGS:
+-        assert flag in wp.MODEL_FEATURES
+-    # 2026-11-02: the anchor and luck re-fits retired with v2_points_from_stat_line; the start-row lines still ship
+-    assert 'v2_points_lines_start_rows' in wp.DEFAULT_FEATURES
+-    assert not ({'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb'} & wp.DEFAULT_FEATURES)
+-    # the anchor and luck re-fits act after the points line (POST_CALIBRATION_FEATURES); the start-row lines are the line itself,
+-    # inert in a calibration dump (no 'calibration' there)
+-    assert {'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb'} <= wp.POST_CALIBRATION_FEATURES
++def test_start_row_lines_ship_and_the_anchor_and_luck_refits_are_gone():
++    assert 'v2_points_lines_start_rows' in wp.MODEL_FEATURES and 'v2_points_lines_start_rows' in wp.DEFAULT_FEATURES
++    # the line itself, inert in a calibration dump (no 'calibration' there)
+     assert 'v2_points_lines_start_rows' not in wp.POST_CALIBRATION_FEATURES
++    for flag in ('v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb'):
++        assert flag not in wp.MODEL_FEATURES
+ 
+ 
+ def test_start_row_lines_move_every_line_by_the_delta():
+@@ -63,38 +56,3 @@ def test_start_row_lines_shrink_the_early_season_top_and_keep_the_low_end_joined
+     knot, a = wp.LOW_END_POINTS_LINE['WR']
+     expected = np.where(raw < knot, ic + sl * knot + a * (raw - knot), ic + sl * raw)
+     assert np.allclose(wp.points_line('WR', 3, raw, low_end=True, scale=on), expected)
+-
+-
+-def test_luck_te_refit_factors():
+-    assert wp.expected_points_luck_factors(set()) == wp.EXPECTED_POINTS_LUCK
+-    on = wp.expected_points_luck_factors({'v2_luck_te_refit'})
+-    assert on['TE'] == wp.EXPECTED_POINTS_LUCK_TE_REFIT == -0.33 and on['WR'] == wp.EXPECTED_POINTS_LUCK['WR']
+-    board = pd.DataFrame({'Player': ['A TE'], 'Pos': ['TE'], 'Team': ['KC'], 'Availability': [1.0],
+-                          'Model Proj Pts': [10.0], 'Calibrated Model Proj Pts': [10.0]})
+-    table = pd.DataFrame({'games': [4], 'luck_pg': [3.0]}, index=clean_name_exact(pd.Series(['A TE'])))
+-    out, _ = wp.apply_expected_points_luck(board, table, factors=on)
+-    assert out['Model Proj Pts'].iloc[0] == 9.01                     # 10 - 0.33 * 3
+-
+-
+-def test_anchor_s_refit_factors():
+-    assert wp.season_anchor_factors(set()) is None                   # apply_season_anchor's default, SEASON_ANCHOR_S
+-    assert wp.season_anchor_factors({'v2_season_anchor', 'v2_anchor_s_refit'}) == wp.SEASON_ANCHOR_S_REFIT
+-    assert all(wp.SEASON_ANCHOR_S_REFIT[p] > wp.SEASON_ANCHOR_S[p] for p in wp.SEASON_ANCHOR_S)   # a weaker pull
+-    assert all(0.0 < s <= 1.0 for s in wp.SEASON_ANCHOR_S_REFIT.values())
+-
+-
+-def test_qb_luck_is_centered_on_the_average_qb():
+-    on = wp.expected_points_luck_factors(LUCK_ON)
+-    assert on['QB'] == wp.EXPECTED_POINTS_LUCK_QB == -0.11 and on['TE'] == -0.33 and on['WR'] == -0.18
+-    assert 'QB' not in wp.expected_points_luck_factors(LUCK_ON - {'v2_luck_qb'})
+-    board = pd.DataFrame({'Player': ['A QB', 'B QB', 'C QB', 'A WR'], 'Pos': ['QB', 'QB', 'QB', 'WR'], 'Team': ['KC'] * 4,
+-                          'Availability': [1.0] * 4, 'Model Proj Pts': [18.0] * 4, 'Calibrated Model Proj Pts': [18.0] * 4})
+-    table = pd.DataFrame({'games': [5, 5, 5, 5], 'luck_pg': [2.5, -0.5, -4.5, 3.0]},
+-                         index=clean_name_exact(pd.Series(['A QB', 'B QB', 'C QB', 'A WR'])))
+-    out, info = wp.apply_expected_points_luck(board, table, factors=on)
+-    pts = out.set_index('Player')['Model Proj Pts']
+-    assert pts['A QB'] == 17.67                                      # 18 - 0.11 * (2.5 - (-0.5))
+-    assert pts['B QB'] == 18.0                                       # the average QB's luck: no move
+-    assert pts['C QB'] == 18.44                                      # 18 - 0.11 * (-4.5 + 0.5)
+-    assert pts['A WR'] == 17.46                                      # WR is not centered: 18 - 0.18 * 3
+-    assert info[('A QB', 'QB', 'KC')]['center'] == -0.5 and info[('A WR', 'WR', 'KC')]['center'] == 0.0
+diff --git a/tests/test_expected_points_luck.py b/tests/test_expected_points_luck.py
+index 3f7d323..83f7c13 100644
+--- a/tests/test_expected_points_luck.py
++++ b/tests/test_expected_points_luck.py
+@@ -25,13 +25,11 @@ def _ff(rows):
+                                        'receptions', 'receptions_exp'])
+ 
+ 
+-def test_flag_is_a_post_calibration_step_retired_with_points_from_stat_line():
+-    # a calibration dump must not record already-adjusted totals, so it is also a post-calibration feature; retired
+-    # 2026-11-02 (v2_points_from_stat_line replaces the weeks 3-17 total)
+-    assert 'v2_expected_points_luck' in wp.MODEL_FEATURES
+-    assert 'v2_expected_points_luck' not in wp.DEFAULT_FEATURES
+-    assert 'v2_expected_points_luck' in wp.POST_CALIBRATION_FEATURES
+-    assert 'v2_expected_points_luck' not in wp.CALIBRATION_INPUT_FEATURES
++def test_the_step_is_retired_but_kept():
++    # retired 2026-11-02 (v2_points_from_stat_line replaces the weeks 3-17 total), removed from the model 2026-11-03; the step lives in
++    # data/retired_points_steps.py and wp re-exports it for the calibration scripts
++    assert 'v2_expected_points_luck' not in wp.MODEL_FEATURES
++    assert wp.apply_expected_points_luck.__module__ == 'data.retired_points_steps'
+ 
+ 
+ def test_luck_uses_only_games_before_the_target_week():
+diff --git a/tests/test_opening_week_stat_calibration.py b/tests/test_opening_week_stat_calibration.py
+index 7aa27c1..e91c9ae 100644
+--- a/tests/test_opening_week_stat_calibration.py
++++ b/tests/test_opening_week_stat_calibration.py
+@@ -51,16 +51,15 @@ def test_flag_is_registered_and_shipped():
+ def test_post_calibration_steps_are_not_inputs_of_the_calibration_lines():
+     # a calibration dump (CALIBRATION_INPUT_FEATURES) must record the totals BEFORE these acted
+     from data.weekly_projections import CALIBRATION_INPUT_FEATURES, POST_CALIBRATION_FEATURES
+-    assert POST_CALIBRATION_FEATURES == {'v2_season_anchor', 'v2_opening_week_stat_calibration',
+-                                         'v2_questionable_workload', 'v2_expected_points_luck',
+-                                         'v2_luck_te_refit', 'v2_anchor_s_refit', 'v2_luck_qb',
++    assert POST_CALIBRATION_FEATURES == {'v2_opening_week_stat_calibration',
++                                         'v2_questionable_workload',
+                                          'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
+                                          'v2_stat_recal_game_script', 'v2_stat_recal_gate_ramp', 'v2_points_from_stat_line',
+                                          'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut'}
+-    # the anchor and luck flags were retired 2026-11-02 (v2_points_from_stat_line) but stay classified post-calibration
++    # the anchor and luck flags were retired 2026-11-02 (v2_points_from_stat_line) and left this set 2026-11-03
+     retired = {'v2_season_anchor', 'v2_anchor_s_refit', 'v2_expected_points_luck', 'v2_luck_te_refit', 'v2_luck_qb'}
+-    assert POST_CALIBRATION_FEATURES - retired <= DEFAULT_FEATURES
+-    assert not (retired & DEFAULT_FEATURES)
++    assert POST_CALIBRATION_FEATURES <= DEFAULT_FEATURES
++    assert not (retired & (DEFAULT_FEATURES | set(MODEL_FEATURES) | POST_CALIBRATION_FEATURES))
+     assert not (CALIBRATION_INPUT_FEATURES & POST_CALIBRATION_FEATURES)
+     assert 'calibration' not in CALIBRATION_INPUT_FEATURES
+     assert CALIBRATION_INPUT_FEATURES == DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES
+diff --git a/tests/test_retired_points_steps.py b/tests/test_retired_points_steps.py
+new file mode 100644
+index 0000000..b906af2
+--- /dev/null
++++ b/tests/test_retired_points_steps.py
+@@ -0,0 +1,58 @@
++"""The points-total steps retired from the model (data/retired_points_steps.py; docs/retired_flags.md): the season anchor, the
++expected-points luck step and their refits. Nothing in the model calls them; the calibration scripts replay them, and they were
++worth having, so they stay tested."""
++import os
++import sys
++
++import pandas as pd
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++import data.retired_points_steps as rps  # noqa: E402
++import data.weekly_projections as wp  # noqa: E402
++from data.utils import clean_name_exact  # noqa: E402
++
++LUCK_ON = frozenset({'v2_expected_points_luck', 'v2_luck_te_refit', 'v2_luck_qb'})
++
++
++def test_the_retired_flags_are_gone_from_the_model_but_the_code_is_reexported():
++    for flag in ('v2_season_anchor', 'v2_anchor_s_refit', 'v2_expected_points_luck', 'v2_luck_te_refit', 'v2_luck_qb'):
++        assert flag not in wp.MODEL_FEATURES and flag not in wp.DEFAULT_FEATURES and flag not in wp.POST_CALIBRATION_FEATURES
++    for name in ('apply_season_anchor', 'apply_expected_points_luck', 'season_anchor_factors', 'expected_points_luck_factors',
++                 'SEASON_ANCHOR_S', 'SEASON_ANCHOR_S_REFIT', 'SEASON_ANCHOR_MIN_GAMES', 'EXPECTED_POINTS_LUCK'):
++        assert getattr(wp, name) is getattr(rps, name)               # the calibration scripts import them from here
++
++
++def test_luck_te_refit_factors():
++    assert rps.expected_points_luck_factors(set()) == rps.EXPECTED_POINTS_LUCK
++    on = rps.expected_points_luck_factors({'v2_luck_te_refit'})
++    assert on['TE'] == rps.EXPECTED_POINTS_LUCK_TE_REFIT == -0.33 and on['WR'] == rps.EXPECTED_POINTS_LUCK['WR']
++    board = pd.DataFrame({'Player': ['A TE'], 'Pos': ['TE'], 'Team': ['KC'], 'Availability': [1.0],
++                          'Model Proj Pts': [10.0], 'Calibrated Model Proj Pts': [10.0]})
++    table = pd.DataFrame({'games': [4], 'luck_pg': [3.0]}, index=clean_name_exact(pd.Series(['A TE'])))
++    out, _ = rps.apply_expected_points_luck(board, table, factors=on)
++    assert out['Model Proj Pts'].iloc[0] == 9.01                     # 10 - 0.33 * 3
++
++
++def test_anchor_s_refit_factors():
++    assert rps.season_anchor_factors(set()) is None                   # apply_season_anchor's default, SEASON_ANCHOR_S
++    assert rps.season_anchor_factors({'v2_season_anchor', 'v2_anchor_s_refit'}) == rps.SEASON_ANCHOR_S_REFIT
++    assert all(rps.SEASON_ANCHOR_S_REFIT[p] > rps.SEASON_ANCHOR_S[p] for p in rps.SEASON_ANCHOR_S)   # a weaker pull
++    assert all(0.0 < s <= 1.0 for s in rps.SEASON_ANCHOR_S_REFIT.values())
++
++
++def test_qb_luck_is_centered_on_the_average_qb():
++    on = rps.expected_points_luck_factors(LUCK_ON)
++    assert on['QB'] == rps.EXPECTED_POINTS_LUCK_QB == -0.11 and on['TE'] == -0.33 and on['WR'] == -0.18
++    assert 'QB' not in rps.expected_points_luck_factors(LUCK_ON - {'v2_luck_qb'})
++    board = pd.DataFrame({'Player': ['A QB', 'B QB', 'C QB', 'A WR'], 'Pos': ['QB', 'QB', 'QB', 'WR'], 'Team': ['KC'] * 4,
++                          'Availability': [1.0] * 4, 'Model Proj Pts': [18.0] * 4, 'Calibrated Model Proj Pts': [18.0] * 4})
++    table = pd.DataFrame({'games': [5, 5, 5, 5], 'luck_pg': [2.5, -0.5, -4.5, 3.0]},
++                         index=clean_name_exact(pd.Series(['A QB', 'B QB', 'C QB', 'A WR'])))
++    out, info = rps.apply_expected_points_luck(board, table, factors=on)
++    pts = out.set_index('Player')['Model Proj Pts']
++    assert pts['A QB'] == 17.67                                      # 18 - 0.11 * (2.5 - (-0.5))
++    assert pts['B QB'] == 18.0                                       # the average QB's luck: no move
++    assert pts['C QB'] == 18.44                                      # 18 - 0.11 * (-4.5 + 0.5)
++    assert pts['A WR'] == 17.46                                      # WR is not centered: 18 - 0.18 * 3
++    assert info[('A QB', 'QB', 'KC')]['center'] == -0.5 and info[('A WR', 'WR', 'KC')]['center'] == 0.0
+diff --git a/tests/test_weekly_projections.py b/tests/test_weekly_projections.py
+index b6c4266..b044a7b 100644
+--- a/tests/test_weekly_projections.py
++++ b/tests/test_weekly_projections.py
+@@ -3668,61 +3668,6 @@ def test_apply_season_anchor_pulls_eligible_rows_toward_their_own_average_and_le
+     assert wp.apply_season_anchor(result, pd.DataFrame(), 'name')[1] == {}
+ 
+ 
+-def test_v2_season_anchor_moves_the_built_board_toward_the_players_to_date_average():
+-    rows = []
+-    for week in range(1, 5):
+-        for team, opp in (('KC', 'DEN'), ('DEN', 'KC')):
+-            for label, snap, tgt in (('Alpha', 92.0, 9.0), ('Bravo', 85.0, 6.0)):
+-                rows.append({'name': f'{team} {label}', 'team': team, 'opponent_team': opp, 'week': week,
+-                             'position': 'WR', 'weekly_snap_pct': snap, 'targets': tgt, 'receptions': tgt * 0.65,
+-                             'receiving_yards': tgt * 8.0, 'receiving_tds': tgt * 0.05, 'fantasy_points': 30.0})
+-            rows.append({'name': f'{team} QB', 'team': team, 'opponent_team': opp, 'week': week, 'position': 'QB',
+-                         'weekly_snap_pct': 100.0, 'passing_attempts': 34.0, 'passing_completions': 22.0,
+-                         'passing_yards': 250.0, 'passing_tds': 1.6, 'passing_interceptions': 0.6, 'fantasy_points': 30.0})
+-    current = weekly(rows)
+-    prior = current.copy()
+-    prior['week'] = 18
+-    schedule = pd.DataFrame([{'week': 5, 'home_team': 'KC', 'away_team': 'DEN'}])
+-    original = (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+-                wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context)
+-    boards, metas = {}, {}
+-    try:
+-        wp.load_and_merge_data = lambda year, scoring: (
+-            (current.copy() if year == 2026 else prior.copy()), 'team', 'name', None)
+-        wp.load_schedule = lambda year: schedule.copy()
+-        wp._load_pff_receiving = lambda year, allow_season_totals=True: pd.DataFrame()
+-        wp.load_team_pace = lambda year, through_week=None: pd.DataFrame()
+-        wp._target_margins_by_team = lambda year, week: {}
+-        wp.realized_script_by_team_week = lambda year: {}
+-        wp._xtd_zone_context = lambda year, as_of_week, prior_year: {
+-            'prior_team': {}, 'cur_team': {}, 'cur_player': {}, 'prior_player': {}}
+-        # pfs replaces the weeks 3-17 total (and retired the anchor, 2026-11-02), so the anchor is tested without it
+-        _base = wp.DEFAULT_FEATURES - {'v2_points_from_stat_line'}
+-        for arm, feats in (('off', _base - {'v2_season_anchor'}), ('on', _base | {'v2_season_anchor'})):
+-            wp.build_weekly_projections.clear()
+-            boards[arm], metas[arm] = wp.build_weekly_projections(
+-                2026, 5, 'Full PPR', as_of_week=5, apply_injury=False, features=feats)
+-            boards[arm] = boards[arm].set_index('Player')
+-    finally:
+-        (wp.load_and_merge_data, wp.load_schedule, wp._load_pff_receiving, wp.load_team_pace,
+-         wp._target_margins_by_team, wp.realized_script_by_team_week, wp._xtd_zone_context) = original
+-        wp.build_weekly_projections.clear()
+-    off, on = boards['off'].loc['KC Alpha', 'Model Proj Pts'], boards['on'].loc['KC Alpha', 'Model Proj Pts']
+-    assert off < 30.0                                                   # his projection is below his 30.0 average...
+-    s = (wp.season_anchor_factors(wp.DEFAULT_FEATURES) or wp.SEASON_ANCHOR_S)['WR']    # the shipped s (v2_anchor_s_refit)
+-    assert on == pytest.approx(30.0 + s * (off - 30.0), abs=0.02) and on > off   # ...so it is pulled up
+-    assert boards['on'].loc['KC QB', 'Model Proj Pts'] == boards['off'].loc['KC QB', 'Model Proj Pts']   # QB untouched
+-    assert boards['on'].loc['KC Alpha', 'Raw Model Proj Pts'] == boards['off'].loc['KC Alpha', 'Raw Model Proj Pts']
+-    anchor = metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['season_anchor']
+-    assert anchor['games'] == 4 and anchor['mean'] == pytest.approx(30.0) and anchor['after'] == pytest.approx(on)
+-    assert metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['calibrated_points'] == pytest.approx(on)
+-    # the calibration caption reports the line's own result, so raw -> line -> anchor chains in the dialog
+-    line = metas['on']['explanations'][('KC Alpha', 'WR', 'KC')]['calibration']
+-    assert line['displayed_points'] == pytest.approx(anchor['before']) and line['delta'] == pytest.approx(anchor['before'] - line['raw_points'])
+-    assert metas['off']['explanations'][('KC Alpha', 'WR', 'KC')]['calibration']['displayed_points'] == pytest.approx(off)
+-    assert 'season_anchor' not in metas['off']['explanations'][('KC Alpha', 'WR', 'KC')]
+-
+-
+ def test_qb_passing_td_k_override_slows_the_current_season_blend_and_is_off_by_default():
+     games, conf = np.array([2.0, 4.0]), np.array([0.5, 0.5])
+     shared = wp._current_blend_weight(games, 'passing_tds', conf)
+-- 
+2.55.0.windows.2
+

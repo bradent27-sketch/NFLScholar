@@ -1,0 +1,167 @@
+From b52691edcdb88ed3424df6897750bc40f094b6ff Mon Sep 17 00:00:00 2001
+From: bradent27-sketch <304192343+bradent27-sketch@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 10:17:27 -0600
+Subject: [PATCH] Retire game_env (the flat game-total + venue bundle)
+
+The bundled "market total + roof/venue" multiplier (_game_env_multiplier: implied-total elasticity per position x an indoor/outdoor
+factor, VENUE_MULT QB 1.049/0.981, TE 1.037/0.986, WR 1.028/0.989, RB neutral) was built, measured and rejected as a bundle (+0.012 MAE).
+Its halves were then tested alone: v2_game_total_elasticity was superseded by the shipped per-stat version, v2_venue_mult was
+INCONCLUSIVE (retired in the first wave). Nothing in the default model used the flat multiplier, so the flat environment multiplier was
+already 1.0 everywhere; the per-stat implied-total channel is unchanged. Removes _game_env_multiplier, VENUE_MULT, the use_total /
+use_venue plumbing, one test, and the wave-1 flag names left behind in the env-loading condition. The 'environment_status' text stays
+'feature disabled' (the UI shows it). GAME_TOTAL_ELASTICITY / GAME_TOTAL_CLIP stay: the per-stat table falls back to them.
+Restore with git revert of this commit.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ data/weekly_projections.py       | 70 ++++----------------------------
+ tests/test_weekly_projections.py |  9 ----
+ 2 files changed, 9 insertions(+), 70 deletions(-)
+
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index ec1b88e..ce53600 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -1131,7 +1131,6 @@ MODEL_FEATURES = (
+     'redzone_tds',        # touchdowns from red-zone opportunity, not a raw TD rate
+     'role_trend',         # a step change in snap share, not a decayed average of it
+     'volume_faced',       # opponent pass/rush volume faced, split (pace is one number)
+-    'game_env',           # market total, roof/venue, wind, rest
+     'teammate_vacancy',   # an OUT teammate's usage redistributed (live only) -
+                            # superseded by 'v2_vacancy' in DEFAULT_FEATURES (same
+                            # gate; v2_vacancy adds the ledger tracking on top)
+@@ -8378,9 +8377,8 @@ def _game_total_stat_multipliers(env, teams, pos, league_implied, stats, boost=N
+     """{stat: np.array(len(teams))} - the per-stat implied-total factor for
+     'v2_game_total_elasticity_perstat'. 1.0 for any team with no posted line
+     (the normal case more than a few weeks out) and for any stat with no
+-    fitted elasticity, same degrade-gracefully convention as
+-    _game_env_multiplier, which this replaces on the implied-total channel
+-    when the per-stat flag is on (venue stays on _game_env_multiplier).
++    fitted elasticity, same degrade-gracefully convention as the flat _game_env_multiplier it replaced (retired 2026-11-03 with
++    the 'game_env' bundle; docs/retired_flags.md).
+     ``boost`` ({stat: delta}) is added to those stats' exponents ('v2_qb_implied_td_boost')."""
+     betas = dict(_load_game_total_perstat().get(pos, ()))
+     for stat, delta in (boost or {}).items():
+@@ -8407,14 +8405,6 @@ def _game_total_stat_multipliers(env, teams, pos, league_implied, stats, boost=N
+ 
+ 
+ INDOOR_ROOFS = ('dome', 'closed')
+-# league-frequency-weighted to 1.0 at the ~28% of games played indoors
+-VENUE_MULT = {
+-    'QB': {'indoor': 1.049, 'outdoor': 0.981},
+-    'TE': {'indoor': 1.037, 'outdoor': 0.986},
+-    'WR': {'indoor': 1.028, 'outdoor': 0.989},
+-    'RB': {'indoor': 1.000, 'outdoor': 1.000},
+-}
+-
+ # --- v2_weather_adjustment --------------------------------------------------
+ # PER-STAT outdoor WIND effect. Two earlier passes failed: the v1 flat
+ # fantasy-points penalty (wind redistributes, it does not just scale points),
+@@ -8605,40 +8595,6 @@ def game_environment(schedule_df, week):
+     return out
+ 
+ 
+-def _game_env_multiplier(env, teams, pos, league_implied, use_total=True, use_venue=True):
+-    """Per-player game-environment multiplier: implied-total elasticity x
+-    venue. 1.0 for any team without a posted line (the normal case more than
+-    a few weeks out), same degrade-gracefully convention as every other
+-    best-effort signal here.
+-
+-    ``use_total``/``use_venue`` let a caller apply just ONE of the two
+-    factors - added 2026-08-27 for the component backtest program: the
+-    BUNDLED 'game_env' feature was built, measured, and rejected (+0.012 MAE,
+-    see DEFAULT_FEATURES's own comment), but a bundle that fails as a whole
+-    can still be hiding one real, useful piece diluted by a non-working one -
+-    exactly what happened with the original alignment mechanism before its
+-    redesign. 'v2_game_total_elasticity' and 'v2_venue_mult' isolate each
+-    piece for its own backtest rather than re-testing the same bundle again.
+-    """
+-    elasticity = GAME_TOTAL_ELASTICITY.get(pos, 0.0)
+-    venue = VENUE_MULT.get(pos, {'indoor': 1.0, 'outdoor': 1.0})
+-    out = np.ones(len(teams))
+-    if not env:
+-        return out
+-    for i, team in enumerate(teams):
+-        entry = env.get(str(team))
+-        if not entry:
+-            continue
+-        mult = 1.0
+-        implied = entry.get('implied')
+-        if use_total and implied and league_implied and league_implied > 0 and implied > 0 and elasticity:
+-            mult *= float(np.clip((implied / league_implied) ** elasticity, *GAME_TOTAL_CLIP))
+-        if use_venue:
+-            mult *= venue['indoor'] if entry.get('indoor') else venue['outdoor']
+-        out[i] = mult
+-    return out
+-
+-
+ def _week_opponents(schedule_df, week):
+     """{team: opponent} for one week, from the real schedule - teams absent
+     from this dict are on a bye. Vectorized dict build, not a per-team scan."""
+@@ -9324,10 +9280,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+     # schedule_df already loaded above for the historical_target check.
+     opponents = _week_opponents(schedule_df, week)
+     env = game_environment(schedule_df, week) if (
+-        'game_env' in feats or 'v2_game_total_elasticity' in feats
+-        or 'v2_game_total_elasticity_perstat' in feats or 'v2_venue_mult' in feats
++        'v2_game_total_elasticity_perstat' in feats
+         or 'v2_xtd' in feats or 'v2_stat_recal_game_script' in feats
+-        or 'v2_rb_game_script' in feats or 'v2_rb_game_script_rush' in feats
++        or 'v2_rb_game_script_rush' in feats
+     ) else {}
+     league_implied = None
+     if env:
+@@ -12169,14 +12124,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+ 
+         inj_mult = cur[name_col].map(injury_mult).fillna(1.0)
+         perstat_env = 'v2_game_total_elasticity_perstat' in feats
+-        # The per-stat implied-total flag OWNS the implied-total channel when
+-        # it's on - the flat _game_env_multiplier then does venue only, so the
+-        # two never both scale the total.
+-        use_total = 'game_env' in feats and not perstat_env
+-        use_venue = 'game_env' in feats
+-        env_mult = (_game_env_multiplier(env, cur['Team'].astype(str).to_numpy(), pos, league_implied,
+-                                         use_total=use_total, use_venue=use_venue)
+-                    if env else np.ones(len(cur)))
++        # The implied-total channel belongs to the per-stat flag (env_stat_mult below). The flat game-total + venue multiplier
++        # (the 'game_env' bundle, and its two halves 'v2_game_total_elasticity' / 'v2_venue_mult') was retired 2026-11-03, so the
++        # flat environment multiplier is neutral.
++        env_mult = np.ones(len(cur))
+         # {stat: per-player array} - the implied-total factor fitted separately
+         # per stat (data._game_total_stat_multipliers). Empty/all-ones unless
+         # the flag is on and a line is posted.
+@@ -12280,10 +12231,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                     _env_stat, dtype=float)
+                 if weather_stat_mult is not None:
+                     trace['weather_stat_multiplier'] = np.asarray(_wx_stat, dtype=float)
+-                trace['environment_status'] = np.full(
+-                    len(cur), 'modeled' if 'game_env' in feats and env else
+-                    ('feature enabled; no usable line' if 'game_env' in feats else 'feature disabled'),
+-                )
++                trace['environment_status'] = np.full(len(cur), 'feature disabled')
+ 
+ 
+ 
+diff --git a/tests/test_weekly_projections.py b/tests/test_weekly_projections.py
+index eaf9bae..5e3a760 100644
+--- a/tests/test_weekly_projections.py
++++ b/tests/test_weekly_projections.py
+@@ -1984,15 +1984,6 @@ def test_game_environment_sign_convention_favours_the_home_team():
+     assert env['KC']['indoor'] is False
+ 
+ 
+-def test_game_environment_multiplier_is_neutral_without_a_posted_line():
+-    sched = pd.DataFrame({'week': [1], 'home_team': ['KC'], 'away_team': ['DEN'],
+-                          'total_line': [np.nan], 'spread_line': [np.nan], 'roof': ['dome']})
+-    env = wp.game_environment(sched, 1)
+-    out = wp._game_env_multiplier(env, np.array(['KC']), 'QB', league_implied=22.0)
+-    # Venue still applies; the total does not, because there isn't one.
+-    assert abs(out[0] - wp.VENUE_MULT['QB']['indoor']) < 1e-9
+-
+-
+ def test_historical_target_margins_matches_live_sign_convention():
+     # A historical target reads the SAME closing-line archive as
+     # game_environment (see _historical_target_margins' own comment for why
+-- 
+2.55.0.windows.2
+

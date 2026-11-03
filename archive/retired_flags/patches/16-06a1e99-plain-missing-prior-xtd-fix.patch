@@ -1,0 +1,148 @@
+From 06a1e9973a8ad0719265c2d556569fdfac3a1485 Mon Sep 17 00:00:00 2001
+From: bradent27-sketch <304192343+bradent27-sketch@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 10:21:46 -0600
+Subject: [PATCH] Retire v2_xtd_missing_prior_share (the plain missing-prior
+ fix; v2_xtd_missing_prior_overall ships)
+
+2026-11-02: a player absent from last season's zone usage (a rookie) had his real zone share blended with a fake 0 prior at weight
+K / (games + K), so a rookie's expected TDs ran 0.2x in week 2 and about 0.43x after three games (rookie RB rushing TDs per carry
+0.009 against 0.027 for veterans). The plain fix gives such a player NO prior (his current share stands alone); it failed weeks 1-2
+(START-ALL +0.019, REJECT) because a 3-game zone share is noisy. The overall variant, which shrinks it toward his overall share of
+the team's opportunities, passed and ships. xtd_blended_rate loses the missing_prior_unknown option (a team with no opportunities yet
+still falls back to the no-prior behaviour); the test now exercises the overall variant against the no-fix baseline.
+Restore with git revert of this commit.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ data/weekly_projections.py            | 30 ++++++++++-----------------
+ tests/test_xtd_missing_prior_share.py | 18 +++++++---------
+ 2 files changed, 19 insertions(+), 29 deletions(-)
+
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index 332c677..607b157 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -1662,12 +1662,6 @@ MODEL_FEATURES = (
+                              # model (RB and QB; ~13.5% / ~6% of their rushing
+                              # TDs come from there). Needs v2_xtd. See
+                              # XTD_RUSH_OUTSIDE_ZONE.
+-    'v2_xtd_missing_prior_share',  # CANDIDATE, superseded (2026-11-02; failed weeks 1-2, the overall variant below ships): a player missing from last season's
+-                             # zone usage (a rookie) has NO prior zone share in v2_xtd, not a 0% one.
+-                             # Before it his real share was multiplied by games / (games + 4): a
+-                             # rookie's expected TDs ran 0.2x in week 2 and ~0.43x after 3 games
+-                             # (START rookie RBs: 0.009 rush TDs per carry at zero TD events vs
+-                             # 0.027 for veterans; actual 0.035). See xtd_blended_rate.
+     'v2_xtd_missing_prior_overall',  # SHIPPED 2026-11-02 (DEFAULT_FEATURES = 81), alternative to the flag above: the
+                              # absent player's prior zone share is his current share of the team's
+                              # opportunities over all zones, so a 3-game zone share is shrunk toward
+@@ -5407,7 +5401,7 @@ def _xtd_zone_context(year, as_of_week, prior_year):
+ 
+ def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_total,
+                      player_names, player_teams, env, league_implied, year, as_of_week,
+-                     rush_outside_zone=False, missing_prior_unknown=False, missing_prior_overall=False):
++                     rush_outside_zone=False, missing_prior_overall=False):
+     """c*own_rate + (1-c)*xTD for `stat` in XTD_ZONE_STATS - see this
+     module's 'v2_xtd' comment block above. All array args are aligned to
+     the caller's `cur` frame. Returns `own_rate` unchanged (a strict no-op)
+@@ -5418,15 +5412,14 @@ def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_tota
+     rushing TDs come from there, and without it the xTD half of the blend is
+     structurally short by that share (see XTD_RUSH_OUTSIDE_ZONE).
+ 
+-    ``missing_prior_unknown`` ('v2_xtd_missing_prior_share'): a player absent from last season's zone usage (a rookie, or
+-    a player who missed the season) has no prior share, so his current share stands alone. Without it the absent row
+-    read as a 0.0 share and was blended in at weight K / (games + K), cutting a rookie's xTD to games / (games + K) of
+-    his real share. A player present last season with no carries/targets in a zone still reads a real 0.
+-
+-    ``missing_prior_overall`` ('v2_xtd_missing_prior_overall'): for the same absent player, the prior share is his
+-    current share of the team's opportunities over all the zones read, so a 3-game zone share is shrunk toward his
+-    overall role the way a veteran's is shrunk toward last season (and a zone the team has not reached yet reads it).
+-    Takes precedence over ``missing_prior_unknown``.
++    ``missing_prior_overall`` ('v2_xtd_missing_prior_overall'): a player absent from last season's zone usage (a rookie, or a
++    player who missed the season) gets, as his prior share, his current share of the team's opportunities over all the zones
++    read, so a 3-game zone share is shrunk toward his overall role the way a veteran's is shrunk toward last season (and a zone
++    the team has not reached yet reads it). Without it the absent row read as a 0.0 share and was blended in at weight
++    K / (games + K), cutting a rookie's xTD to games / (games + K) of his real share. A player present last season with no
++    carries/targets in a zone still reads a real 0. (The plain fix, 'v2_xtd_missing_prior_share' - no prior share at all, the
++    current share stands alone - failed weeks 1-2 and was retired 2026-11-03: docs/retired_flags.md. A team with no opportunities
++    yet still falls back to that: the prior share stays NaN.)
+     """
+     cfg = XTD_ZONE_STATS.get(stat)
+     rates = _load_xtd_rates()
+@@ -5460,9 +5453,9 @@ def xtd_blended_rate(stat, pos, own_rate, cur_games, cur_td_total, prior_td_tota
+         cur_player_row = ctx['cur_player'].get(name_key, {})
+         prior_player_row = ctx['prior_player'].get(name_key, {})
+         cur_team_row = ctx['cur_team'].get(team, {})
+-        absent_prior = (missing_prior_unknown or missing_prior_overall) and name_key not in ctx['prior_player']
++        absent_prior = missing_prior_overall and name_key not in ctx['prior_player']
+         absent_prior_share = np.nan
+-        if absent_prior and missing_prior_overall:
++        if absent_prior:
+             _team_opps = sum(cur_team_row.get(f'{z}_{suffix}', 0.0) for z in zones)
+             if _team_opps > 0:
+                 absent_prior_share = sum(cur_player_row.get(f'{z}_{suffix}', 0.0) for z in zones) / _team_opps
+@@ -11737,7 +11730,6 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                     cur[name_col].to_numpy(dtype=object), cur['Team'].to_numpy(dtype=object),
+                     env, league_implied, year, as_of_week,
+                     rush_outside_zone=('v2_xtd_rush_outside_zone' in feats),
+-                    missing_prior_unknown=('v2_xtd_missing_prior_share' in feats),
+                     missing_prior_overall=('v2_xtd_missing_prior_overall' in feats))
+             # The allocator's carry/target capacity is the preseason role
+             # baseline.  For the two opportunity stats themselves, make that
+diff --git a/tests/test_xtd_missing_prior_share.py b/tests/test_xtd_missing_prior_share.py
+index 744ba3a..92110ee 100644
+--- a/tests/test_xtd_missing_prior_share.py
++++ b/tests/test_xtd_missing_prior_share.py
+@@ -1,4 +1,5 @@
+-"""v2_xtd_missing_prior_share: a player absent from last season's zone usage has no prior zone share in v2_xtd."""
++"""v2_xtd_missing_prior_overall: a player absent from last season's zone usage has his overall current share as his prior in v2_xtd.
++The plain fix (v2_xtd_missing_prior_share: no prior at all) failed weeks 1-2 and was retired 2026-11-03."""
+ import numpy as np
+ 
+ import data.weekly_projections as wp
+@@ -16,13 +17,13 @@ CTX = {
+ }
+ 
+ 
+-def _xtd(monkeypatch, missing_prior_unknown, games=3.0):
++def _xtd(monkeypatch, missing_prior_overall, games=3.0):
+     monkeypatch.setattr(wp, '_load_xtd_rates', lambda: RATES)
+     monkeypatch.setattr(wp, '_xtd_zone_context', lambda *a, **k: CTX)
+     names = np.array(['rookie', 'vet', 'backup'], dtype=object)
+     return wp.xtd_blended_rate('rushing_tds', 'RB', np.zeros(3), np.full(3, games), np.zeros(3), np.zeros(3),
+                                names, np.array(['LV'] * 3, dtype=object), {}, None, 2025, 4,
+-                               missing_prior_unknown=missing_prior_unknown)
++                               missing_prior_overall=missing_prior_overall)
+ 
+ 
+ def _full_share_xtd(share):
+@@ -30,8 +31,8 @@ def _full_share_xtd(share):
+                for z in ('rz5', 'rz10', 'rz20'))
+ 
+ 
+-def test_overall_variant_ships_and_the_plain_fix_stays_off():
+-    assert 'v2_xtd_missing_prior_share' in wp.MODEL_FEATURES and 'v2_xtd_missing_prior_share' not in wp.DEFAULT_FEATURES
++def test_overall_variant_ships_and_the_plain_fix_is_gone():
++    assert 'v2_xtd_missing_prior_share' not in wp.MODEL_FEATURES
+     assert 'v2_xtd_missing_prior_overall' in wp.MODEL_FEATURES and 'v2_xtd_missing_prior_overall' in wp.DEFAULT_FEATURES
+ 
+ 
+@@ -58,14 +59,11 @@ def test_overall_variant_shrinks_the_zone_share_toward_the_overall_share(monkeyp
+     names = np.array(['hot', 'vet'], dtype=object)
+     run = lambda **kw: wp.xtd_blended_rate('rushing_tds', 'RB', np.zeros(2), np.full(2, 3.0), np.zeros(2), np.zeros(2),
+                                            names, np.array(['LV'] * 2, dtype=object), {}, None, 2025, 4, **kw)
+-    plain, overall, both = run(missing_prior_unknown=True), run(missing_prior_overall=True), run(
+-        missing_prior_unknown=True, missing_prior_overall=True)
++    base, overall = run(), run(missing_prior_overall=True)
+     w = 3.0 / 7.0
+     overall_share = 5.0 / 10.0                                      # 5 of the team's 10 zone carries
+     expect = (20 / 17 * (w * 1.0 + (1 - w) * overall_share) * 0.4      # rz5: 4 of 4
+               + 10 / 17 * (w * 0.0 + (1 - w) * overall_share) * 0.1   # rz10: 0 of 2
+               + 20 / 17 * (w * 0.25 + (1 - w) * overall_share) * 0.04)  # rz20: 1 of 4
+     assert abs(overall[0] - expect) < 1e-9
+-    assert overall[0] < plain[0]                                     # the hot 3-game zone share is pulled back
+-    assert abs(both[0] - overall[0]) < 1e-12                         # overall wins when both are on
+-    assert abs(overall[1] - plain[1]) < 1e-12                        # a player with a prior season is untouched
++    assert abs(overall[1] - base[1]) < 1e-12                         # a player with a prior season is untouched
+-- 
+2.55.0.windows.2
+

@@ -1,0 +1,59 @@
+From 74775f8008da688add2620a37a892191fb62d924 Mon Sep 17 00:00:00 2001
+From: bradent27-sketch <304192343+bradent27-sketch@users.noreply.github.com>
+Date: Tue, 3 Nov 2026 11:42:03 -0600
+Subject: [PATCH] Retire v2_td_matchup_audit and v2_td_matchup_pass_rec_off
+ (finished arms of the 2026-10-24 TD matchup strength run)
+
+Two of four variants (TD_MATCHUP_STRENGTH) in the TD matchup run on the 65-flag default, 2022-2025 weeks 3-17:
+- v2_td_matchup_audit (passing / receiving TDs off, rushing half): START-ALL -0.0006 [-0.0066, +0.0050] 28-32 weeks, EVERY-ALL +0.0008.
+- v2_td_matchup_pass_rec_off (passing / receiving off, rushing as is): START-ALL -0.0008 [-0.0063, +0.0050] 30-30, EVERY-ALL +0.0004.
+Both met the pre-set bar, but half strength on every TD stat (v2_td_matchup_half, START-ALL -0.0016, the only variant better on every
+pooled scope, moves projections least) won by the rule and shipped. v2_no_td_matchup (all off) stays as the ablation instrument.
+Removes the two registry entries and their TD_MATCHUP_STRENGTH rows and test lines. Default boards identical (.sweeps/board_identity.py,
+wave-2 start vs final code back to back: 2022 w1, 2024 w12, live 2026 w9). Restore with git revert of this commit.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+---
+ data/weekly_projections.py         | 4 ----
+ tests/test_strength_audit_flags.py | 3 ---
+ 2 files changed, 7 deletions(-)
+
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index 607b157..83c9cfa 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -1868,8 +1868,6 @@ MODEL_FEATURES = (
+                              # (QB splits, abrupt established-role exits, paired partial
+                              # replacements, severe blowout rest) is switched off.
+     'v2_no_td_matchup',  # CANDIDATE (2026-10-23, strength audit): no matchup multiplier on TD stats.
+-    'v2_td_matchup_audit',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, half strength on rushing TDs.
+-    'v2_td_matchup_pass_rec_off',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, rushing TDs unchanged.
+     'v2_td_matchup_half',  # SHIPPED 2026-10-24: TD matchup at half strength on every TD stat.
+     'v2_no_qb_rush_script',  # SHIPPED 2026-10-24 (strength audit): no game-script multiplier on QB rushing.
+     'v2_no_pace',  # CANDIDATE (2026-10-23, strength audit): no opponent-pace multiplier.
+@@ -3155,8 +3153,6 @@ STRENGTH_AUDIT_TD_STATS = ('passing_tds', 'rushing_tds', 'receiving_tds')
+ # passing and receiving TDs at every position and 0.5 for rushing TDs (RB 5 of 5 seasons, QB). The first flag present wins.
+ TD_MATCHUP_STRENGTH = {
+     'v2_no_td_matchup': {'passing_tds': 0.0, 'rushing_tds': 0.0, 'receiving_tds': 0.0},
+-    'v2_td_matchup_audit': {'passing_tds': 0.0, 'rushing_tds': 0.5, 'receiving_tds': 0.0},
+-    'v2_td_matchup_pass_rec_off': {'passing_tds': 0.0, 'rushing_tds': 1.0, 'receiving_tds': 0.0},
+     'v2_td_matchup_half': {'passing_tds': 0.5, 'rushing_tds': 0.5, 'receiving_tds': 0.5},
+ }
+ 
+diff --git a/tests/test_strength_audit_flags.py b/tests/test_strength_audit_flags.py
+index 539fa5a..e73e058 100644
+--- a/tests/test_strength_audit_flags.py
++++ b/tests/test_strength_audit_flags.py
+@@ -25,9 +25,6 @@ def test_td_matchup_strength_variants():
+     assert wp.td_matchup_strength(feats, 'passing_tds') == 0.5          # v2_td_matchup_half shipped 2026-10-24
+     assert wp.td_matchup_strength(frozenset(), 'passing_tds') == 1.0
+     assert wp.td_matchup_strength(feats | {'v2_no_td_matchup'}, 'rushing_tds') == 0.0
+-    audit = feats | {'v2_td_matchup_audit'}
+-    assert (wp.td_matchup_strength(audit, 'receiving_tds'), wp.td_matchup_strength(audit, 'rushing_tds')) == (0.0, 0.5)
+-    assert wp.td_matchup_strength(feats | {'v2_td_matchup_pass_rec_off'}, 'rushing_tds') == 1.0
+     assert wp.td_matchup_strength(feats | {'v2_td_matchup_half'}, 'passing_tds') == 0.5
+     for flag in wp.TD_MATCHUP_STRENGTH:
+         assert flag in wp.MODEL_FEATURES
+-- 
+2.55.0.windows.2
+

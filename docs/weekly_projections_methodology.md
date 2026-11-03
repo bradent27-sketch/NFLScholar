@@ -8211,3 +8211,31 @@ the floor takes the share (points - 2.0) / (3.0 - 2.0) of the move: stat = board
 - **Side effect to know:** a moved bench row now carries `_pre_recal_<stat>` and takes the recal-curve median (`MEDIAN_CURVES_RECAL`) even
   when it moved only part of the way; the prop engine reads the same column. Both are small for rows this far down.
 - Registered in `POST_CALIBRATION_FEATURES`. Undo: remove the flag.
+
+### 2026-11-03 - Retired 15 more off flags (wave 2; code removal, no projection changes)
+
+User: "work through the other dead flags with the same rules as before... things still being worked through stay, don't get rid of
+anything entirely and we need to be sure we keep the evidence and idea of what happened with those flags." `MODEL_FEATURES` 106 -> 91,
+`DEFAULT_FEATURES` stays 85; the six flags still off are the three harness switches (`v2_historical_injury_replay`, `_reserve_replay`,
+`v2_historical_ourlads`) and three ablation instruments (`v2_no_history_exclusions`, `v2_no_td_matchup`, `v2_no_pace`), kept on purpose.
+
+- **Record:** `docs/retired_flags.md`, "Wave 2": per flag the evidence class (9 superseded, 3 failed, 3 hook), what it did, the numbers, the
+  removing commit and the original registry note; six more patch files in `archive/retired_flags/patches/`; tag `retire-flags-wave2-base`.
+- **Five were shipped and worked** (season anchor, `v2_anchor_s_refit`, expected-points luck, `v2_luck_te_refit`, `v2_luck_qb`): retired
+  2026-11-02 because the stat recal plus `v2_points_from_stat_line` replace the weeks 3-17 total (the `lean` arm tied). Their code did NOT go
+  to a patch: it moved verbatim to `data/retired_points_steps.py` (tested in `tests/test_retired_points_steps.py`, re-exported from
+  `data.weekly_projections` because about a dozen calibration scripts import the names). If the total ever goes back to a calibration line,
+  bring these back first.
+- **Legacy names:** `volume_efficiency` (+0.051 MAE, rejected), `game_env` (+0.012 MAE as a bundle; `VENUE_MULT` and the flat multiplier
+  removed, the per-stat implied-total channel untouched), `role_matchup` and `teammate_vacancy` (superseded by `v2_continuous_roles` and
+  `v2_vacancy`), and three names that never had code (`redzone_tds`, `role_trend`, `volume_faced`).
+- **Also retired:** `v2_xtd_missing_prior_share` (the plain fix failed weeks 1-2; the overall variant ships) and `v2_td_matchup_audit` /
+  `v2_td_matchup_pass_rec_off` (two finished arms of the 2026-10-24 run; half strength won by the pre-set rule).
+- **Kept:** the harness switches are needed by every backtest; the three ablation instruments are how a shipped, unflagged piece (the
+  partial-game filter, the TD matchup, the pace multiplier) gets re-checked for whether it earns its place. Flagged to the user: wave 1
+  retired `v2_new_team_starter_restoration` although it was never backtested - restorable from patch 05.
+- **Verification:** the wave-2 starting point against the code after the first four commits, built back to back on 15 scenarios (historical
+  2022-2025 weeks 1, 2, 3, 5, 6, 9, 12, 15, a 2025 week 1 with the Ourlads charts, live 2026 weeks 1, 2, 5, 9): every board column and every
+  explanation payload identical, ignoring only the `efficiency_*` keys removed from the payload on purpose; the last commit on three
+  scenarios. `.sweeps/check_script_imports.py` confirms every `from data.<module> import name` in scripts, tests, ui and data resolves, and a
+  sweep for quoted `v2_` names found no stale condition (wave 1 had left one in the environment-loading condition; it was cleaned here).

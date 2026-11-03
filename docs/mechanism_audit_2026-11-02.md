@@ -191,7 +191,9 @@ and every-game rows differ. The TE capacity relief targets exactly that gap.
    worth ~0 points. Stays off; revisit with more 2026 weeks.
 5. **Dead code**: remove the rejected and superseded flags' branches (section 2), verified by identical default boards.
    DONE 2026-11-03 for the 34 flags of the rejected / superseded / hook groups (`docs/retired_flags.md`: what each tried, the
-   evidence, and how to restore it). The 5 retired-by-pfs flags, the 5 ablation arms and the 7 legacy names remain.
+   evidence, and how to restore it). Wave 2 (also 2026-11-03) did the 5 retired-by-pfs flags, 7 legacy names, the plain missing-prior
+   xTD fix and 2 finished TD-matchup variants. Kept on purpose: the 3 harness switches and the 3 ablation instruments (`v2_no_history_exclusions`,
+   `v2_no_td_matchup`, `v2_no_pace`).
 6. **Leads for the backlog:** rookie RB early-season rushing (M18); WR1 concentration; the stat recal's 3.0-point gate is a
    cliff (M19: targets jump 35-50% across it, below START only). Each needs its own study.
 7. **`v2_wr1_capacity_relief`** passed its bar (START-WR -0.010); in the pfs world START-WR -0.011, 4 of 4 seasons. The

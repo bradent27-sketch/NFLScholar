@@ -47,6 +47,9 @@ from data.odds_sources import (BOOK_WEIGHTS, BOOK_WEIGHT_FALLBACK,
 # TDs are rushing, WR/TE are receiving; a TD is 6 points either way, so this
 # gives the right point total without a rush/rec split (see odds_sources
 # _ANYTIME_TD_STAT_BY_POS, kept in sync).
+# The posted line's book order, sharpest first (ui/games_view.posted_lines, the prediction ledger, the lean records).
+LINE_BOOKS = ('Pinnacle', 'DraftKings', 'FanDuel', 'Underdog', 'PrizePicks')
+
 _ANYTIME_TD_ROUTE = {'QB': 'rushing_tds', 'RB': 'rushing_tds', 'FB': 'rushing_tds',
                      'WR': 'receiving_tds', 'TE': 'receiving_tds'}
 

@@ -418,7 +418,8 @@ MARKET_STAT_NAME = {'rushing_attempts': 'carries', 'passing_attempts': 'attempts
 # Poisson mean solved for a count, so a 0.5 interceptions line priced at even money reads 0.69), the right number beside a mean,
 # the wrong one beside a median or as "the line". 'Line <stat>' is the line a book actually posted: the sharpest book that posted
 # one (this order), so the LINE column is a number that can be bet and a median can be read against it.
-LINE_BOOKS = ('Pinnacle', 'DraftKings', 'FanDuel', 'Underdog', 'PrizePicks')
+# (the order lives in data/odds_projections.py since 2026-11-11, so the prediction ledger reads the same one)
+from data.odds_projections import LINE_BOOKS  # noqa: E402
 # market stats whose implied mean is a Poisson mean (above the line it came from); a yardage implied mean is the market's median
 _MEAN_STATS = {'receptions', 'targets', 'passing_tds', 'rushing_tds', 'receiving_tds', 'passing_interceptions', 'passing_completions',
                'passing_attempts', 'rushing_attempts'}
@@ -477,9 +478,10 @@ def long_market(board):
                     model = _num(rec.get(stat))
             if not np.isfinite(line) or not np.isfinite(model) or line < MIN_LEAN_LINE.get(stat, 1.0 if stat in _MEAN_STATS else 0.0):
                 continue
+            tier = rec.get('Tier ' + stat)
             rows.append({'player': rec['Player'], 'team': rec['Team'], 'Pos': rec['Pos'], 'stat': stat, 'model': float(model),
                          'line': float(line), 'diff': float(model) - line, 'diff_pct': (float(model) - line) / line if line else np.nan,
-                         '_key': (rec['Player'], rec['Pos'], rec['Team'])})
+                         'tier': tier if isinstance(tier, str) else '', '_key': (rec['Player'], rec['Pos'], rec['Team'])})
     return pd.DataFrame(rows)
 
 
@@ -491,9 +493,13 @@ def headline_line(rec, position):
     return line if np.isfinite(line) else _num(rec.get('Mkt ' + stat))
 
 
+TIER_ORDER = ('A', 'B', 'Track', 'No bet')
+
+
 def props_table(market, teams, group='All'):
-    """The priced props of the game's players, the largest disagreement with the book first: PLAYER, TEAM, MARKET, MODEL, LINE, DIFF %
-    (a number) and LEAN. `group`: All / Passing / Rushing / Receiving."""
+    """The priced props of the game's players, tiered props first (TIER, only when the board carries tiers), then the largest
+    disagreement with the book: PLAYER, TEAM, MARKET, MODEL, LINE, DIFF % (a number), LEAN and TIER. `group`: All / Passing /
+    Rushing / Receiving."""
     if market is None or market.empty:
         return pd.DataFrame()
     g = market[market['team'].isin(teams)].copy()
@@ -502,10 +508,15 @@ def props_table(market, teams, group='All'):
     if g.empty:
         return pd.DataFrame()
     g['_gap'] = g['diff_pct'].abs()
-    g = g.sort_values('_gap', ascending=False)
+    tiers = g['tier'] if 'tier' in g.columns else pd.Series('', index=g.index)
+    # B2 (2026-11-11): the tiered props first (A, B, Track, No bet; data/prop_tiers.py), then the largest disagreement
+    g['_tier'] = tiers.map({t: i for i, t in enumerate(TIER_ORDER)}).fillna(len(TIER_ORDER))
+    g = g.sort_values(['_tier', '_gap'], ascending=[True, False])
     out = pd.DataFrame({'PLAYER': g['player'], 'TEAM': g['team'], 'MARKET': g['stat'].map(lambda x: STAT_LABELS.get(x, x)),
                         'MODEL': g['model'], 'LINE': g['line'], 'DIFF %': g['diff_pct'],
                         'LEAN': g['diff'].map(lambda v: 'OVER' if v > 0 else 'UNDER' if v < 0 else '')})
+    if tiers.astype(str).str.len().gt(0).any():
+        out['TIER'] = tiers.reindex(g.index).fillna('').to_numpy()
     out['_key'] = g['_key'].to_numpy()
     return out.reset_index(drop=True)
 
@@ -528,6 +539,11 @@ def styled_props(frame):
                 styles.append(f'background-color:{shade}; color:#ffffff; font-weight:bold;')
             elif column == 'LINE':
                 styles.append(f"background-color:{base}; color:{C['primary']}; font-weight:bold;")
+            elif column == 'TIER':
+                tier = row.get('TIER')
+                styles.append(f"background-color:{base}; color:{C['primary']}; font-weight:bold;" if tier == 'A' else
+                              f"background-color:{base}; color:{C['on_surface']}; font-weight:bold;" if tier == 'B' else
+                              f"background-color:{base}; color:{C['on_surface_variant']};")
             elif column == 'PLAYER':
                 styles.append(f"background-color:{base}; color:{C['on_surface']}; font-weight:bold;")
             else:

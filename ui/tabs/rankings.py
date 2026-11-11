@@ -3214,7 +3214,26 @@ def _render_fantasypros_injury_pull(wk_year, wk_week, roster_df=None):
         st.caption(f"Nothing loaded for Week {wk_week} yet — every player defaults to healthy.")
 
 
-def _render_pff_weekly_alignment_upload(wk_year, wk_week):
+def _pff_export_week_ok(summary_up, upload_week, stats_df, name_col):
+    """False when the uploaded receiving_summary's yards match a different week's box scores (audit D4) and the user has
+    not ticked the override; True otherwise, including when the check cannot run (no stats, unreadable file)."""
+    if summary_up is None or stats_df is None or not name_col:
+        return True
+    from data.pff_alignment import detect_export_week
+    try:
+        summary_up.seek(0)
+        summary = pd.read_csv(summary_up, low_memory=False)
+        summary_up.seek(0)
+        found, share, _n = detect_export_week(summary, stats_df, name_col)
+    except Exception:
+        return True
+    if found is None or share < 0.8 or found == upload_week:
+        return True
+    st.warning(f"This receiving_summary matches week {found}'s box scores, not week {upload_week}.")
+    return st.checkbox(f"Save it as week {upload_week} anyway", key="wr_pff_align_week_override")
+
+
+def _render_pff_weekly_alignment_upload(wk_year, wk_week, stats_df=None, name_col=None):
     """
     Upload widget for the weekly PFF slot/wide/inline alignment archive AND
     its man/zone receiving-scheme companion (data.pff_alignment - see
@@ -3247,8 +3266,10 @@ def _render_pff_weekly_alignment_upload(wk_year, wk_week):
         "builds the slot/wide/inline alignment matchup (WR/TE targets, receptions, yards). "
         "The optional receiving_scheme.csv alongside it builds the man/zone scheme matchup - "
         "TE's own 'Defense multiplier' uses this instead of alignment wherever it's available.", "Details")
+    # 2026-11-11 (audit D4): the default is the last week PLAYED. It was the board's (upcoming) week, so every default
+    # upload landed one folder too high and the next board never saw it (2026 week 9 sat in folder 10).
     upload_week = st.number_input("Week this export covers", min_value=1, max_value=22,
-                                  value=int(wk_week) if wk_week else 1, step=1, key="wr_pff_align_week")
+                                  value=max(1, int(wk_week) - 1) if wk_week else 1, step=1, key="wr_pff_align_week")
     c1, c2 = st.columns(2)
     with c1:
         summary_up = st.file_uploader("receiving_summary.csv", type=["csv"], key="wr_pff_align_summary")
@@ -3257,8 +3278,9 @@ def _render_pff_weekly_alignment_upload(wk_year, wk_week):
     scheme_up = st.file_uploader(
         "receiving_scheme.csv (optional - man/zone route/target/reception/yard split)",
         type=["csv"], key="wr_pff_align_scheme")
+    week_ok = _pff_export_week_ok(summary_up, int(upload_week), stats_df, name_col)
     if st.button("Save this week's archive", key="wr_pff_align_save",
-                 disabled=not ((summary_up and concept_up) or scheme_up)):
+                 disabled=not week_ok or not ((summary_up and concept_up) or scheme_up)):
         ok, issues = save_weekly_alignment_export(
             summary_up, concept_up, wk_year, int(upload_week), scheme_file=scheme_up)
         if ok:
@@ -3312,6 +3334,48 @@ def _fantasypros_freshness_text(wk_year, wk_week, wk_scoring):
     if held_meta == (wk_year, wk_week, wk_scoring):
         return f"FantasyPros pulled {fetched_at:%I:%M %p}".replace(" 0", " ")
     return "FantasyPros pulled for another week"
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _prop_history_cached(wk_year, wk_week, wk_scoring):
+    """data.prop_probability.player_history for the week (the P(over) engine's history inputs), cached so the games view's
+    prop tiers do not recompute it on every rerun. None on any failure."""
+    try:
+        from data.prop_probability import player_history
+        stats, _t, name_col, _ = load_and_merge_data(wk_year, wk_scoring)
+        try:
+            prior, _pt, prior_name_col, _ = load_and_merge_data(wk_year - 1, wk_scoring)
+        except Exception:
+            prior, prior_name_col = None, None
+        return player_history(stats, name_col, int(wk_week), prior, prior_name_col)
+    except Exception:
+        return None
+
+
+def _games_prop_history(wk_year, wk_week, wk_scoring, market_df):
+    """The cached history for the games view's prop tiers, only when the staged pull carries book lines."""
+    book_lines = market_df.attrs.get('book_lines') if market_df is not None else None
+    if book_lines is None or getattr(book_lines, 'empty', True):
+        return None
+    return _prop_history_cached(wk_year, wk_week, wk_scoring)
+
+
+def _ledger_prop_history(wk_year, wk_week, wk_scoring, df_stats, n_col, market_df):
+    """The P(over) engine's history inputs for the ledger (data.prop_probability.player_history: season to date, last 3,
+    last season), only when the staged market pull carries book lines. None on any failure: the ledger then prices
+    without them."""
+    book_lines = market_df.attrs.get('book_lines') if market_df is not None else None
+    if book_lines is None or getattr(book_lines, 'empty', True):
+        return None
+    try:
+        from data.prop_probability import player_history
+        try:
+            prior, _pt, prior_name_col, _ = load_and_merge_data(wk_year - 1, wk_scoring)
+        except Exception:
+            prior, prior_name_col = None, None
+        return player_history(df_stats, n_col, int(wk_week), prior, prior_name_col)
+    except Exception:
+        return None
 
 
 def _scoring_dict(scoring_mode):
@@ -3700,7 +3764,7 @@ def _render_live_data_hub(wk_year, wk_week, wk_scoring, wk_week_completed, name_
             _render_qb1_overrides_hub(
                 wk_year, stats_df if stats_df is not None else pd.DataFrame(), team_col, name_col)
         with tab_pff:
-            _render_pff_weekly_alignment_upload(wk_year, wk_week)
+            _render_pff_weekly_alignment_upload(wk_year, wk_week, stats_df, name_col)
         with tab_market:
             # See the (former) standalone function's docstring: sportsbooks
             # only ever post the CURRENT live slate, so this can't be
@@ -3855,7 +3919,8 @@ def render():
         entry = None if build_clicked else board_session.kept_board(wk_year, wk_week, wk_scoring)
         if entry is not None and entry.get('just_reprojected'):
             record_board(wk_year, wk_week, entry['df'], market_df=market_df,
-                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES, scoring=wk_scoring)
+                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES, scoring=wk_scoring,
+                         history=_ledger_prop_history(wk_year, wk_week, wk_scoring, df_stats, n_col, market_df))
         if entry is None:
             with skeleton_loader("table", n_rows=10, n_cols=7):
                 entry = board_session.build_board(wk_year, wk_week, wk_scoring)
@@ -3868,7 +3933,8 @@ def render():
             # set) per hour) makes re-clicking Build board harmless. Never raises -
             # see record_board's own docstring.
             record_board(wk_year, wk_week, entry['df'], market_df=market_df,
-                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES, scoring=wk_scoring)
+                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES, scoring=wk_scoring,
+                         history=_ledger_prop_history(wk_year, wk_week, wk_scoring, df_stats, n_col, market_df))
         model_df, model_meta = entry['df'], entry['meta']
         # (availability fingerprint, QB1 signature): what the open player breakdown below checks to re-resolve after a
         # rebuild
@@ -4505,7 +4571,8 @@ def render():
                             }
 
                     rankings_games.render(
-                        rankings_games.games_board(model_df, market_df, role_matchup, _attach_by_name),
+                        rankings_games.games_board(model_df, market_df, role_matchup, _attach_by_name,
+                                                   prop_history=_games_prop_history(wk_year, wk_week, wk_scoring, market_df)),
                         model_meta, wk_year, wk_week, weather_by_team, precip_by_team, _select_from_games,
                         view=projection_view)
                     selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)

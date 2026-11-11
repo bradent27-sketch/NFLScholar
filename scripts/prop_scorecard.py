@@ -10,6 +10,9 @@ line posted when the board was built (what could have been bet then) and the las
   - the shrink toward 1/2 that minimises the model's Brier (p' = 1/2 + s (p - 1/2); 1 = trust as is, 0 = no information);
   - the record betting the model's side where its P(over) differs from the book's price by 3%, 5%, 8% or 12%: hit rate, 95% CI,
     and ROI at -110 and at the book's fair price.
+  - (2026-11-11, audit B3) the same bets at the price posted for the side taken; three blind baselines per stat (always under,
+    always over, the side the price favours) and the model's lift over the best; the model's side at every book's own line and
+    price; overs and unders separately. The scoring lives in data/prop_record.py, shared with the Track Record page.
 Yardage lines under 5 are left out, as the app does. Pushes are out.
 
 Sheet (--sheet WEEK): the latest ledger board for WEEK against the latest priced lines: the recalibrated mean, P(over), the book's
@@ -34,14 +37,11 @@ import pandas as pd  # noqa: E402
 
 from data import ledger_scorecard as sc  # noqa: E402
 from data import prop_probability as pp  # noqa: E402
+from data import prop_record as pr  # noqa: E402
 from data.loaders import load_schedule  # noqa: E402
+from data.prop_record import MIN_LEAN_LINE, best_shrink, load_archive, priced_lines, record_tables  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
 from data.utils import clean_name_exact  # noqa: E402
-from scripts.eval_market_record import wilson  # noqa: E402
-from scripts.eval_posted_line_record import load_archive  # noqa: E402
-from ui.games_view import MIN_LEAN_LINE  # noqa: E402
-
-EDGES = (0.03, 0.05, 0.08, 0.12)
 # the closing-line shrink measured by the deep audit on 2026 weeks 3-7 (today's model rebuilt), until the record has its own
 DEFAULT_SHRINK = 0.34
 
@@ -57,89 +57,6 @@ def install_engines(src):
     print(f'{len(engines)} engines -> {pp.ENGINE_PATH}: {", ".join(engines)}')
 
 
-def priced_lines(arc, when):
-    """{(week, _key, market): (line, p_over, book)}: per book its latest priced line pulled at or before `when` ((week, _key) ->
-    Timestamp), then the sharpest book's."""
-    a = arc[arc['p_over'].notna()].copy()
-    a['_when'] = [when.get((w, k)) for w, k in zip(a['week'], a['_key'])]
-    a = a[a['_when'].notna()]
-    a = a[a['fetched_at'] <= pd.to_datetime(a['_when'], utc=True)]
-    a = a.sort_values('fetched_at').groupby(['week', '_key', 'market', 'book']).last().reset_index()
-    a = a.sort_values('_rank').groupby(['week', '_key', 'market']).first()
-    return {k: (float(r['line']), float(r['p_over']), r['book']) for k, r in a.iterrows()}
-
-
-def histories(stats_df, name_col, weeks, prior, prior_name_col):
-    return {int(w): pp.player_history(stats_df, name_col, int(w), prior, prior_name_col) for w in weeks}
-
-
-def scored_rows(live, lines, hist, label):
-    """One row per (player-week, stat) with a priced line: the model's P(over), the book's, the result."""
-    frames = []
-    for stat, market in pp.PROP_MARKETS.items():
-        acol = f'actual_{stat}'
-        if stat not in live.columns or acol not in live.columns:
-            continue
-        pre = [f'_pre_recal_{stat}'] if f'_pre_recal_{stat}' in live.columns else []   # v2_stat_recal_own_history boards
-        f = live[['week', '_key', 'Player', 'Pos', stat, acol] + pre].copy()
-        got = [lines.get((w, k, market)) for w, k in zip(f['week'], f['_key'])]
-        f['line'] = [g[0] if g else np.nan for g in got]
-        f['p_book'] = [g[1] if g else np.nan for g in got]
-        f['book'] = [g[2] if g else None for g in got]
-        f = f[f['line'].notna() & pd.to_numeric(f[stat], errors='coerce').gt(0) & pd.to_numeric(f[acol], errors='coerce').notna()]
-        f = f[f['line'] >= MIN_LEAN_LINE.get(stat, 0.0)]
-        f = f[pd.to_numeric(f[acol], errors='coerce') != f['line']]
-        parts = []
-        for w, fw in f.groupby('week'):
-            parts.append(pp.prop_probabilities(fw, stat, history=hist.get(int(w))))
-        if not parts:
-            continue
-        f = pd.concat(parts)
-        f['actual'] = pd.to_numeric(f[acol], errors='coerce')
-        f['over'] = (f['actual'] > f['line']).astype(float)
-        f['stat'] = stat
-        f['timing'] = label
-        frames.append(f.rename(columns={stat: 'projection'}).drop(columns=[acol]))
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
-def best_shrink(p, o):
-    grid = np.linspace(0, 1.2, 61)
-    return float(grid[np.argmin([np.mean((0.5 + g * (p - 0.5) - o) ** 2) for g in grid])])
-
-
-def record_tables(rows):
-    summary, bets, bands = [], [], []
-    for (timing, stat), s in [((t, 'ALL'), g) for t, g in rows.groupby('timing')] + list(rows.groupby(['timing', 'stat'])):
-        s = s[s['p_over'].notna()]
-        if len(s) < 15:
-            continue
-        p, q, o = s['p_over'].to_numpy(), s['p_book'].to_numpy(), s['over'].to_numpy()
-        summary.append({'timing': timing, 'stat': stat, 'n': len(s), 'over_rate': o.mean(), 'model_mean_p': p.mean(),
-                        'brier_model': np.mean((p - o) ** 2), 'brier_book': np.mean((q - o) ** 2),
-                        'best_shrink': best_shrink(p, o) if len(s) >= 50 else np.nan})
-        for thr in EDGES:
-            edge = p - q
-            sel = np.abs(edge) >= thr
-            n = int(sel.sum())
-            if n < 15:
-                continue
-            over_side = edge[sel] > 0
-            win = np.where(over_side, o[sel] == 1, o[sel] == 0)
-            lo, hi = wilson(int(win.sum()), n)
-            fair = np.where(over_side, q[sel], 1 - q[sel])
-            bets.append({'timing': timing, 'stat': stat, 'edge_min': thr, 'bets': n, 'overs': int(over_side.sum()),
-                         'hit': win.mean(), 'CI low': lo, 'CI high': hi,
-                         'roi_-110': float(np.mean(np.where(win, 100 / 110, -1.0))),
-                         'roi_fair': float(np.mean(np.where(win, 1 / fair - 1, -1.0)))})
-        if stat == 'ALL':
-            band = pd.cut(s['p_over'], [0, 0.2, 0.35, 0.45, 0.55, 0.65, 0.8, 1.0], include_lowest=True)
-            for b, g in s.groupby(band, observed=True):
-                bands.append({'timing': timing, 'P(over) band': str(b), 'n': len(g), 'model_p': g['p_over'].mean(),
-                              'book_p': g['p_book'].mean(), 'hit_rate': g['over'].mean()})
-    return pd.DataFrame(summary), pd.DataFrame(bets), pd.DataFrame(bands)
-
-
 def load_inputs(year):
     stats_df, _team_col, name_col, _ = load_and_merge_data(year, 'Full PPR')
     try:
@@ -151,30 +68,29 @@ def load_inputs(year):
 
 def run_record(a):
     stats_df, name_col, prior, prior_name_col = load_inputs(a.year)
-    frame, _info = sc.load_scored_ledger(a.year, stats_df, name_col, load_schedule(a.year))
-    live = frame[frame['pre_kickoff']].copy()
-    live['build_ts'] = pd.to_datetime(live['build_ts'], utc=True)
-    arc = load_archive(a.year)
-    hist = histories(stats_df, name_col, sorted(live['week'].unique()), prior, prior_name_col)
-    at_build = priced_lines(arc, {(w, k): t for w, k, t in zip(live['week'], live['_key'], live['build_ts'])})
-    at_close = priced_lines(arc, {(w, k): pd.Timestamp(t) for w, k, t in zip(live['week'], live['_key'], live['kickoff'])
-                                  if pd.notna(t)})
-    rows = pd.concat([scored_rows(live, at_build, hist, 'at board'), scored_rows(live, at_close, hist, 'at close')],
-                     ignore_index=True)
+    rows, info = pr.build_record(a.year, stats_df, name_col, prior, prior_name_col, load_schedule(a.year))
     summary, bets, bands = record_tables(rows)
+    sharp = rows[rows['sharpest']] if len(rows) else rows
     fmt = lambda v: f'{v:.3f}'  # noqa: E731
+    skipped = info.get('skipped_files') or []
     out = [f"{a.year} prop record: data/prop_probability.py's P(over) on the pre-kickoff boards against the priced posted lines "
-           f"(Pinnacle, then DraftKings), weeks {sorted(int(w) for w in rows['week'].unique()) if len(rows) else []}, "
-           f"{len(rows):,} line-results"
-           + (f"; {len(arc.attrs.get('skipped_files') or [])} unreadable snapshot(s) skipped"
-              if arc.attrs.get('skipped_files') else ''), '',
-           '1. BRIER (lower is better; 0.25 = a coin flip) and the best shrink toward 1/2 (1 = trust the model as is)',
+           f"(sharpest book: Pinnacle, then DraftKings, ...), weeks {info.get('weeks', [])}, {len(sharp):,} line-results "
+           f"({len(rows):,} with every book's line)" + (f"; {len(skipped)} unreadable snapshot(s) skipped" if skipped else ''), '',
+           '1. BRIER (lower is better; 0.25 = a coin flip) and the best shrink toward 1/2 per stat (1 = trust the model as is)',
            summary.to_string(index=False, float_format=fmt), '',
-           '2. CALIBRATION, all stats: the model\'s P(over) in bands against the hit rate',
+           "2. CALIBRATION, all stats: the model's P(over) in bands against the hit rate",
            bands.to_string(index=False, float_format=fmt), '',
            "3. BETTING THE MODEL'S SIDE where its P(over) differs from the book's de-vigged price by at least edge_min "
-           "(a -110 bet needs 52.4%)",
-           bets.to_string(index=False, float_format=fmt)]
+           "(a -110 bet needs 52.4%); roi_price = at the price posted for the side taken (priced = bets that had one)",
+           bets.to_string(index=False, float_format=fmt), '',
+           "4. BASELINES, sharpest book, every line: always under / always over / the side the book's price favours, against "
+           "the model's side (all lines, and at 5%+); lift = model minus the best blind strategy. ROI at the posted price.",
+           pr.baseline_table(rows).to_string(index=False, float_format=fmt), '',
+           "5. BY BOOK: the model's side at each book's own line and price, 5%+ from that book's de-vigged price (every book "
+           "that posted a priced line, not only the sharpest)",
+           pr.book_table(rows).to_string(index=False, float_format=fmt), '',
+           "6. BY SIDE, sharpest book: the model's overs and unders, every line and 5%+",
+           pr.side_table(rows).to_string(index=False, float_format=fmt)]
     text = '\n'.join(out)
     print(text)
     with open(a.out, 'w', encoding='utf-8') as fh:
@@ -200,6 +116,8 @@ def run_sheet(a):
     if os.path.exists(a.csv):
         rec = pd.read_csv(a.csv)
         rec = rec[(rec['timing'] == 'at close') & rec['p_over'].notna()]
+        if 'sharpest' in rec.columns:
+            rec = rec[rec['sharpest'].astype(bool)]
         if len(rec) >= 300:
             shrink = best_shrink(rec['p_over'].to_numpy(), rec['over'].to_numpy())
     rows = []

@@ -155,3 +155,24 @@ def test_score_ledger_reads_fantasypros_in_the_scoring_being_scored():
     assert _fp_points_col(ledger, 'Full PPR') == 'FP Proj Pts PPR'
     assert _fp_points_col(ledger, 'Half-PPR') == 'FP Proj Pts Half'
     assert _fp_points_col(ledger, 'Standard') == 'FP Proj Pts'
+
+
+def test_a_board_with_the_bet_columns_round_trips(tmp_path):
+    # 2026-11-11, audit D1: a file written by build_ledger_frame with medians, lines, prices and P(over) still scores
+    from data import prediction_ledger as pl
+    model = pd.DataFrame({'Player': ['B Wideout'], 'Pos': ['WR'], 'Team': ['CCC'], 'Opponent': ['DDD'],
+                          'targets': [8.0], 'receptions': [6.0], 'receiving_yards': [70.0]})
+    model['Raw Model Proj Pts'] = score_projected_stats({'targets': 8.0, 'receptions': 6.0, 'receiving_yards': 70.0}, 'Full PPR')
+    model['Model Proj Pts'] = model['Raw Model Proj Pts']
+    market = pd.DataFrame({'Player': ['B Wideout'], 'Market Pts': [12.0], 'Coverage': [1.0], 'receiving_yards': [72.0]})
+    market.attrs['book_lines'] = pd.DataFrame([{'player': 'B Wideout', 'market': 'receiving_yards', 'provider': 'Pinnacle',
+                                               'line': 69.5, 'over_payout': 1.91, 'under_payout': 1.95, 'p_over': 0.505}])
+    board = pl.build_ledger_frame(2026, 5, model, market_df=market, scoring='Full PPR')
+    board['build_ts'] = pd.Timestamp('2026-10-10 12:00', tz='UTC')
+    assert {'Median receiving_yards', 'Line receiving_yards', 'Model P Over receiving_yards'} <= set(board.columns)
+    board.to_parquet(tmp_path / '2026_wk05_a.parquet', index=False)
+    stats = pd.DataFrame({'name': ['B Wideout'], 'week': [5], 'targets': [7], 'receptions': [5], 'receiving_yards': [60],
+                          'fantasy_points': [6.0], 'fantasy_points_ppr': [11.0], 'season_type': ['REG']})
+    frame, info = lsc.load_scored_ledger(2026, stats, 'name', SCHEDULE, ledger_dir=str(tmp_path))
+    assert info['scoring'] == 'Full PPR' and info['unknown_scoring'] == 0
+    assert list(frame['Player']) == ['B Wideout'] and frame['Line receiving_yards'].iloc[0] == 69.5

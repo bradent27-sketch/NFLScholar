@@ -18,7 +18,6 @@ The model's numbers are the ledger's pre-kickoff boards (data/ledger_scorecard.p
 """
 import argparse
 import glob
-import json
 import logging
 import os
 import sys
@@ -30,56 +29,19 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from data import ledger_scorecard as sc  # noqa: E402
+from data import prop_record as pr  # noqa: E402
 from data.loaders import load_schedule  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
 from data.utils import clean_name_exact  # noqa: E402
 from data.weekly_median import recal_mask, stat_median  # noqa: E402
 from scripts.eval_market_record import GAPS, wilson  # noqa: E402
-from ui.games_view import LINE_BOOKS, MIN_LEAN_LINE, _MEAN_STATS  # noqa: E402
+from ui.games_view import MIN_LEAN_LINE, _MEAN_STATS  # noqa: E402
 
-ARCHIVE = os.path.join('external_data', 'props_archive')
-# board stat -> the archive's market name
-LINE_STATS = {'receiving_yards': 'receiving_yards', 'rushing_yards': 'rushing_yards', 'passing_yards': 'passing_yards',
-              'receptions': 'receptions', 'targets': 'targets', 'rushing_attempts': 'carries', 'passing_attempts': 'attempts',
-              'passing_completions': 'passing_completions', 'passing_tds': 'passing_tds', 'passing_interceptions': 'passing_interceptions'}
-
-
-def load_archive(year):
-    """Every scorable full-game line ever pulled for `year`: week, _key, market, book, line, p_over, fetched_at (UTC).
-
-    A snapshot that cannot be read (e.g. 2026_wk09_20261103T001625Z.json, cut off mid-write) is skipped and named on stderr;
-    the file itself is left in place (the archive is a permanent record). The skipped names are in the result's
-    attrs['skipped_files']."""
-    frames, skipped = [], []
-    for path in sorted(glob.glob(os.path.join(ARCHIVE, f'{year}_wk*.json'))):
-        try:
-            with open(path, encoding='utf-8') as handle:
-                snap = json.load(handle)
-            if not isinstance(snap, dict) or 'week' not in snap or 'fetched_at' not in snap:
-                raise ValueError('not a props snapshot')
-        except (OSError, ValueError) as exc:
-            skipped.append(os.path.basename(path))
-            print(f'props archive: skipped unreadable snapshot {os.path.basename(path)} ({exc.__class__.__name__})',
-                  file=sys.stderr)
-            continue
-        rows = pd.DataFrame(snap.get('rows') or [])
-        if rows.empty:
-            continue
-        rows['week'] = int(snap['week'])
-        rows['fetched_at'] = pd.Timestamp(snap['fetched_at'])
-        frames.append(rows)
-    arc = pd.concat(frames, ignore_index=True)
-    arc = arc[arc['scorable'].fillna(False).astype(bool) & arc['period'].astype(str).eq('game')
-              & arc['market'].isin(set(LINE_STATS.values()))].copy()
-    arc['book'] = arc['provider'].astype(str).str.split(' (', regex=False).str[0]
-    arc = arc[arc['book'].isin(LINE_BOOKS)]
-    arc['_rank'] = arc['book'].map({b: i for i, b in enumerate(LINE_BOOKS)})
-    arc['_key'] = clean_name_exact(arc['player'])
-    arc['line'] = pd.to_numeric(arc['line'], errors='coerce')
-    arc['fetched_at'] = pd.to_datetime(arc['fetched_at'], utc=True)
-    out = arc.dropna(subset=['line'])[['week', '_key', 'market', 'book', '_rank', 'line', 'p_over', 'fetched_at']].copy()
-    out.attrs['skipped_files'] = skipped
-    return out
+# The archive reader and the board-stat -> market map live in data/prop_record.py since 2026-11-11 (audit B3); imported here
+# under the old names for scripts/deep_audit.py.
+ARCHIVE = pr.ARCHIVE
+LINE_STATS = pr.LINE_STATS
+load_archive = pr.load_archive
 
 
 def line_as_of(arc, when):

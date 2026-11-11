@@ -25,9 +25,12 @@ import hashlib
 import os
 import subprocess
 
+import numpy as np
 import pandas as pd
 
+from data import prop_probability as pp
 from data.utils import clean_name_exact
+from data.weekly_median import attach_medians
 
 LEDGER_DIR = os.path.join('data', 'ledger')
 
@@ -83,6 +86,80 @@ def _recent_ledger_path(year, week, feat_hash, within_seconds=3600):
     return None
 
 
+# WHAT A BET DECISION NEEDS (2026-11-11, audit D1, docs/audit_leads_2026-11-10.md): the ledger kept means only, so medians,
+# posted lines, prices and P(over) were recomputed later with later code and the record was not what the board showed. Per
+# prop stat (data.prop_probability.PROP_MARKETS) a board built with a market pull now also stores:
+#   'Median <stat>'           the model's median (data/weekly_median.py), plus 'Median Proj Pts'
+#   'Line <stat>'             the line the app shows: the sharpest book that posted one (LINE_BOOKS order), and 'Line Book <stat>'
+#   'Priced Line <stat>'      the sharpest book's line that carries prices (what the prop record scores), with 'Priced Book',
+#                             'Over Price' / 'Under Price' (that book's own decimal odds or pick'em payout) and 'Book P Over'
+#                             (its de-vigged P(over))
+#   'Model P Over <stat>'     data.prop_probability's raw P(over) at the priced line (blank where the model projects 0)
+# The shrunk P(over), the tier and the no-bet flags come with the bet tiers (audit B2, B8).
+LINE_FIELDS = ('Line', 'Line Book', 'Priced Line', 'Priced Book', 'Over Price', 'Under Price', 'Book P Over')
+
+
+def _line_frame(book_lines):
+    """One row per player key (clean_name_exact of the book's player name) with the LINE_FIELDS per prop stat, from
+    data.odds_weekly.weekly_market_book_lines (player, market, provider, line, over_payout, under_payout, p_over). Empty
+    when there are no usable lines."""
+    need = {'player', 'market', 'provider', 'line'}
+    if book_lines is None or len(book_lines) == 0 or not need <= set(book_lines.columns):
+        return pd.DataFrame()
+    from data.odds_projections import LINE_BOOKS
+    bl = book_lines.copy()
+    bl['line'] = pd.to_numeric(bl['line'], errors='coerce')
+    bl = bl.dropna(subset=['line'])
+    for c in ('over_payout', 'under_payout', 'p_over'):
+        bl[c] = pd.to_numeric(bl[c], errors='coerce') if c in bl.columns else np.nan
+    bl['_key'] = clean_name_exact(bl['player'].astype(str))
+    bl['book'] = bl['provider'].astype(str).str.split(' (', regex=False).str[0]
+    bl['_rank'] = bl['book'].map({b: i for i, b in enumerate(LINE_BOOKS)}).fillna(len(LINE_BOOKS))
+    bl = bl.sort_values(['_rank', 'line'])
+    parts = []
+    for stat, market in pp.PROP_MARKETS.items():
+        s = bl[bl['market'] == market]
+        if s.empty:
+            continue
+        posted = s.drop_duplicates('_key').set_index('_key')
+        part = pd.DataFrame({f'Line {stat}': posted['line'], f'Line Book {stat}': posted['book']})
+        priced = s[s['p_over'].notna()].drop_duplicates('_key').set_index('_key')
+        if not priced.empty:
+            part = part.join(pd.DataFrame({
+                f'Priced Line {stat}': priced['line'], f'Priced Book {stat}': priced['book'],
+                f'Over Price {stat}': priced['over_payout'], f'Under Price {stat}': priced['under_payout'],
+                f'Book P Over {stat}': priced['p_over']}), how='outer')
+        parts.append(part)
+    if not parts:
+        return pd.DataFrame()
+    out = pd.concat(parts, axis=1)
+    out.index.name = '_key'
+    return out.reset_index()
+
+
+def _attach_model_p_over(out, history=None):
+    """'Model P Over <stat>' on every row with a priced line and a projection above 0 (data.prop_probability, the same
+    engine and inputs the prop record uses; ``history`` = prop_probability.player_history for the week, None leaves the
+    history inputs missing). Never raises: a stat it cannot price stays blank."""
+    for stat in pp.PROP_MARKETS:
+        line_col = f'Priced Line {stat}'
+        if line_col not in out.columns or stat not in out.columns:
+            continue
+        ok = (pd.to_numeric(out[line_col], errors='coerce').notna()
+              & pd.to_numeric(out[stat], errors='coerce').gt(0))
+        col = f'Model P Over {stat}'
+        out[col] = np.nan
+        if not ok.any():
+            continue
+        cols = ['Pos', '_key', stat, line_col] + [c for c in (f'_pre_recal_{stat}',) if c in out.columns]
+        try:
+            probs = pp.prop_probabilities(out.loc[ok, cols], stat, line_col=line_col, history=history)
+            out.loc[ok, col] = probs['p_over'].to_numpy(dtype=float)
+        except Exception:
+            continue
+    return out
+
+
 def _market_columns(market_df):
     """(name_col, {source_col: ledger_col}) for the market frame -
     data.odds_weekly.weekly_market_projection's output. consensus_stats
@@ -95,13 +172,16 @@ def _market_columns(market_df):
     return name_col, rename
 
 
-def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, feats=None, scoring=None):
+def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, feats=None, scoring=None, history=None):
     """The frame record_board writes, built (and returned) separately from
     the file write so tests can check its shape directly. Raises on a
     genuinely malformed input - callers that must never raise (the live UI)
     go through record_board instead. ``scoring`` (the board's scoring mode,
     e.g. 'Full PPR') is stored in a 'scoring' column when given, so the
-    track record reads it instead of inferring it (2026-11-10)."""
+    track record reads it instead of inferring it (2026-11-10). With a
+    market pull carrying book lines (market_df.attrs['book_lines']) the
+    medians, posted lines, prices and model P(over) are stored too (see
+    LINE_FIELDS); ``history`` feeds the P(over) engine."""
     out = model_df[[c for c in _META_COLS if c in model_df.columns]].copy()
     for stat in STAT_COLS:
         if stat in model_df.columns:
@@ -110,6 +190,12 @@ def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, fea
     for stat in STAT_COLS:
         if f'_pre_recal_{stat}' in model_df.columns:
             out[f'_pre_recal_{stat}'] = model_df[f'_pre_recal_{stat}']
+    try:   # an extra; a failure here must not cost the board its ledger file
+        medians = attach_medians(model_df)
+        for col in [c for c in medians.columns if str(c).startswith('Median ')]:
+            out[col] = medians[col].to_numpy()
+    except Exception:
+        pass
     out['_key'] = clean_name_exact(out['Player'])
 
     if market_df is not None and not market_df.empty:
@@ -118,6 +204,14 @@ def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, fea
         m['_key'] = clean_name_exact(m['_mkt_player'])
         m = m.drop(columns=['_mkt_player']).drop_duplicates(subset=['_key'])
         out = out.merge(m, on='_key', how='left')
+        try:   # an extra, like the medians above
+            lines = _line_frame(market_df.attrs.get('book_lines'))
+            if not lines.empty:
+                out = _attach_model_p_over(out.merge(lines, on='_key', how='left'), history)
+                from data.prop_tiers import board_tiers     # B2 (2026-11-11): the v0 tier shown with each priced prop
+                out = board_tiers(out)
+        except Exception:
+            pass
 
     if fp_weekly is not None and not fp_weekly.empty and 'Player' in fp_weekly.columns:
         fp_pts_cols = [c for c in fp_weekly.columns if c.startswith('FP Proj Pts')]
@@ -139,7 +233,7 @@ def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, fea
     return out
 
 
-def record_board(year, week, model_df, market_df=None, fp_weekly=None, feats=None, scoring=None):
+def record_board(year, week, model_df, market_df=None, fp_weekly=None, feats=None, scoring=None, history=None):
     """Write one ledger row per model-board player. Never raises - a failed
     ledger write must not break the board a user is looking at. Returns the
     path written (a fresh file, or a recent-enough existing one reused
@@ -152,7 +246,7 @@ def record_board(year, week, model_df, market_df=None, fp_weekly=None, feats=Non
         if existing:
             return existing
 
-        out = build_ledger_frame(year, week, model_df, market_df, fp_weekly, feats, scoring=scoring)
+        out = build_ledger_frame(year, week, model_df, market_df, fp_weekly, feats, scoring=scoring, history=history)
         os.makedirs(LEDGER_DIR, exist_ok=True)
         stamp = out['build_ts'].iloc[0].strftime('%Y%m%dT%H%M%S%fZ')
         path = os.path.join(LEDGER_DIR, f'{year}_wk{week:02d}_{stamp}.parquet')

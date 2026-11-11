@@ -17,6 +17,7 @@ import streamlit as st
 from data.game_slate import load_slate, team_display_name
 from data.points_fit import week_points_fit
 from data.weekly_median import attach_medians
+from data.prop_tiers import prop_board_columns
 from ui import export_view, games_view
 
 _GAME_PICK_KEY = 'wr_game_pick'
@@ -225,8 +226,9 @@ def render(board, meta, year, week, weather_by_team, precip_by_team, select_play
                              on_select=_on_select_for(key, frame), selection_mode='single-row', key=key,
                              column_config=_game_column_config(frame))
 
-    # THE PROPS in the game, the largest disagreement with the book first
-    st.markdown("**Priced props in this game** (the model's median against the line, largest disagreement first)")
+    # THE PROPS in the game: tiered first (B2, data/prop_tiers.py), then the largest disagreement with the book
+    st.markdown("**Priced props in this game** (the model's median against the line; tiered props first, then the largest "
+                "disagreement)")
     group = st.segmented_control('Props', ['All', 'Passing', 'Rushing', 'Receiving'], key='wr_game_props_group',
                                  label_visibility='collapsed') or 'All'
     props = games_view.props_table(games_view.long_market(board), game['teams'], group)
@@ -235,14 +237,20 @@ def render(board, meta, year, week, weather_by_team, precip_by_team, select_play
                    'the coming slate).' if group == 'All' else f'No {group.lower()} lines are matched to this game.')
     else:
         key = f"wr_game_props_{game['game_id']}_{group}_{board_key}"
+        tier_help = {'TIER': st.column_config.TextColumn(
+            'TIER', help="A = receiving yards, receptions or a rushing-yards under with the model on the side the book's price "
+                         "leans to; B = the same against the lean; No bet = passing stats, carries or a gap over 25 points; "
+                         "Track = the rest. Read from the model's P(over) at the sharpest priced line. No tier is proven yet: "
+                         "see Track Record.")} if 'TIER' in props.columns else None
         st.dataframe(games_view.styled_props(props), width='stretch', hide_index=True, height=_games_table_height(len(props)),
-                     on_select=_on_select_for(key, props), selection_mode='single-row', key=key)
+                     on_select=_on_select_for(key, props), selection_mode='single-row', key=key, column_config=tier_help)
 
 
-def games_board(model_df, market_df, role_matchup, attach_by_name):
+def games_board(model_df, market_df, role_matchup, attach_by_name, prop_history=None):
     """The board the GAMES view reads: the built board with 'Matchup Pct' (0-100, 100 = the softest matchup FOR THAT PLAYER'S
     ROLE: the percentile of the board's Def Mult, rankings._role_matchup_by_player), the medians beside the means (data/weekly_median.py), and when a market pull is staged the market's implied mean
-    per stat as 'Mkt <stat>' and the posted line as 'Line <stat>' (games_view.posted_lines: what the props compare the median with)."""
+    per stat as 'Mkt <stat>' and the posted line as 'Line <stat>' (games_view.posted_lines: what the props compare the median with),
+    and the prop tier per priced stat as 'Tier <stat>' (data/prop_tiers.py; `prop_history` = prop_probability.player_history)."""
     board = attach_medians(model_df)
     pct = [(role_matchup.get((p, s, t)) or (None, None))[1]
            for p, s, t in zip(board['Player'], board['Pos'], board['Team'])]
@@ -254,6 +262,11 @@ def games_board(model_df, market_df, role_matchup, attach_by_name):
         posted = games_view.posted_lines(market_df.attrs.get('book_lines'))
         if not posted.empty:
             board = attach_by_name(board, posted, [c for c in posted.columns if c != 'Player'], 'Line ')
+        # B2 (2026-11-11): the v0 prop tier per priced stat ('Tier <stat>'), for the props table's TIER column
+        tiers = prop_board_columns(board, market_df.attrs.get('book_lines'), prop_history)
+        tier_cols = [c for c in tiers.columns if c.startswith('Tier ')]
+        if tier_cols:
+            board = board.join(tiers[tier_cols])
     return board
 
 

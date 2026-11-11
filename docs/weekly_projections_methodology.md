@@ -8258,3 +8258,90 @@ Found by the whole-model audit (`docs/audit_leads_2026-11-10.md`, D0 and D2). No
   unreadable snapshot; `data/odds_weekly._archive_snapshot` writes a temp file and moves it into place. The bad file is kept.
 - Tests: `tests/test_ledger_scorecard.py` (+3), `tests/test_prediction_ledger.py` (+1), `tests/test_props_archive_reader.py`
   (new). Full suite 1044 passed.
+
+### 2026-11-11 - Data leads D1, D3, D4, D5 (no projection changes, no flags)
+
+From the whole-model audit (`docs/audit_leads_2026-11-10.md`).
+
+- **D1, the ledger saves what a bet decision needs.** `build_ledger_frame` / `record_board` now store, per prop stat: `Median <stat>`
+  (`attach_medians`); the sharpest posted line and its book (`Line <stat>`, `Line Book <stat>`, book order
+  `data.odds_projections.LINE_BOOKS`, moved there from `ui/games_view.py`); the sharpest priced line with both prices and the
+  book's no-vig P(over) (`Priced Line`, `Priced Book`, `Over Price`, `Under Price`, `Book P Over`); and the model's P(over) at
+  that line from the installed engines (`Model P Over <stat>`, `data.prop_probability.prop_probabilities`, with the history the
+  Rankings tab now passes). New columns only; each part is wrapped so a failure never blocks the write; old files read as before.
+  Checked on the week-10 board with the 11-11 04:35 snapshot: the ledger's P(over) equals the prop scorecard's own call on the same
+  rows (max difference 0.0). The shrunk P(over), the tier and the flags wait on B2/B8, which define them.
+- **D3, the end-of-season routine.** `scripts/end_of_season.py --year YEAR` checks the season reaches week 17 and prints the plan;
+  `--run` does the scripted part in order (deep audit all stages, engine refit, back up the engines, install, re-install the
+  "mean": "board" engines, the season's prop record), logs to `.sweeps/end_of_season_<YEAR>.log`, stops at the first failure.
+  Heavy: launch it detached through `.sweeps/wait_then_run.ps1`. The hand steps (A10, B2/B8, week-1 M20/M21/A4, the watch items,
+  D4) and the year-specific code to roll forward are printed with the plan.
+- **D4, weekly PFF archive.** `scripts/pff_weekly_coverage.py` reads each `pff_imports/<year>/weekly/<n>` folder's real week from
+  its receiving yards against the box scores (`data.pff_alignment.detect_export_week`: ~99-100% of players match the week the export
+  covers, ~5% any other week), falls back to bye teams, and checks the manifest. 2024 and 2025: all 18 weeks complete and correctly
+  labelled. 2026: folder 4 holds week 2 (a second copy of folder 2; week 4 is on disk nowhere), folder 9 is empty and folder 10
+  holds week 9, so the week-10 board read no week-9 alignment data and weeks 5+ have read week 2 twice; the manifest misses 5, 7
+  and 8. Cause of the folder-10 case: the upload box defaulted to the board's (upcoming) week. Fixes: the default is now the last
+  played week, and saving is held (with a "save anyway" override) when the summary's yards match a different week. The PFF files
+  were fixed later the same day with the user's OK: folder 10 moved to 9 (folder 9 was empty), folder 4 (byte-identical
+  to folder 2, saved 10-05) moved to `pff_imports/2026/weekly_set_aside/`, the manifest rewritten to rows 1-3 and 5-9 (dates from the
+  files, schema checked; old copy `.sweeps/pff_2026_weekly_manifest_before_fix_20261111.csv`). The user re-exported week 4 the
+  same day (verified by its yards; manifest row added): 2026 weeks 1-9 are complete. 2022/2023 sit in a legacy `Weekly Data` layout the loader does not read. Gate: two full
+  weekly seasons of the three needed to retry N2 / N5 / C1 / C1b; 2026 makes three once week 4 is re-exported and the folders fixed.
+- **D5, role-state change point (study, stopped).** `scripts/eval_role_changepoint.py`: the default board (harness `base`,
+  2022-2025 weeks 3-17) against box-score snap share, RB/WR/TE who played with 2+ earlier games for the team. A single best-split
+  change point (penalty and minimum segment tuned on 2022-23) against the model's Expected Snap Share, held out on 2024-25, MAE in
+  snap-share points: model 12.35, change point 12.17, model replaced by the post-split mean where a change is found 12.31 (paired
+  -0.04, SE 0.06), last-three mean 12.00. The change point beats neither the model, once combined with it, nor plain recency, and
+  the recency gain is the one `v2_share_recency` already showed (share error down, points not following; `docs/retired_flags.md`).
+  Stopped per the lead's own rule.
+- Tests: `tests/test_prediction_ledger.py` (+2), `tests/test_ledger_scorecard.py` (+1, the D1 round trip), `tests/test_pff_export_week.py`
+  (new, 2).
+
+### 2026-11-11 - B3: the prop record at the real price and against blind baselines (no projection changes)
+
+From the whole-model audit (`docs/audit_leads_2026-11-10.md`, B3). The record graded every bet at -110 on the sharpest book's
+line, which hid the blind under, the price lean and the softer book.
+
+- **Code.** `data/prop_record.py` holds the record (archive reader, lines as of a time, scoring, tables), shared by
+  `scripts/prop_scorecard.py` and a new props section on the Track Record page. One row per (player-week, stat, book) with both
+  prices; a 'sharpest' flag marks the line the record has always used. `scripts/eval_posted_line_record.py` keeps `load_archive`
+  under its old name (used by `scripts/deep_audit.py`).
+- **Bar met.** On the sharpest-book view the new code reproduces the old output exactly: the same 7,639 line-results (weeks 3-9),
+  identical line, book price, P(over) and result on every row, and identical Brier, calibration and bet tables. Underdog never
+  appears: its full-game lines are all shaded and not scorable, as in the app.
+- **Read (at board, weeks 3-9; at close is within a point).**
+  - All stats, every line: blind under hits 51.9% (-2.6% ROI at the posted price); the model's side 50.5% (-4.1%); the model at
+    5%+ edges 51.2% (-2.7%). The model adds nothing over the blind under (lift -1.4% ROI).
+  - Receiving yards is the one stat with a real lift: 5%+ edges 53.2% (+1.3% ROI) against the best blind -3.3% (lift +3.4%);
+    receptions at 5%+ 53.1% (+0.6%).
+  - Rushing yards: blind under 56.8% (+7.7% ROI); the model's 5%+ side 51.1% (-3.3%). Carries: blind under +1.4%, model -8.4%.
+    Passing stats: the model's side loses 10-20% ROI at 5%+ on ~65-117 bets each.
+  - By book (5%+ against each book's own price): DraftKings 52.2% (-1.3%), Pinnacle 50.8% (-3.3%).
+  - By side (5%+): model overs 49.2% (-5.4%), unders 52.2% (-1.3%).
+  - The best shrink per stat was already in the summary (receiving yards 0.20, receptions 0.26, rushing yards 0.16, passing
+    yards and attempts 0.0).
+- These are inputs to B2 (a bettable tier) and B8 (no-bet rules), not changes: nothing moves a projection, and the blind
+  baselines select nothing on their own.
+- Tests: `tests/test_prop_record.py` (new, 4); `tests/test_props_archive_reader.py` now patches the module.
+
+### 2026-11-11 - B2: prop tiers v0 in place of gap % as the bet read (no projection changes)
+
+From the whole-model audit (`docs/audit_leads_2026-11-10.md`, B2). Definitions and bar fixed before scoring in
+`.sweeps/prop_tiers_v0_bar.md`.
+
+- **Rules (`data/prop_tiers.py`).** On the sharpest priced line, with the model's raw P(over) p and the book's no-vig q: No bet =
+  passing yards / attempts / completions / TDs, interceptions, carries, or |p - q| > 0.25; A = receiving yards, receptions or a
+  rushing-yards under, the model on the side the price leans to (q > 0.5 = over), gap 0.03-0.25; B = the same against the lean;
+  Track = the rest. The shrunk P(over) (per stat, fit on earlier weeks only) and EV at the price are reported, not used to tier.
+- **Forward only.** The rules were chosen from what weeks 3-8 showed, so the status counts only boards from 2026 week 10 on
+  (`FORWARD_FROM`); a tier reads "bettable" only with 300+ such bets and ROI at the price with a 90% lower bound above 0, else
+  "tracking". Weeks 3-9 are in-sample background: A 738 bets, 57.6% hit, +1.3% ROI at the price (90% low -4.0%; with the lean
+  means the shorter price); B 1,174, 51.8%, +3.1% (-1.7%); Track 662, 45.8%, -13.0%; No bet 1,243, 47.7%, -9.2%. Closing-line
+  value barely registers: about 3% of lines moved either way between the board and the close.
+- **Display.** One TIER column on the game view's priced-props table, tiered rows first (A, B, Track, No bet, then the old
+  largest-gap order), a header tooltip; the phone export, every board and every other column are unchanged, and a board without
+  a market pull shows the table exactly as before. The Track Record props section gains the tier record (forward and in-sample).
+- **Ledger.** New ledger files store 'Tier <stat>' beside the D1 columns. B8 row flags do not exist yet (v0 has none).
+- Tests: `tests/test_prop_tiers.py` (new, 5); `tests/test_prediction_ledger.py` checks the stored tier.
+

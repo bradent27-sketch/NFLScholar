@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -142,3 +143,40 @@ def test_latest_ledger_paths_picks_the_newest_per_week():
             assert latest[(2026, 2)] == other_week
         finally:
             pl.LEDGER_DIR = original_dir
+
+
+def _book_lines():
+    return pd.DataFrame([
+        # B Wideout: a priced Pinnacle line and an unpriced PrizePicks line; the LINE shown is Pinnacle's (sharpest)
+        {'player': 'B Wideout', 'market': 'receiving_yards', 'provider': 'Pinnacle', 'line': 84.5,
+         'over_payout': 1.91, 'under_payout': 1.95, 'p_over': 0.505},
+        {'player': 'B Wideout', 'market': 'receiving_yards', 'provider': 'PrizePicks', 'line': 79.5,
+         'over_payout': np.nan, 'under_payout': np.nan, 'p_over': np.nan},
+        # A Back: only an unpriced pick'em line -> a LINE but no priced line or P(over)
+        {'player': 'A Back', 'market': 'carries', 'provider': 'PrizePicks (goblin)', 'line': 14.5,
+         'over_payout': np.nan, 'under_payout': np.nan, 'p_over': np.nan},
+    ])
+
+
+def test_build_ledger_frame_stores_what_a_bet_decision_needs():
+    # 2026-11-11, audit D1: medians, the posted line and its book, the priced line with prices, and the model's P(over)
+    market = _market_df()
+    market.attrs['book_lines'] = _book_lines()
+    out = pl.build_ledger_frame(2026, 3, _model_df(), market_df=market).set_index('Player')
+    assert {'Median receiving_yards', 'Median Proj Pts'} <= set(out.columns)
+    wr = out.loc['B Wideout']
+    assert wr['Line receiving_yards'] == 84.5 and wr['Line Book receiving_yards'] == 'Pinnacle'
+    assert wr['Priced Line receiving_yards'] == 84.5 and wr['Over Price receiving_yards'] == 1.91
+    assert wr['Under Price receiving_yards'] == 1.95 and wr['Book P Over receiving_yards'] == 0.505
+    assert 0.0 < wr['Model P Over receiving_yards'] < 1.0
+    assert wr['Tier receiving_yards'] in {'A', 'B', 'Track', 'No bet'}       # B2: the tier shown beside the prop
+    rb = out.loc['A Back']
+    assert rb['Line rushing_attempts'] == 14.5 and rb['Line Book rushing_attempts'] == 'PrizePicks'
+    assert 'Priced Line rushing_attempts' not in out.columns        # no book priced a carries line
+    assert 'Model P Over rushing_attempts' not in out.columns
+
+
+def test_build_ledger_frame_without_book_lines_has_no_line_columns():
+    out = pl.build_ledger_frame(2026, 3, _model_df(), market_df=_market_df())
+    assert not [c for c in out.columns if c.startswith(('Line ', 'Priced ', 'Model P Over'))]
+    assert 'Median receiving_yards' in out.columns

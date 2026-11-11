@@ -1051,6 +1051,30 @@ def _validate_scheme(frame: pd.DataFrame, label: str, issues: list[str]) -> tupl
     return out, True
 
 
+def detect_export_week(summary: pd.DataFrame, box_scores: pd.DataFrame, name_col: str,
+                       min_players: int = 20) -> tuple[int | None, float, int]:
+    """(week, share, n): the box-score week whose receiving yards the export's per-player `yards` match (within half a
+    yard) for the largest share of the n players found in both. A weekly receiving_summary export matches the week it
+    covers almost exactly (~99-100% on every 2024-2026 folder) and any other week at ~5%, so a share of 0.8+ names the
+    week. (None, 0, 0) when the frames lack the columns or no week has min_players in common. 2026-11-11 (audit D4):
+    two 2026 folders held the wrong week (4 held week 2; 10 held week 9) and nothing checked it."""
+    if summary is None or box_scores is None or 'yards' not in summary or 'player' not in summary \
+            or name_col not in box_scores or not {'week', 'receiving_yards'} <= set(box_scores.columns):
+        return None, 0.0, 0
+    pff = dict(zip(summary['player'].map(_name_key), pd.to_numeric(summary['yards'], errors='coerce')))
+    best: tuple[int | None, float, int] = (None, 0.0, 0)
+    keys = box_scores[name_col].map(_name_key)
+    for week, idx in box_scores.groupby('week').groups.items():
+        box = dict(zip(keys.loc[idx], pd.to_numeric(box_scores.loc[idx, 'receiving_yards'], errors='coerce')))
+        both = [k for k in pff if k and k in box]
+        if len(both) < min_players:
+            continue
+        share = float(np.mean([abs(pff[k] - box[k]) <= 0.5 for k in both]))
+        if share > best[1]:
+            best = (int(week), share, len(both))
+    return best
+
+
 def save_weekly_alignment_export(
     summary_file: Any,
     concept_file: Any,

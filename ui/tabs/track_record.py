@@ -12,6 +12,8 @@ import pandas as pd
 import streamlit as st
 
 from data import ledger_scorecard as lsc
+from data import prop_record as prec
+from data import prop_tiers as ptiers
 from data.loaders import load_schedule
 from data.prediction_ledger import LEDGER_DIR
 from data.transforms import load_and_merge_data
@@ -39,6 +41,116 @@ def _scored(year, _signature):
     if stats_df is None or stats_df.empty or 'week' not in stats_df.columns:
         return pd.DataFrame(), {'files': 0, 'scoring': None, 'mixed_scoring': False}
     return lsc.load_scored_ledger(year, stats_df, name_col, load_schedule(year))
+
+
+def _archive_signature(year):
+    """Changes whenever a props snapshot for ``year`` is added - with the ledger signature, the cache key for the prop record."""
+    paths = sorted(glob.glob(os.path.join(prec.ARCHIVE, f'{year}_wk*.json')))
+    return tuple((os.path.basename(p), int(os.path.getmtime(p))) for p in paths)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _prop_rows(year, _ledger_sig, _archive_sig):
+    stats_df, _team_col, name_col, _ = load_and_merge_data(year, 'Full PPR')
+    try:
+        prior, _t, prior_name_col, _ = load_and_merge_data(year - 1, 'Full PPR')
+    except Exception:
+        prior, prior_name_col = None, None
+    rows, _info = prec.build_record(year, stats_df, name_col, prior, prior_name_col, load_schedule(year))
+    return rows
+
+
+_BLIND = ('always under', 'always over', 'book favourite')
+
+
+def _render_prop_record(year, pos):
+    """2026-11-11 (audit B3): the prop record against the lines the books posted, at the price of the side taken, beside
+    the blind strategies that need no model. Scored on the line posted when the board was built (what could have been bet)."""
+    st.markdown("**Props: the model's side against the posted line and price**")
+    try:
+        rows = _prop_rows(year, _ledger_signature(year), _archive_signature(year))
+    except Exception:
+        rows = pd.DataFrame()
+    if rows.empty:
+        st.caption("No archived priced lines for played weeks yet.")
+        return
+    if pos is not None:
+        rows = rows[rows['Pos'].eq(pos)]
+    all_rows = rows
+    rows = rows[rows['timing'].eq('at board')]
+    base = prec.baseline_table(rows)
+    if base.empty:
+        st.caption("Too few priced lines for this filter.")
+        return
+    allrow = base[base['stat'].eq('ALL')].iloc[0]
+    best = max(_BLIND, key=lambda b: allrow[f'{b} roi'] if np.isfinite(allrow[f'{b} roi']) else -np.inf)
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Model 5%+ edges", f"{100 * allrow['model 5%+ hit']:.1f}% hit",
+              delta=f"{100 * allrow['model 5%+ roi']:+.1f}% ROI", help=f"{int(allrow['model 5%+ bets'])} bets at the posted price.")
+    c2.metric("Best blind strategy", best.capitalize(), delta=f"{100 * allrow[f'{best} roi']:+.1f}% ROI",
+              help="Betting one side of every line with no model at all.")
+    c3.metric("Model lift", f"{100 * allrow['roi lift vs best blind']:+.1f}% ROI",
+              help="The model's side on every line, ROI minus the best blind strategy's. Below zero: the model is not adding to it yet.")
+    stat_rows = base[~base['stat'].eq('ALL')]
+    shown = pd.DataFrame({
+        'Stat': stat_rows['stat'].map(_STAT_LABELS).fillna(stat_rows['stat']), 'Lines': stat_rows['lines'],
+        'Under ROI %': 100 * stat_rows['always under roi'], 'Over ROI %': 100 * stat_rows['always over roi'],
+        'Favourite ROI %': 100 * stat_rows['book favourite roi'],
+        'Model 5%+ bets': stat_rows['model 5%+ bets'], 'Model 5%+ hit %': 100 * stat_rows['model 5%+ hit'],
+        'Model 5%+ ROI %': 100 * stat_rows['model 5%+ roi'], 'Model lift %': 100 * stat_rows['roi lift vs best blind']})
+    st.dataframe(style_plain_dataframe(shown, diverging_cols={'Model lift %': 5.0, 'Model 5%+ ROI %': 5.0},
+                                       decimals_by_col={c: 1 for c in shown.columns if c.endswith('%')}),
+                 hide_index=True, width="stretch", height=df_auto_height(len(shown)))
+    _render_tier_record(all_rows, year)
+    books = prec.book_table(rows)
+    sides = prec.side_table(rows)
+    if not books.empty or not sides.empty:
+        b1, b2 = st.columns(2)
+        if not books.empty:
+            bt = pd.DataFrame({'Book': books['book'], 'Bets': books['bets'], 'Hit %': 100 * books['hit'],
+                               'ROI %': 100 * books['roi_price']})
+            b1.dataframe(style_plain_dataframe(bt, decimals_by_col={'Hit %': 1, 'ROI %': 1}), hide_index=True,
+                         width="stretch", height=df_auto_height(len(bt)))
+        if not sides.empty:
+            sd = sides[sides['edge_min'].eq(0.05)]
+            stt = pd.DataFrame({'Model side': sd['side'].str.capitalize(), 'Bets': sd['bets'], 'Hit %': 100 * sd['hit'],
+                                'ROI %': 100 * sd['roi_price']})
+            b2.dataframe(style_plain_dataframe(stt, decimals_by_col={'Hit %': 1, 'ROI %': 1}), hide_index=True,
+                         width="stretch", height=df_auto_height(len(stt)))
+    quiet_note("Every priced line archived for a played week, at the line posted when the board was built. The model's side is "
+               "the one where its P(over) beats the book's no-vig price; 5%+ = by at least 5 points. ROI is at the price "
+               "actually posted for that side. Lift = the model's side on every line minus the best of the blind strategies "
+               "(always under, always over, the side the price favours) - a record that only matches the blind under has found "
+               "nothing. The stat table uses the sharpest book's line; the book table scores each book's own line and price; "
+               "the side table is 5%+ edges. Full detail: scripts/prop_scorecard.py.", "Details")
+
+
+def _render_tier_record(rows, year):
+    """B2 (2026-11-11): the v0 tiers' record. The status reads only boards from data.prop_tiers.FORWARD_FROM on - the rules were
+    chosen from the weeks before it, so those are shown as in-sample background and can never make a tier bettable."""
+    fwd = ptiers.forward_rows(rows)
+    if fwd.empty:
+        return
+    live = ptiers.tier_record(fwd, year, forward_only=True).set_index('tier')
+    past = ptiers.tier_record(fwd[~ptiers.is_forward(year, fwd['week'])], year).set_index('tier')
+    y, w = ptiers.FORWARD_FROM
+    shown = pd.DataFrame({
+        'Tier': list(ptiers.ORDER),
+        'Bets': [int(live.at[t, 'bets']) for t in ptiers.ORDER],
+        'Hit %': [f"{100 * live.at[t, 'hit shown']:.1f}" if live.at[t, 'bets'] else '-' for t in ptiers.ORDER],
+        'ROI %': [f"{100 * live.at[t, 'roi_price']:+.1f}" if live.at[t, 'bets'] else '-' for t in ptiers.ORDER],
+        'Status': [live.at[t, 'status'] for t in ptiers.ORDER],
+        'Earlier bets': [int(past.at[t, 'bets']) for t in ptiers.ORDER],
+        'Earlier hit %': [f"{100 * past.at[t, 'hit']:.1f}" if past.at[t, 'bets'] else '-' for t in ptiers.ORDER],
+        'Earlier ROI %': [f"{100 * past.at[t, 'roi_price']:+.1f}" if past.at[t, 'bets'] else '-' for t in ptiers.ORDER]})
+    st.dataframe(style_plain_dataframe(shown),
+                 hide_index=True, width="stretch", height=df_auto_height(len(shown)))
+    quiet_note(f"Tiers ({ptiers.VERSION}): A = receiving yards, receptions or a rushing-yards under, the model on the side the "
+               "book's price leans to, 3-25 points from the book's probability; B = the same against the lean; No bet = "
+               "passing stats, carries, or a gap over 25 points; Track = the rest. Bets, Hit % and ROI % count boards from "
+               f"{y} week {w} on, when these rules were fixed; Hit % is pulled toward 50% until the sample is large. A tier "
+               "reads bettable only after 300 such bets with ROI at the posted price clear of zero (90% lower bound). The "
+               "earlier columns are the weeks the rules were chosen from, so they cannot prove them.", "Tiers")
 
 
 def _weekly_table(comp, bench):
@@ -183,6 +295,8 @@ def render():
     _render_stats(frame if pos is None else frame[frame['Pos'] == pos], bench)
     st.divider()
     _render_line_calls(frame if pos is None else frame[frame['Pos'] == pos])
+    st.divider()
+    _render_prop_record(year, pos)
 
     rebuilt = frame[~frame['pre_kickoff']]
     rebuilt_weeks = sorted(set(rebuilt['week']) - set(live['week']))

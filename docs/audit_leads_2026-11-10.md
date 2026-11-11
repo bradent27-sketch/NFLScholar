@@ -110,6 +110,10 @@ caught it.
 
 ### B3. Score against the right baseline and the real price
 
+**DONE 2026-11-11.** `data/prop_record.py`; the sharpest-book view reproduces the old record exactly; the new tables are in
+`scripts/prop_scorecard.py` and on the Track Record page. Read: no lift over the blind under overall (-1.4% ROI); receiving
+yards +3.4%; rushing-yards blind under +7.7%; DraftKings 52.2% vs Pinnacle 50.8% at 5%+ (methodology entry of the same date).
+
 - **Why.** The record grades every bet at -110 against the sharpest book. That hides three things measured above: a blind under
   already wins on rushing yards, the model does best when it agrees with the price lean (where the price is worse than -110),
   and the softer book is where the hits are.
@@ -125,6 +129,9 @@ caught it.
 - **Size.** Small to medium.
 
 ### D1. The ledger saves what a bet decision needs
+
+**PARTLY DONE 2026-11-11.** Medians, the posted line and book, the priced line with both prices and the book's P(over), the
+model's raw P(over) and (B2) the tier are stored; a new file round-trips through `load_scored_ledger` (test). Still to add once B8 defines them: the flags.
 
 - **Why.** The ledger keeps means only. Medians, posted lines, prices, P(over) and the tier are recomputed later with later code,
   so the record is not what was actually shown.
@@ -161,6 +168,10 @@ caught it.
 ## Phase 2. Deciding when an edge is bettable
 
 ### B2. A bettable tier in place of gap %
+
+**DONE (v0) 2026-11-11.** `data/prop_tiers.py`, bar in `.sweeps/prop_tiers_v0_bar.md`. Status counts boards from 2026 week 10
+on only (the rules came from weeks 3-8); every tier reads tracking. TIER column on the game view's props table; tier record on
+Track Record; ledger stores 'Tier <stat>'. Fair odds at the best available price wait on B4 (v0 uses the sharpest priced book).
 
 - **Why.** Edge size does not predict the hit rate; side, stat, book and agreement with the price lean do. The app sorts and
   colours by gap %, the weakest signal.
@@ -484,6 +495,8 @@ only if the read passes.
 
 ### D3. End-of-season routine (after week 17)
 
+**SCRIPTED 2026-11-11:** `scripts/end_of_season.py` (step 1 runs with `--run`; steps 2-5 are printed as the hand list).
+
 1. `scripts/deep_audit.py --stage all`, then `--stage engines`, then `scripts/prop_scorecard.py --install-engines`.
 2. A10 on the full season.
 3. Refit the tiers' shrink and switches (B2, B8) on the full season, then freeze them for 2027 weeks 1-4.
@@ -492,10 +505,17 @@ only if the read passes.
 
 ### D4. More history before retrying closed ideas
 
+**2026-11-11:** `scripts/pff_weekly_coverage.py` counts and verifies the seasons (2 of 3: 2024, 2025). 2026 folder 4 holds week 2,
+folder 10 holds week 9 (upload default fixed; save now checks the week). Folders fixed 11-11 with the user's OK; week 4
+re-exported and verified the same day.
+
 Routes and targets per route (N2), charting and tracking data (N5) and the PFF alignment tuning (C1, C1b) were closed for lack
 of seasons, not lack of signal. Keep archiving the weekly PFF exports; retry each once it has three seasons of weekly data.
 
 ### D5. Role-state model (research, low confidence)
+
+**STOPPED 2026-11-11.** Held out on 2024-25 the change point does not beat the model's share (paired -0.04 pts MAE, SE 0.06) or a
+last-three mean (`scripts/eval_role_changepoint.py`, methodology entry of the same date).
 
 A change-point model on snap and route share to replace the fixed trust speed and the role-change rules. The residual scan
 suggests little is left to find here, and three share-recency flags have already failed. Scope a two-day offline study at most:

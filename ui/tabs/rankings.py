@@ -2259,9 +2259,12 @@ def _render_points_path(detail):
         if stat_cut:
             cuts = ', '.join(f"{name.replace('receiving_', 'rec ').replace('_', ' ')} ×{after / before:.2f}"
                              for name, (before, after) in stat_cut.items() if before)
+            who = ("a running back listed Questionable on the final injury report who then played got fewer carries "
+                   "than his healthy line" if 'rushing_attempts' in stat_cut else
+                   "a receiver listed Questionable on the final injury report who then played produced less than his "
+                   "healthy line, stat by stat")
             parts.append(
-                "**Questionable tag**: in 2021-2025 a receiver listed Questionable on the final injury report who then "
-                "played produced less than his healthy line, stat by stat. The stat lines above already carry the cut "
+                f"**Questionable tag**: in 2021-2025 {who}. The stat lines above already carry the cut "
                 f"({cuts}) and the total is that line scored. This is not a chance of sitting out: he is still counted as "
                 "playing. Only Out and Doubtful change availability.")
         elif questionable:
@@ -3352,6 +3355,50 @@ def _prop_history_cached(wk_year, wk_week, wk_scoring):
         return None
 
 
+@st.cache_data(show_spinner=False, ttl=3600)
+def _props_context(wk_year, wk_week, ledger_sig, archive_sig):
+    """(shrinks, forward tier record, {(_key, stat, book): the book's first line of the week}) for the PROPS view, from the prop
+    record the Track Record page builds (cached on the same ledger and archive signatures). Empty pieces on any failure."""
+    try:
+        from data import prop_tiers as ptiers
+        from data.prop_record import load_archive
+        from ui.tabs.track_record import _prop_rows
+        rows = _prop_rows(wk_year, ledger_sig, archive_sig)
+        fwd = ptiers.forward_rows(rows)
+        shrinks = ptiers.shrinks_before(rows, int(wk_week)) if len(rows) else {}
+        rec = ptiers.tier_record(fwd, wk_year, forward_only=True) if len(fwd) else None
+        arc = load_archive(wk_year)
+        arc = arc[arc['week'] == int(wk_week)].sort_values(['fetched_at', '_rank'])
+        from data.prop_probability import PROP_MARKETS
+        stat_of = {m: s for s, m in PROP_MARKETS.items()}
+        first = arc.drop_duplicates(['_key', 'market', 'book'])
+        return shrinks, rec, {(k, stat_of.get(m), bk): float(li)
+                              for k, m, bk, li in zip(first['_key'], first['market'], first['book'], first['line'])}
+    except Exception:
+        return {}, None, {}
+
+
+def _render_props_view(model_df, market_df, wk_year, wk_week, wk_scoring):
+    """C1: the PROPS view (ui/props_view.py) for the built board and the staged market pull."""
+    from ui import props_view
+    from ui.tabs.track_record import _archive_signature, _ledger_signature
+    book_lines = market_df.attrs.get('book_lines') if market_df is not None else None
+    if book_lines is None or getattr(book_lines, 'empty', True):
+        st.caption('No priced props yet: pull Market props above, then build.')
+        return
+    with st.spinner('Reading the prop record...'):
+        shrinks, rec, first = _props_context(wk_year, wk_week, _ledger_signature(wk_year), _archive_signature(wk_year))
+    rows = props_view.props_rows(model_df, book_lines, _games_prop_history(wk_year, wk_week, wk_scoring, market_df),
+                                 shrinks=shrinks, tier_rec=rec, first_lines=first)
+    games = {}
+    if {'Team', 'Opponent'} <= set(model_df.columns):
+        for t, o in zip(model_df['Team'], model_df['Opponent']):
+            if isinstance(t, str) and isinstance(o, str) and o:
+                pair = tuple(sorted((t, o.lstrip('@').strip())))
+                games[f'{pair[0]} vs {pair[1]}'] = set(pair)
+    props_view.render(rows, sorted(games.items()))
+
+
 def _games_prop_history(wk_year, wk_week, wk_scoring, market_df):
     """The cached history for the games view's prop tiers, only when the staged pull carries book lines."""
     book_lines = market_df.attrs.get('book_lines') if market_df is not None else None
@@ -4322,7 +4369,8 @@ def render():
 
             # BOARD / GAMES (2026-10-23, user: "replicate this very closely" - CFB Scholar's game view): only the open
             # view is drawn. GAMES reads the same built board (ui/tabs/rankings_games.py).
-            views = st.tabs(['BOARD', 'GAMES'], key='weekly_rank_view', on_change='rerun')
+            # PROPS (2026-11-11, audit C1): the priced props as a betting list, opened from its tab (BOARD stays the default)
+            views = st.tabs(['BOARD', 'GAMES', 'PROPS'], key='weekly_rank_view', on_change='rerun')
             if views[0].open:
                 with views[0]:
                     # Explicit column order, per request: identity first, then the three
@@ -4578,5 +4626,8 @@ def render():
                     selected_state = st.session_state.get(_PROJECTION_DETAIL_KEY)
                     if selected_state and selected_state.get('config') == detail_config:
                         _open_projection_dialog(selected_state.get('detail'), selected_state.get('market_detail'))
+            if views[2].open:
+                with views[2]:
+                    _render_props_view(model_df, market_df, wk_year, wk_week, wk_scoring)
         _render_board()
 

@@ -1818,6 +1818,10 @@ MODEL_FEATURES = (
                              # line, so points and stats agree. Needs v2_questionable_workload
                              # and v2_points_from_stat_line. Held out by season the points
                              # RMSE is as good as the uniform cut (6.84 vs 6.81 / 6.85).
+    'v2_questionable_rb',  # SHIPPED 2026-11-11 (audit A1 follow-up; DEFAULT_FEATURES = 86). A Questionable RB's
+                             # rushing line is cut (QUESTIONABLE_RB_STAT_FACTORS: carries 0.93, rushing yards 0.89,
+                             # rushing TDs 0.89) and scored; receiving untouched. Weeks 3-17, needs
+                             # v2_points_from_stat_line. Still assumed to play (Availability unchanged).
     'v2_top_end_yardage',  # SHIPPED 2026-10-13 (was a candidate). From week 3, projected
                              # yards above 60 (receiving: WR/TE/RB; rushing:
                              # RB) count only in part (TOP_END_YARDAGE), the
@@ -2706,6 +2710,12 @@ DEFAULT_FEATURES = frozenset({
     # rows in the band: played rows RMSE -0.86% (6 of 6 seasons), every-game rows +0.07% with the bias +0.30 -> -0.05; START pools are
     # not touched (their rows sit far above the floor). Acts after every points step (POST_CALIBRATION_FEATURES). Undo: remove the flag.
     'v2_stat_recal_gate_ramp',
+    # SHIPPED 2026-11-11 (user: "push it", after the harness pass): DEFAULT_FEATURES = 86. v2_questionable_rb (audit A1 follow-up): a
+    # Questionable RB projected to play has his rushing line cut (QUESTIONABLE_RB_STAT_FACTORS: carries 0.927, rushing yards 0.892,
+    # rushing TDs 0.894) and scored; receiving and availability untouched; weeks 3-17. Harness v2 2022-2025 (bar set before the run,
+    # .sweeps/questionable_rb_bar.md): moved rows RMSE -0.065 (points 4 of 4 seasons), carries bias +0.87 -> +0.15, START-RB -0.005,
+    # EVERY-START-RB -0.027, START-ALL -0.001, EVERY-ALL -0.004; QB / WR / TE unchanged. In-sample factors. Undo: remove the flag.
+    'v2_questionable_rb',
 })
 
 
@@ -2741,7 +2751,8 @@ POST_CALIBRATION_FEATURES = frozenset({'v2_opening_week_stat_calibration',
                                        'v2_questionable_workload',
                                        'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
                                        'v2_stat_recal_game_script', 'v2_stat_recal_gate_ramp', 'v2_points_from_stat_line',
-                                       'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut'})
+                                       'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut',
+                                       'v2_questionable_rb'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
@@ -3183,6 +3194,26 @@ def td_matchup_strength(feats, stat):
 QUESTIONABLE_WORKLOAD_FACTORS = {'WR': 0.83}
 
 
+def _questionable_eligible(out, injury_profiles, positions):
+    """Boolean Series: the injury feed's status for the row's Player is 'questionable', his Pos is in ``positions``, he is
+    not sidelined (Availability above SIDELINED_AVAILABILITY) and his total is non-zero."""
+    status = out['Player'].map(lambda p: str((injury_profiles.get(p) or {}).get('status', '') or '').strip().lower())
+    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
+    pts = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
+    return status.eq('questionable') & out['Pos'].isin(list(positions)) & (avail > SIDELINED_AVAILABILITY) & (pts > 0.005)
+
+
+def questionable_rows(result, injury_profiles, positions):
+    """{(Player, Pos, Team): {'status': 'questionable'}} for the rows at ``positions`` that apply_questionable_workload's
+    eligibility takes; nothing is changed (v2_questionable_rb cuts their stat line instead of the points)."""
+    if result is None or result.empty or not injury_profiles or 'Model Proj Pts' not in result.columns:
+        return {}
+    eligible = _questionable_eligible(result, injury_profiles, positions)
+    return {(result.at[i, 'Player'], result.at[i, 'Pos'], result.at[i, 'Team']): {'status': 'questionable'}
+            for i in result.index[eligible]}
+
+
 def apply_questionable_workload(result, injury_profiles, factors=None):
     """(result, info): scale the point total of each eligible row by ``factors[pos]`` (default
     QUESTIONABLE_WORKLOAD_FACTORS). Eligible: a position in ``factors``, the injury feed's status for him is
@@ -3192,12 +3223,9 @@ def apply_questionable_workload(result, injury_profiles, factors=None):
     if result is None or result.empty or not injury_profiles or 'Model Proj Pts' not in result.columns:
         return result, {}
     out = result.copy()
-    status = out['Player'].map(lambda p: str((injury_profiles.get(p) or {}).get('status', '') or '').strip().lower())
     factor = out['Pos'].map(factors)
-    avail = (pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
-             if 'Availability' in out.columns else pd.Series(1.0, index=out.index))
     pts = pd.to_numeric(out['Model Proj Pts'], errors='coerce')
-    eligible = status.eq('questionable') & factor.notna() & (avail > SIDELINED_AVAILABILITY) & (pts > 0.005)
+    eligible = _questionable_eligible(out, injury_profiles, factors) & factor.notna()
     if not eligible.any():
         return out, {}
     new = np.round(pts * factor, 2)
@@ -3218,6 +3246,15 @@ def apply_questionable_workload(result, injury_profiles, factors=None):
 # for a uniform factor fit out of sample), and each stat's bias goes to zero: yards -7.6 -> +0.6, receptions -0.49 -> +0.04, TDs
 # -0.15 -> +0.02, with 1-3% less stat RMSE. Applied after the stat recal, to the rows the points cut touched.
 QUESTIONABLE_STAT_FACTORS = {'WR': {'targets': 0.926, 'receptions': 0.888, 'receiving_yards': 0.862, 'receiving_tds': 0.564}}
+
+# v2_questionable_rb (SHIPPED 2026-11-11, audit A1 follow-up; scripts/study_questionable_wr_rb.py): a Questionable RB who plays
+# gets less work, not worse work. Against untagged backs who played (harness base boards 2022-2025 + live 2026, weeks 3-17): carries
+# 0.91 (5 of 5 seasons below 1), snap share 0.92 of expected, rushing yards 0.90, yards per carry 0.98, targets / receptions / yards
+# per target about 1; early exits 7.9% vs 3.9% are about a fifth of it, and the next game is missed barely more (11.4% vs 10.0%).
+# Least squares through the origin on the 182 played rows 2022-2025 (relative to untagged; fit without each season 0.91-0.95 /
+# 0.86-0.92 / 0.79-0.99). Held out by season a cut on the rushing line only: points MSE -1.2 (4 of 5), carries 5 of 5, rushing
+# yards 4 of 5; cutting receptions is worse. Weeks 3-17, the rows points-from-the-stat-line scores (the total is that line).
+QUESTIONABLE_RB_STAT_FACTORS = {'RB': {'rushing_attempts': 0.927, 'rushing_yards': 0.892, 'rushing_tds': 0.894}}
 
 
 def apply_questionable_stat_cut(result, questionable_info, factors=None):
@@ -13070,6 +13107,12 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                      {k: v for k, v in questionable_info.items() if k[1] in POINTS_FROM_STAT_LINE_EDGE_POSITIONS})
         result, questionable_stat_info = apply_questionable_stat_cut(result, _cut_info)
         _points_info_for_line = {k: v for k, v in questionable_info.items() if k not in questionable_stat_info}
+    if 'v2_questionable_rb' in feats and 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
+        # a Questionable RB's rushing line is cut (QUESTIONABLE_RB_STAT_FACTORS); his points are that line scored just below
+        _rb_rows = questionable_rows(result, injury_profiles, QUESTIONABLE_RB_STAT_FACTORS)
+        if _rb_rows:
+            result, _rb_info = apply_questionable_stat_cut(result, _rb_rows, factors=QUESTIONABLE_RB_STAT_FACTORS)
+            questionable_stat_info = {**questionable_stat_info, **_rb_info}
     if 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
         result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, _points_info_for_line)
         result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)

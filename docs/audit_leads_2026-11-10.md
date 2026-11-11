@@ -144,6 +144,14 @@ model's raw P(over) and (B2) the tier are stored; a new file round-trips through
 
 ### B6. Closing-line value
 
+**DONE 2026-11-11.** Line value and price value per bet (`data/prop_tiers.py` `clv_values`, `clv_table`; the close moved to the
+bet's line with the new `data/line_shift.py`); scorecard section 7; "Vs close %" on Track Record. The ledger files are the bet log
+(they store the line, both prices, both P(over)s and the tier at build time; the shrunk P is computed forward), not a separate
+file. Scheduled pulls registered (`scripts/schedule_tasks.ps1`, Task Scheduler folder NFLScholar: Tue/Thu/Fri/Sat pulls, Sunday
+international, and a close pull 15 minutes before each window; `scripts/pull_props.py`). Weeks 3-9: price value -2.8% on every
+tier (the vig: board and close were the same hand pull, 1.5% of lines moved), so this reads only from week 10's scheduled pulls.
+PrizePicks and Underdog still come from the saved files; the scheduled pulls do not refresh them.
+
 - **Why.** Win rate needs seasons to separate 52% from 54%; closing-line value answers in weeks. The earlier read (lines moved
   toward the model 47.6% on receiving yards, 44.1% on rushing yards) says the leans have had no closing-line value so far. It
   must be measured per tier. Pulls are manual and irregular (17 to 53 snapshots a week), so "open" and "close" are whatever
@@ -215,6 +223,12 @@ Track Record; ledger stores 'Tier <stat>'. Fair odds at the best available price
 
 ### B4. Line shopping
 
+**DONE 2026-11-11.** FanDuel added to the free weekly pull (`data/odds_sources.py` `fetch_fanduel_weekly_lines`, about 210 lines a
+week; third in LINE_BOOKS order, after Pinnacle and DraftKings). Best price per side across books (`data/line_shopping.py`;
+pick'em multipliers excluded). The Odds API (`data/odds_api_props.py`): three markets, one region, cost checked on the free
+events call first, at most one pull per 20 hours, never below 100 credits left, Sunday 10:30 only; rows kept in
+`external_data/odds_api_archive` so `v2_ps_line_routing` never sees them. Needs an Odds API key saved (none on this machine).
+
 - **Why.** The weekly pull covers PrizePicks, Underdog, DraftKings and Pinnacle (`WEEKLY_BOOKS`, `data/odds_weekly.py` line 71).
   The record is better against the softer book. A FanDuel parser already exists and is not in the weekly pull.
 - **Where.** `data/odds_sources.py` `fetch_fanduel_lines` (line 1355); `data/loaders.py` `fetch_nfl_player_props` (line 1677) and
@@ -229,6 +243,14 @@ Track Record; ledger stores 'Tier <stat>'. Fair odds at the best available price
 - **Size.** Medium.
 
 ### B5. Top-down bets (the sharp price against soft and pick'em lines)
+
+**STUDIED 2026-11-11, nothing surfaces.** `data/pickem.py`, payouts as config in `data/pickem_payouts.json` (PrizePicks verified from
+its 2026-09-18 post; Underdog from third-party pages, marked unverified), `scripts/eval_pickem_topdown.py` ->
+`.sweeps/pickem_topdown.txt`. The line shift is calibrated (demons: fair 0.219, hit 0.209 on 3,774; goblins: 0.666, 0.669 on
+3,402). With each pick'em line paired with the sharp price of its own time, flagged legs hit 54.8% (454, PrizePicks standard) and
+56.1% / 55.6% (Underdog shaded / standard) against about 54.7% break-even; no 90% low above it. The fair chance overstates
+flagged legs by about 5 points (stale saved lines). In-sample only: flagged Underdog legs the model agrees with hit 62% (184)
+against 47% (102) - a combined rule to test forward, not a finding.
 
 - **Why.** PrizePicks standard, demon and goblin rows and Underdog rows are archived every pull (several thousand a snapshot) and
   never scored. Their lines move slowly and pay fixed amounts, so a line that sits off the sharp price is an edge that needs no
@@ -267,6 +289,12 @@ Track Record; ledger stores 'Tier <stat>'. Fair odds at the best available price
 
 ### B10. Inactives automation
 
+**DONE 2026-11-11.** `scripts/refresh_pre_kickoff.py`: memory / heavy-job gate, FantasyPros injury pull, props pull, the board
+by the app's own call (`build_weekly_projections` with `board_inputs`' fingerprint, so the same inputs give the same board),
+market frame (`data.odds_weekly.weekly_market_frame`), FP weekly columns carried from the week's previous ledger board, one ledger
+file, and `.sweeps/scheduled/what_moved_<year>_wkNN.md`. Scheduled 75 minutes before each window (plus Sunday 07:15 for
+international games). Live run on week 10: 492 players, 256 priced, 130 s (over the 2-minute bar; the build is nearly all of it).
+
 - **Why.** Live boards beat rebuilt ones (52.3% against 50.9% at a 5%+ edge): the edge that exists is fresh injury and role
   information. Week 5 lost Chase and McLaurin to a stale pull.
 - **Where.** `ui/board_session.py` `build_board` (line 106); `data/fantasypros_availability.py`; `data/odds_weekly.py`
@@ -288,6 +316,10 @@ Track Record; ledger stores 'Tier <stat>'. Fair odds at the best available price
 ## Phase 3. Presentation
 
 ### C1. A Props view as the main betting surface
+
+**DONE 2026-11-11.** `ui/props_view.py`, a PROPS tab beside BOARD and GAMES (BOARD stays the default). Rows match the ledger's
+pricing (0 mismatches over 341 week-10 props); 0.3 s to build, 0.6 s to reopen (the first open reads the prop record, about 15
+s, then cached). Step 5 (the GAMES props table) left as it is, per the user.
 
 - **Why.** The stated purpose is prop betting, yet the prop output is a CSV from a script and a table sorted by gap %
   (`ui/games_view.py` `props_table`, line 494). P(over) is never shown in the app.
@@ -356,6 +388,53 @@ only if the read passes.
 
 ### A1. Practice participation
 
+**CLOSED 2026-11-11: the timing does not separate; WR 0.83 verified; RB is the one open candidate (a carries cut).** The user's rule: a Questionable player is
+assumed to play (the live board keeps him at Availability 1.0; the FantasyPros percentage is shown, not applied), so only the
+production of those who play counts. First pass (`scripts/study_practice_status.py`): Questionable x limited/DNP players miss
+far more games than the model's availability says (RB 57% played) - set aside by that rule. Follow-up on played rows only,
+2022-2025 harness base boards + 2026 live boards (`scripts/study_questionable_timing.py` -> `.sweeps/study_questionable_timing.txt`;
+`scripts/screen_questionable_cells.py` -> `.sweeps/screen_questionable_cells.txt`):
+- In-sample splits point to ongoing injuries (on the report 3+ weeks: RB 0.91, 5 of 5 seasons below 1; WR back from a missed
+  game 0.84 after the shipped cut) and leg injuries (RB ankle/foot 0.84, knee 0.84), with late tags (new this week, full
+  practice) near or above 1.
+- Held out by season none of it holds: new / ongoing cells +0.09 points MSE, ongoing x practice +0.11, against -0.08 for one
+  factor per position. The 2026 Wed-Thu-Fri pattern (FantasyPros, now archived on every pull in
+  `external_data/fantasypros_injury_archive`; the API keeps it for the current season only) and the FantasyPros play chance show
+  nothing on 87 rows.
+- One factor per position: RB 0.93 better in 4 of 5 seasons (points), carries 0.93 / rushing yards 0.92 better in 3 of 5,
+  receptions unchanged; WR already right with the shipped 0.83 cut; TE and QB worse or too few. Candidate
+  `v2_questionable_rb` (points, carries, rushing yards) for one harness run; the 2026-10-08 study had RB 0.95 with an interval
+  across 1 and START-RB slightly worse, so expect a small or no gain. Re-read the timing splits after week 17 with the daily
+  pattern for a full season.
+
+**WR cut verified, RB read 2026-11-11** (`scripts/study_questionable_wr_rb.py` -> `.sweeps/study_questionable_wr_rb.txt`;
+Questionable players who played, 1+ offensive snap, early exits kept since the board is set before kickoff):
+- WR 0.83 is not a data artefact. The 2026-10-08 fit joined the report on name + week only; joined on name + team + week it is
+  0.837 against 0.843 (17 rows differ), and on the model's own replayed tag 0.835. Refit on today's model (harness base
+  2022-2025 + live 2026, the cut undone on exactly the rows `apply_questionable_workload` touches: replayed through
+  `historical_injury_profiles`, 0 false cuts, 7 official-Q rows missed by a name mismatch; live rows by build time against the
+  ship times): START 0.858 (week-resampled interval 0.80-0.91), seasons 0.84 0.86 0.91 0.80 0.90. Today's pre-cut projection
+  is 3% lower than the old one on the same player-weeks, which is most of the gap. Held out by season the shipped 0.83 beats a
+  refit flat factor and a split by projection level (all rows +0.40 / +0.03 MSE worse, START +0.05 / +0.49). Keep 0.83.
+- WR stats: targets refit 0.91 (shipped 0.926) is better in 5 of 5 seasons but by 0.9% of MSE; receptions, yards and TDs no
+  better than shipped (the TD factor refits nearer 0.76-0.81 by ratio, but the held-out MSE is identical). No change.
+- WR 2026: the FantasyPros tag (what the live board keys on) and the official report agree on 36 of 43 played rows; 2026 START
+  reads 0.90 on 24 rows, inside the interval.
+- RB is volume, not efficiency, with a small early-exit part. Against untagged RBs who played: carries 0.91 (5 of 5 seasons
+  below 1), rushing yards 0.90, snap share against expected 0.92 (4 of 4), yards per carry 0.98 (mixed), targets 0.99,
+  receptions 1.00, yards per target 1.00. Early exits (under half the expected share) 7.9% against 3.9%; without them the
+  factor is 0.94 (carries 0.93), so they are about a fifth of the shortfall. The next game is missed 11.4% against 10.0% - not
+  meaningfully more re-injury. Held out by season: points x0.92 -1.19 MSE (5 of 5), the same shortfall on the rushing line
+  only (x0.87 rushing points) -1.22 (4 of 5), carries -1.18 (5 of 5), rushing yards -24 (4 of 5), receptions +0.03 (worse).
+  Candidate `v2_questionable_rb`: Questionable RBs, rushing attempts and rushing yards (and rushing TDs) x about 0.90, the
+  receiving line untouched, points re-scored from the line. One harness run against the A1 bar.
+- **`v2_questionable_rb` BUILT and PASSED 2026-11-11** (candidate, off; bar and result in `.sweeps/questionable_rb_bar.md`, set
+  before the run; the A1 START-ALL <= -0.003 bar is out of reach for a rule on ~5% of START backs, so the bar was the rows it moves
+  plus no-worse). Factors carries 0.927, rushing yards 0.892, rushing TDs 0.894 (fit on 2022-2025, so the harness read is
+  in-sample). Harness 2022-2025 weeks 3-17: moved rows (played) RMSE -0.065, carries bias +0.87 -> +0.15, points better in 4 of 4
+  seasons; START-RB -0.005, EVERY-START-RB -0.027 (CI below 0), START-ALL -0.001, EVERY-ALL -0.004 (CI below 0); QB / WR / TE
+  unchanged. **SHIPPED 2026-11-11** on the user's yes (DEFAULT_FEATURES = 86).
+
 - **Why.** The model reads the game status (Out, Doubtful, Questionable) and nothing about practice. The cached injury feed has
   `practice_status` (full, limited, did not participate) for every listed player, 2021-2026, so it is testable in the injury
   replay. The Questionable handling today is one factor for WRs.
@@ -375,6 +454,10 @@ only if the read passes.
 - **Size.** Medium.
 
 ### A2. Defensive personnel, and A3. Offensive line state (one shared panel)
+
+**NULL 2026-11-11.** `scripts/audit_personnel.py` -> `.sweeps/audit_personnel.txt`. Missing share of each unit's season-to-date
+snaps (Out / Doubtful, reserve lists, gone from the roster; gameday inactives excluded), 2022-2025. No read passes the build bar:
+the largest held-out gain is 0.09% of a stat's MSE (bar 0.5%). No flag.
 
 - **Why.** The matchup multiplier comes from what a defense has allowed. It does not know a starting corner, safety or edge
   rusher is out this week, or was traded. The same holds for a team's own line: PFF blocking and pass-rush files are loaded
@@ -432,6 +515,10 @@ only if the read passes.
 - **Size.** Medium.
 
 ### A6. Per-stat level check on the new stat columns
+
+**IN PLACE 2026-11-11.** Scorecard section 8. Week 9: receptions +1.8 and receiving yards +1.3 points of over rate above the
+model's mean P (weeks 3-8: +3.6 each), on 175 / 171 lines. Results above the model median: 47% / 45% in both periods (every
+played row). Re-read after week 12.
 
 - **Why.** In weeks 3-8 the model's average P(over) on receptions and receiving yards was 0.44-0.46 while 0.48-0.49 went over.
   In week 9, the first week on the recal and capacity-relief columns, the overall average matched (0.462 against 0.462). One

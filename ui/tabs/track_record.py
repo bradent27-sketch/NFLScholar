@@ -36,7 +36,7 @@ def _ledger_signature(year):
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _scored(year, _signature):
+def _scored(year, signature):   # no leading underscore: st.cache_data skips hashing those
     stats_df, _team_col, name_col, _ = load_and_merge_data(year, 'Full PPR')
     if stats_df is None or stats_df.empty or 'week' not in stats_df.columns:
         return pd.DataFrame(), {'files': 0, 'scoring': None, 'mixed_scoring': False}
@@ -50,7 +50,7 @@ def _archive_signature(year):
 
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def _prop_rows(year, _ledger_sig, _archive_sig):
+def _prop_rows(year, ledger_sig, archive_sig):   # hashed: a new board or snapshot rebuilds
     stats_df, _team_col, name_col, _ = load_and_merge_data(year, 'Full PPR')
     try:
         prior, _t, prior_name_col, _ = load_and_merge_data(year - 1, 'Full PPR')
@@ -125,6 +125,10 @@ def _render_prop_record(year, pos):
                "the side table is 5%+ edges. Full detail: scripts/prop_scorecard.py.", "Details")
 
 
+def _pct(v):
+    return f'{100 * v:+.1f}' if pd.notna(v) else '-'
+
+
 def _render_tier_record(rows, year):
     """B2 (2026-11-11): the v0 tiers' record. The status reads only boards from data.prop_tiers.FORWARD_FROM on - the rules were
     chosen from the weeks before it, so those are shown as in-sample background and can never make a tier bettable."""
@@ -139,6 +143,8 @@ def _render_tier_record(rows, year):
         'Bets': [int(live.at[t, 'bets']) for t in ptiers.ORDER],
         'Hit %': [f"{100 * live.at[t, 'hit shown']:.1f}" if live.at[t, 'bets'] else '-' for t in ptiers.ORDER],
         'ROI %': [f"{100 * live.at[t, 'roi_price']:+.1f}" if live.at[t, 'bets'] else '-' for t in ptiers.ORDER],
+        'Vs close %': [_pct(live.at[t, 'price value']) if live.at[t, 'bets'] and 'price value' in live.columns else '-'
+                       for t in ptiers.ORDER],
         'Status': [live.at[t, 'status'] for t in ptiers.ORDER],
         'Earlier bets': [int(past.at[t, 'bets']) for t in ptiers.ORDER],
         'Earlier hit %': [f"{100 * past.at[t, 'hit']:.1f}" if past.at[t, 'bets'] else '-' for t in ptiers.ORDER],
@@ -149,7 +155,9 @@ def _render_tier_record(rows, year):
                "book's price leans to, 3-25 points from the book's probability; B = the same against the lean; No bet = "
                "passing stats, carries, or a gap over 25 points; Track = the rest. Bets, Hit % and ROI % count boards from "
                f"{y} week {w} on, when these rules were fixed; Hit % is pulled toward 50% until the sample is large. A tier "
-               "reads bettable only after 300 such bets with ROI at the posted price clear of zero (90% lower bound). The "
+               "reads bettable only after 300 such bets with ROI at the posted price clear of zero (90% lower bound). "
+               "Vs close % = the closing fair chance of the side taken, from the sharpest book's last line before kickoff, "
+               "minus the chance the price paid implied: above 0 means the bet beat the close (about -3 is just the vig). The "
                "earlier columns are the weeks the rules were chosen from, so they cannot prove them.", "Tiers")
 
 

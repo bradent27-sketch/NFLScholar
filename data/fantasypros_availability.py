@@ -254,6 +254,7 @@ def fetch_fantasypros_injury_report(api_key: str, year: int, week: int) -> tuple
         injuries = resp.json().get('injuries', [])
     except Exception as exc:
         return pd.DataFrame(), f'parse failed: {exc}'
+    archive_injury_payload(injuries, year, week)
     if not injuries:
         return pd.DataFrame(), None
 
@@ -265,6 +266,29 @@ def fetch_fantasypros_injury_report(api_key: str, year: int, week: int) -> tuple
         'plays_probability': [i.get(_API_PROBABILITY_FIELD) for i in injuries],
     })
     return raw, None
+
+
+# Every injury pull's full records, kept (2026-11-11, audit A1): the API serves the day-by-day practice report (practice_1-3:
+# DNP / Limit / Full) only for the current season, and the board's CSV keeps the status and play probability alone. One file
+# per pull; a later pull in the same week is a later snapshot. Never raises.
+FANTASYPROS_INJURY_ARCHIVE = Path(__file__).resolve().parent.parent / 'external_data' / 'fantasypros_injury_archive'
+
+
+def archive_injury_payload(injuries, year, week, archive=None, now=None):
+    import datetime
+    import json
+    try:
+        folder = Path(archive or FANTASYPROS_INJURY_ARCHIVE)
+        folder.mkdir(parents=True, exist_ok=True)
+        stamp = (now or datetime.datetime.now(datetime.timezone.utc)).strftime('%Y%m%dT%H%M%SZ')
+        path = folder / f'{int(year)}_wk{int(week):02d}_{stamp}.json'
+        tmp = path.with_suffix('.tmp')
+        tmp.write_text(json.dumps({'year': int(year), 'week': int(week), 'fetched_at': stamp, 'injuries': injuries}),
+                       encoding='utf-8')
+        tmp.replace(path)
+        return path
+    except Exception:
+        return None
 
 
 def save_fantasypros_injury_api_pull(api_key: str, year: int, week: int,

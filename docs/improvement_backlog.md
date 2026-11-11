@@ -9,6 +9,8 @@ look (that file still holds the history and the closed-item table).
 practice status, defensive and line personnel, rookie priors, QB rushing) are a work order in `docs/audit_leads_2026-11-10.md`.
 Their IDs there (A1-A10, B2-B10, C1-C7, D0-D5) are separate from the IDs below; move an item into this file when work starts.
 
+**2026-11-11:** `v2_questionable_rb` SHIPPED from audit A1 (DEFAULT_FEATURES = 86): a Questionable RB's rushing line is cut and scored.
+
 **Status key:** TODO, IN PROGRESS, SHIPPED, REJECTED (tested, not worth it), PARKED (waiting on something).
 **Rules that apply to every item:** one named flag per model change; harness v2 (played-only, 2022-2025 weeks 3-17) is the
 gate; a pre-set bar is written before the run; shipping into `DEFAULT_FEATURES` needs the user's sign-off; no model+market

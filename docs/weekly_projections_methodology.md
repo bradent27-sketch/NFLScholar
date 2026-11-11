@@ -8345,3 +8345,70 @@ From the whole-model audit (`docs/audit_leads_2026-11-10.md`, B2). Definitions a
 - **Ledger.** New ledger files store 'Tier <stat>' beside the D1 columns. B8 row flags do not exist yet (v0 has none).
 - Tests: `tests/test_prop_tiers.py` (new, 5); `tests/test_prediction_ledger.py` checks the stored tier.
 
+
+### 2026-11-11 - B4, B5, B6, B10, C1 and the first offline studies A1, A2/A3, A6 (no projection changes, no flags)
+
+From the whole-model audit (`docs/audit_leads_2026-11-10.md`). Nothing here moves a projection; the market selects and prices
+bets only (the no-blend rule).
+
+- **Line shift (`data/line_shift.py`).** A book's no-vig P(over) at one line is moved to another by centring the stat's empirical
+  shape (`data/prop_probability.py` ratio tables) so P(over the book's line) matches, then reading it at the other line. Checked on
+  PrizePicks demon and goblin lines (lines far from the sharp one): fair 0.219 vs hit 0.209 (3,774), 0.666 vs 0.669 (3,402).
+- **B6 closing-line value.** Per tier bet: line value (points the same book's close moved toward the side) and price value (the
+  sharpest book's closing fair chance of the side at the bet's line minus 1 / the price paid). Scorecard section 7 and "Vs close
+  %" on Track Record. Weeks 3-9 read -2.8% on every tier: the vig, since board and close came from the same hand pull. The ledger
+  files are the bet log. Scheduled pulls (`scripts/pull_props.py`, `scripts/schedule_tasks.ps1`) give a real open and close from
+  week 10; PrizePicks and Underdog still come from the saved files, now stamped with the file's own time (`saved_at` in the
+  snapshot status; `data/prop_record.load_archive` uses it).
+- **B4 line shopping.** FanDuel joins the free weekly pull (event pages, about 3 calls a game). `data/line_shopping.py` gives the
+  best price per side across priced books. `data/odds_api_props.py` spends The Odds API conservatively (3 markets, 1 region,
+  cost checked on the free events call, one pull per 20 h, 100 credits kept) into its own folder so `v2_ps_line_routing` never
+  reads it.
+- **B10 pre-kickoff refresh.** `scripts/refresh_pre_kickoff.py` builds the board by the app's own call, records it to the
+  ledger, and writes what moved since the week's previous board; scheduled 75 minutes before each window, skipped when a heavy
+  job runs or free memory is under 4 GB. Week 10 live run: 130 s.
+- **B5 pick'em legs.** `data/pickem.py`, payouts in `data/pickem_payouts.json`. Paired with the sharp price of their own time,
+  flagged legs do not clear break-even (PrizePicks standard 54.8% on 454 against 54.7%); nothing surfaces.
+- **C1 PROPS view.** `ui/props_view.py`, a third tab (not the default): the ledger's pricing per prop, the side, the shrunk P,
+  fair odds, best price with EV, tier and its forward record, line move. Sorted by tier then EV; Track and No bet hidden by default.
+- **A1 practice status and Questionable timing** (`scripts/study_practice_status.py`, `scripts/study_questionable_timing.py`,
+  `scripts/screen_questionable_cells.py`). User rule: a Questionable player is assumed to play (Availability stays 1.0), so only
+  production when he plays is read. Splits by final practice status, new vs ongoing listing, weeks in a row listed, injury type
+  and (2026) the Wed-Thu-Fri pattern look different in-sample (ongoing and leg injuries lower) but none beats one factor per
+  position held out by season. One factor per position: RB 0.93 better in 4 of 5 seasons on points (carries and rushing yards
+  3 of 5); WR right with the shipped cut; TE, QB no. Candidate `v2_questionable_rb`, not built. FantasyPros injury pulls now
+  archive the full records (`external_data/fantasypros_injury_archive`; the daily practice report exists for the current season
+  only), backfilled for 2026 weeks 1-9.
+- **A1 follow-up: the WR cut and the RB shortfall** (`scripts/study_questionable_wr_rb.py`). WR 0.83 holds: the name-only report
+  join of the original fit moves it by 0.006, the model's own tag gives 0.835, a refit on today's model reads 0.86 (interval
+  0.80-0.91, mostly because the pre-cut projection is 3% lower now) and held out by season 0.83 beats the refit and a split by
+  projection level. WR stat factors: no change worth making. RB Questionable shortfall (0.92 points) is volume: carries 0.91 and
+  snap share 0.92 of expected, yards per carry and the receiving line about 1; early exits double (7.9% vs 3.9%) and are about a
+  fifth of it; the next game is missed barely more often (11.4% vs 10.0%). A cut on the rushing line beats no cut held out by
+  season (points -1.2 MSE, 4-5 of 5 seasons). Built as candidate `v2_questionable_rb` (off): carries x0.927, rushing yards
+  x0.892, rushing TDs x0.894 on Questionable backs projected to play, weeks 3-17, the line scored; availability unchanged.
+  Harness 2022-2025 (bar in `.sweeps/questionable_rb_bar.md`): the 203 moved played rows RMSE -0.065 (points 4 of 4 seasons),
+  carries bias +0.87 -> +0.15, START-RB -0.005, EVERY-START-RB -0.027, START-ALL -0.001, EVERY-ALL -0.004; other positions 0.
+  `tests/test_questionable_rb.py`.
+- **A2/A3 personnel** (`scripts/audit_personnel.py`): the missing share of a defense's secondary / front / linebackers or an
+  offence's line explains at most 0.09% of a stat's MSE held out by season. Null.
+- **A6 level check:** scorecard section 8; re-read after week 12.
+- **Fix.** Track Record's cached record and scored ledger took their cache-key arguments with a leading underscore, which
+  st.cache_data does not hash: a new board or snapshot showed only after the hour's TTL. Renamed.
+- Tests: `tests/test_line_tools.py` (12), `tests/test_props_view.py` (3).
+
+### 2026-11-11 - SHIPPED: `v2_questionable_rb` (DEFAULT_FEATURES = 86; audit A1 follow-up)
+
+User: "build and run", then after the pass "push it". A back the injury feed lists as Questionable and who is projected to play
+is still counted as playing (Availability unchanged); his rushing line is cut (`QUESTIONABLE_RB_STAT_FACTORS`: carries 0.927,
+rushing yards 0.892, rushing TDs 0.894) and the total is that line scored (`v2_points_from_stat_line`). Receiving untouched.
+Weeks 3-17. Shares the WR cut's eligibility (`_questionable_eligible`, `questionable_rows`) and `apply_questionable_stat_cut`.
+- Evidence: `scripts/study_questionable_wr_rb.py` (the shortfall is volume: carries 0.91, snap share 0.92 of expected; yards per
+  carry and the receiving line about 1; early exits about a fifth of it; no real re-injury effect).
+- Harness v2 2022-2025 weeks 3-17 (bar set before the run, `.sweeps/questionable_rb_bar.md`): 203 moved played rows RMSE -0.065,
+  points better in 4 of 4 seasons, carries bias +0.87 -> +0.15; START-RB -0.005, EVERY-START-RB -0.027 (CI below 0), START-ALL
+  -0.001, EVERY-ALL -0.004 (CI below 0); QB / WR / TE 0.000. The factors are fit on the same seasons (in-sample).
+- Live check: a week-10 build with one back injected as Questionable (in memory) moved only that row: carries 19.8 -> 18.4,
+  rushing yards 89.7 -> 80.0, receptions unchanged, points 19.8 -> 18.5. No back is Questionable on the real week-10 feed yet.
+- Popup wording: the Questionable note says a back gets fewer carries. Tests: `tests/test_questionable_rb.py` (5). Undo: remove
+  the flag from DEFAULT_FEATURES.

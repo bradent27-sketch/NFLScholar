@@ -38,7 +38,7 @@ import pandas as pd
 
 from data.odds_sources import (
     _empty_props, combine_props, fetch_prizepicks_lines, fetch_underdog_lines,
-    fetch_draftkings_weekly_lines, fetch_pinnacle_lines, load_saved_book_payload,
+    fetch_draftkings_weekly_lines, fetch_fanduel_weekly_lines, fetch_pinnacle_lines, load_saved_book_payload,
     parse_prizepicks_payload, parse_underdog_payload, parse_draftkings_payloads,
 )
 
@@ -68,7 +68,8 @@ WEEKLY_SAVED_SOURCES = {
 # 2026-09-06: its guest /matchups + /markets/straight feeds carry per-game
 # player props with prices (BOOK_WEIGHTS puts it highest - the sharpest lean
 # on the board), and neither feed is blocked to a plain request.
-WEEKLY_BOOKS = ('PrizePicks', 'Underdog', 'DraftKings', 'Pinnacle')
+# FanDuel joined 2026-11-11 (audit B4, line shopping): its event pages carry the weekly props with prices, no key needed.
+WEEKLY_BOOKS = ('PrizePicks', 'Underdog', 'DraftKings', 'Pinnacle', 'FanDuel')
 
 WEEKLY_SNAPSHOT_PATH = os.path.join('external_data', 'weekly_props_snapshot.json')
 
@@ -297,6 +298,16 @@ def save_snapshot(props, status, fetched_at=None, path=WEEKLY_SNAPSHOT_PATH):
     return None
 
 
+def saved_payload_time(saved_key):
+    """ISO UTC time the saved payload file for `saved_key` (data.odds_sources.SAVED_PAYLOADS) was last written, or None."""
+    from data.odds_sources import SAVED_PAYLOADS
+    try:
+        path = SAVED_PAYLOADS[saved_key][0]
+        return datetime.datetime.fromtimestamp(os.path.getmtime(path), datetime.timezone.utc).isoformat()
+    except (KeyError, OSError, TypeError):
+        return None
+
+
 def fetch_weekly_props(books=WEEKLY_BOOKS):
     """
     One pull of every free book's weekly board. Returns (props, status).
@@ -310,9 +321,11 @@ def fetch_weekly_props(books=WEEKLY_BOOKS):
 
         saved_key, parser = WEEKLY_SAVED_SOURCES.get(name, (None, None))
         payload = load_saved_book_payload(saved_key) if saved_key else None
+        saved_at = None
         if payload is not None:
             props, err = parser(payload)
             source = 'your saved payload'
+            saved_at = saved_payload_time(saved_key)
 
         # Only go to the network when there is no file to read. A saved
         # payload is there precisely because the live path did not work.
@@ -331,6 +344,8 @@ def fetch_weekly_props(books=WEEKLY_BOOKS):
                 # fetch_pinnacle_lines returns season + per-game rows; the
                 # period == 'game' filter just below keeps only the weekly ones.
                 props, err = fetch_pinnacle_lines()
+            elif name == 'FanDuel':
+                props, err = fetch_fanduel_weekly_lines()
             else:
                 continue
             source = 'live'
@@ -339,6 +354,10 @@ def fetch_weekly_props(books=WEEKLY_BOOKS):
             props = props[props['period'] == 'game']
         status[name] = {'rows': int(len(props)), 'error': err, 'source': source,
                         'players': int(props['player'].nunique()) if not props.empty else 0}
+        if saved_at is not None:
+            # 2026-11-11 (audit B6): when the saved payload was written. A scheduled pull re-reads the same file until a new one
+            # is saved, so its lines are as old as the file, not the pull; data.prop_record dates them by this.
+            status[name]['saved_at'] = saved_at
         if not props.empty:
             frames.append(props)
 
@@ -367,7 +386,7 @@ def weekly_props(force=False, books=WEEKLY_BOOKS, path=WEEKLY_SNAPSHOT_PATH, now
         # parser fix (or a just-saved PrizePicks file that replaces a live
         # book) would not show until the TTL lapsed.
         for _fetcher in (fetch_prizepicks_lines, fetch_underdog_lines,
-                         fetch_draftkings_weekly_lines, fetch_pinnacle_lines):
+                         fetch_draftkings_weekly_lines, fetch_pinnacle_lines, fetch_fanduel_weekly_lines):
             if hasattr(_fetcher, 'clear'):
                 _fetcher.clear()
 
@@ -525,3 +544,21 @@ def weekly_market_book_lines(props, board=None):
     if props is None or props.empty:
         return pd.DataFrame()
     return market_book_stat_lines(props, season_only=False, board=board)
+
+
+def weekly_market_frame(props, scoring, name_pool=None, fetched_at=None):
+    """The staged market frame the board, the ledger and the games view read (2026-11-11, moved out of the Rankings tab so a
+    headless refresh builds the same one, audit B10): the market projection per player ('Player'), with attrs 'book_lines'
+    (per player, stat and book), 'consensus_stats' and 'fetched_at'. Empty frame when nothing maps to a scored stat."""
+    from data.draft_projections import PROJECTED_STATS
+    if props is None or props.empty:
+        return pd.DataFrame()
+    scored, _meta = weekly_market_projection(props, scoring, board=name_pool)
+    if scored.empty:
+        return pd.DataFrame()
+    out = scored.rename(columns={'player': 'Player'})
+    out.attrs['book_lines'] = weekly_market_book_lines(props, board=name_pool)
+    out.attrs['consensus_stats'] = [c for c in PROJECTED_STATS if c in scored.columns]
+    out.attrs['fetched_at'] = fetched_at
+    return out
+

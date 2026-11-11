@@ -13,6 +13,7 @@ line posted when the board was built (what could have been bet then) and the las
   - (2026-11-11, audit B3) the same bets at the price posted for the side taken; three blind baselines per stat (always under,
     always over, the side the price favours) and the model's lift over the best; the model's side at every book's own line and
     price; overs and unders separately. The scoring lives in data/prop_record.py, shared with the Track Record page.
+  - (2026-11-11, audit B6) the tiers' bets against the close: line value and price value (data/prop_tiers.clv_values).
 Yardage lines under 5 are left out, as the app does. Pushes are out.
 
 Sheet (--sheet WEEK): the latest ledger board for WEEK against the latest priced lines: the recalibrated mean, P(over), the book's
@@ -38,6 +39,7 @@ import pandas as pd  # noqa: E402
 from data import ledger_scorecard as sc  # noqa: E402
 from data import prop_probability as pp  # noqa: E402
 from data import prop_record as pr  # noqa: E402
+from data import prop_tiers as ptiers  # noqa: E402
 from data.loaders import load_schedule  # noqa: E402
 from data.prop_record import MIN_LEAN_LINE, best_shrink, load_archive, priced_lines, record_tables  # noqa: E402
 from data.transforms import load_and_merge_data  # noqa: E402
@@ -91,11 +93,64 @@ def run_record(a):
            pr.book_table(rows).to_string(index=False, float_format=fmt), '',
            "6. BY SIDE, sharpest book: the model's overs and unders, every line and 5%+",
            pr.side_table(rows).to_string(index=False, float_format=fmt)]
+    fwd = ptiers.forward_rows(rows)
+    if len(fwd):
+        out += ['', "7. BEATING THE CLOSE (B6), the tiers' bets at the board: line value = points the same book's last line "
+                "before kickoff moved toward the side taken; price value = the sharpest book's closing fair chance of the side "
+                "at the bet's line minus the chance the price paid implied (about -0.03 = the vig alone). 'beats close' needs "
+                f"{ptiers.CLV_MIN_BETS}+ bets with the 90% low above 0.",
+                ptiers.clv_table(fwd, ('tier',)).to_string(index=False, float_format=fmt), '',
+                ptiers.clv_table(fwd, ('stat', 'side')).to_string(index=False, float_format=fmt)]
+    out += ['', level_check(a.year, rows, stats_df, name_col)]
     text = '\n'.join(out)
     print(text)
     with open(a.out, 'w', encoding='utf-8') as fh:
         fh.write(text + '\n')
     rows.to_csv(a.csv, index=False)
+
+
+A6_FROM_WEEK = 9          # the first week on the recal and capacity-relief stat columns
+
+
+def level_check(year, rows, stats_df, name_col, from_week=A6_FROM_WEEK):
+    """A6 (2026-11-11): per stat, the model's mean P(over) at the sharpest book's closing line against the share that went over,
+    and the share of played results above the model's median (ledger 'Median <stat>', every pre-kickoff row with a result),
+    for weeks before `from_week` (early) and from it on (late). Bar to recentre a median (MEDIAN_CURVES_RECAL): weeks 9-12 off
+    by 3+ points on 400+ lines, the same sign as weeks 3-8."""
+    lines = ['8. LEVEL CHECK (A6): mean model P(over) against the over rate at the close, and the share of results above the '
+             f'model median; weeks {from_week}+ (late) against the weeks before (early). No change before week 12 has results.']
+    r = rows[(rows['timing'] == 'at close') & rows['p_over'].notna()]
+    if 'sharpest' in r.columns:
+        r = r[r['sharpest'].astype(bool)]
+    frame, _info = sc.load_scored_ledger(year, stats_df, name_col, load_schedule(year))
+    frame = frame[frame['pre_kickoff']] if 'pre_kickoff' in frame.columns else frame
+    try:     # boards from before the ledger stored medians (D1, 2026-11-10): the same medians from the stored means
+        from data.weekly_median import attach_medians
+        filled = attach_medians(frame)
+        for c in [c for c in filled.columns if str(c).startswith('Median ')]:
+            frame[c] = frame[c].fillna(filled[c]) if c in frame.columns else filled[c]
+    except Exception:
+        pass
+    out = []
+    for stat in pp.PROP_MARKETS:
+        rec = {'stat': stat}
+        for label in ('early', 'late'):
+            g = r[(r['stat'] == stat) & ((r['week'] < from_week) if label == 'early' else (r['week'] >= from_week))]
+            rec[f'{label} lines'] = len(g)
+            rec[f'{label} mean P'] = g['p_over'].mean() if len(g) else np.nan
+            rec[f'{label} over rate'] = g['over'].mean() if len(g) else np.nan
+        med, act = f'Median {stat}', f'actual_{stat}'
+        if med in frame.columns and act in frame.columns:
+            f = frame[pd.to_numeric(frame[med], errors='coerce').gt(0) & frame[act].notna()]
+            for label in ('early', 'late'):
+                g = f[(f['week'] < from_week) if label == 'early' else (f['week'] >= from_week)]
+                rec[f'{label} above median'] = (g[act] > g[med]).mean() if len(g) else np.nan
+        out.append(rec)
+    t = pd.DataFrame(out)
+    t['early gap'] = t['early over rate'] - t['early mean P']
+    t['late gap'] = t['late over rate'] - t['late mean P']
+    lines.append(t.to_string(index=False, float_format=lambda v: f'{v:.3f}'))
+    return '\n'.join(lines)
 
 
 def run_sheet(a):

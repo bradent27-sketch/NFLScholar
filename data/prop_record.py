@@ -72,6 +72,14 @@ def load_archive(year, archive=None):
             continue
         rows['week'] = int(snap['week'])
         rows['fetched_at'] = pd.Timestamp(snap['fetched_at'])
+        # A book read from a saved payload carries when that file was written (data.odds_weekly, 2026-11-11): its lines are
+        # that old, however late the pull that re-read them. Snapshots before then have no stamp and keep the pull's time.
+        status = snap.get('status') if isinstance(snap.get('status'), dict) else {}
+        saved = {b: s.get('saved_at') for b, s in status.items() if isinstance(s, dict) and s.get('saved_at')}
+        if saved:
+            book = rows['provider'].astype(str).str.split(' (', regex=False).str[0]
+            stamp = book.map(saved)
+            rows.loc[stamp.notna(), 'fetched_at'] = pd.to_datetime(stamp[stamp.notna()], utc=True).map(pd.Timestamp)
         frames.append(rows)
     cols = ['week', '_key', 'market', 'book', '_rank', 'line', 'p_over', 'over_payout', 'under_payout', 'fetched_at']
     if not frames:

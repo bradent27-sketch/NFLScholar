@@ -1360,6 +1360,103 @@ def fetch_fanduel_lines():
     return parse_fanduel_payload(payload)
 
 
+# 2026-11-11 (audit B4): FanDuel's weekly player props. The NFL page above lists the games; each game's props sit on its
+# event page, one tab per stat group. A main line is a market named "<Player> - <Stat>" of type PLAYER_X_<STAT> (an
+# ALT_ type is the alternate-line ladder and is skipped) with an Over and an Under runner at the same handicap.
+FANDUEL_EVENT_URL = ('https://sbapi.oh.sportsbook.fanduel.com/api/event-page?_ak=FhMFpcPWXMeyZxOx'
+                     '&eventId={event_id}&tab={tab}')
+FANDUEL_PROP_TABS = ('passing-props', 'rushing-props', 'receiving-props')
+FANDUEL_WEEK_DAYS = 7          # games opening within this many days: the current week's slate, not next week's
+
+
+def _fanduel_runner(runner):
+    side = str(runner.get('runnerName') or '').rsplit(' ', 1)[-1].lower()
+    odds = ((runner.get('winRunnerOdds') or {}).get('trueOdds') or {}).get('decimalOdds')
+    if isinstance(odds, dict):          # {'decimalOdds': 1.877}: one level deeper on the event pages
+        odds = odds.get('decimalOdds')
+    try:
+        odds = float(odds)
+    except (TypeError, ValueError):
+        odds = None
+    return side, runner.get('handicap'), odds
+
+
+def parse_fanduel_event_payloads(payloads):
+    """FanDuel event-page payloads (one per game and tab) -> weekly prop rows (period 'game'). Returns (props, error)."""
+    rows, seen = [], set()
+    for payload in payloads or []:
+        markets = ((payload or {}).get('attachments') or {}).get('markets') or {}
+        for market in markets.values():
+            mtype, name = str(market.get('marketType') or ''), str(market.get('marketName') or '')
+            if not mtype.startswith('PLAYER_X_') or '_ALT_' in mtype or ' - ' not in name:
+                continue
+            player, label = (s.strip() for s in name.split(' - ', 1))
+            stat = label[len('Total '):] if label.startswith('Total ') else label
+            sides = {}
+            for runner in market.get('runners') or []:
+                side, line, odds = _fanduel_runner(runner)
+                if side in ('over', 'under') and line is not None and odds:
+                    sides[side] = (float(line), float(odds))
+            if set(sides) != {'over', 'under'} or sides['over'][0] != sides['under'][0]:
+                continue
+            key = str(market.get('marketId') or '')
+            if key in seen:
+                continue
+            seen.add(key)
+            market_name, scorable = normalize_stat(stat)
+            rows.append({
+                'provider': 'FanDuel', 'player': player, 'team': '', 'position': '',
+                'market': market_name or stat, 'market_raw': label, 'scorable': bool(scorable),
+                'line': sides['over'][0], 'over_payout': sides['over'][1], 'under_payout': sides['under'][1],
+                'p_over': devig_two_way_decimal(sides['over'][1], sides['under'][1]),
+                'period': 'game', 'source_id': key,
+            })
+    if not rows:
+        return _empty_props(), 'FanDuel returned no weekly player lines.'
+    return pd.DataFrame(rows, columns=PROP_COLUMNS), None
+
+
+def fanduel_week_events(payload, now=None, days=FANDUEL_WEEK_DAYS):
+    """[event id] of the NFL games on FanDuel's NFL page that open within `days` of `now` (and have not started)."""
+    now = now or pd.Timestamp.now(tz='UTC')
+    out = []
+    for eid, ev in (((payload or {}).get('attachments') or {}).get('events') or {}).items():
+        if ' @ ' not in str(ev.get('name') or ''):
+            continue
+        try:
+            start = pd.Timestamp(ev.get('openDate'))
+        except (TypeError, ValueError):
+            continue
+        if start.tzinfo is None:
+            start = start.tz_localize('UTC')
+        if now <= start <= now + pd.Timedelta(days=days):
+            out.append(str(eid))
+    return out
+
+
+def fetch_fanduel_weekly_lines():
+    """Live FanDuel weekly player props: the NFL page for the week's games, then each game's prop tabs (about three calls
+    a game, no key, no quota). Returns (props, error)."""
+    page, err = _get_json(FANDUEL_NFL_URL)
+    if err:
+        return _empty_props(), err
+    events = fanduel_week_events(page)
+    if not events:
+        return _empty_props(), 'FanDuel lists no games this week.'
+    payloads, errors = [], []
+    for eid in events:
+        for tab in FANDUEL_PROP_TABS:
+            payload, e = _get_json(FANDUEL_EVENT_URL.format(event_id=eid, tab=tab))
+            if e:
+                errors.append(e)
+            else:
+                payloads.append(payload)
+    props, perr = parse_fanduel_event_payloads(payloads)
+    if props.empty and errors:
+        return props, '; '.join(sorted(set(str(x) for x in errors))[:3])
+    return props, perr
+
+
 # ---------------------------------------------------------------------------
 # DraftKings
 # ---------------------------------------------------------------------------

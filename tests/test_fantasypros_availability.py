@@ -21,7 +21,23 @@ import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pytest  # noqa: E402
+
 from data import fantasypros_availability as fpa  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _archive_in_tmp(tmp_path, monkeypatch):
+    """Every fetch archives its payload (2026-11-11): keep the fake ones out of external_data."""
+    monkeypatch.setattr(fpa, 'FANTASYPROS_INJURY_ARCHIVE', tmp_path / 'fp_archive')
+
+
+def test_fetch_archives_the_full_records(monkeypatch, tmp_path):
+    payload = {'injuries': [{'name': 'A B', 'status': 'Questionable', 'practice_1': 'DNP', 'practice_2': 'Limit'}]}
+    monkeypatch.setattr(fpa.requests, 'get', lambda *a, **k: _FakeResponse(200, payload))
+    fpa.fetch_fantasypros_injury_report('key123', 2026, 10)
+    files = list((tmp_path / 'fp_archive').glob('2026_wk10_*.json'))
+    assert len(files) == 1 and '"practice_1": "DNP"' in files[0].read_text(encoding='utf-8')
 
 
 class _FakeResponse:

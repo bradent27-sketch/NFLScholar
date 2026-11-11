@@ -1,0 +1,15 @@
+{
+  "_note": "Pick'em entry payouts (audit B5, 2026-11-11), kept as config so a change is one edit. Power = every pick must hit. Per-leg break-even = payout ^ (-1 / picks), assuming independent legs. Check the payout the app shows before entering; promotions, demons, goblins and Underdog's per-pick multipliers change these.",
+  "PrizePicks": {
+    "source": "PrizePicks Playbook, 2-pick Flex announcement, updated 2026-09-18 (https://www.prizepicks.com/playbook-article/2-pick-flex-plays-on-prizepicks-hit-one-pick-get-paid)",
+    "verified": true,
+    "checked": "2026-11-11",
+    "power": {"2": 3.0, "3": 6.0, "4": 10.0, "5": 20.0, "6": 37.5}
+  },
+  "Underdog": {
+    "source": "third-party guides only (Stokastic, Odds Reference, 2026); no official page found",
+    "verified": false,
+    "checked": "2026-11-11",
+    "power": {"2": 3.0, "3": 6.0, "4": 10.0, "5": 20.0}
+  }
+}

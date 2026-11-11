@@ -79,6 +79,68 @@ def _clv(bets, close):
     return np.where(np.isfinite(dline), sign * move, np.nan)
 
 
+def clv_values(bets, close):
+    """Per bet (B6): the same book's closing line and the line value (points the close moved toward the side taken: + for an
+    over when the line rose), and the price value: the sharpest book's closing no-vig probability of the side taken, moved to
+    the bet's line with data/line_shift.py when the close sits elsewhere, minus 1 / the price paid. Positive price value = the
+    bet beat the close. NaN where no close was pulled."""
+    from data.line_shift import p_over_at
+    n = len(bets)
+    out = pd.DataFrame({'close_line': np.full(n, np.nan), 'line_value': np.full(n, np.nan),
+                        'close_fair': np.full(n, np.nan), 'price_value': np.full(n, np.nan)})
+    if not n or close is None or not len(close):
+        return out
+    sign = np.where(bets['side'].eq('over').to_numpy(), 1.0, -1.0)
+    key = ['week', '_key', 'stat', 'book']
+    same = close[key + ['line']].drop_duplicates(key).rename(columns={'line': 'close_line'})
+    m = bets[key].merge(same, on=key, how='left')
+    out['close_line'] = m['close_line'].to_numpy(float)
+    out['line_value'] = sign * (out['close_line'].to_numpy() - bets['line'].to_numpy(float))
+    sharp = close[close['sharpest'].astype(bool)] if 'sharpest' in close.columns else close
+    k3 = ['week', '_key', 'stat']
+    sh = sharp[k3 + ['line', 'p_book']].drop_duplicates(k3).rename(columns={'line': '_sl', 'p_book': '_sq'})
+    m = bets.assign(Pos=bets['Pos'] if 'Pos' in bets.columns else '')[k3 + ['Pos', 'line']].merge(sh, on=k3, how='left')
+    q = np.full(n, np.nan)
+    for stat in m['stat'].dropna().unique():
+        idx = np.where((m['stat'] == stat).to_numpy() & m['_sq'].notna().to_numpy())[0]
+        if len(idx):
+            q[idx] = p_over_at(stat, m['Pos'].to_numpy()[idx], m['_sl'].to_numpy(float)[idx], m['_sq'].to_numpy(float)[idx],
+                               m['line'].to_numpy(float)[idx])
+    fair = np.where(sign > 0, q, 1 - q)
+    price = bets['price'].to_numpy(float)
+    out['close_fair'] = fair
+    out['price_value'] = np.where(np.isfinite(price) & (price > 1), fair - 1.0 / np.where(price > 1, price, np.nan), np.nan)
+    return out
+
+
+CLV_MIN_BETS = 200
+
+
+def clv_table(fwd, by=('tier',)):
+    """Beating the close (B6), one row per group: bets with a close, the mean line value, the mean price value with its 90%
+    interval, the share of bets that beat the close (price value > 0), and 'beats close' when the 90% low is above 0 on
+    CLV_MIN_BETS+ bets."""
+    if fwd is None or not len(fwd) or 'price_value' not in fwd.columns:
+        return pd.DataFrame()
+    out = []
+    groups = [(('ALL',) * len(by), fwd)] + list(fwd.groupby(list(by)))
+    for k, g in groups:
+        k = k if isinstance(k, tuple) else (k,)
+        v = g['price_value'].dropna().to_numpy(float)
+        rec = dict(zip(by, k))
+        rec.update({'bets': int(len(g)), 'with close': int(len(v)),
+                    'mean line value': float(g['line_value'].mean()) if g['line_value'].notna().any() else np.nan})
+        if len(v):
+            se = v.std(ddof=1) / np.sqrt(len(v)) if len(v) > 1 else np.nan
+            rec.update({'mean price value': float(v.mean()), '90% low': float(v.mean() - 1.645 * se),
+                        '90% high': float(v.mean() + 1.645 * se), 'beat close': float((v > 0).mean())})
+            rec['status'] = 'beats close' if len(v) >= CLV_MIN_BETS and np.isfinite(rec['90% low']) and rec['90% low'] > 0                 else 'tracking'
+        else:
+            rec['status'] = 'no close'
+        out.append(rec)
+    return pd.DataFrame(out)
+
+
 def forward_rows(rows):
     """The record's at-board sharpest-book rows (data.prop_record.build_record) with the v0 tier, the side taken, its price,
     the shrunk P(over) and EV (week w's shrink fit on weeks before w only), the result and closing-line value."""
@@ -100,8 +162,12 @@ def forward_rows(rows):
     side_p = np.where(over, board['p_shrunk'], 1 - board['p_shrunk'])
     board['ev'] = side_p * board['price'].astype(float) - 1.0
     close = rows[rows['timing'] == 'at close']
-    board['clv'] = _clv(board.reset_index(drop=True), close) if len(close) else np.nan
-    return board.reset_index(drop=True)
+    board = board.reset_index(drop=True)
+    board['clv'] = _clv(board, close) if len(close) else np.nan
+    vals = clv_values(board, close)
+    for c in vals.columns:
+        board[c] = vals[c].to_numpy()
+    return board
 
 
 def tier_record(fwd, year=None, forward_only=False):
@@ -131,7 +197,10 @@ def tier_record(fwd, year=None, forward_only=False):
                         'mean ev': float(g['ev'].mean()),
                         'clv toward': float((clv > 0).mean()) if len(clv) else np.nan,
                         'clv away': float((clv < 0).mean()) if len(clv) else np.nan,
-                        'clv n': int(len(clv)), 'overs': int(g['side'].eq('over').sum()), 'forward bets': fwd_n})
+                        'clv n': int(len(clv)),
+                        'price value': float(g['price_value'].mean()) if 'price_value' in g and g['price_value'].notna().any()
+                        else np.nan,
+                        'overs': int(g['side'].eq('over').sum()), 'forward bets': fwd_n})
             rec['status'] = ('bettable' if forward_only and n >= BETTABLE_MIN_BETS and np.isfinite(lb) and lb > 0
                              else 'tracking')
         else:

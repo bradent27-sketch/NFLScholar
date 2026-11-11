@@ -5,6 +5,10 @@ ID, the evidence that put it here, the data it needs, a rough size, and a status
 entry date when an item moves. This file replaces the "Model leads" section of `docs/open_items_2026-10-07.md` as the place to
 look (that file still holds the history and the closed-item table).
 
+**2026-11-10:** the whole-model audit's approved leads (ledger and archive fixes, bet tiers, closing-line value, the Props view,
+practice status, defensive and line personnel, rookie priors, QB rushing) are a work order in `docs/audit_leads_2026-11-10.md`.
+Their IDs there (A1-A10, B2-B10, C1-C7, D0-D5) are separate from the IDs below; move an item into this file when work starts.
+
 **Status key:** TODO, IN PROGRESS, SHIPPED, REJECTED (tested, not worth it), PARKED (waiting on something).
 **Rules that apply to every item:** one named flag per model change; harness v2 (played-only, 2022-2025 weeks 3-17) is the
 gate; a pre-set bar is written before the run; shipping into `DEFAULT_FEATURES` needs the user's sign-off; no model+market

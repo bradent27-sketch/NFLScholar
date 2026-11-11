@@ -59,6 +59,41 @@ def test_infer_scoring_reads_the_mode_off_the_stat_line():
     assert lsc.infer_scoring(rows[1]) == 'Half-PPR'
 
 
+def test_infer_scoring_reads_the_pre_recal_line_when_the_board_has_one():
+    # regression (2026-11-10, audit D0): v2_stat_recal_own_history re-predicts the stat columns after the raw points, so the
+    # shipped line no longer reproduces 'Raw Model Proj Pts'; every board from 2026-11-01 on read as unknown and was dropped
+    pre = {'targets': 8.0, 'receptions': 6.0, 'receiving_yards': 70.0, 'receiving_tds': 0.5}
+    rec = {s: pre.get(s, 0.0) for s in STAT_COLS}
+    rec.update({'targets': 7.0, 'receptions': 5.0, 'receiving_yards': 61.0})          # the recal'd columns
+    rec.update({f'_pre_recal_{s}': v for s, v in pre.items() if s != 'receiving_tds'})  # no pre column -> the stat itself
+    rec['Raw Model Proj Pts'] = score_projected_stats(pre, 'Full PPR')
+    frame = pd.DataFrame([rec])
+    assert lsc.infer_scoring(frame) == 'Full PPR'
+    assert lsc.infer_scoring(frame.drop(columns=[c for c in frame.columns if c.startswith('_pre_recal_')])) is None
+
+
+def test_infer_scoring_prefers_the_stored_scoring_column():
+    frame = pd.DataFrame([{'Raw Model Proj Pts': 999.0, 'targets': 1.0, 'scoring': 'Half-PPR'}])
+    assert lsc.infer_scoring(frame) == 'Half-PPR'
+    frame['scoring'] = 'not a mode'                                  # unreadable stored value: fall back to inference
+    assert lsc.infer_scoring(frame) is None
+
+
+def test_a_board_with_unknown_scoring_is_kept_and_counted(tmp_path):
+    line = {'targets': 8.0, 'receptions': 6.0, 'receiving_yards': 70.0}
+    good = _row('Known Guy', 'CCC', 0.0, '2026-10-10 12:00', **line)
+    good['Raw Model Proj Pts'] = score_projected_stats(line, 'Full PPR')
+    odd = _row('Odd Guy', 'CCC', 9.0, '2026-10-10 12:00', **line)                      # raw points match no mode
+    pd.DataFrame([good]).to_parquet(tmp_path / '2026_wk05_a.parquet', index=False)
+    pd.DataFrame([odd]).to_parquet(tmp_path / '2026_wk05_b.parquet', index=False)
+    stats = pd.DataFrame({'name': ['Known Guy', 'Odd Guy'], 'week': [5, 5], 'targets': [7, 9], 'receptions': [5, 6],
+                          'receiving_yards': [60, 80], 'fantasy_points': [6.0, 8.0], 'fantasy_points_ppr': [11.0, 14.0],
+                          'season_type': ['REG', 'REG']})
+    frame, info = lsc.load_scored_ledger(2026, stats, 'name', SCHEDULE, ledger_dir=str(tmp_path))
+    assert info['scoring'] == 'Full PPR' and info['unknown_scoring'] == 1 and info['files'] == 2
+    assert set(frame['Player']) == {'Known Guy', 'Odd Guy'}
+
+
 def _scored_frame():
     rng = np.random.default_rng(0)
     recs = []

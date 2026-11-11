@@ -164,7 +164,10 @@ def run_record(a):
     summary, bets, bands = record_tables(rows)
     fmt = lambda v: f'{v:.3f}'  # noqa: E731
     out = [f"{a.year} prop record: data/prop_probability.py's P(over) on the pre-kickoff boards against the priced posted lines "
-           f"(Pinnacle, then DraftKings), weeks {sorted(rows['week'].unique()) if len(rows) else []}, {len(rows):,} line-results", '',
+           f"(Pinnacle, then DraftKings), weeks {sorted(int(w) for w in rows['week'].unique()) if len(rows) else []}, "
+           f"{len(rows):,} line-results"
+           + (f"; {len(arc.attrs.get('skipped_files') or [])} unreadable snapshot(s) skipped"
+              if arc.attrs.get('skipped_files') else ''), '',
            '1. BRIER (lower is better; 0.25 = a coin flip) and the best shrink toward 1/2 (1 = trust the model as is)',
            summary.to_string(index=False, float_format=fmt), '',
            '2. CALIBRATION, all stats: the model\'s P(over) in bands against the hit rate',

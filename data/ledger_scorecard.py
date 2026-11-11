@@ -43,12 +43,27 @@ def ledger_years(ledger_dir=LEDGER_DIR):
 
 
 def infer_scoring(frame):
-    """The scoring mode a ledger file was built in (it is not stored): the mode whose score of each row's stat line
-    reproduces 'Raw Model Proj Pts'. None when nothing fits within 0.05 pts on average."""
+    """The scoring mode a ledger file was built in. Files written since 2026-11-10 store it ('scoring' column); for older
+    files it is the mode whose score of each row's stat line reproduces 'Raw Model Proj Pts'. None when nothing fits
+    within 0.05 pts on average.
+
+    The stat line scored is the one 'Raw Model Proj Pts' was made from: '_pre_recal_<stat>' where the board has it.
+    Since v2_stat_recal_own_history (2026-11-01) the shipped stat columns are re-predicted after the raw points, so
+    scoring them misses by ~0.3 pts and every board from 2026-11-01 on read as unknown and was dropped (audit D0)."""
+    if 'scoring' in frame.columns:
+        stored = frame['scoring'].dropna().astype(str)
+        stored = stored[stored.isin(SCORING_MODES)]
+        if len(stored):
+            return stored.mode().iloc[0]
     cols = [c for c in STAT_COLS if c in frame.columns]
     if not cols or 'Raw Model Proj Pts' not in frame.columns or frame.empty:
         return None
-    lines = frame[cols].fillna(0.0).to_dict('records')
+    line = frame[cols].copy()
+    for c in cols:
+        pre = f'_pre_recal_{c}'
+        if pre in frame.columns:
+            line[c] = pd.to_numeric(frame[pre], errors='coerce').fillna(pd.to_numeric(frame[c], errors='coerce'))
+    lines = line.fillna(0.0).to_dict('records')
     raw = pd.to_numeric(frame['Raw Model Proj Pts'], errors='coerce').to_numpy(dtype=float)
     best, best_err = None, np.inf
     for mode in SCORING_MODES:
@@ -105,7 +120,10 @@ def _actual_points(stats_df, scoring):
 
 def load_scored_ledger(year, stats_df, name_col, schedule, ledger_dir=LEDGER_DIR):
     """(frame, info) - one row per player-week with a box score: projections from the pre-kickoff board (see the module
-    docstring) next to the actual points and stats. ``info`` = {'scoring', 'files', 'mixed_scoring'}."""
+    docstring) next to the actual points and stats. ``info`` = {'scoring', 'files', 'mixed_scoring', 'unknown_scoring'}.
+
+    A file whose scoring cannot be read (infer_scoring None) is scored as the majority mode and counted in
+    'unknown_scoring', so a future break shows up as a number instead of weeks quietly missing from the record."""
     paths = sorted(glob.glob(os.path.join(ledger_dir, f'{year}_wk*_*.parquet')))
     frames, modes = [], []
     for path in paths:
@@ -119,7 +137,8 @@ def load_scored_ledger(year, stats_df, name_col, schedule, ledger_dir=LEDGER_DIR
         modes.append(mode)
         f['_scoring'] = mode
         frames.append(f)
-    info = {'files': len(frames), 'scoring': None, 'mixed_scoring': False}
+    info = {'files': len(frames), 'scoring': None, 'mixed_scoring': False,
+            'unknown_scoring': sum(m is None for m in modes)}
     if not frames:
         return pd.DataFrame(), info
     ledger = pd.concat(frames, ignore_index=True)
@@ -127,7 +146,7 @@ def load_scored_ledger(year, stats_df, name_col, schedule, ledger_dir=LEDGER_DIR
     scoring = max(set(known), key=known.count) if known else 'Full PPR'
     info['scoring'] = scoring
     info['mixed_scoring'] = len(set(known)) > 1
-    ledger = ledger[ledger['_scoring'].eq(scoring)].copy()
+    ledger = ledger[ledger['_scoring'].isna() | ledger['_scoring'].eq(scoring)].copy()
     ledger['_key'] = clean_name_exact(ledger['Player'])
     rows = select_pre_kickoff_rows(ledger, kickoffs_utc(schedule))
 

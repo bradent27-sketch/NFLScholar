@@ -8239,3 +8239,22 @@ anything entirely and we need to be sure we keep the evidence and idea of what h
   explanation payload identical, ignoring only the `efficiency_*` keys removed from the payload on purpose; the last commit on three
   scenarios. `.sweeps/check_script_imports.py` confirms every `from data.<module> import name` in scripts, tests, ui and data resolves, and a
   sweep for quoted `v2_` names found no stale condition (wave 1 had left one in the environment-loading condition; it was cleaned here).
+
+### 2026-11-10 - Data fixes: the track record dropped every board since 2026-11-01; a cut-off props snapshot crashed the prop record (not model flags)
+
+Found by the whole-model audit (`docs/audit_leads_2026-11-10.md`, D0 and D2). No projection changes.
+
+- **D0.** `data/ledger_scorecard.infer_scoring` reads a ledger file's scoring mode by scoring its stat line against
+  'Raw Model Proj Pts'. Since `v2_stat_recal_own_history` (2026-11-01) the stat columns are re-predicted after the raw points,
+  so the shipped line missed by 0.31 pts on average (limit 0.05), every file from 2026-11-01 16:50 UTC on read as unknown, and
+  `load_scored_ledger` dropped it: the Track Record page and every script that scores the ledger stopped at week 8, and week 8
+  was scored from the 10-31 board. Fix: score the `_pre_recal_<stat>` columns where the file has them (error 0.011); new
+  ledger files store a 'scoring' column (`record_board(..., scoring=)`), read first; a file that still matches no mode is scored
+  as the majority mode and counted in `info['unknown_scoring']` (shown on the Track Record page). All 42 files now read Full PPR;
+  week 9 is in the record (321 pre-kickoff player-weeks with a box score), week 8 takes the 11-01 16:50 board for 256 of 299.
+  Start-worthy, paired: week 8 model 7.73 / market 7.58; week 9 model 7.06 / market 6.75; weeks 3-9 model 7.34 / market 7.11.
+- **D2.** `external_data/props_archive/2026_wk09_20261103T001625Z.json` is cut off mid-write and crashed
+  `scripts/eval_posted_line_record.load_archive` (used by `scripts/prop_scorecard.py`). Readers now skip and name an
+  unreadable snapshot; `data/odds_weekly._archive_snapshot` writes a temp file and moves it into place. The bad file is kept.
+- Tests: `tests/test_ledger_scorecard.py` (+3), `tests/test_prediction_ledger.py` (+1), `tests/test_props_archive_reader.py`
+  (new). Full suite 1044 passed.

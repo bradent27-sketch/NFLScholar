@@ -45,11 +45,23 @@ LINE_STATS = {'receiving_yards': 'receiving_yards', 'rushing_yards': 'rushing_ya
 
 
 def load_archive(year):
-    """Every scorable full-game line ever pulled for `year`: week, _key, market, book, line, p_over, fetched_at (UTC)."""
-    frames = []
+    """Every scorable full-game line ever pulled for `year`: week, _key, market, book, line, p_over, fetched_at (UTC).
+
+    A snapshot that cannot be read (e.g. 2026_wk09_20261103T001625Z.json, cut off mid-write) is skipped and named on stderr;
+    the file itself is left in place (the archive is a permanent record). The skipped names are in the result's
+    attrs['skipped_files']."""
+    frames, skipped = [], []
     for path in sorted(glob.glob(os.path.join(ARCHIVE, f'{year}_wk*.json'))):
-        with open(path, encoding='utf-8') as handle:
-            snap = json.load(handle)
+        try:
+            with open(path, encoding='utf-8') as handle:
+                snap = json.load(handle)
+            if not isinstance(snap, dict) or 'week' not in snap or 'fetched_at' not in snap:
+                raise ValueError('not a props snapshot')
+        except (OSError, ValueError) as exc:
+            skipped.append(os.path.basename(path))
+            print(f'props archive: skipped unreadable snapshot {os.path.basename(path)} ({exc.__class__.__name__})',
+                  file=sys.stderr)
+            continue
         rows = pd.DataFrame(snap.get('rows') or [])
         if rows.empty:
             continue
@@ -65,7 +77,9 @@ def load_archive(year):
     arc['_key'] = clean_name_exact(arc['player'])
     arc['line'] = pd.to_numeric(arc['line'], errors='coerce')
     arc['fetched_at'] = pd.to_datetime(arc['fetched_at'], utc=True)
-    return arc.dropna(subset=['line'])[['week', '_key', 'market', 'book', '_rank', 'line', 'p_over', 'fetched_at']]
+    out = arc.dropna(subset=['line'])[['week', '_key', 'market', 'book', '_rank', 'line', 'p_over', 'fetched_at']].copy()
+    out.attrs['skipped_files'] = skipped
+    return out
 
 
 def line_as_of(arc, when):

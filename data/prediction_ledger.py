@@ -95,11 +95,13 @@ def _market_columns(market_df):
     return name_col, rename
 
 
-def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, feats=None):
+def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, feats=None, scoring=None):
     """The frame record_board writes, built (and returned) separately from
     the file write so tests can check its shape directly. Raises on a
     genuinely malformed input - callers that must never raise (the live UI)
-    go through record_board instead."""
+    go through record_board instead. ``scoring`` (the board's scoring mode,
+    e.g. 'Full PPR') is stored in a 'scoring' column when given, so the
+    track record reads it instead of inferring it (2026-11-10)."""
     out = model_df[[c for c in _META_COLS if c in model_df.columns]].copy()
     for stat in STAT_COLS:
         if stat in model_df.columns:
@@ -130,12 +132,14 @@ def build_ledger_frame(year, week, model_df, market_df=None, fp_weekly=None, fea
     out['year'] = year
     out['week'] = week
     out['feature_hash'] = feature_hash(feats)
+    if scoring:
+        out['scoring'] = str(scoring)
     out['git_sha'] = _git_sha()
     out['build_ts'] = pd.Timestamp.now(tz='UTC')
     return out
 
 
-def record_board(year, week, model_df, market_df=None, fp_weekly=None, feats=None):
+def record_board(year, week, model_df, market_df=None, fp_weekly=None, feats=None, scoring=None):
     """Write one ledger row per model-board player. Never raises - a failed
     ledger write must not break the board a user is looking at. Returns the
     path written (a fresh file, or a recent-enough existing one reused
@@ -148,7 +152,7 @@ def record_board(year, week, model_df, market_df=None, fp_weekly=None, feats=Non
         if existing:
             return existing
 
-        out = build_ledger_frame(year, week, model_df, market_df, fp_weekly, feats)
+        out = build_ledger_frame(year, week, model_df, market_df, fp_weekly, feats, scoring=scoring)
         os.makedirs(LEDGER_DIR, exist_ok=True)
         stamp = out['build_ts'].iloc[0].strftime('%Y%m%dT%H%M%S%fZ')
         path = os.path.join(LEDGER_DIR, f'{year}_wk{week:02d}_{stamp}.parquet')

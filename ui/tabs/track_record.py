@@ -155,6 +155,9 @@ def render():
         return
     if info.get('mixed_scoring'):
         st.caption(f"Boards were saved in more than one scoring format; only the {info['scoring']} ones are scored.")
+    if info.get('unknown_scoring'):
+        st.caption(f"{info['unknown_scoring']} saved board(s) did not match a scoring format and are scored as "
+                   f"{info['scoring']}.")
 
     live = frame[frame['pre_kickoff']]
     comp = lsc.weekly_comparison(frame, bench, pos=pos, startable=(pool == "Startable"))

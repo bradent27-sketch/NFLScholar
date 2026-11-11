@@ -200,9 +200,18 @@ def _archive_snapshot(props, status, fetched_at):
         os.makedirs(PROPS_ARCHIVE_DIR, exist_ok=True)
         stamp = fetched_at.strftime('%Y%m%dT%H%M%SZ')
         fname = f'{season}_wk{week:02d}_{stamp}.json'
-        with open(os.path.join(PROPS_ARCHIVE_DIR, fname), 'w', encoding='utf-8') as handle:
-            json.dump({'fetched_at': fetched_at.isoformat(), 'season': season, 'week': week,
-                       'status': status, 'rows': props.to_dict('records')}, handle)
+        path = os.path.join(PROPS_ARCHIVE_DIR, fname)
+        # Written whole to a temp file in the same folder, then moved into place, so an interrupted write leaves no
+        # half-written snapshot behind (2026-11-03 left one: 2026_wk09_20261103T001625Z.json; audit D2).
+        tmp = path + '.tmp'
+        try:
+            with open(tmp, 'w', encoding='utf-8') as handle:
+                json.dump({'fetched_at': fetched_at.isoformat(), 'season': season, 'week': week,
+                           'status': status, 'rows': props.to_dict('records')}, handle)
+            os.replace(tmp, path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
     except Exception:
         pass
 

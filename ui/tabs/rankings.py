@@ -3855,7 +3855,7 @@ def render():
         entry = None if build_clicked else board_session.kept_board(wk_year, wk_week, wk_scoring)
         if entry is not None and entry.get('just_reprojected'):
             record_board(wk_year, wk_week, entry['df'], market_df=market_df,
-                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES)
+                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES, scoring=wk_scoring)
         if entry is None:
             with skeleton_loader("table", n_rows=10, n_cols=7):
                 entry = board_session.build_board(wk_year, wk_week, wk_scoring)
@@ -3868,7 +3868,7 @@ def render():
             # set) per hour) makes re-clicking Build board harmless. Never raises -
             # see record_board's own docstring.
             record_board(wk_year, wk_week, entry['df'], market_df=market_df,
-                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES)
+                         fp_weekly=fp_weekly, feats=DEFAULT_FEATURES, scoring=wk_scoring)
         model_df, model_meta = entry['df'], entry['meta']
         # (availability fingerprint, QB1 signature): what the open player breakdown below checks to re-resolve after a
         # rebuild

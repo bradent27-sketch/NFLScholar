@@ -58,6 +58,12 @@ def test_build_ledger_frame_carries_model_stats_and_metadata():
     assert 'build_ts' in out.columns
 
 
+def test_build_ledger_frame_stores_the_scoring_mode_when_given():
+    assert 'scoring' not in pl.build_ledger_frame(2026, 3, _model_df()).columns
+    out = pl.build_ledger_frame(2026, 3, _model_df(), scoring='Half-PPR')
+    assert (out['scoring'] == 'Half-PPR').all()
+
+
 def test_build_ledger_frame_merges_market_and_fp_by_name():
     out = pl.build_ledger_frame(2026, 3, _model_df(), market_df=_market_df(), fp_weekly=_fp_df())
     row = out.set_index('Player').loc['A Back']

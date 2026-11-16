@@ -794,3 +794,22 @@ Copied from the `MODEL_FEATURES` entry of each flag in `retire-flags-wave2-base`
 ```text
 'v2_td_matchup_pass_rec_off',  # CANDIDATE (2026-10-24): TD matchup off for passing/receiving TDs, rushing TDs unchanged.
 ```
+
+## After wave 2 - flags built, tested and removed before they were committed
+
+Same rules as above. These never reached a commit, so each has a patch file and no sha.
+
+| Flag | Evidence | What it did | Why it was removed | Patch |
+|---|---|---|---|---|
+| `v2_alignment_recency` (first form) | failed (inert) | 2026-11-16, user: a recency weight for receiver role change, "more importantly change in alignment". The WR/TE weekly PFF alignment mix (slot / wide / inline, read by the alignment matchup) weighted each game by 0.85 ** games_ago instead of season-to-date snaps. | Harness 2024-2025 weeks 3-17 (bar `.sweeps/alignment_recency_bar.md`): START-WR -0.000, START-TE +0.001, every scope within 0.001. The flag name is back in the code with a refit per-position decay (second round: methodology 2026-11-16, `.sweeps/role_drift_v2_bar.md`). | `18-uncommitted-alignment-recency.patch` |
+| `v2_alignment_recency_fast` | failed (inert) | The same at 0.70 per game. | START-WR -0.001 (CI -0.003..+0.001), START-TE +0.000; the 462 moved rows WR +0.006, TE -0.003. | `18-uncommitted-alignment-recency.patch` |
+
+`v2_te_route_rise` / `v2_wr_route_rise` were listed here after round one (exponent 0.35 / 0.30: passed 2024-2025, failed the
+2026 rebuild, START-TE +0.025, START-WR +0.011). Refit (0.20 / 0.15) they are back in the code as candidates; see the methodology
+entry of 2026-11-16 and `.sweeps/role_drift_v2_bar.md`.
+
+Other role-drift forms tried offline in the same study (`scripts/study_role_alignment_drift.py`, never built as flags): an
+always-on route-participation ratio on targets (exponential windows, half-life 1-6 games: -0.1 to -0.4% targets MSE, points
+not), a route-based target estimate blended in (whole TE pool -0.6 to -1.0%, START worse), and sustained-move detection over the
+last 2-3 games (2 of 3 seasons at best). Snap-share recency failed three times before (`v2_share_recency`, `v2_share_prior_shrink`,
+`v2_partial_game_role_carry`, above).

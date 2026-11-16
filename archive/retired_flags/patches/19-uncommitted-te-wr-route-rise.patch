@@ -1,0 +1,275 @@
+# v2_te_route_rise / v2_wr_route_rise (2026-11-16), never committed: built, harness-tested 2024-2025 + 2026 weeks 3-10, failed its bar.
+# Restore (against 17a43cb): git apply --ignore-whitespace archive/retired_flags/patches/19-uncommitted-te-wr-route-rise.patch
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index 2aca15c..7619f07 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -1818,6 +1818,11 @@ MODEL_FEATURES = (
+                              # line, so points and stats agree. Needs v2_questionable_workload
+                              # and v2_points_from_stat_line. Held out by season the points
+                              # RMSE is as good as the uniform cut (6.84 vs 6.81 / 6.85).
++    'v2_te_route_rise',      # CANDIDATE 2026-11-16: a TE whose latest game's route participation (PFF weekly routes /
++                             # team dropbacks) is TE_ROUTE_RISE_THRESHOLD+ above his earlier season level gets his
++                             # receiving line x (rp_last / rp_before) ** TE_ROUTE_RISE_EXPONENT. Weeks 3-17, needs
++                             # v2_points_from_stat_line; off when the latest weekly export is not his team's latest game.
++    'v2_wr_route_rise',      # CANDIDATE 2026-11-16: the same for WRs (WR_ROUTE_RISE_THRESHOLD 0.20, _EXPONENT 0.30).
+     'v2_questionable_rb',  # SHIPPED 2026-11-11 (audit A1 follow-up; DEFAULT_FEATURES = 86). A Questionable RB's
+                              # rushing line is cut (QUESTIONABLE_RB_STAT_FACTORS: carries 0.93, rushing yards 0.89,
+                              # rushing TDs 0.89) and scored; receiving untouched. Weeks 3-17, needs
+@@ -3256,6 +3261,58 @@ QUESTIONABLE_STAT_FACTORS = {'WR': {'targets': 0.926, 'receptions': 0.888, 'rece
+ # yards 4 of 5; cutting receptions is worse. Weeks 3-17, the rows points-from-the-stat-line scores (the total is that line).
+ QUESTIONABLE_RB_STAT_FACTORS = {'RB': {'rushing_attempts': 0.927, 'rushing_yards': 0.892, 'rushing_tds': 0.894}}
+ 
++# v2_te_route_rise (CANDIDATE 2026-11-16; scripts/study_role_alignment_drift.py): when a tight end's route participation jumps
++# in his latest game (routes / team dropbacks, PFF weekly receiving exports; 0.15+ above his pooled earlier-season level, 2+
++# earlier games for the team), the board under-projects him the next week - it reads targets and snaps, not routes, and its
++# per-game decay moves slowly. Held out by season (2024 / 2025 / 2026) scaling the receiving line by the participation ratio to
++# the 0.35 power: the moved rows' points MSE -3.7% / -1.7% / -0.7%, the whole TE pool better in 3 of 3; the exponent fit
++# without each season 0.25-0.45. Drops are not acted on (the same rule on drops is worse). Factor capped at 1.5.
++TE_ROUTE_RISE_THRESHOLD = 0.15
++TE_ROUTE_RISE_EXPONENT = 0.35
++TE_ROUTE_RISE_MAX_FACTOR = 1.5
++TE_ROUTE_RISE_STATS = ('targets', 'receptions', 'receiving_yards', 'receiving_tds')
++# v2_wr_route_rise (CANDIDATE 2026-11-16): the same rule for WRs, 0.20+ and exponent 0.30 (the held-out fits 0.20 / 0.30 / 0.35).
++# Offline the moved rows' points MSE -2.9% / -3.3% / +2.0% (2024 / 2025 / 2026) and START -0.2% / -0.3% / +0.0%; the 2026 fold
++# was the live ledger, so the harness rebuild of 2026 decides it. WR drops: worse at every threshold.
++WR_ROUTE_RISE_THRESHOLD = 0.20
++WR_ROUTE_RISE_EXPONENT = 0.30
++
++
++def team_latest_game_weeks(hist, team_col, as_of_week):
++    """{canonical team: the latest week before ``as_of_week`` that team has a game in ``hist``}."""
++    from data.pff_alignment import _canonical_team_key
++    if hist is None or hist.empty or 'week' not in hist.columns:
++        return {}
++    weeks = pd.to_numeric(hist['week'], errors='coerce')
++    teams = _historical_game_team(hist, team_col).astype(str)
++    frame = pd.DataFrame({'team': teams.map(_canonical_team_key), 'week': weeks})
++    frame = frame[(frame['week'] < as_of_week) & (frame['team'] != '')]
++    return {t: int(w) for t, w in frame.groupby('team')['week'].max().items()}
++
++
++def apply_te_route_rise(result, factors):
++    """(result, info): scale TE_ROUTE_RISE_STATS on the rows ``factors`` lists ((Player, Pos, Team) -> {'factor', ...})."""
++    if result is None or result.empty or not factors:
++        return result, {}
++    out = result.copy()
++    info = {}
++    for j, key in enumerate(zip(out['Player'], out['Pos'], out['Team'])):
++        spec = factors.get(key)
++        if spec is None:
++            continue
++        changed = {}
++        for stat in TE_ROUTE_RISE_STATS:
++            if stat not in out.columns:
++                continue
++            before = pd.to_numeric(out.iat[j, out.columns.get_loc(stat)], errors='coerce')
++            if pd.isna(before):
++                continue
++            after = float(before) * float(spec['factor'])
++            out.iat[j, out.columns.get_loc(stat)] = after
++            changed[stat] = (float(before), after)
++        info[key] = {**spec, 'stats': changed}
++    return out, info
++
+ 
+ def apply_questionable_stat_cut(result, questionable_info, factors=None):
+     """(result, info): scale the stat columns of each row ``questionable_info`` lists (the Questionable rows
+@@ -13113,6 +13170,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+         if _rb_rows:
+             result, _rb_info = apply_questionable_stat_cut(result, _rb_rows, factors=QUESTIONABLE_RB_STAT_FACTORS)
+             questionable_stat_info = {**questionable_stat_info, **_rb_info}
++    te_route_rise_info = {}
++    if (({'v2_te_route_rise', 'v2_wr_route_rise'} & set(feats)) and 'v2_points_from_stat_line' in feats
++            and _recal_form == 'linear'):
++        # a TE (WR) whose route participation jumped in his latest game: his receiving line is scaled up (*_ROUTE_RISE_*)
++        from data.route_participation import latest_game_moves, route_rise_factors, weekly_route_rows
++        _rr_params = {**({'TE': (TE_ROUTE_RISE_THRESHOLD, TE_ROUTE_RISE_EXPONENT)} if 'v2_te_route_rise' in feats else {}),
++                      **({'WR': (WR_ROUTE_RISE_THRESHOLD, WR_ROUTE_RISE_EXPONENT)} if 'v2_wr_route_rise' in feats else {})}
++        _rr_factors = route_rise_factors(
++            result, latest_game_moves(weekly_route_rows(year, as_of_week)),
++            team_latest_game_weeks(hist, team_col, as_of_week), _rr_params, TE_ROUTE_RISE_MAX_FACTOR)
++        result, te_route_rise_info = apply_te_route_rise(result, _rr_factors)
+     if 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
+         result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, _points_info_for_line)
+         result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)
+diff --git a/data/route_participation.py b/data/route_participation.py
+new file mode 100644
+index 0000000..364c781
+--- /dev/null
++++ b/data/route_participation.py
+@@ -0,0 +1,100 @@
++"""Route participation from the weekly PFF receiving exports (2026-11-16, v2_te_route_rise).
++
++Route participation = routes run / the team's dropbacks in that game (a team's dropbacks = the most pass plays any of its
++receivers was on the field for). The board does not read routes anywhere else; this module only answers "did a tight end's
++(or receiver's) route participation jump in his latest game", which scripts/study_role_alignment_drift.py found the board lags (2024-2026).
++"""
++from __future__ import annotations
++
++from pathlib import Path
++
++import numpy as np
++import pandas as pd
++
++from data.pff_alignment import DEFAULT_PFF_ROOT, _canonical_team_key, discover_weekly_alignment_exports
++from data.utils import clean_name_exact
++
++_NUMERIC = ('routes', 'pass_plays')
++
++
++def weekly_route_rows(year: int, as_of_week: int, pff_root: str | Path = DEFAULT_PFF_ROOT) -> pd.DataFrame:
++    """[week, Team, _key, position, routes, pass_plays, team_db] for every eligible weekly export before ``as_of_week``.
++    Empty on any missing / unreadable source (the rule is then inert)."""
++    try:
++        found = discover_weekly_alignment_exports(year, as_of_week, pff_root)
++        archives = found.archives
++    except Exception:
++        return pd.DataFrame()
++    if archives is None or archives.empty:
++        return pd.DataFrame()
++    rows = []
++    for arch in archives.loc[archives['eligible_as_of'].astype(bool)].itertuples(index=False):
++        path = getattr(arch, 'summary_path', '')
++        week = int(getattr(arch, 'week'))
++        if not path or week >= as_of_week:
++            continue
++        try:
++            d = pd.read_csv(path, low_memory=False, usecols=lambda c: c in ('player', 'position', 'team_name') + _NUMERIC)
++        except Exception:
++            continue
++        if not {'player', 'team_name', 'routes', 'pass_plays'} <= set(d.columns):
++            continue
++        d = d.assign(week=week)
++        rows.append(d)
++    if not rows:
++        return pd.DataFrame()
++    d = pd.concat(rows, ignore_index=True)
++    d['Team'] = d['team_name'].map(_canonical_team_key)
++    d['_key'] = clean_name_exact(d['player'].astype(str))
++    for c in _NUMERIC:
++        d[c] = pd.to_numeric(d[c], errors='coerce').fillna(0.0)
++    d = d.join(d.groupby(['week', 'Team'])['pass_plays'].max().rename('team_db'), on=['week', 'Team'])
++    return d[['week', 'Team', '_key', 'position', 'routes', 'pass_plays', 'team_db']]
++
++
++def latest_game_moves(rows: pd.DataFrame, min_before: int = 2) -> pd.DataFrame:
++    """Per (Team, _key): route participation in his latest exported game (rp_last), over his earlier games this season for
++    the same team (rp_before, pooled routes / pooled dropbacks), the latest game's week and how many earlier games."""
++    if rows is None or rows.empty:
++        return pd.DataFrame(columns=['Team', '_key', 'last_week', 'rp_last', 'rp_before', 'games_before'])
++    out = []
++    for (team, key), g in rows.groupby(['Team', '_key'], sort=False):
++        g = g.sort_values('week')
++        if len(g) < min_before + 1:
++            continue
++        last, before = g.iloc[-1], g.iloc[:-1]
++        db_before = before['team_db'].sum()
++        if last['team_db'] <= 0 or db_before <= 0:
++            continue
++        out.append({'Team': team, '_key': key, 'last_week': int(last['week']),
++                    'rp_last': float(last['routes'] / last['team_db']),
++                    'rp_before': float(before['routes'].sum() / db_before), 'games_before': len(before)})
++    return pd.DataFrame(out)
++
++
++def route_rise_factors(result: pd.DataFrame, moves: pd.DataFrame, team_last_week: dict, params: dict,
++                       max_factor: float) -> dict:
++    """{(Player, Pos, Team): {'factor', 'rp_last', 'rp_before', 'week'}} for the rows of the positions ``params`` lists
++    ({pos: (threshold, exponent)}) whose latest game's route participation is threshold+ above his earlier level, and whose
++    latest exported game is his team's latest game (a missing weekly export leaves the rule off rather than reading an old
++    game as the latest). factor = min((rp_last / rp_before) ** exponent, max_factor)."""
++    if result is None or result.empty or moves is None or moves.empty:
++        return {}
++    index = {(t, k): r for t, k, r in zip(moves['Team'], moves['_key'], moves.itertuples(index=False))}
++    keys = clean_name_exact(result['Player'].astype(str))
++    out = {}
++    for player, pos, team, key in zip(result['Player'], result['Pos'], result['Team'], keys):
++        if pos not in params:
++            continue
++        threshold, exponent = params[pos]
++        team_key = _canonical_team_key(team)
++        m = index.get((team_key, key))
++        if m is None or m.rp_before <= 0 or team_last_week.get(team_key) != m.last_week:
++            continue
++        if m.rp_last - m.rp_before < threshold:
++            continue
++        factor = float(min((m.rp_last / m.rp_before) ** exponent, max_factor))
++        if not np.isfinite(factor) or factor <= 1.0:
++            continue
++        out[(player, pos, team)] = {'factor': factor, 'rp_last': m.rp_last, 'rp_before': m.rp_before, 'week': m.last_week}
++    return out
+diff --git a/tests/test_te_route_rise.py b/tests/test_te_route_rise.py
+new file mode 100644
+index 0000000..df2f84a
+--- /dev/null
++++ b/tests/test_te_route_rise.py
+@@ -0,0 +1,68 @@
++"""v2_te_route_rise (candidate, 2026-11-16): a TE whose latest game's route participation jumped gets his receiving line scaled."""
++import pandas as pd
++
++import data.weekly_projections as wp
++from data.route_participation import latest_game_moves, route_rise_factors
++
++
++def _routes(weeks, routes, team='KC', key='traviskelce', db=40.0):
++    return pd.DataFrame({'week': weeks, 'Team': team, '_key': key, 'position': 'TE', 'routes': routes,
++                         'pass_plays': db, 'team_db': db})
++
++
++def _board(pos='TE'):
++    return pd.DataFrame({'Player': ['Travis Kelce'], 'Pos': [pos], 'Team': ['KC'], 'targets': [5.0], 'receptions': [4.0],
++                         'receiving_yards': [40.0], 'receiving_tds': [0.3], 'rushing_yards': [0.0]})
++
++
++def _factors(board, moves, last_week):
++    return route_rise_factors(board, moves, {'KC': last_week}, {'TE': (wp.TE_ROUTE_RISE_THRESHOLD, wp.TE_ROUTE_RISE_EXPONENT)},
++                              wp.TE_ROUTE_RISE_MAX_FACTOR)
++
++
++def test_flag_is_a_post_calibration_candidate():
++    assert 'v2_te_route_rise' in wp.MODEL_FEATURES
++    assert 'v2_te_route_rise' not in wp.DEFAULT_FEATURES
++    assert 'v2_te_route_rise' not in wp.CALIBRATION_INPUT_FEATURES   # joins POST_CALIBRATION_FEATURES if it ships
++
++
++def test_moves_pool_the_earlier_games():
++    m = latest_game_moves(_routes([1, 2, 3], [16.0, 24.0, 36.0])).iloc[0]
++    assert m.last_week == 3 and m.games_before == 2
++    assert abs(m.rp_before - 0.5) < 1e-9 and abs(m.rp_last - 0.9) < 1e-9
++    assert latest_game_moves(_routes([1, 2], [16.0, 36.0])).empty      # one earlier game is not enough
++
++
++def test_a_rise_scales_the_receiving_line_only():
++    moves = latest_game_moves(_routes([1, 2, 3], [16.0, 24.0, 36.0]))
++    factors = _factors(_board(), moves, 3)
++    spec = factors[('Travis Kelce', 'TE', 'KC')]
++    assert abs(spec['factor'] - (0.9 / 0.5) ** wp.TE_ROUTE_RISE_EXPONENT) < 1e-9
++    out, info = wp.apply_te_route_rise(_board(), factors)
++    assert abs(out['receiving_yards'].iloc[0] - 40.0 * spec['factor']) < 1e-9
++    assert out['rushing_yards'].iloc[0] == 0.0 and set(info[('Travis Kelce', 'TE', 'KC')]['stats']) == set(wp.TE_ROUTE_RISE_STATS)
++
++
++def test_no_rise_a_drop_a_stale_export_or_a_wr_is_left_alone():
++    steady = latest_game_moves(_routes([1, 2, 3], [20.0, 20.0, 24.0]))           # +0.10, under the threshold
++    drop = latest_game_moves(_routes([1, 2, 3], [36.0, 36.0, 16.0]))
++    rise = latest_game_moves(_routes([1, 2, 3], [16.0, 24.0, 36.0]))
++    assert not _factors(_board(), steady, 3)
++    assert not _factors(_board(), drop, 3)
++    assert not _factors(_board(), rise, 4)                                         # team played week 4, export missing
++    assert not _factors(_board('WR'), rise, 3)
++
++
++def test_the_factor_is_capped():
++    moves = latest_game_moves(_routes([1, 2, 3], [2.0, 2.0, 40.0]))
++    assert _factors(_board(), moves, 3)[('Travis Kelce', 'TE', 'KC')]['factor'] == wp.TE_ROUTE_RISE_MAX_FACTOR
++
++
++def test_wr_arm_uses_its_own_threshold():
++    assert 'v2_wr_route_rise' in wp.MODEL_FEATURES and 'v2_wr_route_rise' not in wp.DEFAULT_FEATURES
++    moves = latest_game_moves(_routes([1, 2, 3], [16.0, 24.0, 32.0]))             # +0.30 over 0.50
++    wr = {'WR': (wp.WR_ROUTE_RISE_THRESHOLD, wp.WR_ROUTE_RISE_EXPONENT)}
++    spec = route_rise_factors(_board('WR'), moves, {'KC': 3}, wr, wp.TE_ROUTE_RISE_MAX_FACTOR)[('Travis Kelce', 'WR', 'KC')]
++    assert abs(spec['factor'] - 1.6 ** wp.WR_ROUTE_RISE_EXPONENT) < 1e-9
++    small = latest_game_moves(_routes([1, 2, 3], [16.0, 24.0, 27.0]))             # +0.175: a TE rise, not a WR one
++    assert not route_rise_factors(_board('WR'), small, {'KC': 3}, wr, wp.TE_ROUTE_RISE_MAX_FACTOR)

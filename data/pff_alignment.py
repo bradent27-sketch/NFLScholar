@@ -1347,7 +1347,11 @@ def _aggregate_profiles(
     source_year: int,
     source_time_valid: bool,
     source_notes: str,
+    recency_decay: float | dict | None = None,
 ) -> pd.DataFrame:
+    """``recency_decay`` (v2_alignment_recency, 2026-11-16): each game's weight is multiplied by decay ** games_ago (0 for
+    the player's latest week here), so a mid-season move to or from the slot shows in his mix sooner. A dict maps position
+    -> decay (positions not in it keep the season-to-date weighting). None = the season-to-date snap weighting."""
     if rows.empty:
         return empty_alignment_profiles()
     records: list[dict[str, Any]] = []
@@ -1356,6 +1360,12 @@ def _aggregate_profiles(
         group = group.copy()
         last = group.iloc[-1]
         weights = pd.to_numeric(group["_alignment_weight"], errors="coerce").fillna(0.0)
+        decay = (recency_decay.get(str(last.get("position", "")).upper()) if isinstance(recency_decay, dict)
+                 else recency_decay)
+        if decay is not None:
+            weeks = pd.to_numeric(group["source_week"], errors="coerce")
+            games_ago = weeks.rank(method="dense", ascending=False).fillna(1.0) - 1.0
+            weights = weights * (float(decay) ** games_ago)
         weight = float(weights.sum())
         slot_rate = _weighted_average(group["_slot_rate"], weights)
         wide_rate = _weighted_average(group["_wide_rate"], weights)
@@ -1639,8 +1649,9 @@ def load_weekly_alignment_profiles(
     pff_root: str | Path = DEFAULT_PFF_ROOT,
     *,
     include_postseason: bool = False,
+    recency_decay: float | dict | None = None,
 ) -> AlignmentLoadResult:
-    """Load only time-valid weekly PFF player alignment profiles.
+    """Load only time-valid weekly PFF player alignment profiles. ``recency_decay``: see _aggregate_profiles.
 
     ``as_of_week`` is required here (unlike discovery) so consumers cannot
     accidentally build a historical profile from a completed season.  The
@@ -1700,6 +1711,7 @@ def load_weekly_alignment_profiles(
     included_weeks = tuple(sorted({int(value) for value in combined.get("source_week", pd.Series(dtype=int)).tolist()}))
     profiles = _aggregate_profiles(
         combined,
+        recency_decay=recency_decay,
         source_kind="weekly_archive",
         source_year=int(year),
         source_time_valid=True,

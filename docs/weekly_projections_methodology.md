@@ -8412,3 +8412,30 @@ Weeks 3-17. Shares the WR cut's eligibility (`_questionable_eligible`, `question
   rushing yards 89.7 -> 80.0, receptions unchanged, points 19.8 -> 18.5. No back is Questionable on the real week-10 feed yet.
 - Popup wording: the Questionable note says a back gets fewer carries. Tests: `tests/test_questionable_rb.py` (5). Undo: remove
   the flag from DEFAULT_FEATURES.
+
+### 2026-11-16 - Receiver role drift: alignment recency, WR and TE route rise SHIPPED (DEFAULT_FEATURES = 89)
+User: a recency weight or detection for a receiver's role change, snaps and above all alignment (slot / wide / in line).
+Study `scripts/study_role_alignment_drift.py` -> `.sweeps/study_role_alignment_drift.txt` (2024-2026 WR / TE who played; the
+seasons with PFF weekly exports; route participation = routes / team dropbacks):
+- Alignment: no consistent miss after a slot / wide / in-line move, any window, any season. The board's mix follows well enough.
+- Route participation: the targets miss rises 0.3-0.6 targets from the bottom to the top quintile of the recent move every
+  season, but always-on ratios gain at most 0.4% targets MSE and little on points. Drops: no lag (worse when acted on).
+- A move in the latest game (rise of 0.15+ for TE, 0.20+ for WR) showed the clearest lag: those rows beat the board every season.
+Round one (`.sweeps/alignment_recency_bar.md`, `.sweeps/te_route_rise_bar.md`): alignment decay 0.85 / 0.70 inert; route rise
+at exponent 0.35 (TE) / 0.30 (WR) passed 2024-2025 and failed the 2026 weeks 3-10 rebuild (START-TE +0.025, START-WR +0.011).
+Round two (`.sweeps/role_drift_v2_bar.md`; user: find the best decay and keep it as a push, keep chasing 2026, weight 2026 a
+little less):
+- `v2_alignment_recency`: decay chosen by next-game alignment-share error, WR 0.80 / TE 0.85 (flat 0.80-0.90). Harness: a push
+  (START-WR -0.000 / -0.002, START-TE +0.001 / +0.002 for 2024-2025 / 2026, the rest within 0.001). A WR-only run gave identical
+  numbers: the TE cost is WR mix changes moving a few TE rows 0.1-0.2 through team targets.
+- `v2_wr_route_rise` (0.20+, exponent 0.15, refit on the miss relative to the WR pool): passes every line. START-WR -0.005 /
+  +0.001, EVERY-WR -0.004 / +0.002, moved rows better 3 of 3 seasons (-0.068 / -0.073 / -0.001).
+- `v2_te_route_rise` (0.15+, exponent 0.20): 2024-2025 START-TE -0.017, EVERY-TE -0.006; 2026 START-TE +0.007 (limit +0.010),
+  EVERY-TE +0.005 (limit +0.003): fails one line. Pooled START-TE -0.012, moved rows 2 of 3.
+Why 2026 read worse: the WR rule's gain sits in weeks 11-17 (pool-relative +1.67 / +1.38 in 2024 / 2025; weeks 3-10 a wash every
+season), and the 2026 rebuild has weeks 3-10 only. The 2026 TE moved rows (+0.03 miss, n 46, SE 0.66) are within noise of
+2024-2025 (+0.99), z = -1.1.
+SHIPPED all three (user: "Alignment recency push .8 and .85. Wr route rise push 0.15. Te rout rise, push 0.2"), valuing the
+smaller 2026 sample less for the TE arm's one missed line. Route rise reads the PFF weekly receiving export; the staleness guard
+keeps it off for a team until that team's latest game is in the export (uploads land Tuesdays). Re-check both route arms on a
+2026 rebuild once weeks 11+ exist.

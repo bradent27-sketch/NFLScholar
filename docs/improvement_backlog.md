@@ -9,6 +9,13 @@ look (that file still holds the history and the closed-item table).
 practice status, defensive and line personnel, rookie priors, QB rushing) are a work order in `docs/audit_leads_2026-11-10.md`.
 Their IDs there (A1-A10, B2-B10, C1-C7, D0-D5) are separate from the IDs below; move an item into this file when work starts.
 
+**2026-11-16:** receiver role drift (user idea), two harness rounds (`.sweeps/role_drift_v2_bar.md`): SHIPPED
+`v2_alignment_recency` (WR 0.80 / TE 0.85; a push), `v2_wr_route_rise` (exponent 0.15; passed every line) and `v2_te_route_rise`
+(exponent 0.20; missed the 2026 EVERY-TE line by 0.002, shipped by the user) -> DEFAULT_FEATURES = 89.
+Re-check both route arms on a 2026 rebuild once weeks 11+ exist (the route-rise gain sits mostly in weeks 11-17). Open lead: TEs run
+high in the 2026 weeks 3-10 rebuild (START-TE bias +1.06 vs -0.35 in 2024-2025; the board's top 12 TEs about 1.4 a game over,
+mostly receiving yards).
+
 **2026-11-11:** `v2_questionable_rb` SHIPPED from audit A1 (DEFAULT_FEATURES = 86): a Questionable RB's rushing line is cut and scored.
 
 **Status key:** TODO, IN PROGRESS, SHIPPED, REJECTED (tested, not worth it), PARKED (waiting on something).

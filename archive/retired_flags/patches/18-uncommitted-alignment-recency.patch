@@ -1,0 +1,105 @@
+# v2_alignment_recency / v2_alignment_recency_fast (2026-11-16), never committed: built, harness-tested, failed its bar (inert).
+# Restore: git apply --ignore-whitespace archive/retired_flags/patches/18-uncommitted-alignment-recency.patch  (the weekly_projections hunks were cut from a diff with other candidates; apply by hand if offsets moved)
+diff --git a/data/pff_alignment.py b/data/pff_alignment.py
+index 0cfb690..088894b 100644
+--- a/data/pff_alignment.py
++++ b/data/pff_alignment.py
+@@ -1347,7 +1347,11 @@ def _aggregate_profiles(
+     source_year: int,
+     source_time_valid: bool,
+     source_notes: str,
++    recency_decay: float | None = None,
+ ) -> pd.DataFrame:
++    """``recency_decay`` (v2_alignment_recency, 2026-11-16): each game's weight is multiplied by decay ** games_ago (0 for
++    the player's latest week here), so a mid-season move to or from the slot shows in his mix sooner. None = the
++    season-to-date snap weighting."""
+     if rows.empty:
+         return empty_alignment_profiles()
+     records: list[dict[str, Any]] = []
+@@ -1356,6 +1360,10 @@ def _aggregate_profiles(
+         group = group.copy()
+         last = group.iloc[-1]
+         weights = pd.to_numeric(group["_alignment_weight"], errors="coerce").fillna(0.0)
++        if recency_decay is not None:
++            weeks = pd.to_numeric(group["source_week"], errors="coerce")
++            games_ago = weeks.rank(method="dense", ascending=False).fillna(1.0) - 1.0
++            weights = weights * (float(recency_decay) ** games_ago)
+         weight = float(weights.sum())
+         slot_rate = _weighted_average(group["_slot_rate"], weights)
+         wide_rate = _weighted_average(group["_wide_rate"], weights)
+@@ -1639,8 +1647,9 @@ def load_weekly_alignment_profiles(
+     pff_root: str | Path = DEFAULT_PFF_ROOT,
+     *,
+     include_postseason: bool = False,
++    recency_decay: float | None = None,
+ ) -> AlignmentLoadResult:
+-    """Load only time-valid weekly PFF player alignment profiles.
++    """Load only time-valid weekly PFF player alignment profiles. ``recency_decay``: see _aggregate_profiles.
+ 
+     ``as_of_week`` is required here (unlike discovery) so consumers cannot
+     accidentally build a historical profile from a completed season.  The
+@@ -1700,6 +1709,7 @@ def load_weekly_alignment_profiles(
+     included_weeks = tuple(sorted({int(value) for value in combined.get("source_week", pd.Series(dtype=int)).tolist()}))
+     profiles = _aggregate_profiles(
+         combined,
++        recency_decay=recency_decay,
+         source_kind="weekly_archive",
+         source_year=int(year),
+         source_time_valid=True,
+diff --git a/tests/test_alignment_recency.py b/tests/test_alignment_recency.py
+new file mode 100644
+index 0000000..2166d65
+--- /dev/null
++++ b/tests/test_alignment_recency.py
+@@ -0,0 +1,41 @@
++"""v2_alignment_recency (candidate, 2026-11-16): the weekly PFF alignment mix weights each game by decay ** games_ago."""
++import pandas as pd
++
++import data.pff_alignment as pa
++import data.weekly_projections as wp
++
++
++def _rows(weeks, slots):
++    n = len(weeks)
++    frame = pd.DataFrame({
++        'identity_key': ['p1'] * n, 'source_week': weeks, 'source_path': [f'w{w}' for w in weeks],
++        'position': ['WR'] * n, '_alignment_weight': [40.0] * n, '_slot_rate': slots,
++        '_wide_rate': [1.0 - s for s in slots], '_inline_rate': [0.0] * n,
++        'source_regular_season': [True] * n, 'source_confidence': ['test'] * n})
++    for col in ('slot_routes', 'slot_targets', 'slot_receptions', 'slot_yards', 'slot_touchdowns', 'slot_snaps',
++                'wide_snaps', 'inline_snaps', 'routes'):
++        frame[col] = 0.0
++    return frame
++
++
++def _slot(profiles):
++    return float(profiles['slot_alignment_rate'].iloc[0])
++
++
++def _aggregate(rows, decay):
++    return pa._aggregate_profiles(rows, source_kind='weekly_archive', source_year=2025, source_time_valid=True,
++                                  source_notes='test', recency_decay=decay)
++
++
++def test_flags_are_candidates():
++    assert {'v2_alignment_recency', 'v2_alignment_recency_fast'} <= set(wp.MODEL_FEATURES)
++    assert not ({'v2_alignment_recency', 'v2_alignment_recency_fast'} & wp.DEFAULT_FEATURES)
++    assert wp.ALIGNMENT_RECENCY_DECAY_FAST < wp.ALIGNMENT_RECENCY_DECAY < 1.0
++
++
++def test_decay_leans_toward_the_latest_games_and_none_is_season_to_date():
++    rows = _rows([1, 2, 3, 4], [0.2, 0.2, 0.8, 0.8])          # moved into the slot two games ago
++    assert abs(_slot(_aggregate(rows, None)) - 0.5) < 1e-9
++    assert 0.5 < _slot(_aggregate(rows, 0.85)) < _slot(_aggregate(rows, 0.70)) < 0.8
++    steady = _rows([1, 2, 3], [0.4, 0.4, 0.4])                # no move: decay changes nothing
++    assert abs(_slot(_aggregate(steady, 0.70)) - 0.4) < 1e-9
+# --- data/weekly_projections.py (by hand; these lines sat in a diff with other uncommitted candidates) ---
+# after RECENCY_DECAY = 0.85:
+#   ALIGNMENT_RECENCY_DECAY = 0.85
+#   ALIGNMENT_RECENCY_DECAY_FAST = 0.70
+# MODEL_FEATURES: 'v2_alignment_recency', 'v2_alignment_recency_fast'
+# build_weekly_projections, the in-season alignment load:
+#   alignment_result = load_weekly_alignment_profiles(
+#       year, as_of_week,
+#       recency_decay=(ALIGNMENT_RECENCY_DECAY_FAST if 'v2_alignment_recency_fast' in feats
+#                      else ALIGNMENT_RECENCY_DECAY if 'v2_alignment_recency' in feats else None))

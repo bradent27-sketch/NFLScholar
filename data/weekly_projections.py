@@ -311,6 +311,17 @@ ROLE_CONFIDENCE_REVERSED_STATS = frozenset({'targets', 'receptions', 'receiving_
 # be treated as last Sunday.
 RECENCY_DECAY = 0.85
 
+# v2_alignment_recency (SHIPPED 2026-11-16; user: a recency weight for receiver role change, "more importantly change in
+# alignment"; wanted as an accuracy push even if the points barely move): the weekly PFF alignment mix a WR / TE is read with
+# (slot / wide / inline, feeding the alignment matchup) weights each game by decay ** games_ago instead of season-to-date
+# snaps. The decay is the one that best predicts the player's NEXT game's mix (2024-2026, weighted squared error of the
+# shares, decays 0.40-1.00): WR 0.80 (slot / wide; 2024 and 2025 both 0.80; slot error -2.3% vs season to date), TE 0.85
+# (slot / in line; in-line error -1.5%). The curve is flat 0.80-0.90; 0.70 is worse. A first 0.85 / 0.70 run was inert.
+# Harness (2024-2025 weeks 3-17 / 2026 weeks 3-10): START-WR -0.000 / -0.002, START-TE +0.001 / +0.002, every other scope
+# within 0.001 - a push. A WR-only run gave the same numbers, so the TE decay moves no points; the small START-TE cost is WR
+# alignment changes shifting team targets onto a few TE rows by 0.1-0.2.
+ALIGNMENT_RECENCY_DECAY = {'WR': 0.80, 'TE': 0.85}
+
 # When a prior season is the only defensive sample (Week 1) or is being
 # blended into an early-season defense, do NOT let its final few games behave
 # as if they happened yesterday.  The ordinary 0.85 decay would make an early
@@ -1818,6 +1829,13 @@ MODEL_FEATURES = (
                              # line, so points and stats agree. Needs v2_questionable_workload
                              # and v2_points_from_stat_line. Held out by season the points
                              # RMSE is as good as the uniform cut (6.84 vs 6.81 / 6.85).
+    'v2_alignment_recency',  # SHIPPED 2026-11-16 (DEFAULT_FEATURES = 89): the WR/TE alignment mix weights games by decay ** games_ago
+                             # (ALIGNMENT_RECENCY_DECAY: WR 0.80, TE 0.85) instead of season-to-date snaps.
+    'v2_te_route_rise',      # SHIPPED 2026-11-16 (DEFAULT_FEATURES = 89): a TE whose latest game's route participation (PFF weekly routes /
+                             # team dropbacks) is TE_ROUTE_RISE_THRESHOLD+ above his earlier season level gets his
+                             # receiving line x (rp_last / rp_before) ** TE_ROUTE_RISE_EXPONENT. Weeks 3-17, needs
+                             # v2_points_from_stat_line; off when the latest weekly export is not his team's latest game.
+    'v2_wr_route_rise',      # SHIPPED 2026-11-16 (DEFAULT_FEATURES = 89): the same for WRs (WR_ROUTE_RISE_THRESHOLD 0.20, _EXPONENT 0.15).
     'v2_questionable_rb',  # SHIPPED 2026-11-11 (audit A1 follow-up; DEFAULT_FEATURES = 86). A Questionable RB's
                              # rushing line is cut (QUESTIONABLE_RB_STAT_FACTORS: carries 0.93, rushing yards 0.89,
                              # rushing TDs 0.89) and scored; receiving untouched. Weeks 3-17, needs
@@ -2716,6 +2734,20 @@ DEFAULT_FEATURES = frozenset({
     # .sweeps/questionable_rb_bar.md): moved rows RMSE -0.065 (points 4 of 4 seasons), carries bias +0.87 -> +0.15, START-RB -0.005,
     # EVERY-START-RB -0.027, START-ALL -0.001, EVERY-ALL -0.004; QB / WR / TE unchanged. In-sample factors. Undo: remove the flag.
     'v2_questionable_rb',
+    # SHIPPED 2026-11-16 (user: "Alignment recency push .8 and .85. Wr route rise push 0.15. Te rout rise, push 0.2"): DEFAULT_FEATURES
+    # = 89. Receiver role drift (user idea; bars .sweeps/role_drift_v2_bar.md, harness v2 2024-2025 weeks 3-17 and 2026 weeks 3-10).
+    # v2_alignment_recency: the WR / TE alignment mix weights games by decay ** games_ago (WR 0.80, TE 0.85, chosen on next-game
+    # alignment error). A push the user wanted as an accuracy step: START-WR -0.000 / -0.002, START-TE +0.001 / +0.002 (WR target
+    # spillover onto a few TE rows), the rest within 0.001. Undo: remove the flag.
+    'v2_alignment_recency',
+    # v2_wr_route_rise: a WR whose latest game's route participation is 0.20+ above his earlier level gets his receiving line x
+    # (rp_last / rp_before) ** 0.15 (cap 1.5), weeks 3-17. Passed every bar line: START-WR -0.005 / +0.001, EVERY-WR -0.004 / +0.002,
+    # moved rows better 3 of 3 seasons. The gain sits in weeks 11-17 (weeks 3-10 a wash). Acts after the points line. Undo: remove it.
+    'v2_wr_route_rise',
+    # v2_te_route_rise: the same for TEs at 0.15+ and exponent 0.20. START-TE -0.017 / +0.007, EVERY-TE -0.006 / +0.005 (the 2026 line
+    # missed its +0.003 bar; the user valued the smaller 2026 sample less and shipped it), pooled START-TE -0.012, moved rows 2 of 3.
+    # Re-check on a 2026 rebuild once weeks 11+ exist. Acts after the points line. Undo: remove the flag.
+    'v2_te_route_rise',
 })
 
 
@@ -2752,7 +2784,7 @@ POST_CALIBRATION_FEATURES = frozenset({'v2_opening_week_stat_calibration',
                                        'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
                                        'v2_stat_recal_game_script', 'v2_stat_recal_gate_ramp', 'v2_points_from_stat_line',
                                        'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut',
-                                       'v2_questionable_rb'})
+                                       'v2_questionable_rb', 'v2_te_route_rise', 'v2_wr_route_rise'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
@@ -3255,6 +3287,62 @@ QUESTIONABLE_STAT_FACTORS = {'WR': {'targets': 0.926, 'receptions': 0.888, 'rece
 # 0.86-0.92 / 0.79-0.99). Held out by season a cut on the rushing line only: points MSE -1.2 (4 of 5), carries 5 of 5, rushing
 # yards 4 of 5; cutting receptions is worse. Weeks 3-17, the rows points-from-the-stat-line scores (the total is that line).
 QUESTIONABLE_RB_STAT_FACTORS = {'RB': {'rushing_attempts': 0.927, 'rushing_yards': 0.892, 'rushing_tds': 0.894}}
+
+# v2_te_route_rise (SHIPPED 2026-11-16; scripts/study_role_alignment_drift.py): when a tight end's route participation jumps
+# in his latest game (routes / team dropbacks, PFF weekly receiving exports; 0.15+ above his pooled earlier-season level, 2+
+# earlier games for the team), the board under-projects him the next week - it reads targets and snaps, not routes, and its
+# per-game decay moves slowly. Drops are not acted on (the same rule on drops is worse). Factor capped at 1.5.
+# The first build (exponent 0.35, fit on the raw miss) passed 2024-2025 and failed the 2026 rebuild: in 2024-2025 the board
+# under-projected the whole TE pool (+0.5 a played row, weeks 3-10), so part of what that fit rewarded was raising any TE, and
+# 2026's pool has no such gap (-0.1). Against the pool's own miss the moved TEs beat the board by about the same +0.6-0.9 every
+# season (2026 +0.57), less than the 1.05 bump. Refit on the miss relative to the pool (same position, season, weeks 3-10 /
+# 11-17), held out by season on today's model (harness base boards 2024-2026): exponent 0.20 / 0.25 / 0.20; moved rows -3.1% /
+# -2.7% / -1.6% points MSE, whole TE pool -0.75% / -0.49% / -0.13%, START-TE -0.45% / -0.76% / +0.22%.
+TE_ROUTE_RISE_THRESHOLD = 0.15
+TE_ROUTE_RISE_EXPONENT = 0.20
+TE_ROUTE_RISE_MAX_FACTOR = 1.5
+TE_ROUTE_RISE_STATS = ('targets', 'receptions', 'receiving_yards', 'receiving_tds')
+# v2_wr_route_rise (SHIPPED 2026-11-16): the same rule for WRs at 0.20+. The first build (0.30, raw miss) failed 2026; refit on
+# the miss relative to the WR pool, held out: exponent 0.15 / 0.10 / 0.20, moved rows -2.3% / -2.0% / -0.8%, START-WR -0.15% /
+# -0.08% / -0.06%, whole WR pool 3 of 3 (thresholds 0.15-0.20 alike). WR drops: worse at every threshold.
+WR_ROUTE_RISE_THRESHOLD = 0.20
+WR_ROUTE_RISE_EXPONENT = 0.15
+
+
+def team_latest_game_weeks(hist, team_col, as_of_week):
+    """{canonical team: the latest week before ``as_of_week`` that team has a game in ``hist``}."""
+    from data.pff_alignment import _canonical_team_key
+    if hist is None or hist.empty or 'week' not in hist.columns:
+        return {}
+    weeks = pd.to_numeric(hist['week'], errors='coerce')
+    teams = _historical_game_team(hist, team_col).astype(str)
+    frame = pd.DataFrame({'team': teams.map(_canonical_team_key), 'week': weeks})
+    frame = frame[(frame['week'] < as_of_week) & (frame['team'] != '')]
+    return {t: int(w) for t, w in frame.groupby('team')['week'].max().items()}
+
+
+def apply_te_route_rise(result, factors):
+    """(result, info): scale TE_ROUTE_RISE_STATS on the rows ``factors`` lists ((Player, Pos, Team) -> {'factor', ...})."""
+    if result is None or result.empty or not factors:
+        return result, {}
+    out = result.copy()
+    info = {}
+    for j, key in enumerate(zip(out['Player'], out['Pos'], out['Team'])):
+        spec = factors.get(key)
+        if spec is None:
+            continue
+        changed = {}
+        for stat in TE_ROUTE_RISE_STATS:
+            if stat not in out.columns:
+                continue
+            before = pd.to_numeric(out.iat[j, out.columns.get_loc(stat)], errors='coerce')
+            if pd.isna(before):
+                continue
+            after = float(before) * float(spec['factor'])
+            out.iat[j, out.columns.get_loc(stat)] = after
+            changed[stat] = (float(before), after)
+        info[key] = {**spec, 'stats': changed}
+    return out, info
 
 
 def apply_questionable_stat_cut(result, questionable_info, factors=None):
@@ -9347,7 +9435,9 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
                     if fallback_result.available:
                         alignment_result = fallback_result
             else:
-                alignment_result = load_weekly_alignment_profiles(year, as_of_week)
+                alignment_result = load_weekly_alignment_profiles(
+                    year, as_of_week,
+                    recency_decay=ALIGNMENT_RECENCY_DECAY if 'v2_alignment_recency' in feats else None)
             pff_alignment_profiles = alignment_result.profiles
             pff_alignment_contract = {
                 'status': 'time-valid local alignment profiles available'
@@ -13113,6 +13203,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         if _rb_rows:
             result, _rb_info = apply_questionable_stat_cut(result, _rb_rows, factors=QUESTIONABLE_RB_STAT_FACTORS)
             questionable_stat_info = {**questionable_stat_info, **_rb_info}
+    te_route_rise_info = {}
+    if (({'v2_te_route_rise', 'v2_wr_route_rise'} & set(feats)) and 'v2_points_from_stat_line' in feats
+            and _recal_form == 'linear'):
+        # a TE (WR) whose route participation jumped in his latest game: his receiving line is scaled up (*_ROUTE_RISE_*)
+        from data.route_participation import latest_game_moves, route_rise_factors, weekly_route_rows
+        _rr_params = {**({'TE': (TE_ROUTE_RISE_THRESHOLD, TE_ROUTE_RISE_EXPONENT)} if 'v2_te_route_rise' in feats else {}),
+                      **({'WR': (WR_ROUTE_RISE_THRESHOLD, WR_ROUTE_RISE_EXPONENT)} if 'v2_wr_route_rise' in feats else {})}
+        _rr_factors = route_rise_factors(
+            result, latest_game_moves(weekly_route_rows(year, as_of_week)),
+            team_latest_game_weeks(hist, team_col, as_of_week), _rr_params, TE_ROUTE_RISE_MAX_FACTOR)
+        result, te_route_rise_info = apply_te_route_rise(result, _rr_factors)
     if 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
         result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, _points_info_for_line)
         result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)

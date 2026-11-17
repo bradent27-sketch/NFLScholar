@@ -183,6 +183,7 @@ def test_st_dataframe_is_wrapped_once_and_still_passes_everything_through(monkey
 
 def test_deep_dive_player_log_columns_and_average_row(monkeypatch):
     captured = []
+    monkeypatch.setattr(rk, 'refine_snap_pct', lambda player, year, weeks, stored: stored)
     monkeypatch.setattr(rk, 'render_game_table', lambda styled, entries, **kw: captured.append((styled, kw)))
     monkeypatch.setattr(rk, 'score_entries', lambda *a, **k: [None, None, None])
     monkeypatch.setattr(rk, 'score_texts', lambda entries: ['—'] * len(entries))
@@ -205,10 +206,54 @@ def test_deep_dive_player_log_columns_and_average_row(monkeypatch):
                                    'Defense-adj Passing Yards', 'Included']
     assert list(frame['Score'][:3]) == ['W 36-31', 'L 26-29', 'T 10-10']             # the result leads the score
     assert list(frame['Matchup %'][:3]) == ['65', '25', '45'] and frame['Matchup %'].iloc[-1] == '45'
-    assert list(frame['Snap %'][:3]) == ['100', '80', '—']                         # a recorded 0 is no data
+    snap = [_snap_text(v) for v in frame['Snap %']]
+    assert snap == ['100.0%', '80.0%', None, '90.0%']                    # a bar with one decimal; a recorded 0 is no data
     assert list(frame['Team plays'][:3]) == ['52', '70', '60'] and frame['Team plays'].iloc[-1] == '61'
-    assert frame['Snap %'].iloc[-1] == '90' and frame['Week'].iloc[-1] == 'AVG'
+    assert frame['Week'].iloc[-1] == 'AVG'
     assert set(kwargs['column_config']) == {'Matchup %', 'Snap %', 'Team plays'}
+    assert kwargs['column_config']['Snap %']['type_config']['type'] == 'image'
+
+
+def _svg(uri):
+    import base64
+    return base64.b64decode(uri.split(',', 1)[1]).decode()
+
+
+def _snap_text(uri):
+    if not isinstance(uri, str):                                                   # None / NaN: a blank cell
+        return None
+    s = _svg(uri)
+    return s[s.index("text-anchor='end'>") + len("text-anchor='end'>"):].split('<', 1)[0]
+
+
+def test_snap_share_tenths_come_from_the_raw_counts_only_when_they_agree(monkeypatch):
+    from data import loaders
+    raw = pd.DataFrame({
+        'game_id': ['g1'] * 4 + ['g2'] * 2, 'game_type': 'REG', 'week': [1, 1, 1, 1, 2, 2],
+        'player': ['Tackle', 'Wide Out', 'Wide Out', 'Tight End', 'Tackle', 'Wide Out'],
+        'team': ['AAA', 'AAA', 'BBB', 'AAA', 'AAA', 'AAA'],          # a namesake on another team in week 1
+        'offense_snaps': [55, 43, 20, 30, 60, 50], 'defense_snaps': 0,
+    })
+    monkeypatch.setattr(loaders, '_load_snap_counts_raw', lambda year: raw)
+    loaders.exact_snap_pct.clear()
+    table = loaders.exact_snap_pct(2099)
+    loaders.exact_snap_pct.clear()
+    monkeypatch.setattr(loaders, 'exact_snap_pct', lambda year: table)
+    out = loaders.refine_snap_pct('Wide Out', 2099, [1, 2, 3], [78.0, 83.0, 50.0])
+    assert round(out[0], 1) == 78.2                     # 43 of 55; the namesake's 20 of 20 (100) does not agree with 78
+    assert round(out[1], 1) == 83.3 and out[2] == 50.0  # 50 of 60; no raw row for week 3 keeps the stored value
+    assert loaders.refine_snap_pct('Wide Out', 2099, [1], [60.0]) == [60.0]       # disagrees -> stored
+
+
+def test_snap_bar_is_out_of_100_with_one_decimal_at_a_fixed_place():
+    from ui.charts import snap_bar_data_uri
+    a, b = _svg(snap_bar_data_uri(48.26)), _svg(snap_bar_data_uri(100.0))
+    assert '48.3%' in a and '100.0%' in b
+    assert snap_bar_data_uri(None) is None and snap_bar_data_uri(float('nan')) is None
+    anchor = lambda s: s[s.index("<text x='") + 9:].split("'", 1)[0]
+    assert anchor(a) == anchor(b)                                                  # the numbers line up
+    fill = lambda s: float(s.split('<rect')[2].split("width='")[1].split("'")[0])
+    assert abs(fill(a) - 0.4826 * fill(b)) < 0.1 and fill(_svg(snap_bar_data_uri(130.0))) == fill(b)
 
 
 def test_deep_dive_player_log_without_the_new_fields_keeps_the_old_layout(monkeypatch):
@@ -266,3 +311,56 @@ def test_quiet_note_inside_an_expander_becomes_a_plain_details_block(monkeypatch
     text, kwargs = fake.markdown_calls[0]
     assert text.startswith('<details><summary>What &lt;b&gt;it&lt;/b&gt; means</summary>') and 'Explain **this**.' in text
     assert kwargs == {'unsafe_allow_html': True}
+
+
+def test_a_sortable_share_bar_sorts_by_its_value_as_text():
+    from urllib.parse import unquote
+    from ui.charts import snap_bar_data_uri
+    values = [98.4, 7.0, 100.0, 61.25, 0.0]
+    uris = [snap_bar_data_uri(v, sortable=True) for v in values]
+    assert [values[uris.index(u)] for u in sorted(uris)] == sorted(values)
+    assert '98.4%' in unquote(uris[0]) and '#' not in uris[0]
+    assert '93%' in _svg(snap_bar_data_uri(93.2, decimals=0))
+
+
+class _MarkdownSt:
+    def __init__(self):
+        self.calls = []
+
+    def markdown(self, text, *a, **k):
+        self.calls.append(text)
+
+
+def test_points_waterfall_drops_flat_steps_and_keeps_both_totals(monkeypatch):
+    import ui.charts as charts
+    fake = _MarkdownSt()
+    monkeypatch.setattr(charts, 'st', fake)
+    charts.render_points_waterfall([('Previous avg', 21.7), ('Projection', 26.0), ('Defense', 24.9),
+                                    ('Vacancy', 24.9), ('Projected', 20.5)])
+    svg = fake.calls[0]
+    assert '>Vacancy<' not in svg and '>Defense<' in svg
+    assert '>21.7<' in svg and '>+4.3<' in svg and '>-1.1<' in svg and '>20.5<' in svg
+    fake.calls.clear()
+    charts.render_points_waterfall([('Previous avg', 10.0)])
+    assert fake.calls == []
+
+
+def test_share_bar_normalizes_the_mix_and_keeps_a_zero_share_in_the_legend(monkeypatch):
+    import ui.charts as charts
+    fake = _MarkdownSt()
+    monkeypatch.setattr(charts, 'st', fake)
+    charts.render_share_bar([('Slot', 0.293), ('Wide', 0.701), ('Inline', 0.0)])
+    html_text = fake.calls[0]
+    assert 'Slot 29.5%' in html_text and 'Inline 0.0%' not in html_text   # bar tooltips: zero shares left out
+    assert '>Inline <b' in html_text and '0.0%</b>' in html_text
+
+
+def test_role_meters_keep_the_shares_decimal_and_skip_missing_values(monkeypatch):
+    import ui.charts as charts
+    fake = _MarkdownSt()
+    monkeypatch.setattr(charts, 'st', fake)
+    charts.render_meter_row([('Expected snaps', 0.912), ('Target share', 0.368, 1), ('Carry share', float('nan'), 1)],
+                            ['ADOT: 8.0'])
+    html_text = fake.calls[0]
+    assert '>91%</b>' in html_text and '>36.8%</b>' in html_text and 'Carry share' not in html_text
+    assert 'ADOT: 8.0' in html_text

@@ -43,14 +43,15 @@ from data.draft_projections import PROJECTED_STATS as _MARKET_PROJECTED_STATS
 from data.fantasypros_availability import canonical_status, FANTASYPROS_INJURY_PATH
 from data.pass_capacity_allocator import (
     PASS_CAPACITY_DEADBAND, PASS_CAPACITY_TRUSTED_TIER, PASS_CAPACITY_TRUSTED_TIER_RB)
-from data.loaders import load_schedule
+from data.loaders import load_schedule, refine_snap_pct
 from data.weather import resolve_game_weather, resolve_game_precip
 from ui import board_session, freshness
 from ui.tabs import rankings_games
 from data.weekly_median import MEDIAN_STATS, attach_medians
-from ui.charts import sparkline_data_uri, C as _CHART_COLORS
+from ui.charts import (sparkline_data_uri, snap_bar_data_uri, render_share_bar, render_meter_row,
+                       render_points_waterfall, C as _CHART_COLORS)
 from ui.styling import (style_plain_dataframe, df_auto_height, build_column_help_config,
-                        get_diverging_color, get_multiplier_color, get_team_style)
+                        get_diverging_color, get_multiplier_color, get_team_style, COLUMN_HELP)
 from ui.components import (position_group_buttons, apply_position_group, skeleton_loader,
                            import_hint, switch_tab, render_weekly_board_uploads, quiet_note)
 
@@ -707,6 +708,8 @@ def _render_alignment_mix(detail, reference_only=False):
     rate_total = sum(rates.values())
     shares = ({key: (rates[key] / rate_total if rate_total > 0 else 0.0) for key, _, _ in aligns}
               if rate_total > 0 else {key: 0.0 for key, _, _ in aligns})
+    # The mix as one stacked bar (2026-11-16 request); the table rows below keep just the alignment name.
+    render_share_bar([(row_label, rates[key]) for key, row_label, _ in aligns])
     if not role.get('alignment_defense_candidate_available'):
         st.caption(f"Alignment adjustment is neutral (1.0×) here: "
                    f"{role.get('alignment_defense_reason') or 'not enough comparison evidence'}")
@@ -717,7 +720,7 @@ def _render_alignment_mix(detail, reference_only=False):
     splits_col = f"{player_label}'s Splits"
     table_rows = []
     for key, row_label, rate in aligns:
-        row = {splits_col: f"{row_label} — {rate:.1%}" if rate is not None and pd.notna(rate) else f"{row_label} — —"}
+        row = {splits_col: row_label}
         table_rows.append(row)
     totals_row = {splits_col: "Blend (all)"}
     # Row-position-matched raw ratios for style_plain_dataframe's
@@ -1210,6 +1213,15 @@ def _render_decomposition_primary_table(detail, market_detail=None):
     style_grid = pd.DataFrame({col: _style_column(col) for col in display_cols})
     styler = display_table.style.apply(lambda _: style_grid, axis=None)
     st.dataframe(styler, hide_index=True, width="stretch", height=df_auto_height(len(display_table)))
+    # The points row above as a small waterfall (2026-11-16 request). Previous Adj Avg is left out: it is context
+    # only and never feeds Player Projection, so it is not a step on the way to the final number.
+    waterfall = []
+    for col in display_cols[1:]:
+        label = _WATERFALL_LABELS.get(col)
+        stat_dict = stage_totals.get(stage_by_col.get(col), {}) if label else {}
+        if stat_dict:
+            waterfall.append((label, max(0.0, score_projected_stats(stat_dict, scoring_mode))))
+    render_points_waterfall(waterfall)
 
     note_text = " / ".join(sorted(raw_average_notes)) if raw_average_notes else "prior-season history"
     bullets = [
@@ -1387,6 +1399,23 @@ def _allowed_tone(allowed, baseline):
     return [None if pd.isna(r) else 1.0 + 0.25 * (float(r) - 1.0) for r in ratio]
 
 
+# Stage-table columns that are steps toward the final stat line, with the waterfall's short label for each.
+_WATERFALL_LABELS = {
+    'Previous Avg': 'Previous avg', 'Player Projection': 'Projection', 'Defense multiplier': 'Defense',
+    'Context multiplier': 'Context', 'Team capacity Δ': 'Capacity', 'Carry budget Δ': 'Carry budget',
+    'Vacancy Δ': 'Vacancy', 'Top-end yardage Δ': 'Top-end yds', 'Opening-week calibration Δ': 'Opening wk',
+    'Own-history Δ': 'Own history', 'Projected value': 'Projected',
+}
+
+
+def _context_cell(name, value):
+    """A game-log context cell: Snap % is a bar out of 100 with the share at one decimal (an image, see
+    ui.charts.snap_bar_data_uri; None leaves the cell blank), the rest a whole number or a dash."""
+    if name == 'Snap %':
+        return snap_bar_data_uri(value)
+    return f"{value:.0f}" if value is not None and pd.notna(value) else '—'
+
+
 def _result_score(result, score):
     """'W 59-37' from the game's result letter and 'own-opponent' score; the letter is read off the score when the
     schedule gave none. A game with no final yet stays a dash."""
@@ -1560,6 +1589,9 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
         nan_series = pd.Series(np.nan, index=pgl.index)
         matchup_pct = pd.to_numeric(pgl.get(f'_matchup_pct_{stat}', nan_series), errors='coerce')
         snap_pct = pd.to_numeric(pgl.get('weekly_snap_pct', nan_series), errors='coerce').where(lambda s: s > 0)
+        if snap_pct.notna().any():          # the stored share is whole percents; the raw counts give the tenths
+            snap_pct = pd.Series(refine_snap_pct(detail.get('player'), season_year, pgl['_week_num'].tolist(),
+                                                 snap_pct.tolist()), index=pgl.index)
         team_plays = pd.to_numeric(pgl.get('_team_plays', nan_series), errors='coerce')
         context_columns = {}
         if matchup_pct.notna().any():
@@ -1570,7 +1602,7 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
             context_columns['Team plays'] = team_plays
         display = {'Week': pgl['_week_num'].astype(int), 'Opponent': pgl.get('opponent_team', ''), 'Score': score}
         for name, values in context_columns.items():
-            display[name] = [f"{v:.0f}" if pd.notna(v) else '—' for v in values]
+            display[name] = [_context_cell(name, v) for v in values]
         display[f'Raw {label}'] = [_fmt_stat(stat, v) for v in pgl[stat]]
         display[f'Defense-adj {label}'] = [_fmt_stat(stat, v) for v in pgl.get(adj_col, pd.Series(dtype=float))]
         display['Included'] = included
@@ -1589,7 +1621,7 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
         for name, values in context_columns.items():
             kept = values.to_numpy(dtype=float)[eligible_mask]
             averages[name] = float(np.nanmean(kept)) if np.isfinite(kept).any() else None
-            pgl_with_avg.loc[pgl_with_avg.index[-1], name] = f"{averages[name]:.0f}" if averages[name] is not None else '—'
+            pgl_with_avg.loc[pgl_with_avg.index[-1], name] = _context_cell(name, averages[name])
         pct_cols = ({'Matchup %': [None if pd.isna(v) else float(v) for v in matchup_pct] + [averages['Matchup %']]}
                     if 'Matchup %' in context_columns else None)
         if any(player_games):
@@ -1602,7 +1634,8 @@ def _render_stat_deep_dive(detail, stat, game_log_by_season, defense_log_by_seas
                 'Matchup %': st.column_config.Column(
                     help=f"How soft the defense was for {label.lower()} against this position, as a percentile of "
                          "the league's defenses: 100 = the softest, 0 = the toughest."),
-                'Snap %': st.column_config.Column(help="Share of his team's offensive snaps he played."),
+                'Snap %': st.column_config.ImageColumn(
+                    'Snap %', width=130, help="Share of his team's offensive snaps he played (the bar is out of 100)."),
                 'Team plays': st.column_config.Column(help="Plays his team's offense ran that game.")})
         n_excluded = int((~eligible.astype(bool)).sum())
         if n_excluded:
@@ -1966,6 +1999,10 @@ def _render_role_confidence_table(role):
     route_rate = role.get('role_confidence_route_rate')
     method = role.get('role_confidence_method') or 'unknown'
     st.markdown("**Role confidence — what fed this number**")
+    shares = [float(snap_pct) if snap_pct is not None and pd.notna(snap_pct) else None]
+    if route_rate is not None and pd.notna(route_rate):
+        shares.append(float(route_rate))
+    shares.append(float(confidence))
     ingredient_rows = [{
         'Ingredient': 'Recent snap share',
         'Value': f"{float(snap_pct):.0%}" if snap_pct is not None and pd.notna(snap_pct) else '—',
@@ -1984,8 +2021,12 @@ def _render_role_confidence_table(role):
         'Value': f"{float(confidence):.0%}",
         'Detail': method,
     })
-    st.dataframe(style_plain_dataframe(pd.DataFrame(ingredient_rows)), hide_index=True, width="stretch",
-                height=df_auto_height(len(ingredient_rows)))
+    # Every Value here is a share, so it gets the game log's bar out of 100 (2026-11-16 request).
+    frame = pd.DataFrame(ingredient_rows)
+    frame['Value'] = [snap_bar_data_uri(v * 100, decimals=0) if v is not None else None for v in shares]
+    st.dataframe(style_plain_dataframe(frame), hide_index=True, width="stretch",
+                 height=df_auto_height(len(ingredient_rows)),
+                 column_config={'Value': st.column_config.ImageColumn('Value', width=130)})
 
 
 def _render_pass_capacity_room(detail):
@@ -2374,26 +2415,27 @@ def _render_decomposition_audit_body(detail):
     source) are skipped rather than printed as boilerplate "nothing to
     report" lines."""
     role = detail.get('role', {})
-    role_bits = []
-    for label, key, fmt in (
-        ('Expected snaps', 'expected_snap_share', '.0%'),
-        ('Role confidence', 'role_confidence', '.0%'),
-        ('Target-earner score', 'target_earner_score', '.2f'),
-        ('Target share', 'target_share', '.1%'),
-        ('Carry share', 'carry_share', '.1%'),
-        ('ADOT', 'adot', '.1f'),
-    ):
+
+    def _present(key):
         value = role.get(key)
-        if value is not None and pd.notna(value):
-            role_bits.append(f"{label}: {float(value):{fmt}}")
+        return value is not None and pd.notna(value)
+
+    # The shares as small meters out of 100% (2026-11-16 request); the two numbers on other scales stay as text.
+    meters = [(label, float(role[key]), decimals) for label, key, decimals in (
+        ('Expected snaps', 'expected_snap_share', 0), ('Role confidence', 'role_confidence', 0),
+        ('Target share', 'target_share', 1), ('Carry share', 'carry_share', 1)) if _present(key)]
     # Role-change evidence is 0% for nearly every player (it only fires
     # when the allocator actually detected a change) - showing it only
     # when non-zero turns a near-universal "0%" line into a real signal.
-    role_change = role.get('role_change_confidence')
-    if role_change is not None and pd.notna(role_change) and float(role_change) > 0:
-        role_bits.append(f"Role-change evidence: {float(role_change):.0%}")
+    if _present('role_change_confidence') and float(role['role_change_confidence']) > 0:
+        meters.append(('Role-change evidence', float(role['role_change_confidence'])))
+    notes = [f"{label}: {float(role[key]):{fmt}}" for label, key, fmt in (
+        ('Target-earner score', 'target_earner_score', '.2f'), ('ADOT', 'adot', '.1f')) if _present(key)]
     st.markdown("**Expected role**")
-    st.caption(" · ".join(role_bits) if role_bits else "No time-valid role profile was available.")
+    if meters or notes:
+        render_meter_row(meters, notes)
+    else:
+        st.caption("No time-valid role profile was available.")
 
     _render_role_confidence_table(role)
 
@@ -4510,8 +4552,16 @@ def render():
                         indexed, pinned_cols=['Rank', 'Team', 'Opponent'],
                         short_labels=(dict(_RANK_PROJ_SHORT_LABELS, **{'Model Proj Pts': 'Model Median'})
                                       if projection_view == "Median" else _RANK_PROJ_SHORT_LABELS),
-                        narrow_cols=_NARROW_COLS,
-                        meter_cols={'Season Snap %': (0, 100)} if 'Season Snap %' in indexed.columns else {})
+                        narrow_cols=_NARROW_COLS)
+                    # Season Snap % in the game log's bar style (2026-11-16 request): a bar out of 100 with "98.4%"
+                    # beside it, where the native meter printed a bare "98.4". sortable keeps header-click sorting.
+                    if 'Season Snap %' in indexed.columns:
+                        # 120x34: drawn at the board's 42px rows without scaling, so the "98.4%" is not cut off.
+                        indexed['Season Snap %'] = [snap_bar_data_uri(v, width=120, height=34, sortable=True)
+                                                    for v in indexed['Season Snap %']]
+                        column_config['Season Snap %'] = st.column_config.ImageColumn(
+                            _RANK_PROJ_SHORT_LABELS['Season Snap %'], width=130,
+                            help=COLUMN_HELP.get('Season Snap %'))
                     column_config['Last 5 Weeks'] = st.column_config.ImageColumn(
                         help=(f"Fantasy points over the last {RECENT_FORM_GAMES} games played "
                               f"({form_source_year}), with the dotted line at that season's average"),

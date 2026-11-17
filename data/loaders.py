@@ -150,6 +150,50 @@ def snap_pct_by_pfr_id(year):
         return pd.Series(dtype=float)
 
 
+@st.cache_data(ttl=CACHE_TTL_SECONDS)
+def exact_snap_pct(year):
+    """DataFrame [name_key, week, pct]: each regular-season player-game's snap share from the raw counts (his snaps over
+    the most any teammate played that game, x100, offense or defense whichever is larger) - the source's own pct is
+    rounded to whole percents. DISPLAY ONLY (the game log's one-decimal Snap %, 2026-11-16); the model keeps
+    weekly_snap_pct. Empty on any failure."""
+    try:
+        raw = _load_snap_counts_raw(year)
+        if raw is None or raw.empty or not {'player', 'week', 'team'}.issubset(raw.columns):
+            return pd.DataFrame(columns=['name_key', 'week', 'pct'])
+        if 'game_type' in raw.columns:
+            raw = raw[raw['game_type'] == 'REG']
+        game = raw['game_id'] if 'game_id' in raw.columns else raw['week'].astype(str)
+        shares = []
+        for side in ('offense', 'defense'):
+            snaps = pd.to_numeric(raw.get(f'{side}_snaps', 0), errors='coerce').fillna(0)
+            total = snaps.groupby([game, raw['team']]).transform('max')
+            shares.append((snaps / total.where(total > 0)).fillna(0) * 100)
+        pct = pd.concat(shares, axis=1).max(axis=1)
+        out = pd.DataFrame({'name_key': clean_name_exact(raw['player']).to_numpy(),
+                            'week': pd.to_numeric(raw['week'], errors='coerce').to_numpy(), 'pct': pct.to_numpy()})
+        return out[out['week'].notna() & (out['pct'] > 0)].reset_index(drop=True)
+    except Exception:
+        return pd.DataFrame(columns=['name_key', 'week', 'pct'])
+
+
+def refine_snap_pct(player, year, weeks, stored):
+    """``stored`` (the whole-percent weekly_snap_pct per game) with each game's exact share from exact_snap_pct where
+    one exists for this name and week AND rounds back to the stored value (so a namesake or a game where no teammate
+    played every snap keeps the stored number). Same length and order as ``weeks``."""
+    stored = [float(v) if v is not None and pd.notna(v) else np.nan for v in stored]
+    table = exact_snap_pct(year)
+    if table is None or table.empty or not player:
+        return stored
+    key = clean_name_exact(pd.Series([str(player)])).iloc[0]
+    mine = table[table['name_key'] == key]
+    out = []
+    for week, value in zip(weeks, stored):
+        hits = mine.loc[mine['week'] == week, 'pct'] if pd.notna(value) and pd.notna(week) else pd.Series(dtype=float)
+        close = hits[(hits - value).abs() <= 0.51]
+        out.append(float(close.iloc[0]) if len(close) == 1 else value)
+    return out
+
+
 def fill_snap_pct_by_pfr_id(stats, by_id):
     """stats with weekly_snap_pct filled by (pfr_id, week) on the rows the name match left empty. Rows the name match
     found are untouched."""

@@ -673,3 +673,174 @@ def sparkline_data_uri(values, avg=None, line_color=None, width=_SPARK_W, height
     parts.append("</svg>")
     svg = "".join(parts)
     return "data:image/svg+xml;base64," + base64.b64encode(svg.encode('utf-8')).decode('ascii')
+
+
+def snap_bar_data_uri(pct, width=118, height=26, decimals=1, sortable=False, color=None):
+    """One game's snap share as a data-URI SVG for an st.column_config.ImageColumn cell: a thin bar out of 100 with the
+    share to its right at one decimal (requested 2026-11-16, after the CFB app's game-log snap bar). The number is
+    right-aligned at a fixed x so a column of them lines up. None for a missing share (the cell stays blank).
+
+    The grid draws an image cell at the ROW height and takes the width from the aspect ratio, so the default 118x26
+    fits a 130px column at Streamlit's 35px rows; a table with taller rows passes a taller size (the board: 120x34).
+
+    Any 0-100 share can use it (`decimals` sets the printed precision). `sortable=True` is for a table the user sorts
+    by clicking the header: the grid sorts an image column by its URI text, so the SVG is percent-encoded (not base64)
+    behind a zero-padded comment holding the value, and the text order is the number order."""
+    import base64
+    import math
+    from urllib.parse import quote
+
+    try:
+        value = float(pct)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    value = min(max(value, 0.0), 100.0)
+    bar_x, bar_w, bar_h = 4.0, 62.0, 6.0
+    y = (height - bar_h) / 2
+    svg = (
+        f"<svg xmlns='http://www.w3.org/2000/svg' width='{width}' height='{height}' viewBox='0 0 {width} {height}'>"
+        f"<rect x='{bar_x}' y='{y:.1f}' width='{bar_w}' height='{bar_h}' rx='3' fill='{C['on_surface_variant']}' "
+        f"fill-opacity='0.22'/>"
+        f"<rect x='{bar_x}' y='{y:.1f}' width='{bar_w * value / 100.0:.1f}' height='{bar_h}' rx='3' "
+        f"fill='{color or C['secondary']}'/>"
+        f"<text x='{width - 4}' y='{height / 2 + 4:.1f}' font-size='12' font-weight='600' font-family='{_MONO_FONT}' "
+        f"fill='{C['on_surface']}' text-anchor='end'>{value:.{int(decimals)}f}%</text></svg>"
+    )
+    if sortable:
+        return "data:image/svg+xml," + quote(f"<!--{round(value * 100):05d}-->" + svg, safe='')
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode('utf-8')).decode('ascii')
+
+
+# Slot / wide / inline, in that order everywhere the mix is drawn.
+_SHARE_COLORS = (C['primary_container'], C['secondary'], C['tertiary'], C['outline'])
+
+
+def render_share_bar(segments):
+    """One stacked bar out of 100% with a legend under it - the alignment mix (slot / wide / inline) as a picture
+    instead of shares written into the row labels (requested 2026-11-16). `segments` = [(label, share 0-1), ...];
+    a zero or missing share is left out of the bar but kept in the legend."""
+    import math
+    cleaned = []
+    for label, share in segments:
+        try:
+            value = float(share)
+        except (TypeError, ValueError):
+            value = 0.0
+        cleaned.append((label, value if math.isfinite(value) and value > 0 else 0.0))
+    total = sum(v for _, v in cleaned)
+    if total <= 0:
+        return
+    pieces, legend = [], []
+    for i, (label, value) in enumerate(cleaned):
+        color = _SHARE_COLORS[i % len(_SHARE_COLORS)]
+        share = value / total
+        if share > 0:
+            pieces.append(f"<div title='{_esc(label)} {share:.1%}' "
+                          f"style='width:{share * 100:.2f}%; background:{color};'></div>")
+        legend.append(f"<span style='white-space:nowrap; margin-right:14px;'>"
+                      f"<span style='display:inline-block; width:9px; height:9px; border-radius:2px; "
+                      f"background:{color}; margin-right:5px;'></span>{_esc(label)} "
+                      f"<b style='font-family:{_MONO_FONT}; color:{C['on_surface']};'>{share:.1%}</b></span>")
+    st.markdown(
+        f"<div style='max-width:520px; margin:2px 0 10px 0;'>"
+        f"<div style='display:flex; height:10px; border-radius:5px; overflow:hidden; gap:2px; "
+        f"background:{C['surface_container_high']};'>{''.join(pieces)}</div>"
+        f"<div style='font-size:12.5px; color:{C['on_surface_variant']}; margin-top:6px;'>{''.join(legend)}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_meter_row(meters, notes=None):
+    """Small labelled bars out of 100% side by side - the 'Expected role' line (expected snaps, role confidence,
+    target / carry share) as meters instead of one run-on caption (requested 2026-11-16). `meters` = [(label, share
+    0-1), ...] or (label, share, decimals); `notes` = plain-text extras (ADOT, target-earner score) printed after them."""
+    import math
+    cells = []
+    for label, share, *rest in meters:
+        decimals = int(rest[0]) if rest else 0
+        try:
+            value = float(share)
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(value):
+            continue
+        fill = min(max(value, 0.0), 1.0) * 100
+        cells.append(
+            f"<div style='min-width:130px; flex:0 1 170px;'>"
+            f"<div style='display:flex; justify-content:space-between; font-size:12.5px; "
+            f"color:{C['on_surface_variant']};'><span>{_esc(label)}</span>"
+            f"<b style='font-family:{_MONO_FONT}; color:{C['on_surface']};'>{value:.{decimals}%}</b></div>"
+            f"<div style='height:6px; border-radius:3px; margin-top:4px; background:{C['surface_container_highest']};'>"
+            f"<div style='width:{fill:.1f}%; height:6px; border-radius:3px; background:{C['secondary']};'></div>"
+            f"</div></div>")
+    if not cells and not notes:
+        return
+    tail = (f"<div style='font-size:12.5px; color:{C['on_surface_variant']}; align-self:flex-end;'>"
+            f"{' · '.join(_esc(n) for n in notes)}</div>" if notes else '')
+    st.markdown(f"<div style='display:flex; flex-wrap:wrap; gap:10px 22px; margin:2px 0 12px 0;'>"
+                f"{''.join(cells)}{tail}</div>", unsafe_allow_html=True)
+
+
+def render_points_waterfall(stages, min_step=0.05):
+    """The 'Fantasy points at this stage' row as a small waterfall (requested 2026-11-16): the first and last stages
+    are full bars from zero, each stage between floats from the running total, green up and red down, so the step
+    that moved the projection most stands out. `stages` = [(label, points), ...] in build order; a middle stage that
+    moves the total by less than `min_step` points is left out (its column in the table above still shows it).
+    The axis starts at zero, so a step is drawn at its true size against the total."""
+    import math
+    pts = []
+    for label, value in stages:
+        try:
+            v = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(v):
+            pts.append((label, v))
+    if len(pts) < 2:
+        return
+    first, last = pts[0], pts[-1]
+    bars = [('total', first[0], 0.0, first[1])]
+    level = first[1]
+    for label, v in pts[1:-1]:
+        if abs(v - level) >= min_step:
+            bars.append(('step', label, level, v))
+            level = v
+    bars.append(('total', last[0], 0.0, last[1]))
+    W, H, MT, MB = 640, 168, 22, 34
+    plot_h = H - MT - MB
+    top = max(max(max(a, b) for _, _, a, b in bars), 1.0) * 1.08
+    slot = W / len(bars)
+    bar_w = min(56.0, slot * 0.6)
+
+    def y_at(v):
+        return MT + plot_h - plot_h * max(0.0, v) / top
+
+    parts = [f"<svg viewBox='0 0 {W} {H}' xmlns='http://www.w3.org/2000/svg' "
+             f"style='width:100%; max-width:{W}px; height:auto; font-family:{_BODY_FONT};'>"]
+    parts.append(f"<line x1='0' y1='{y_at(0):.1f}' x2='{W}' y2='{y_at(0):.1f}' "
+                 f"stroke='{C['outline_variant']}' stroke-width='1'/>")
+    for i, (kind, label, start, end) in enumerate(bars):
+        x = slot * i + (slot - bar_w) / 2
+        y_top, y_bot = y_at(max(start, end)), y_at(min(start, end))
+        if kind == 'total':
+            fill, text = C['secondary'], f"{end:.1f}"
+        else:
+            fill = C['positive'] if end > start else C['negative']
+            text = f"{end - start:+.1f}"
+        tip = _esc(f"{label}: {end:.1f} pts" + ('' if kind == 'total' else f" ({end - start:+.1f})"))
+        parts.append(f"<rect x='{x:.1f}' y='{y_top:.1f}' width='{bar_w:.1f}' height='{max(1.5, y_bot - y_top):.1f}' "
+                     f"rx='2' fill='{fill}' opacity='{0.95 if kind == 'total' else 0.85}'><title>{tip}</title></rect>")
+        parts.append(f"<text x='{x + bar_w / 2:.1f}' y='{y_top - 5:.1f}' text-anchor='middle' font-size='11' "
+                     f"font-weight='600' font-family='{_MONO_FONT}' fill='{C['on_surface']}'>{text}</text>")
+        parts.append(f"<text x='{x + bar_w / 2:.1f}' y='{H - 18}' text-anchor='middle' font-size='10' "
+                     f"fill='{C['on_surface_variant']}'>{_esc(label)}<title>{tip}</title></text>")
+        if i + 1 < len(bars):           # connector at the running total into the next bar
+            ny = y_at(end)
+            parts.append(f"<line x1='{x + bar_w:.1f}' y1='{ny:.1f}' x2='{slot * (i + 1) + (slot - bar_w) / 2:.1f}' "
+                         f"y2='{ny:.1f}' stroke='{C['on_surface_variant']}' stroke-width='1' "
+                         f"stroke-dasharray='2,2' opacity='0.7'/>")
+    parts.append("</svg>")
+    st.markdown("".join(parts), unsafe_allow_html=True)

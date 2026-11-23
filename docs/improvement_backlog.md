@@ -9,10 +9,19 @@ look (that file still holds the history and the closed-item table).
 practice status, defensive and line personnel, rookie priors, QB rushing) are a work order in `docs/audit_leads_2026-11-10.md`.
 Their IDs there (A1-A10, B2-B10, C1-C7, D0-D5) are separate from the IDs below; move an item into this file when work starts.
 
+**2026-11-23:** ten new accuracy ideas with first reads, each with how to add, test and analyse it, are in
+`docs/accuracy_ideas_2026-11-23.md` (scripts in `.sweeps/accuracy_ideas_2026-11-23/`). The live gap to the market is almost all
+in how a team's points are split between teammates, not in team totals. Ideas 1 and 2 (route-based targets, route trend) became one
+flag, `v2_recal_pass_snap_trend`: the recal's WR / TE / RB receiving lines move with his pass-snap share in his latest game against
+his earlier games, both directions. Harness (`.sweeps/pass_snap_trend_bar.md`) passed every bar line against the route rises:
+2022-2025 START-ALL -0.006 (every season and position better), moved rows 4 of 4 seasons; 2026 weeks 3-10 +0.003 (at the bar).
+SHIPPED 2026-11-23 (user: "Yes, ship it") in place of `v2_wr_route_rise` / `v2_te_route_rise` -> DEFAULT_FEATURES = 88. Live it
+waits on the PFF weekly export for each team's latest game (exports stop at week 9). The doc's status ledger tracks ideas 3-10.
+
 **2026-11-16:** receiver role drift (user idea), two harness rounds (`.sweeps/role_drift_v2_bar.md`): SHIPPED
 `v2_alignment_recency` (WR 0.80 / TE 0.85; a push), `v2_wr_route_rise` (exponent 0.15; passed every line) and `v2_te_route_rise`
 (exponent 0.20; missed the 2026 EVERY-TE line by 0.002, shipped by the user) -> DEFAULT_FEATURES = 89.
-Re-check both route arms on a 2026 rebuild once weeks 11+ exist (the route-rise gain sits mostly in weeks 11-17). Open lead: TEs run
+The two route rises left 2026-11-23 for `v2_recal_pass_snap_trend` (above). Re-check that trend on a 2026 rebuild once weeks 11+ exist (the route-rise gain sits mostly in weeks 11-17). Open lead: TEs run
 high in the 2026 weeks 3-10 rebuild (START-TE bias +1.06 vs -0.35 in 2024-2025; the board's top 12 TEs about 1.4 a game over,
 mostly receiving yards).
 

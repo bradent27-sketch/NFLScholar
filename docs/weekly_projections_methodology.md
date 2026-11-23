@@ -8439,3 +8439,29 @@ SHIPPED all three (user: "Alignment recency push .8 and .85. Wr route rise push 
 smaller 2026 sample less for the TE arm's one missed line. Route rise reads the PFF weekly receiving export; the staleness guard
 keeps it off for a team until that team's latest game is in the export (uploads land Tuesdays). Re-check both route arms on a
 2026 rebuild once weeks 11+ exist.
+
+### 2026-11-23 - SHIPPED: `v2_recal_pass_snap_trend` in place of the WR and TE route rises (DEFAULT_FEATURES = 88)
+User: start accuracy ideas 1 (route-based targets) and 2 (route trend as a continuous signal) from
+`docs/accuracy_ideas_2026-11-23.md`; keep the other eight in that doc's status ledger. Bar and result
+`.sweeps/pass_snap_trend_bar.md`; scripts `.sweeps/accuracy_ideas_2026-11-23/`.
+- The two ideas are one input. Idea 1's first read cancelled to targets per team dropback (his pass snaps over team dropbacks
+  times his targets over his pass snaps), which the recal's season-to-date term already carries. Routes add something only as a
+  change: his pass-snap share in his latest game over his earlier games for the team, minus 1 (clipped -0.8..1.5; 0 with fewer
+  than 2 earlier games or when he missed the team's latest game).
+- Source `data/pass_snaps.py`: pass-play snaps (on the field for a dropback), nflverse participation for 2016-2025 (cached in
+  data/cache/pass_snaps_{year}.parquet), the PFF weekly exports' `pass_plays` for 2026. 2024-2025 per player-game share
+  correlation 0.98, PFF about 7% higher; the ratio cancels a level offset (same-player trend ratios correlate 0.92-0.94).
+- Form: the recal's WR / TE / RB targets, receptions and receiving yards add c x r x season-to-date stat, c fit on what the
+  shipped recal leaves (2021-2025 panel), one weight for weeks 8-17 and one for weeks 3-7 (the gain sits in weeks 8-17 in every
+  season; weeks 3-7 are a wash). Held out by season against the recal plus the route rises: WR/TE/RB points MSE -0.34% (5 of 5),
+  START -0.15% (3 of 5); 2026 weeks 3-7 +0.16% / +0.03%.
+- Harness v2, arm = the route rises off and the trend on, against the 89-flag default with the injury and reserve replay.
+  2022-2025 weeks 3-17: START-ALL -0.006 (CI [-0.012, -0.001], every season better), START-WR / TE / RB -0.007 / -0.008 /
+  -0.009, EVERY-WR / TE / RB -0.011 / -0.006 / -0.008, QB unmoved, SHIP-ELIGIBLE. Moved played rows -0.018 (CI [-0.025, -0.010],
+  4 of 4 seasons; the falls carry most of it). 2026 weeks 3-10: START-ALL +0.0026 (bar +0.003), START-WR +0.009, EVERY-WR
+  +0.007 (bar +0.010), INCONCLUSIVE; weeks 3-7 +0.004, weeks 8-10 -0.001. The weights are in-sample for 2022-2025.
+SHIPPED (user: "Yes, ship it"): `v2_recal_pass_snap_trend` in DEFAULT_FEATURES and POST_CALIBRATION_FEATURES; `v2_wr_route_rise`
+and `v2_te_route_rise` out of both and kept as off flags. Live 2026 week 12 and 13 boards, old and new sets back to back: identical
+(the trend, like the route rises, waits on the PFF weekly export for the team's latest game; exports stop at week 9). Re-check
+on a 2026 rebuild once weeks 11+ exist. Known gaps: PFF name suffixes (Sr. / Jr.) and midseason trades miss the join (about 3%
+of 2026 rows); a player who left his latest game early comes down (priced in on average by the fit).

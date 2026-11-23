@@ -1,4 +1,4 @@
-"""v2_te_route_rise / v2_wr_route_rise (shipped 2026-11-16): a TE whose latest game's route participation jumped gets his receiving line scaled."""
+"""v2_te_route_rise / v2_wr_route_rise (shipped 2026-11-16, off since 2026-11-23): a TE whose latest game's route participation jumped gets his receiving line scaled."""
 import pandas as pd
 
 import data.weekly_projections as wp
@@ -20,10 +20,10 @@ def _factors(board, moves, last_week):
                               wp.TE_ROUTE_RISE_MAX_FACTOR)
 
 
-def test_flags_are_shipped_after_the_calibration():
+def test_flags_are_off_and_never_calibration_inputs():
     for flag in ('v2_te_route_rise', 'v2_wr_route_rise'):
-        assert flag in wp.MODEL_FEATURES and flag in wp.DEFAULT_FEATURES
-        assert flag in wp.POST_CALIBRATION_FEATURES and flag not in wp.CALIBRATION_INPUT_FEATURES
+        assert flag in wp.MODEL_FEATURES and flag not in wp.DEFAULT_FEATURES   # off since 2026-11-23 (v2_recal_pass_snap_trend)
+        assert flag not in wp.CALIBRATION_INPUT_FEATURES
     assert (wp.TE_ROUTE_RISE_EXPONENT, wp.WR_ROUTE_RISE_EXPONENT) == (0.20, 0.15)
 
 

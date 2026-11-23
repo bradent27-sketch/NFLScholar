@@ -1831,11 +1831,17 @@ MODEL_FEATURES = (
                              # RMSE is as good as the uniform cut (6.84 vs 6.81 / 6.85).
     'v2_alignment_recency',  # SHIPPED 2026-11-16 (DEFAULT_FEATURES = 89): the WR/TE alignment mix weights games by decay ** games_ago
                              # (ALIGNMENT_RECENCY_DECAY: WR 0.80, TE 0.85) instead of season-to-date snaps.
-    'v2_te_route_rise',      # SHIPPED 2026-11-16 (DEFAULT_FEATURES = 89): a TE whose latest game's route participation (PFF weekly routes /
-                             # team dropbacks) is TE_ROUTE_RISE_THRESHOLD+ above his earlier season level gets his
-                             # receiving line x (rp_last / rp_before) ** TE_ROUTE_RISE_EXPONENT. Weeks 3-17, needs
-                             # v2_points_from_stat_line; off when the latest weekly export is not his team's latest game.
-    'v2_wr_route_rise',      # SHIPPED 2026-11-16 (DEFAULT_FEATURES = 89): the same for WRs (WR_ROUTE_RISE_THRESHOLD 0.20, _EXPONENT 0.15).
+    'v2_te_route_rise',      # OFF since 2026-11-23 (shipped 2026-11-16; replaced by v2_recal_pass_snap_trend): a TE whose latest
+                             # game's route participation (PFF weekly routes / team dropbacks) is TE_ROUTE_RISE_THRESHOLD+ above
+                             # his earlier season level gets his receiving line x (rp_last / rp_before) ** TE_ROUTE_RISE_EXPONENT.
+                             # Weeks 3-17, needs v2_points_from_stat_line; off when the latest weekly export is not his team's
+                             # latest game.
+    'v2_wr_route_rise',      # OFF since 2026-11-23 (shipped 2026-11-16; replaced by v2_recal_pass_snap_trend): the same for WRs
+                             # (WR_ROUTE_RISE_THRESHOLD 0.20, _EXPONENT 0.15).
+    'v2_recal_pass_snap_trend',  # SHIPPED 2026-11-23 (accuracy ideas 1-2; DEFAULT_FEATURES = 88): weeks 3-17, the recal's WR/TE/RB
+                             # targets, receptions and receiving yards take STAT_RECAL_PASS_SNAP_TREND x r x season to date,
+                             # r = his latest game's pass-snap share over his earlier games' - 1 (data/pass_snaps.py).
+                             # Replaced v2_wr_route_rise / v2_te_route_rise (the same signal, thresholded and rises only).
     'v2_questionable_rb',  # SHIPPED 2026-11-11 (audit A1 follow-up; DEFAULT_FEATURES = 86). A Questionable RB's
                              # rushing line is cut (QUESTIONABLE_RB_STAT_FACTORS: carries 0.93, rushing yards 0.89,
                              # rushing TDs 0.89) and scored; receiving untouched. Weeks 3-17, needs
@@ -2740,14 +2746,17 @@ DEFAULT_FEATURES = frozenset({
     # alignment error). A push the user wanted as an accuracy step: START-WR -0.000 / -0.002, START-TE +0.001 / +0.002 (WR target
     # spillover onto a few TE rows), the rest within 0.001. Undo: remove the flag.
     'v2_alignment_recency',
-    # v2_wr_route_rise: a WR whose latest game's route participation is 0.20+ above his earlier level gets his receiving line x
-    # (rp_last / rp_before) ** 0.15 (cap 1.5), weeks 3-17. Passed every bar line: START-WR -0.005 / +0.001, EVERY-WR -0.004 / +0.002,
-    # moved rows better 3 of 3 seasons. The gain sits in weeks 11-17 (weeks 3-10 a wash). Acts after the points line. Undo: remove it.
-    'v2_wr_route_rise',
-    # v2_te_route_rise: the same for TEs at 0.15+ and exponent 0.20. START-TE -0.017 / +0.007, EVERY-TE -0.006 / +0.005 (the 2026 line
-    # missed its +0.003 bar; the user valued the smaller 2026 sample less and shipped it), pooled START-TE -0.012, moved rows 2 of 3.
-    # Re-check on a 2026 rebuild once weeks 11+ exist. Acts after the points line. Undo: remove the flag.
-    'v2_te_route_rise',
+    # v2_wr_route_rise / v2_te_route_rise shipped here with it (route participation up 0.20+ / 0.15+ in his latest game: receiving
+    # line x (rp_last / rp_before) ** 0.15 / 0.20); both left 2026-11-23 for v2_recal_pass_snap_trend below.
+    # SHIPPED 2026-11-23 (user: "Yes, ship it", after the harness pass): DEFAULT_FEATURES = 88. v2_recal_pass_snap_trend (accuracy
+    # ideas 1-2, docs/accuracy_ideas_2026-11-23.md; bar and result .sweeps/pass_snap_trend_bar.md) in place of the two route rises:
+    # the recal's WR / TE / RB receiving lines move with his pass-snap share in his latest game against his earlier games, both
+    # directions, RBs included. Harness v2 against the route rises: 2022-2025 weeks 3-17 START-ALL -0.006 (every season better),
+    # START-WR / TE / RB -0.007 / -0.008 / -0.009, EVERY-WR / TE / RB -0.011 / -0.006 / -0.008, moved played rows -0.018 (4 of 4
+    # seasons; the weights are in-sample there, held out the read was better in 5 of 5); 2026 weeks 3-10 START-ALL +0.003 (bar
+    # +0.003), weeks 3-7 a wash as in every season. QB rows unmoved. Live it waits on the PFF weekly export for the team's latest
+    # game, like the route rises did. Undo: remove it and put the two route rises back.
+    'v2_recal_pass_snap_trend',
 })
 
 
@@ -2784,7 +2793,7 @@ POST_CALIBRATION_FEATURES = frozenset({'v2_opening_week_stat_calibration',
                                        'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
                                        'v2_stat_recal_game_script', 'v2_stat_recal_gate_ramp', 'v2_points_from_stat_line',
                                        'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut',
-                                       'v2_questionable_rb', 'v2_te_route_rise', 'v2_wr_route_rise'})
+                                       'v2_questionable_rb', 'v2_recal_pass_snap_trend'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
@@ -3288,7 +3297,8 @@ QUESTIONABLE_STAT_FACTORS = {'WR': {'targets': 0.926, 'receptions': 0.888, 'rece
 # yards 4 of 5; cutting receptions is worse. Weeks 3-17, the rows points-from-the-stat-line scores (the total is that line).
 QUESTIONABLE_RB_STAT_FACTORS = {'RB': {'rushing_attempts': 0.927, 'rushing_yards': 0.892, 'rushing_tds': 0.894}}
 
-# v2_te_route_rise (SHIPPED 2026-11-16; scripts/study_role_alignment_drift.py): when a tight end's route participation jumps
+# v2_te_route_rise (shipped 2026-11-16, OFF since 2026-11-23 for v2_recal_pass_snap_trend; scripts/study_role_alignment_drift.py):
+# when a tight end's route participation jumps
 # in his latest game (routes / team dropbacks, PFF weekly receiving exports; 0.15+ above his pooled earlier-season level, 2+
 # earlier games for the team), the board under-projects him the next week - it reads targets and snaps, not routes, and its
 # per-game decay moves slowly. Drops are not acted on (the same rule on drops is worse). Factor capped at 1.5.
@@ -3302,7 +3312,7 @@ TE_ROUTE_RISE_THRESHOLD = 0.15
 TE_ROUTE_RISE_EXPONENT = 0.20
 TE_ROUTE_RISE_MAX_FACTOR = 1.5
 TE_ROUTE_RISE_STATS = ('targets', 'receptions', 'receiving_yards', 'receiving_tds')
-# v2_wr_route_rise (SHIPPED 2026-11-16): the same rule for WRs at 0.20+. The first build (0.30, raw miss) failed 2026; refit on
+# v2_wr_route_rise (shipped 2026-11-16, OFF since 2026-11-23): the same rule for WRs at 0.20+. The first build (0.30, raw miss) failed 2026; refit on
 # the miss relative to the WR pool, held out: exponent 0.15 / 0.10 / 0.20, moved rows -2.3% / -2.0% / -0.8%, START-WR -0.15% /
 # -0.08% / -0.06%, whole WR pool 3 of 3 (thresholds 0.15-0.20 alike). WR drops: worse at every threshold.
 WR_ROUTE_RISE_THRESHOLD = 0.20
@@ -3479,6 +3489,25 @@ STAT_RECAL_GAME_SCRIPT = {
 }
 STAT_RECAL_SCRIPT_KNEE = 7.0
 
+# --- v2_recal_pass_snap_trend (SHIPPED 2026-11-23, accuracy ideas 1-2; bar and result .sweeps/pass_snap_trend_bar.md) --------
+# The recal reads targets and catches, not who is on the field when the team drops back. With the flag the weeks 3-17 WR / TE / RB
+# targets, receptions and receiving yards add c x r x s2d: r = his pass-snap share (on the field for a dropback / the team's
+# dropbacks) in his latest game over his earlier games for the team, minus 1, clipped -0.8..1.5 (data/pass_snaps.py; 0 with
+# fewer than 2 earlier games or when he missed the team's latest game); s2d = his season-to-date per-game stat; c = the first
+# weight from week PASS_SNAP_TREND_LATE_WEEK on, the second before (the gain sits in weeks 8-17 in every season; weeks 3-7 are
+# a wash). Source: nflverse participation where the season has it (2016-2025), else the weekly PFF exports' pass_plays (2026);
+# per player-game share correlation 0.98 between them (2024-2025), PFF about 7% higher, which the ratio cancels.
+# Weights fit on what the shipped recal leaves (deep-audit panel, 2021-2025, no intercept; .sweeps/accuracy_ideas_2026-11-23/
+# fit_trend_table.py). Held out by season against the shipped recal plus the shipped route rise (route_recal.py, which refits
+# both arms): points MSE on WR/TE/RB recal rows -0.34% pooled (5 of 5 seasons), START -0.15% (3 of 5); 2026 weeks 3-7 (PFF)
+# +0.16% / +0.03%. It replaces v2_wr_route_rise / v2_te_route_rise (the same signal, thresholded and rises only).
+STAT_RECAL_PASS_SNAP_TREND = {   # (weeks 8-17, weeks 3-7)
+    'WR': {'targets': (0.2272, 0.1401), 'receptions': (0.2275, 0.0885), 'receiving_yards': (0.2217, 0.0404)},
+    'TE': {'targets': (0.2101, 0.164), 'receptions': (0.1801, 0.1977), 'receiving_yards': (0.2103, 0.1777)},
+    'RB': {'targets': (0.1624, 0.0657), 'receptions': (0.2053, 0.0435), 'receiving_yards': (0.1959, 0.0646)},
+}
+PASS_SNAP_TREND_LATE_WEEK = 8
+
 # --- v2_rb_game_script_rush (SHIPPED) / v2_rb_game_script (off), backlog L5 -----------------------------------------------------
 # Error-first audit 2026-10-21: RBs on favored teams beat the board (START-RB -0.008 held out, 5 of 5). Measured 2026-11-01 on
 # the deep-audit panel (today's points), START-RB (top 40 played), weeks 3-17 (bar: .sweeps/rb_game_script_bar.md, set first):
@@ -3501,17 +3530,24 @@ RB_GAME_SCRIPT_CLIP = 14.0
 def stat_recal_table(feats, week):
     """(form, {pos: {stat: coefficients}}) for this week under `feats`: form 'linear' (weeks 3-17), 'week1' or 'pull' (week 2);
     (None, {}) when neither flag covers the week. With 'v2_stat_recal_game_script' the linear table's QB entries come from
-    STAT_RECAL_GAME_SCRIPT (ten terms)."""
+    STAT_RECAL_GAME_SCRIPT (ten terms); with 'v2_recal_pass_snap_trend' the WR / TE / RB receiving entries get the two
+    STAT_RECAL_PASS_SNAP_TREND weights after their seven terms (nine)."""
     week = int(week)
     if 3 <= week <= 17:
         if 'v2_stat_recal_own_history' not in feats:
             return None, {}
+        table = STAT_RECAL_OWN_HISTORY
         if 'v2_stat_recal_game_script' in feats:
-            table = {pos: dict(stats) for pos, stats in STAT_RECAL_OWN_HISTORY.items()}
+            table = {pos: dict(stats) for pos, stats in table.items()}
             for pos, stats in STAT_RECAL_GAME_SCRIPT.items():
                 table.setdefault(pos, {}).update(stats)
-            return 'linear', table
-        return 'linear', STAT_RECAL_OWN_HISTORY
+        if 'v2_recal_pass_snap_trend' in feats:     # nine terms: the seven above, then the two trend weights
+            table = {pos: dict(stats) for pos, stats in table.items()}
+            for pos, stats in STAT_RECAL_PASS_SNAP_TREND.items():
+                for stat, weights in stats.items():
+                    if stat in table.get(pos, {}):
+                        table[pos][stat] = tuple(table[pos][stat][:7]) + tuple(weights)
+        return 'linear', table
     if week in STAT_RECAL_OWN_HISTORY_EDGES and 'v2_stat_recal_own_history_edges' in feats:
         return ('week1' if week == 1 else 'pull'), STAT_RECAL_OWN_HISTORY_EDGES[week]
     return None, {}
@@ -3541,7 +3577,7 @@ def rb_game_script_multipliers(teams, script, table):
     return {stat: 1.0 + float(b) * z for stat, b in table.items()}
 
 
-def apply_stat_recal_own_history(result, history, form, table, script=None, ramp_start=None):
+def apply_stat_recal_own_history(result, history, form, table, script=None, ramp_start=None, trend=None, week=None):
     """(result, info): re-predict each listed stat from the board's stat and the player's own history (module comment above).
     ``history`` is data.prop_probability.player_history (index (_key, pos): h_s2d_/h_l3_/h_ps_<stat>, h_games, h_ps_games);
     ``form`` and ``table`` from stat_recal_table. Skips rows under STAT_RECAL_MIN_POINTS, sidelined rows, non-starting QBs, rows
@@ -3550,7 +3586,9 @@ def apply_stat_recal_own_history(result, history, form, table, script=None, ramp
     (before, after)}, 'games': games this season, 'form': form}. ``script`` ({team: (m, t)}, stat_recal_script_inputs) feeds
     a ten-term linear entry (v2_stat_recal_game_script); a team missing from it reads 0, 0. ``ramp_start``
     (v2_stat_recal_gate_ramp, weeks 3-17 only): a row with gate points from ``ramp_start`` up to STAT_RECAL_MIN_POINTS takes the
-    share (points - ramp_start) / (STAT_RECAL_MIN_POINTS - ramp_start) of the recal's move."""
+    share (points - ramp_start) / (STAT_RECAL_MIN_POINTS - ramp_start) of the recal's move. ``trend`` ({(canonical team, name
+    key): (r_last, r_l3)}, data.pass_snaps.trend_ratios) feeds a nine-term entry (v2_recal_pass_snap_trend) with ``week``
+    choosing its weight; a row missing from it reads r = 0."""
     if result is None or result.empty or not table or history is None or len(history) == 0:
         return result, {}
     out = result.copy()
@@ -3585,6 +3623,12 @@ def apply_stat_recal_own_history(result, history, form, table, script=None, ramp
     teams = out['Team'].astype(str) if 'Team' in out.columns else pd.Series('', index=out.index)
     margin = teams.map(lambda t: (script or {}).get(t, (0.0, 0.0))[0]).to_numpy(float)
     total = teams.map(lambda t: (script or {}).get(t, (0.0, 0.0))[1]).to_numpy(float)
+    if trend:
+        from data.pff_alignment import _canonical_team_key
+        trend_r = np.array([trend.get((_canonical_team_key(t), k), (0.0, 0.0))[0] for t, k in zip(teams, keys)], dtype=float)
+    else:
+        trend_r = np.zeros(len(out))
+    trend_late = week is not None and int(week) >= PASS_SNAP_TREND_LATE_WEEK
     info = {}
     for pos, stats in table.items():
         pos_rows = out['Pos'].eq(pos).to_numpy() & ok
@@ -3604,6 +3648,8 @@ def apply_stat_recal_own_history(result, history, form, table, script=None, ramp
                 if len(coef) == 10:                                         # v2_stat_recal_game_script
                     c_m, c_t, c_knee = coef[7:]
                     new = new + c_m * margin + c_t * total + c_knee * np.maximum(margin - STAT_RECAL_SCRIPT_KNEE, 0.0)
+                elif len(coef) == 9:                                        # v2_recal_pass_snap_trend
+                    new = new + (coef[7] if trend_late else coef[8]) * trend_r * np.nan_to_num(s2d)
             elif form == 'week1':
                 c0, c_proj, c_last = coef
                 new = c0 + c_proj * level + c_last * ps
@@ -3627,6 +3673,8 @@ def apply_stat_recal_own_history(result, history, form, table, script=None, ramp
                 rec = info.setdefault((row['Player'], row['Pos'], row['Team']),
                                       {'stats': {}, 'games': int(games[j]), 'form': form})
                 rec['stats'][stat] = (float(cur[j]), float(round(new[j], 3)))
+                if form == 'linear' and len(coef) == 9 and trend_r[j] != 0.0:
+                    rec['pass_snap_trend'] = float(trend_r[j])
     # Each stat has its own fit, so a rare row can end up catching more than it is thrown (panel 2021-2026: 4 of about 17,000
     # moved rows, all weeks 1-2). There the board's own catch rate is kept on the new targets.
     if '_pre_recal_receptions' in out.columns and 'targets' in out.columns:
@@ -13177,10 +13225,17 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
         _own_history = player_history(hist, name_col, as_of_week,
                                       prior_stats if prior_stats is not None and not prior_stats.empty else None,
                                       prior_name_col)
+        _pass_snap_trend = None
+        if 'v2_recal_pass_snap_trend' in feats and _recal_form == 'linear':
+            # his latest game's pass-snap share against his earlier games' (participation, else the weekly PFF exports)
+            from data.pass_snaps import pass_snap_rows, pass_snap_trend, trend_ratios
+            _pass_snap_trend = trend_ratios(pass_snap_trend(pass_snap_rows(year, as_of_week)),
+                                            team_latest_game_weeks(hist, team_col, as_of_week))
         result, own_history_info = apply_stat_recal_own_history(
             result, _own_history, _recal_form, _recal_table,
             script=stat_recal_script_inputs(env, opponents) if 'v2_stat_recal_game_script' in feats else None,
-            ramp_start=STAT_RECAL_RAMP_START if 'v2_stat_recal_gate_ramp' in feats else None)
+            ramp_start=STAT_RECAL_RAMP_START if 'v2_stat_recal_gate_ramp' in feats else None,
+            trend=_pass_snap_trend, week=week)
 
     # v2_points_from_stat_line (candidate, 2026-11-01 audit): weeks 3-17, the total is the displayed stat line scored, times the
     # Questionable cut where it ran; the points line, season anchor and luck results above are replaced.

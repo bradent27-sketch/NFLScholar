@@ -1,0 +1,263 @@
+# v2_debut_starter_full_role (accuracy idea 6, 2026-11-23), never committed: built, harness-tested, failed its bar (.sweeps/debut_starter_bar.md).
+# Restore: git apply --ignore-whitespace archive/retired_flags/patches/20-uncommitted-debut-starter-full-role.patch  (base bb17771; includes pup_nfi_before, the shared roster-code helper and the tests)
+diff --git a/data/historical_availability.py b/data/historical_availability.py
+index 9d1b1ce..799856c 100644
+--- a/data/historical_availability.py
++++ b/data/historical_availability.py
+@@ -180,12 +180,16 @@ def historical_reserve_profiles(season, week):
+ SUSPENDED_ROSTER_CODE = 'R40'
+ 
+ 
+-def suspended_before(season, week, rosters=None):
+-    """Set of clean_name_exact keys of every player whose LATEST weekly-roster row in a week before ``week`` is the
+-    Reserve/Suspended code - 'was suspended through last week', the rule v2_suspension_return_full_role reads. Only weeks
+-    before ``week`` decide who was suspended, and a player still on the suspended list in ``week``'s own row (when it
+-    exists - the live feed publishes it at the start of the week) is dropped: he has not returned. Anyone whose latest
+-    earlier row is anything else (activated, cut, injured reserve) is not in the set. Empty on any failure."""
++# The PUP and non-football injury / illness reserve-list codes (Chubb and Hockenson 2024 R04, Brooks 2024 R05,
++# Edwards-Helaire 2024 R27). A debut from one of these lists ramps up, unlike an injured-reserve or suspension return.
++PUP_NFI_ROSTER_CODES = frozenset({'R04', 'R05', 'R27'})
++
++
++def _latest_earlier_code_in(season, week, codes, rosters=None):
++    """Set of clean_name_exact keys of every player whose LATEST weekly-roster row in a week before ``week`` carries one
++    of ``codes`` - 'was on that list through last week'. Only weeks before ``week`` decide, and a player still on one of
++    the lists in ``week``'s own row (when it exists - the live feed publishes it at the start of the week) is dropped: he
++    has not returned. Anyone whose latest earlier row is anything else is not in the set. Empty on any failure."""
+     try:
+         r = load_weekly_rosters(season) if rosters is None else rosters
+         if r is None or r.empty or 'week' not in r.columns or 'status_description_abbr' not in r.columns:
+@@ -193,17 +197,29 @@ def suspended_before(season, week, rosters=None):
+         r = r.copy()
+         r['_week'] = pd.to_numeric(r['week'], errors='coerce')
+         r['_key'] = clean_name_exact(r['full_name'].astype(str))
+-        is_susp = r['status_description_abbr'].astype(str).eq(SUSPENDED_ROSTER_CODE)
++        on_list = r['status_description_abbr'].astype(str).isin(codes)
+         earlier = r[r['_week'] < float(week)]
+         if earlier.empty:
+             return set()
+         latest = earlier.sort_values('_week').groupby('_key', sort=False).tail(1)
+-        out = set(latest.loc[is_susp.reindex(latest.index), '_key'])
+-        return out - set(r.loc[(r['_week'] == float(week)) & is_susp, '_key'])
++        out = set(latest.loc[on_list.reindex(latest.index), '_key'])
++        return out - set(r.loc[(r['_week'] == float(week)) & on_list, '_key'])
+     except Exception:
+         return set()
+ 
+ 
++def suspended_before(season, week, rosters=None):
++    """Players back from the Reserve/Suspended list (``_latest_earlier_code_in``), the rule v2_suspension_return_full_role
++    reads. Anyone whose latest earlier row is anything else (activated, cut, injured reserve) is not in the set."""
++    return _latest_earlier_code_in(season, week, {SUSPENDED_ROSTER_CODE}, rosters)
++
++
++def pup_nfi_before(season, week, rosters=None):
++    """Players back from the PUP or non-football injury / illness list (``_latest_earlier_code_in``), the debuts
++    v2_debut_starter_full_role leaves on the partial pull."""
++    return _latest_earlier_code_in(season, week, PUP_NFI_ROSTER_CODES, rosters)
++
++
+ def merge_reserve_profiles(injury_profiles, reserve_profiles):
+     """Injury-report profiles plus reserve-list players. A reserve-list
+     status wins over a same-week report entry (a player can't be both
+diff --git a/data/weekly_projections.py b/data/weekly_projections.py
+index a367ec0..b4f94fd 100644
+--- a/data/weekly_projections.py
++++ b/data/weekly_projections.py
+@@ -151,7 +151,8 @@ RETIRED_POINTS_STEP_REEXPORTS = (
+     EXPECTED_POINTS_LUCK, EXPECTED_POINTS_LUCK_TE_REFIT, EXPECTED_POINTS_LUCK_QB, EXPECTED_POINTS_LUCK_CENTER,
+     apply_expected_points_luck, expected_points_luck_factors)
+ from data.historical_availability import (
+-    historical_injury_profiles, historical_reserve_profiles, load_weekly_rosters, merge_reserve_profiles, suspended_before)
++    historical_injury_profiles, historical_reserve_profiles, load_weekly_rosters, merge_reserve_profiles, pup_nfi_before,
++    suspended_before)
+ from data.matchup_signals import (defense_stat_rank, blended_defense_stat_table,
+                                    defense_rank_from_table)
+ from data.weekly_distribution import player_distribution
+@@ -411,6 +412,9 @@ QB1_INSEASON_MAX_STALE_TEAM_GAMES = 2
+ COLD_START_RETURNING_ROLE_MIN_GAMES = {'RB': 8, 'WR': 6, 'TE': 6}
+ COLD_START_RETURNING_ROLE_MIN_ACTIVE_SHARE = 0.60
+ COLD_START_RETURNING_ROLE_CAP = 0.95
++# v2_debut_starter_full_role: a starter's role in his last healthy games. Same-team debuts at 0.70+ came back at full role
++# (2022-2026: 0.82 of snaps vs 0.81 last season); at 0.50-0.70 they came back at about half (0.35 vs 0.60).
++DEBUT_STARTER_MIN_ROLE = 0.70
+ 
+ # Two-season cold-start blend, added 2026-08-24 at explicit request: a down
+ # year, an abbreviated/injury-shortened season, or a genuinely thin sample
+@@ -1864,6 +1868,12 @@ MODEL_FEATURES = (
+                              # partial pull (restore_cold_start_returning_role_share's
+                              # full_recovery). 2021-2025: Hopkins, Kamara, Addison each
+                              # scored ~1.85x their projection in the first game back.
++    'v2_debut_starter_full_role',  # CANDIDATE 2026-11-23 (accuracy idea 6). The same full role for a
++                             # zero-game RB/WR/TE whose last healthy role was a starter's (active or
++                             # pre-absence share >= DEBUT_STARTER_MIN_ROLE) and who was NOT on the
++                             # PUP / NFI list (pup_nfi_before), when available. 2022-2026 same-team
++                             # debuts at 0.70+: projected 0.53 snaps, played 0.82, +3.4 pts a game;
++                             # PUP debuts played 0.29 (.sweeps/ir_return/).
+     'v2_qb1_latest_game_starter',  # SHIPPED 2026-10-14 (was a candidate). The in-season QB1
+                              # picker compares QBs on their share of the TEAM's
+                              # most recent game, not each QB's own last game:
+@@ -6163,6 +6173,20 @@ def suspension_return_mask(names, suspended_keys, availability):
+     return clean_name_exact(names).isin(suspended_keys).to_numpy(dtype=bool) & (avail > SIDELINED_AVAILABILITY)
+ 
+ 
++def debut_starter_return_mask(names, active_share, pre_absence_share, pup_nfi_keys, availability):
++    """Boolean array over ``names`` (v2_debut_starter_full_role): his last healthy role was a starter's (the larger of his
++    active and pre-absence share >= DEBUT_STARTER_MIN_ROLE), he is not back from the PUP / NFI list (``pup_nfi_keys``,
++    data.historical_availability.pup_nfi_before: those debuts ramp up) and he is available this week. The caller applies
++    it to rows with no game this season, partial games included; restore_cold_start_returning_role_share still checks
++    eligibility (same team, prior games)."""
++    names = pd.Series(names)
++    role = np.fmax(np.nan_to_num(np.asarray(active_share, dtype=float), nan=0.0),
++                   np.nan_to_num(np.asarray(pre_absence_share, dtype=float), nan=0.0))
++    avail = np.asarray(availability, dtype=float)
++    pup_nfi = clean_name_exact(names).isin(pup_nfi_keys or set()).to_numpy(dtype=bool)
++    return (role >= DEBUT_STARTER_MIN_ROLE) & ~pup_nfi & (avail > SIDELINED_AVAILABILITY)
++
++
+ def restore_cold_start_returning_role_share(whole_season_share, active_game_share,
+                                             prior_games, prior_team, current_team, pos,
+                                             pre_absence_share=None, depth_rank=None,
+@@ -6198,7 +6222,7 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
+     full active/pre-absence role (``restored``) instead of the alpha pull toward it. A player back from a suspension
+     has no ramp-up to price in (Hopkins 2022, Kamara 2023, Addison 2025 each produced about 1.85x the partial-role
+     projection in their first game back); the eligibility checks are unchanged, so a rookie or a new-team player
+-    is not promoted.
++    is not promoted. 'v2_debut_starter_full_role' (2026-11-23) marks a starter back from injury the same way.
+     """
+     whole = np.asarray(whole_season_share, dtype=float)
+     active = np.asarray(active_game_share, dtype=float)
+@@ -6309,7 +6333,7 @@ def restore_cold_start_returning_role_share(whole_season_share, active_game_shar
+         recovered = np.where(full_rows, np.maximum(recovered, restored), recovered)
+     values = np.where(eligible, recovered, whole)
+     reasons = np.where(
+-        full_rows, 'suspension return: full active role restored',
++        full_rows, 'full active role restored',
+         np.where(
+             charted_short_sample, 'charted short-sample returning-starter recovery',
+             np.where(
+@@ -11213,10 +11237,18 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                         and not prior_role_reference.empty):
+                     # v2_suspension_return_full_role: a zero-game player whose latest earlier roster row is
+                     # Reserve/Suspended has no ramp-up to price in, so he gets his full active role.
+-                    suspension_return = np.zeros(len(cur), dtype=bool)
++                    full_role_return = np.zeros(len(cur), dtype=bool)
+                     if 'v2_suspension_return_full_role' in feats:
+-                        suspension_return = suspension_return_mask(
++                        full_role_return = suspension_return_mask(
+                             cur[name_col], suspended_before(year, as_of_week), player_availability)
++                    # v2_debut_starter_full_role: so does a starter back from injury (not PUP / NFI) in his true debut.
++                    # 'Games' leaves out partial games, so a starter ramping up at 45% snaps (Hockenson 2024 weeks 9-10)
++                    # still reads 0 games; any partial game this season is evidence of the ramp and keeps the pull.
++                    if 'v2_debut_starter_full_role' in feats:
++                        no_game_yet = cur['_current_history_excluded_games'].to_numpy(dtype=float) <= 0
++                        full_role_return = full_role_return | (no_game_yet & debut_starter_return_mask(
++                            cur[name_col], player_prior_share, player_pre_absence_share,
++                            pup_nfi_before(year, as_of_week), player_availability))
+                     restored_share, restored_eligible, restored_reason = restore_cold_start_returning_role_share(
+                         player_share, player_prior_share, prior_games, player_prior_teams,
+                         team_keys_rv.to_numpy(dtype=object), pos,
+@@ -11226,7 +11258,7 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
+                         prior2_games=player_prior2_games,
+                         prior2_active_share=player_prior2_active_share,
+                         role_confidence=cur['role_confidence'].to_numpy(dtype=float),
+-                            full_recovery=suspension_return,
++                            full_recovery=full_role_return,
+                         return_details=True,
+                     )
+                     apply_mask = zero_games_mask & restored_eligible
+diff --git a/tests/test_suspension_return.py b/tests/test_suspension_return.py
+index 8298d61..1254dde 100644
+--- a/tests/test_suspension_return.py
++++ b/tests/test_suspension_return.py
+@@ -80,7 +80,7 @@ def test_full_recovery_promotes_only_eligible_marked_rows():
+     assert share[0] == base_share[0]                                    # eligible, not marked: the partial pull
+     assert share[1] > base_share[1] and np.isclose(share[1], 0.80)      # eligible and marked: the full active role
+     assert share[2] == base_share[2] and not ok[2]                      # marked but ineligible (3 prior games): untouched
+-    assert reason[1] == 'suspension return: full active role restored'
++    assert reason[1] == 'full active role restored'
+     assert (ok == base_ok).all()
+ 
+ 
+diff --git a/tests/test_debut_starter_full_role.py b/tests/test_debut_starter_full_role.py
+new file mode 100644
+index 0000000..8f52728
+--- /dev/null
++++ b/tests/test_debut_starter_full_role.py
+@@ -0,0 +1,76 @@
++"""v2_debut_starter_full_role (2026-11-23, accuracy idea 6): a zero-game starter back from injury (not PUP / NFI) gets his
++full active role, as a suspension return does."""
++import os
++import sys
++
++import numpy as np
++import pandas as pd
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++pd.options.mode.string_storage = "python"
++
++import data.historical_availability as ha  # noqa: E402
++import data.weekly_projections as wp  # noqa: E402
++
++
++def key(name):
++    return wp.clean_name_exact(pd.Series([name])).iloc[0]
++
++
++def _rosters(rows):
++    return pd.DataFrame(rows, columns=['season', 'week', 'team', 'full_name', 'status', 'status_description_abbr'])
++
++
++def test_flag_is_a_registered_candidate():
++    assert 'v2_debut_starter_full_role' in wp.MODEL_FEATURES
++    assert 'v2_debut_starter_full_role' not in wp.DEFAULT_FEATURES
++    assert wp.DEBUT_STARTER_MIN_ROLE == 0.70
++
++
++def test_pup_nfi_before_reads_the_three_codes_and_only_them():
++    r = _rosters([
++        [2024, 5, 'MIN', 'Pup Tight End', 'RES', 'R04'], [2024, 6, 'MIN', 'Pup Tight End', 'ACT', 'A01'],
++        [2024, 5, 'CAR', 'Nfi Back', 'RES', 'R05'],
++        [2024, 5, 'KC', 'Illness Back', 'RES', 'R27'],
++        [2024, 5, 'SF', 'Ir Back', 'RES', 'R01'],
++        [2024, 5, 'LA', 'Dtr Receiver', 'RES', 'R48'],
++        [2024, 5, 'NO', 'Suspended Back', 'RES', 'R40'],
++    ])
++    out = ha.pup_nfi_before(2024, 6, rosters=r)
++    assert out == {key('Pup Tight End'), key('Nfi Back'), key('Illness Back')}
++    # still on the list in his own week's row: not back yet
++    still = _rosters([[2024, 5, 'MIN', 'Pup Tight End', 'RES', 'R04'], [2024, 6, 'MIN', 'Pup Tight End', 'RES', 'R04']])
++    assert ha.pup_nfi_before(2024, 6, rosters=still) == set()
++    assert ha.pup_nfi_before(2024, 6, rosters=pd.DataFrame()) == set()
++
++
++def test_suspended_before_is_unchanged_by_the_shared_helper():
++    r = _rosters([[2023, 3, 'NO', 'Alvin Kamara', 'RES', 'R40'], [2023, 4, 'NO', 'Alvin Kamara', 'ACT', 'A01'],
++                  [2023, 3, 'MIN', 'Pup Tight End', 'RES', 'R04']])
++    assert ha.suspended_before(2023, 4, rosters=r) == {key('Alvin Kamara')}
++
++
++def test_mask_needs_a_starter_role_no_pup_nfi_and_availability():
++    names = pd.Series(['Starter', 'Pre Absence Starter', 'Part Timer', 'Pup Starter', 'Out Starter', 'No History'])
++    active = [0.86, 0.55, 0.62, 0.80, 0.90, np.nan]
++    pre_absence = [np.nan, 0.83, 0.65, 0.80, 0.90, np.nan]
++    avail = [1.0, 1.0, 1.0, 1.0, 0.0, 1.0]
++    mask = wp.debut_starter_return_mask(names, active, pre_absence, {key('Pup Starter')}, avail)
++    assert mask.tolist() == [True, True, False, False, False, False]
++    # no PUP / NFI set at all: only the role and availability decide
++    assert wp.debut_starter_return_mask(names, active, pre_absence, set(), avail).tolist() == \
++        [True, True, False, True, False, False]
++
++
++def test_a_marked_starter_gets_the_full_role_and_an_ineligible_one_nothing():
++    # whole ~0 (no game this season), active 0.86 over 15 prior games, same team; the third row changed teams
++    whole, active = np.array([0.0, 0.0, 0.0]), np.array([0.86, 0.86, 0.86])
++    args = dict(whole_season_share=whole, active_game_share=active, prior_games=np.array([15, 15, 15]),
++                prior_team=['BAL', 'BAL', 'ARI'], current_team=['BAL', 'BAL', 'KC'], pos='WR', return_details=True)
++    base, base_ok, _ = wp.restore_cold_start_returning_role_share(**args)
++    mask = wp.debut_starter_return_mask(['A', 'B', 'C'], active, [np.nan] * 3, set(), [1.0, 1.0, 1.0])
++    share, ok, reason = wp.restore_cold_start_returning_role_share(**args, full_recovery=mask & np.array([False, True, True]))
++    assert share[0] == base[0] and base[0] < 0.86                       # not marked: the partial pull
++    assert np.isclose(share[1], 0.86) and reason[1] == 'full active role restored'
++    assert share[2] == base[2] and not ok[2]                            # new team: never promoted
++    assert (ok == base_ok).all()

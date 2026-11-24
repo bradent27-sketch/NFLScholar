@@ -19,7 +19,7 @@ TODO, IN PROGRESS, SHIPPED, REJECTED (tested, not worth it), PARKED (waiting on 
 | 3 | A room share model, and share error in the scorecard | TODO | 2026-11-23 | |
 | 4 | QB and pass-catcher passing yards made to agree | TODO | 2026-11-23 | re-measure on current boards first (the game-script recal overlaps) |
 | 5 | A second source before an Out tag zeroes a player | TODO | 2026-11-23 | the props-existence check needs the user's OK |
-| 6 | Full role for players back from injured reserve | TODO | 2026-11-23 | |
+| 6 | Full role for players back from injured reserve | FAILED | 2026-11-24 | re-measure: same-team starters' (0.70+ last season) true season debuts were projected 0.53 snaps, played 0.82 (n 9); PUP debuts ramp. Flag `v2_debut_starter_full_role` failed its bar: moved played rows +0.089 RMSE, better in 1 of 4 seasons; START-ALL +0.001. The mask's role (max of active and pre-absence share) also marked depth WRs off a late-season fill-in stretch, and on the true starters the points didn't follow (3 better, 5 worse). 2026 weeks 3-10 better (-0.010, Bowers week 3 only). Not shipped. `.sweeps/debut_starter_bar.md` |
 | 7 | Depth-chart promotions as an early role signal | TODO | 2026-11-23 | |
 | 8 | Past opponents taken out of a player's own rates | TODO | 2026-11-23 | |
 | 9 | Man/zone matchups refit on six seasons of free data | TODO | 2026-11-23 | |

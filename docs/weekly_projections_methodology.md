@@ -8465,3 +8465,26 @@ and `v2_te_route_rise` out of both and kept as off flags. Live 2026 week 12 and 
 (the trend, like the route rises, waits on the PFF weekly export for the team's latest game; exports stop at week 9). Re-check
 on a 2026 rebuild once weeks 11+ exist. Known gaps: PFF name suffixes (Sr. / Jr.) and midseason trades miss the join (about 3%
 of 2026 rows); a player who left his latest game early comes down (priced in on average by the fit).
+
+### 2026-11-24 - SHIPPED: `v2_receiving_yards_coherence` (DEFAULT_FEATURES = 89)
+User: try idea 4 of `docs/accuracy_ideas_2026-11-23.md` (QB and pass-catcher passing yards made to agree) only if it is a
+significant improvement. Bar and result `.sweeps/receiving_coherence_bar.md`; scripts `.sweeps/accuracy_ideas_2026-11-23/`
+(`qb_coherence_v2.py`, `smoke_coherence.py`, `live_check_coherence.py`).
+- Re-measured on the harness base boards (DEFAULT 88). Moving the QB's passing yards toward his receivers' sum, the first read's
+  form, now fits at weight 0: the game-script recal (2026-11-01) took it. The other direction holds: the recal moves a QB's yards
+  with the game script but never his receivers'. Held out by season, RB / WR / TE receiving yards 25-30% of the way toward the
+  board QB1's line cut receiving-yard MSE 0.05-0.54% (5 of 5); down-moved and up-moved team-weeks both improve.
+- The rule, weeks 3-17 (with `v2_points_from_stat_line`), the last stat-line step before the line is scored: each team's
+  receiving yards x ((1 - 0.25) x total + 0.25 x QB1 / 0.956) / total, total = availability-weighted RB / WR / TE receiving yards,
+  QB1 = most projected passing attempts. One factor per team (shares unchanged); yards only; the QB line never moves. Weight and
+  K fit pooled on 2022-2025.
+- Harness v2 against DEFAULT 88 with the injury and reserve replay. 2022-2025 weeks 3-17: START-ALL -0.006 [-0.011, -0.003],
+  START-WR / TE / RB -0.010 / -0.013 / -0.003, EVERY-ALL -0.004, QB unmoved; by season -0.0006 / -0.0022 / -0.0116 / -0.0115.
+  Moved played rows -0.013 [-0.020, -0.007], every position and both directions. 2026 weeks 3-10 START-ALL -0.003 [-0.014,
+  +0.005]. The bar was moved from -0.005 to -0.003 by the user before any result existed; the run clears both.
+- A team the board projects no QB for (36 harness team-weeks, mostly a starter ruled out with no backup line) gets its receivers
+  cut about 25%. There it helped: 397 played receivers, RMSE 5.437 -> 5.358 (mean 5.68 -> 5.17, actual 5.20).
+SHIPPED (user: "Yes, ship it"): in DEFAULT_FEATURES and POST_CALIBRATION_FEATURES. Live 2026 weeks 12 and 13, old and new sets
+back to back: only `receiving_yards`, `Model Proj Pts` and `Calibrated Model Proj Pts` change, RB / WR / TE rows only (week 12
+172 rows, -1.6 to +0.2, LV the -1.6 with no QB line; week 13 130 rows, -0.4 to +0.1). The first live build crashed on the live
+board's Categorical Team column (the historical boards' is plain text); fixed and tested before the ship.

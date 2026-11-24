@@ -1842,6 +1842,10 @@ MODEL_FEATURES = (
                              # targets, receptions and receiving yards take STAT_RECAL_PASS_SNAP_TREND x r x season to date,
                              # r = his latest game's pass-snap share over his earlier games' - 1 (data/pass_snaps.py).
                              # Replaced v2_wr_route_rise / v2_te_route_rise (the same signal, thresholded and rises only).
+    'v2_receiving_yards_coherence',  # SHIPPED 2026-11-24 (accuracy idea 4; DEFAULT_FEATURES = 89). Weeks 3-17, a team's RB/WR/TE
+                             # receiving yards are scaled part of the way toward what its QB1's passing
+                             # line implies (RECEIVING_YARDS_COHERENCE_*), up or down, shares unchanged.
+                             # The game-script recal moves the QB's yards, not his receivers'.
     'v2_questionable_rb',  # SHIPPED 2026-11-11 (audit A1 follow-up; DEFAULT_FEATURES = 86). A Questionable RB's
                              # rushing line is cut (QUESTIONABLE_RB_STAT_FACTORS: carries 0.93, rushing yards 0.89,
                              # rushing TDs 0.89) and scored; receiving untouched. Weeks 3-17, needs
@@ -2757,6 +2761,13 @@ DEFAULT_FEATURES = frozenset({
     # +0.003), weeks 3-7 a wash as in every season. QB rows unmoved. Live it waits on the PFF weekly export for the team's latest
     # game, like the route rises did. Undo: remove it and put the two route rises back.
     'v2_recal_pass_snap_trend',
+    # SHIPPED 2026-11-24 (user: "Yes, ship it", after the harness pass): DEFAULT_FEATURES = 89. v2_receiving_yards_coherence
+    # (accuracy idea 4; bar and result .sweeps/receiving_coherence_bar.md): weeks 3-17, each team's RB / WR / TE receiving yards
+    # move 25% of the way toward what its QB1's passing line implies, up or down, shares unchanged. Harness v2: 2022-2025 weeks
+    # 3-17 START-ALL -0.006 [-0.011, -0.003] (4 of 4 seasons, 2022 nearly flat), START-WR / TE / RB -0.010 / -0.013 / -0.003,
+    # moved played rows -0.013 (every position, both directions; the weight is in-sample there); 2026 weeks 3-10 START-ALL
+    # -0.003. QB rows unmoved.
+    'v2_receiving_yards_coherence',
 })
 
 
@@ -2793,7 +2804,8 @@ POST_CALIBRATION_FEATURES = frozenset({'v2_opening_week_stat_calibration',
                                        'v2_stat_recal_own_history', 'v2_stat_recal_own_history_edges',
                                        'v2_stat_recal_game_script', 'v2_stat_recal_gate_ramp', 'v2_points_from_stat_line',
                                        'v2_points_from_stat_line_edges', 'v2_questionable_stat_cut',
-                                       'v2_questionable_rb', 'v2_recal_pass_snap_trend'})
+                                       'v2_questionable_rb', 'v2_recal_pass_snap_trend',
+                                       'v2_receiving_yards_coherence'})
 CALIBRATION_INPUT_FEATURES = frozenset(DEFAULT_FEATURES - {'calibration'} - POST_CALIBRATION_FEATURES)
 
 
@@ -3329,6 +3341,48 @@ def team_latest_game_weeks(hist, team_col, as_of_week):
     frame = pd.DataFrame({'team': teams.map(_canonical_team_key), 'week': weeks})
     frame = frame[(frame['week'] < as_of_week) & (frame['team'] != '')]
     return {t: int(w) for t, w in frame.groupby('team')['week'].max().items()}
+
+
+# v2_receiving_yards_coherence (SHIPPED 2026-11-24, accuracy idea 4; .sweeps/accuracy_ideas_2026-11-23/qb_coherence_v2.py):
+# a team's QB passing yards and its pass-catchers' receiving yards estimate the same number, and only the QB side reads the game
+# script (v2_stat_recal_game_script). On the harness base boards (DEFAULT 88, weeks 3-17) moving the receivers' availability-
+# weighted total part of the way toward QB1's line / K cut receiving-yard MSE in 5 of 5 seasons held out (-0.05% to -0.54%),
+# down-moved and up-moved team-weeks alike; the reverse (QB toward the receivers) fits at weight 0. Pooled fit 2022-2025.
+RECEIVING_YARDS_COHERENCE_WEIGHT = 0.25
+RECEIVING_YARDS_COHERENCE_K = 0.956      # QB1 passing yards per availability-weighted receiving yard, on average
+RECEIVING_YARDS_COHERENCE_POSITIONS = ('RB', 'WR', 'TE')
+
+
+def apply_receiving_yards_coherence(result):
+    """(result, info): each team's RB/WR/TE receiving yards x ((1 - w) x total + w x QB1 / K) / total, where total is the
+    team's availability-weighted receiving yards and QB1 is its QB with the most projected passing attempts. Every
+    receiver on a team takes the same factor, so the shares are unchanged. info = {team: factor}."""
+    if result is None or result.empty:
+        return result, {}
+    for col in ('Pos', 'Team', 'Availability'):
+        if col not in result.columns:
+            raise KeyError(f'apply_receiving_yards_coherence: board has no {col!r} column')
+    if not {'receiving_yards', 'passing_yards', 'passing_attempts'} <= set(result.columns):
+        return result, {}    # no QB line or no receiving line on this board (no QBs / no receivers): nothing to reconcile
+    out = result.copy()
+    pos = out['Pos'].astype(str)
+    team = out['Team'].astype(object)      # the live board's Team is Categorical: .map would return categories, not factors
+    rec = pos.isin(RECEIVING_YARDS_COHERENCE_POSITIONS)
+    yards = pd.to_numeric(out['receiving_yards'], errors='coerce').fillna(0.0)
+    avail = pd.to_numeric(out['Availability'], errors='coerce').fillna(1.0)
+    total = (yards * avail).where(rec, 0.0).groupby(team).sum()
+    is_qb = pos.eq('QB')
+    qbs = pd.DataFrame({'Team': team[is_qb],
+                        '_att': pd.to_numeric(out.loc[is_qb, 'passing_attempts'], errors='coerce').fillna(0.0),
+                        '_py': pd.to_numeric(out.loc[is_qb, 'passing_yards'], errors='coerce').fillna(0.0)})
+    qb1 = qbs.sort_values('_att').groupby('Team')['_py'].last()
+    w, k = RECEIVING_YARDS_COHERENCE_WEIGHT, RECEIVING_YARDS_COHERENCE_K
+    teams = total.index.intersection(qb1.index)
+    teams = teams[total.loc[teams].to_numpy() > 0]
+    factor = ((1 - w) * total.loc[teams] + w * qb1.loc[teams] / k) / total.loc[teams]
+    row_factor = team.map(factor).where(rec).fillna(1.0)
+    out['receiving_yards'] = np.where(rec, yards * row_factor, out['receiving_yards'])
+    return out, {t: float(f) for t, f in factor.items()}
 
 
 def apply_te_route_rise(result, factors):
@@ -13269,6 +13323,10 @@ def build_weekly_projections(year, week, scoring_mode='Full PPR', as_of_week=Non
             result, latest_game_moves(weekly_route_rows(year, as_of_week)),
             team_latest_game_weeks(hist, team_col, as_of_week), _rr_params, TE_ROUTE_RISE_MAX_FACTOR)
         result, te_route_rise_info = apply_te_route_rise(result, _rr_factors)
+    if 'v2_receiving_yards_coherence' in feats and 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
+        # the receivers' yards follow the QB's line part of the way; the last stat-line step, so the points just below
+        # score it. Measured on the finished board's lines (Questionable cuts included).
+        result, _coherence_info = apply_receiving_yards_coherence(result)
     if 'v2_points_from_stat_line' in feats and _recal_form == 'linear':
         result, points_from_line_info = apply_points_from_stat_line(result, scoring_mode, _points_info_for_line)
         result = result.sort_values('Model Proj Pts', ascending=False).reset_index(drop=True)

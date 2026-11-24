@@ -18,6 +18,8 @@ his earlier games, both directions. Harness (`.sweeps/pass_snap_trend_bar.md`) p
 SHIPPED 2026-11-23 (user: "Yes, ship it") in place of `v2_wr_route_rise` / `v2_te_route_rise` -> DEFAULT_FEATURES = 88. Live it
 waits on the PFF weekly export for each team's latest game (exports stop at week 9). The doc's status ledger tracks ideas 3-10.
 
+**2026-11-24:** accuracy idea 6 (full role for starters back from injured reserve) failed its bar and was retired (patch 20, `docs/retired_flags.md`). Idea 4 re-measured: the QB side is gone (the game-script recal took it), the receiver side holds. `v2_receiving_yards_coherence` moves each team's RB / WR / TE receiving yards 25% of the way toward what its QB1's line implies, up or down. Harness (`.sweeps/receiving_coherence_bar.md`) passed every line: 2022-2025 START-ALL -0.006 [-0.011, -0.003], WR -0.010, TE -0.013, RB -0.003, 4 of 4 seasons; 2026 weeks 3-10 -0.003. SHIPPED 2026-11-24 (user: "Yes, ship it") -> DEFAULT_FEATURES = 89. Open lead: a team the board projects no QB for (starter out, no backup line; LV 2026 weeks 10 and 12) gets its receivers cut ~25% by this flag, which helped on average in the harness (36 team-weeks), but the real gap is the missing backup QB line.
+
 **2026-11-16:** receiver role drift (user idea), two harness rounds (`.sweeps/role_drift_v2_bar.md`): SHIPPED
 `v2_alignment_recency` (WR 0.80 / TE 0.85; a push), `v2_wr_route_rise` (exponent 0.15; passed every line) and `v2_te_route_rise`
 (exponent 0.20; missed the 2026 EVERY-TE line by 0.002, shipped by the user) -> DEFAULT_FEATURES = 89.

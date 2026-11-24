@@ -8488,3 +8488,16 @@ SHIPPED (user: "Yes, ship it"): in DEFAULT_FEATURES and POST_CALIBRATION_FEATURE
 back to back: only `receiving_yards`, `Model Proj Pts` and `Calibrated Model Proj Pts` change, RB / WR / TE rows only (week 12
 172 rows, -1.6 to +0.2, LV the -1.6 with no QB line; week 13 130 rows, -0.4 to +0.1). The first live build crashed on the live
 board's Categorical Team column (the historical boards' is plain text); fixed and tested before the ship.
+
+### 2026-11-24 - Accuracy idea 9 (man/zone matchups on free data): no signal in seven seasons, closed
+User: "I like idea 9. Go ahead with that." It retries audit C1b (closed 2026-10-21 for lack of seasons). Gate and result
+`.sweeps/manzone/first_read_bar.md`; scripts `.sweeps/manzone/`. Offline, no model change.
+- Data: nflverse participation's `defense_man_zone_type` covers 99.5%+ of regular-season targets in 2018-2025 (2016-2017
+  empty; 2026 not covered), joined to play-by-play targets.
+- Read, held out by season 2019-2025 weeks 3-17, WR and TE: his man and zone yards per target (and his share of the team's
+  targets on man and zone plays), each shrunk toward his overall rate, weighted by the opponent's man rate to date against
+  the league rate. Pooled MSE change: yards TE +0.033% / WR +0.009%, targets TE +0.018% / WR +0.030%; better in 2-4 of 7
+  seasons (gate -0.5%, 6 of 7). Every fold chose the heaviest shrinkage; the in-game oracle stays under 0.5%.
+- Why: the man-minus-zone split does not persist (year-to-year r +0.07 WR, 355 pairs; -0.05 TE, 78 pairs), while defenses'
+  man rates do differ (0.14-0.70, r 0.37). CLOSED; nothing built. The shipped PFF TE scheme matchup is unchanged (C1b: weaker
+  settings were worse on 2024-2025).
